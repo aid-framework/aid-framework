@@ -1,0 +1,110 @@
+# AID Framework — .gitignore
+# Covers Node/TypeScript, Python, .NET, and Java build artifacts.
+# NOTE: lockfiles (package-lock.json, pnpm-lock.yaml, uv.lock, poetry.lock, packages.lock.json)
+# are intentionally NOT ignored — they are committed for reproducible builds.
+
+# ── Secrets & local environment ──────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.aid/
+.aid-cache/
+
+# ── OS & editor cruft ────────────────────────────────────────
+.DS_Store
+.AppleDouble
+Thumbs.db
+ehthumbs.db
+desktop.ini
+*~
+*.swp
+*.swo
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+
+# ── Node / TypeScript ────────────────────────────────────────
+node_modules/
+dist/
+build/
+out/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+.eslintcache
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/install-state.gz
+*.tgz
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.python-version
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+.ruff_cache/
+.hypothesis/
+.ipynb_checkpoints/
+
+# ── .NET ─────────────────────────────────────────────────────
+[Bb]in/
+[Oo]bj/
+.vs/
+TestResults/
+artifacts/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+project.lock.json
+project.fragment.lock.json
+*.nupkg
+*.snupkg
+*.binlog
+BenchmarkDotNet.Artifacts/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+
+# ── Java / JVM ───────────────────────────────────────────────
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+target/
+out/
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+hs_err_pid*
+replay_pid*
+*.hprof
+.attach_pid*
+
+# ── Build / tooling caches ───────────────────────────────────
+.cache/
+.tmp/
+tmp/
