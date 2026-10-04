@@ -1,0 +1,154 @@
+specVersion: "0.1"
+
+project:
+  name: support-copilot
+  namespace: aid.examples.support
+  description: Classifies an inbound support ticket and returns a structured answer.
+  targets:
+    - py-fastapi
+
+types:
+  Ticket:
+    kind: struct
+    fields:
+      subject:
+        type: string
+        required: true
+        description: The ticket subject line.
+      body:
+        type: string
+        required: true
+      locale:
+        type: string
+        enum: [en, de, fr]
+  Answer:
+    kind: struct
+    fields:
+      summary:
+        type: string
+        required: true
+      category:
+        type: string
+        required: true
+        enum: [billing, bug, howto, other]
+      confidence:
+        type: number
+        required: true
+        minimum: 0
+        maximum: 1
+
+models:
+  fast:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [json-schema, tools]
+    params:
+      temperature: 0.2
+      maxTokens: 512
+    costProfile: openai-gpt-4o-mini
+    limits:
+      maxInputTokens: 8192
+      maxOutputTokens: 512
+    fallbacks: [flexible]
+  flexible:
+    provider: openai-compatible
+    modelId: llama-3.3-70b-instruct
+    baseUrl: https://inference.example.com/v1
+    apiKeyEnv: FLEXIBLE_API_KEY
+    capabilities: [json-schema]
+  offline:
+    provider: fake
+    modelId: fake-deterministic-1
+    capabilities: [json-schema, tools]
+
+prompts:
+  classify_ticket:
+    version: 1
+    model: fast
+    template: |
+      You classify inbound support tickets.
+
+      Subject: {{ ticket.subject }}
+      Body: {{ ticket.body }}
+      Locale: {{ ticket.locale }}
+    variables:
+      ticket:
+        type: Ticket
+        required: true
+    output:
+      kind: structured
+      schema: Answer
+  rephrase_offline:
+    version: 1
+    model: offline
+    template: "Rephrase in one line: {{ text }}"
+    variables:
+      text:
+        type: string
+        required: true
+    output:
+      kind: text
+
+tools:
+  lookup_customer:
+    description: Look up the customer account associated with a ticket.
+    input: Ticket
+    output: Answer
+    handler:
+      kind: business
+      symbol: lookup_customer
+    sideEffects: read
+    timeoutMs: 5000
+    retries: 1
+    idempotency: key
+    auth: hasScope("customers:read")
+
+evals:
+  classify_quality:
+    description: Structured-output quality for the classification pipeline.
+    target: pipeline:answer_ticket
+    dataset:
+      source: file
+      uri: evals/classify_quality.jsonl
+    metrics:
+      - kind: json-schema
+        schema: Answer
+      - kind: exact
+        field: category
+      - kind: contains
+        field: summary
+        value: refund
+      - kind: tool-trace
+        expect: [lookup_customer]
+        ordered: false
+      - kind: cost
+        max: 0.02
+      - kind: latency
+        maxMs: 15000
+    gate:
+      ci: true
+      maxRegression: 0.05
+      samples: 5
+
+pipelines:
+  answer_ticket:
+    description: Classify a ticket and return a structured answer.
+    trigger:
+      http:
+        method: post
+        path: /tickets/answer
+    steps:
+      - tool:
+          tool: lookup_customer
+          input:
+            ticket: "{{ ticket }}"
+          as: customer
+      - generate:
+          prompt: classify_ticket
+          input:
+            ticket: "{{ ticket }}"
+            customer: "{{ customer }}"
+          as: answer
+      - emit:
+          event: Answer

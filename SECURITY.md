@@ -9,11 +9,27 @@ traces can carry sensitive data. We take that seriously.
 AID Framework is **pre-alpha** and has no releases yet. There are no supported versions to patch at this time.
 
 | Version | Supported |
-|---------|-----------|
+| --- | --- |
 | `main` (pre-alpha) | ❌ No — not for production use |
 | Latest tagged release | ❌ None published yet |
 
 This table will be updated when the first release is published.
+
+## Secret scanning
+
+GitHub secret scanning and **push protection** are enabled on this repository, so a commit containing a
+recognized provider token is rejected before it can reach a branch. Two gaps are known:
+
+- **Non-provider patterns are disabled.** Generic credential shapes — private keys, connection strings,
+  high-entropy strings — are not detected. Report anything you notice; do not assume the scanner caught it.
+- **Secret-scanning alerts are not status checks.** A detected secret does not fail CI and does not block a
+  pull request. Alerts are reviewed by a human in the Security tab, which means detection is not the same as
+  enforcement.
+
+**Contributor rule:** never commit a real provider token, or a realistic-looking one, anywhere in this
+repository — not in a test fixture, golden file, dataset, or documentation example. Push protection will
+reject the push, and a secret that reaches a branch is handled as a live incident. Use obviously fake
+sentinel values instead.
 
 ## Reporting a vulnerability
 

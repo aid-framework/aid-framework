@@ -22,7 +22,7 @@ under the project's license (Apache-2.0).
 
 Certify every commit by signing off with `git commit -s`, which appends:
 
-```
+```text
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
@@ -61,26 +61,40 @@ Pull requests whose commits are not signed off will be asked to amend before mer
 
 ## Development setup
 
-> **TODO (Phase 0): there is nothing to install or build yet.** The toolchains are not wired up and no
-> package in this repository is buildable today. This section is a placeholder that will be filled in as
-> `packages/` and `runtimes/` become real.
+Phase 0 is in progress. The root toolchain and `packages/spec` are real and buildable; `packages/ir`,
+`packages/generator-sdk`, `packages/cli`, `packages/generators/*`, and `runtimes/*` are still README
+stubs. Python tooling (`uv`) is not needed until the `py-fastapi` target and the Python runtime land.
 
-The toolchains we expect to require are:
-
-| Stack | Toolchain (planned) |
-|-------|---------------------|
-| Spec / IR / CLI / generator SDK | Node.js 20+ with TypeScript and pnpm |
-| Python runtime & `py-fastapi` target | Python 3.11+ with `uv` |
+You need Node.js 24 (see `.nvmrc`) and pnpm. Enable pnpm through Corepack instead of installing it
+globally:
 
 ```bash
-# TODO(phase-0): every command below except clone is a placeholder.
-# The repository has no build, lint, or test task yet.
 git clone https://github.com/aid-framework/aid-framework.git
 cd aid-framework
-# TODO(phase-0): pnpm install
-# TODO(phase-0): uv sync
-# TODO(phase-0): <build> / <lint> / <test>
+corepack enable
+pnpm install --frozen-lockfile
 ```
+
+Then, from the repository root:
+
+| Command | What it does |
+| --- | --- |
+| `pnpm build` | Compile the TypeScript packages to `dist/` |
+| `pnpm typecheck` | Type-check sources, tests, and the `scripts/` helpers |
+| `pnpm test` | Run the unit, spec-validation, and release-gate tests |
+| `pnpm test:coverage` | The same tests with the coverage thresholds enforced |
+| `pnpm lint` | Biome, markdownlint, and config validation |
+| `pnpm lint:actions` | actionlint over `.github/workflows` |
+| `pnpm lint:licenses` | Dependency licence audit |
+| `pnpm check` | `pnpm lint && pnpm typecheck && pnpm test` — the full local gate |
+| `pnpm format` | Apply Biome formatting |
+
+`pnpm check` is the gate CI runs, so run it before opening a pull request. The golden-file,
+determinism, eval-harness, and end-to-end checks are added by the pull requests that introduce their
+content, and only become required checks at that point.
+
+Golden-file tests assert that generation is **deterministic** — generating twice from the same spec
+must produce byte-identical output (`docs/design.md` §8.2, §12).
 
 ## Repository layout
 

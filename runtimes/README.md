@@ -29,7 +29,7 @@ Each runtime provides the same capabilities, implemented idiomatically for its s
 generated app's `business/` tier ([`docs/design.md` §8.4](../docs/design.md), the seam).
 
 | Runtime | Stack | Generator it pairs with | Phase | Status |
-|---------|-------|-------------------------|-------|--------|
+| --- | --- | --- | --- | --- |
 | [`python/`](python/) | Python 3.11+ | `py-fastapi` | Phase 0 | Not implemented |
 
 Planned but **not yet scaffolded**: TypeScript/Node (Vercel AI SDK), .NET (Semantic Kernel), and Java

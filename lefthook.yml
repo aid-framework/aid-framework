@@ -1,0 +1,21 @@
+# Convenience only; CI is the gate. `pnpm check` reproduces the full CI check.
+
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: '*.{ts,mts,cts,js,mjs,cjs,json,jsonc,yaml,yml}'
+      run: pnpm exec biome check --error-on-warnings --no-errors-on-unmatched --staged
+    markdownlint:
+      glob: '*.md'
+      run: pnpm exec markdownlint-cli2 {staged_files}
+    config:
+      glob: '*.json'
+      run: node scripts/check-config.mjs
+    workflows:
+      glob: '.github/workflows/*.yml'
+      run: node scripts/check-workflows.mjs
+
+skip_output:
+  - execution_out
+  - execution_info

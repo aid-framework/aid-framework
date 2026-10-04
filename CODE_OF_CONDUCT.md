@@ -48,7 +48,7 @@ online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders
-responsible for enforcement at **nithinneeraj60@gmail.com**.
+responsible for enforcement at **<nithinneeraj60@gmail.com>**.
 
 All complaints will be reviewed and investigated promptly and fairly.
 

@@ -1,0 +1,18 @@
+# Overrides core.autocrlf, which would otherwise check text files out as CRLF and
+# fail both the formatter and the byte-for-byte golden-file comparison.
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Compared byte-for-byte against freshly emitted output.
+packages/generators/**/test/__golden__/** -text
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary

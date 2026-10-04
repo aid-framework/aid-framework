@@ -43,7 +43,7 @@ the IR, the CLI surface, and the roadmap.
 ## Repository layout
 
 | Path | Responsibility |
-|------|----------------|
+| --- | --- |
 | [`docs/`](docs/) | Design documentation. [`docs/design.md`](docs/design.md) is authoritative. |
 | [`packages/spec/`](packages/spec/) | The declarative spec DSL plus JSON Schema, parser, and validator. |
 | [`packages/ir/`](packages/ir/) | The stack-independent IR: types, builder, normalization, validation. |

@@ -1,0 +1,40 @@
+{
+  "name": "aid-framework",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Declare an AI app once; generate idiomatic, runnable AI services across language stacks.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@12.9.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "typecheck": "tsc -b && tsc -p tsconfig.tests.json",
+    "lint": "pnpm lint:code && pnpm lint:md && pnpm lint:config",
+    "lint:code": "biome ci --error-on-warnings .",
+    "lint:md": "markdownlint-cli2",
+    "lint:config": "node scripts/check-config.mjs",
+    "lint:actions": "node scripts/check-workflows.mjs",
+    "lint:licenses": "node scripts/check-licenses.mjs",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest --coverage.enabled=false",
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "prepare": "lefthook install"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@types/node": "^24.19.1",
+    "@vitest/coverage-v8": "^5.0.3",
+    "ajv": "^8.20.0",
+    "lefthook": "^2.1.16",
+    "markdownlint-cli2": "^0.23.3",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3",
+    "yaml": "^2.9.1"
+  }
+}

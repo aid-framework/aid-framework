@@ -1,0 +1,44 @@
+{
+  "description": "Release gating and versioning policy for the AID Framework monorepo. Consumed by scripts/version.mjs (the release decision and version computation) and by .github/workflows/release.yml. See docs/design.md §13 for the versioning contract.",
+  "mode": "repo-wide",
+  "tagPrefix": "v",
+  "bump": "patch",
+  "bootstrapVersion": "0.1.0",
+  "releaseGating": "path-based",
+  "nonReleasable": [
+    {
+      "pattern": "^[.]github/",
+      "reason": "CI-only change; ships nothing to a consumer"
+    },
+    {
+      "pattern": "^docs/",
+      "reason": "documentation only; ships nothing to a consumer"
+    },
+    {
+      "pattern": "^[^/]+[.]md$",
+      "reason": "root-level markdown (README, CONTRIBUTING, ...); ships nothing to a consumer"
+    },
+    {
+      "pattern": "^[.]editorconfig$",
+      "reason": "repository plumbing; ships nothing to a consumer"
+    },
+    {
+      "pattern": "^[.]gitignore$",
+      "reason": "repository plumbing; ships nothing to a consumer"
+    },
+    {
+      "pattern": "^[.]nvmrc$",
+      "reason": "repository plumbing; ships nothing to a consumer"
+    },
+    {
+      "pattern": "^[.]gitattributes$",
+      "reason": "repository plumbing; ships nothing to a consumer"
+    }
+  ],
+  "packages": [
+    { "name": "@aid/spec", "path": "packages/spec", "registry": "npm" },
+    { "name": "@aid/ir", "path": "packages/ir", "registry": "npm" },
+    { "name": "@aid/generator-sdk", "path": "packages/generator-sdk", "registry": "npm" },
+    { "name": "aid-runtime-python", "path": "runtimes/python", "registry": "pypi" }
+  ]
+}

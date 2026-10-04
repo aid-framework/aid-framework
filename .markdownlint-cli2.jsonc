@@ -1,0 +1,15 @@
+{
+  "config": {
+    "MD013": false,
+    "MD033": false,
+    "MD024": { "siblings_only": true },
+    "MD041": false,
+    "MD036": false,
+    "MD009": { "br_spaces": 2 },
+    "MD029": { "style": "one_or_ordered" },
+    "MD046": { "style": "fenced" },
+    "MD048": { "style": "backtick" }
+  },
+  "globs": ["**/*.md"],
+  "ignores": ["**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.venv/**", "CHANGELOG.md"]
+}

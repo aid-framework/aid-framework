@@ -1,0 +1,15 @@
+specVersion: "0.1"
+
+project:
+  name: probe
+
+pipelines:
+  probe:
+    trigger:
+      http:
+        method: post
+        path: /probe
+    steps:
+      - retrieve:
+          retriever: knowledge
+          as: docs

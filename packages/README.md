@@ -7,7 +7,7 @@ and the CLI. These are the pieces that turn a declarative spec into generated ap
 > [`docs/design.md` §14](../docs/design.md). [`docs/design.md`](../docs/design.md) is authoritative.
 
 | Package | Responsibility | Design ref |
-|---------|----------------|------------|
+| --------- | ---------------- | ------------ |
 | [`spec/`](spec/) | Declarative spec DSL, JSON Schema, parser, and validator. | §6 |
 | [`ir/`](ir/) | Stack-independent IR: types, builder, normalization, validation. | §7 |
 | [`generator-sdk/`](generator-sdk/) | Generator plugin interface, plan/emit contract, determinism rules. | §8 |
