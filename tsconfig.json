@@ -1,0 +1,6 @@
+{
+  "$schema": "https://www.schemastore.org/tsconfig",
+  "//": "Solution file. `tsc -b` builds every referenced package project in dependency order.",
+  "files": [],
+  "references": [{ "path": "packages/spec" }]
+}

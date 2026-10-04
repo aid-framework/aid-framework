@@ -1,0 +1,8 @@
+specVersion: "0.1"
+
+project:
+  name: probe
+
+agents:
+  triage:
+    description: Deferred to a later phase by design.

@@ -1,0 +1,129 @@
+# The git tag is the source of truth for the version, so nothing here commits to
+# main.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: "Cut a release even if no releasable path changed"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # A cancelled run could push a tag without its release.
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      released: ${{ steps.publish.outputs.released }}
+      version: ${{ steps.publish.outputs.version }}
+      reason: ${{ steps.plan.outputs.reason }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Decide whether to release
+        id: plan
+        shell: bash
+        env:
+          FORCE_RELEASE: ${{ inputs.force_release }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --quiet
+          git tag --list > tags.txt
+
+          last_tag=$(node scripts/version.mjs latest --config release.config.json --tags-file tags.txt)
+
+          if [ -n "$last_tag" ]; then
+            git diff --name-only --no-renames "$last_tag" HEAD > changed-files.txt
+            echo "changed paths since $last_tag:"
+          else
+            empty_tree=$(git hash-object -t tree /dev/null)
+            git diff --name-only --no-renames "$empty_tree" HEAD > changed-files.txt
+            echo "no release tag yet; treating the whole history as the change set:"
+          fi
+          cat changed-files.txt
+
+          force_flag=""
+          if [ "${FORCE_RELEASE:-false}" = "true" ]; then
+            force_flag="--force"
+          fi
+
+          node scripts/version.mjs decide \
+            --config release.config.json \
+            --tags-file tags.txt \
+            --changed-files-file changed-files.txt \
+            --github-output "$GITHUB_OUTPUT" \
+            $force_flag > release-plan.json
+
+          cat release-plan.json
+
+      - name: Create tag and GitHub Release
+        id: publish
+        if: steps.plan.outputs.release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          echo "released=true" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "tag $VERSION already exists; leaving it untouched"
+          else
+            git tag -a "$VERSION" -m "$VERSION"
+            git push origin "refs/tags/$VERSION"
+          fi
+
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "release $VERSION already exists; leaving it untouched"
+          else
+            gh release create "$VERSION" \
+              --title "$VERSION" \
+              --generate-notes \
+              --verify-tag
+          fi
+
+      - name: Summarize
+        if: always() && steps.plan.outcome == 'success'
+        shell: bash
+        env:
+          RELEASE: ${{ steps.plan.outputs.release }}
+          VERSION: ${{ steps.plan.outputs.tag }}
+          REASON: ${{ steps.plan.outputs.reason }}
+        run: |
+          {
+            if [ "$RELEASE" = "true" ]; then
+              echo "### Released \`$VERSION\`"
+            else
+              echo "### No release cut"
+            fi
+            echo
+            echo "\`$REASON\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,560 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aid-framework.dev/schemas/spec/0.1/spec.schema.json",
+  "$comment": "Conditional branches (`then`, and a `not` inside one) that require a property also declare it as `\"properties\": { \"<name>\": true }`. That is deliberately not a constraint - a boolean `true` schema permits anything. It exists because the validator runs Ajv with `strict: true`, and Ajv's `strictRequired` rule rejects a `required` entry whose property is not declared in that same subschema object. Keeping the branch self-contained satisfies the rule without changing its meaning; the valid and invalid fixtures in packages/spec/test cover both directions.",
+  "title": "AID Framework spec v0.1",
+  "description": "The declarative source of truth for an AID application. Hand-authored against design doc §6, narrowed to the Phase 0 surface (§14): models, prompts, tools, evals and pipelines. Top-level keys outside this set are rejected rather than ignored, so a feature that has not been implemented cannot be silently dropped. See packages/spec/README.md for the scope boundary and the deferred keys.",
+  "type": "object",
+  "required": ["specVersion", "project"],
+  "additionalProperties": false,
+  "properties": {
+    "specVersion": {
+      "description": "Spec language version. Only 0.1 exists; a different value is a hard error rather than a best-effort parse.",
+      "const": "0.1"
+    },
+    "project": { "$ref": "#/$defs/project" },
+    "types": {
+      "description": "Named structured types referenced by prompts (structured output) and tools (input/output).",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/typeName" },
+      "additionalProperties": { "$ref": "#/$defs/typeDef" }
+    },
+    "models": {
+      "description": "Model aliases. The alias is what the rest of the spec refers to; the vendor id is pinned here and only here.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/model" }
+    },
+    "prompts": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/prompt" }
+    },
+    "tools": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/tool" }
+    },
+    "evals": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/eval" }
+    },
+    "pipelines": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/pipeline" }
+    }
+  },
+  "$defs": {
+    "name": {
+      "description": "snake_case identifier for a spec node.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "typeName": {
+      "description": "UpperCamelCase name of a declared type.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Za-z0-9]{0,63}$"
+    },
+    "fieldType": {
+      "description": "A primitive (string, number, integer, boolean) or a declared type name, optionally suffixed with [] for a list.",
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9]*(\\[\\])?$"
+    },
+    "project": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+        },
+        "namespace": {
+          "description": "Dotted namespace used to qualify generated symbols.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*$"
+        },
+        "description": { "type": "string" },
+        "targets": {
+          "description": "Generator targets to emit. Defaults to [py-fastapi] when omitted.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["py-fastapi"] }
+        }
+      }
+    },
+    "typeDef": {
+      "type": "object",
+      "required": ["kind", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "Only struct is in spec v0.1. enum/union/list land with the agents work, and adding them is a schema change, not a silent widening.",
+          "const": "struct"
+        },
+        "description": { "type": "string" },
+        "fields": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/name" },
+          "additionalProperties": { "$ref": "#/$defs/field" }
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "$ref": "#/$defs/fieldType" },
+        "required": {
+          "description": "Defaults to false. Drives required-vs-optional on the generated side.",
+          "type": "boolean"
+        },
+        "description": { "type": "string" },
+        "enum": {
+          "$comment": "A deliberate, minimal widening beyond the approved §3 sketch: structured output is the whole point of spec v0.1 and a classification field is the most common shape it takes. The minimum/maximum keys already establish that scalar constraints belong on a field.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": ["string", "number", "boolean"] }
+        },
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" }
+      }
+    },
+    "model": {
+      "type": "object",
+      "required": ["provider", "modelId"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "description": "The Phase 0 provider set. `fake` is deterministic and keyless, which is what lets the eval gate run offline in CI.",
+          "enum": ["openai", "openai-compatible", "fake"]
+        },
+        "modelId": {
+          "description": "Pinned vendor model id. Never an alias or a moving target: the resolved id is recorded in the IR so a run is reproducible.",
+          "type": "string",
+          "minLength": 1
+        },
+        "capabilities": {
+          "description": "Declared model capabilities. Only json-schema is negotiated in Phase 0 (a structured-output prompt must bind a model that declares it); the others are recorded in the IR for the capability gate to use in later phases.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["json-schema", "tools", "streaming"] }
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
+            "topP": { "type": "number", "minimum": 0, "maximum": 1 },
+            "maxTokens": { "type": "integer", "minimum": 1 },
+            "seed": { "type": "integer" }
+          }
+        },
+        "fallbacks": {
+          "description": "Ordered model aliases to fail over to. Simple alias failover only; no routing policy in Phase 0.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" }
+        },
+        "costProfile": {
+          "description": "Name of a priced entry in the pinned model catalog. Omit to resolve it from the catalog by modelId.",
+          "type": "string",
+          "minLength": 1
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxInputTokens": { "type": "integer", "minimum": 1 },
+            "maxOutputTokens": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "baseUrl": {
+          "description": "Required for openai-compatible. Never a credential.",
+          "type": "string",
+          "pattern": "^https?://"
+        },
+        "apiKeyEnv": {
+          "$comment": "The *name* of an environment variable, never a key. The pattern cannot express a literal secret, so a committed credential is out of scope by construction.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+        },
+        "description": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "provider": { "const": "openai-compatible" } },
+            "required": ["provider"]
+          },
+          "then": { "required": ["baseUrl"], "properties": { "baseUrl": true } }
+        },
+        {
+          "if": {
+            "properties": { "provider": { "enum": ["openai", "openai-compatible"] } },
+            "required": ["provider"]
+          },
+          "then": { "required": ["apiKeyEnv"], "properties": { "apiKeyEnv": true } }
+        },
+        {
+          "if": {
+            "properties": { "provider": { "const": "fake" } },
+            "required": ["provider"]
+          },
+          "then": {
+            "not": { "required": ["apiKeyEnv"], "properties": { "apiKeyEnv": true } }
+          }
+        }
+      ]
+    },
+    "prompt": {
+      "type": "object",
+      "required": ["version", "model", "template", "output"],
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "description": "Bumped by hand when the template changes. The prompt identity includes it (prompt:<name>@<version>) so a revision does not move the IR node id.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "model": { "$ref": "#/$defs/name" },
+        "template": {
+          "description": "Mustache-style text. Placeholders are {{variable}} references and are checked by the parser for well-formedness; whether each one resolves is a build-time IR gate, not a schema concern.",
+          "type": "string",
+          "minLength": 1
+        },
+        "variables": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/name" },
+          "additionalProperties": { "$ref": "#/$defs/variable" }
+        },
+        "output": {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "enum": ["text", "json", "structured"] },
+            "schema": { "$ref": "#/$defs/typeName" }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": { "kind": { "const": "structured" } },
+                "required": ["kind"]
+              },
+              "then": { "required": ["schema"], "properties": { "schema": true } }
+            },
+            {
+              "if": {
+                "properties": { "kind": { "enum": ["text", "json"] } },
+                "required": ["kind"]
+              },
+              "then": { "not": { "required": ["schema"], "properties": { "schema": true } } }
+            }
+          ]
+        }
+      }
+    },
+    "variable": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "$ref": "#/$defs/fieldType" },
+        "required": { "type": "boolean" },
+        "description": { "type": "string" },
+        "default": {}
+      }
+    },
+    "tool": {
+      "type": "object",
+      "required": ["description", "input", "output", "handler"],
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "description": "Shown to the model once model-selected tool choice exists (Phase 2). Required now so the field never has to be added retroactively.",
+          "type": "string",
+          "minLength": 1
+        },
+        "input": { "$ref": "#/$defs/typeName" },
+        "output": { "$ref": "#/$defs/typeName" },
+        "sideEffects": {
+          "description": "Drives the fail-closed security gate: write and destructive require auth.",
+          "enum": ["none", "read", "write", "destructive"],
+          "default": "none"
+        },
+        "handler": {
+          "description": "Where the implementation lives. `business` means a user-owned module, so the generated code imports it rather than inlining logic.",
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "business" },
+            "symbol": { "type": "string", "pattern": "^[a-z_][a-z0-9_]{0,63}$" }
+          },
+          "if": {
+            "properties": { "kind": { "const": "business" } },
+            "required": ["kind"]
+          },
+          "then": { "required": ["symbol"], "properties": { "symbol": true } }
+        },
+        "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 600000 },
+        "retries": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "idempotency": { "enum": ["none", "key", "natural"] },
+        "auth": {
+          "description": "PolicyExpr source. Parsed once, on the TypeScript side, into a JSON AST that the runtime interprets; the string form never reaches a runtime.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "eval": {
+      "type": "object",
+      "required": ["target", "dataset", "metrics"],
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "description": "Only pipelines are evaluable in Phase 0.",
+          "type": "string",
+          "pattern": "^pipeline:[a-z][a-z0-9_]{0,63}$"
+        },
+        "dataset": {
+          "type": "object",
+          "required": ["source"],
+          "additionalProperties": false,
+          "properties": {
+            "source": { "const": "file" },
+            "uri": { "type": "string", "minLength": 1 }
+          },
+          "if": {
+            "properties": { "source": { "const": "file" } },
+            "required": ["source"]
+          },
+          "then": { "required": ["uri"], "properties": { "uri": true } }
+        },
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/metric" }
+        },
+        "gate": {
+          "description": "How this eval's result is compared against the committed baseline. Never an equality check: sampling noise is expected, so the gate is a threshold on the regression relative to the baseline.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ci": {
+              "description": "When true this eval runs in the CI gate. At least one eval per HTTP-triggered pipeline should set it (an IR warning, not a schema rule).",
+              "type": "boolean",
+              "default": false
+            },
+            "maxRegression": {
+              "description": "Largest tolerated absolute drop in the metric's score versus the baseline.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0
+            },
+            "samples": {
+              "description": "Runs per case. More samples shrink the sampling-uncertainty term the gate also requires before it fails.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 5
+            }
+          }
+        },
+        "description": { "type": "string" }
+      }
+    },
+    "metric": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "field"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "exact" },
+            "field": { "$ref": "#/$defs/name" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "field"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "contains" },
+            "field": { "$ref": "#/$defs/name" },
+            "value": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "schema"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "json-schema" },
+            "schema": { "$ref": "#/$defs/typeName" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "expect"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "tool-trace" },
+            "expect": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/name" }
+            },
+            "ordered": { "type": "boolean", "default": false }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "max"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "cost" },
+            "max": {
+              "description": "Maximum tolerated USD per case.",
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "maxMs"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "latency" },
+            "maxMs": { "type": "integer", "minimum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "rubric"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "description": "Allowed in the spec but rejected by a spec-local rule when gate.ci is true: a judging model is neither deterministic nor available offline, so it can never be part of the CI gate.",
+              "const": "llm-judge"
+            },
+            "rubric": { "type": "string", "minLength": 1 },
+            "field": { "$ref": "#/$defs/name" },
+            "model": { "$ref": "#/$defs/name" },
+            "threshold": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      ]
+    },
+    "pipeline": {
+      "type": "object",
+      "required": ["trigger", "steps"],
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string" },
+        "trigger": {
+          "type": "object",
+          "required": ["http"],
+          "additionalProperties": false,
+          "properties": {
+            "http": {
+              "type": "object",
+              "required": ["method", "path"],
+              "additionalProperties": false,
+              "properties": {
+                "method": { "enum": ["get", "post", "put", "patch", "delete"] },
+                "path": { "type": "string", "pattern": "^/[A-Za-z0-9/_{}-]*$" }
+              }
+            }
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/step" }
+        }
+      }
+    },
+    "step": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["generate"],
+          "additionalProperties": false,
+          "properties": {
+            "generate": {
+              "type": "object",
+              "required": ["prompt", "as"],
+              "additionalProperties": false,
+              "properties": {
+                "prompt": { "$ref": "#/$defs/name" },
+                "input": { "$ref": "#/$defs/stepInput" },
+                "as": { "$ref": "#/$defs/binding" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["tool"],
+          "additionalProperties": false,
+          "properties": {
+            "tool": {
+              "description": "Explicitly invoked by the pipeline, never chosen by the model. That is what keeps Phase 0 control flow plain async while still exercising the tool, auth and tracing seams.",
+              "type": "object",
+              "required": ["tool", "as"],
+              "additionalProperties": false,
+              "properties": {
+                "tool": { "$ref": "#/$defs/name" },
+                "input": { "$ref": "#/$defs/stepInput" },
+                "as": { "$ref": "#/$defs/binding" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["emit"],
+          "additionalProperties": false,
+          "properties": {
+            "emit": {
+              "type": "object",
+              "required": ["event"],
+              "additionalProperties": false,
+              "properties": {
+                "event": { "$ref": "#/$defs/typeName" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "binding": {
+      "description": "Name a step's result is bound to for later steps.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "stepInput": {
+      "description": "Flat map of scalars. A string may be a single {{path}} reference or a template containing several; nested values are deliberately out of scope for Phase 0.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
+    }
+  }
+}

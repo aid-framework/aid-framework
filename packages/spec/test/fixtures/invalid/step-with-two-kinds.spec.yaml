@@ -1,0 +1,17 @@
+specVersion: "0.1"
+
+project:
+  name: probe
+
+pipelines:
+  probe:
+    trigger:
+      http:
+        method: post
+        path: /probe
+    steps:
+      - generate:
+          prompt: classify
+          as: result
+        emit:
+          event: Answer

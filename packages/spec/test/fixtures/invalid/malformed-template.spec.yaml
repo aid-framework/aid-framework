@@ -1,0 +1,12 @@
+specVersion: "0.1"
+
+project:
+  name: probe
+
+prompts:
+  classify:
+    version: 1
+    model: offline
+    template: "Classify {{ text }"
+    output:
+      kind: text

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://www.schemastore.org/tsconfig",
+  "//": "Type-checks tests, test fixtures helpers and the release script. Emits nothing.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": [
+    "vitest.config.ts",
+    "packages/*/src/**/*.ts",
+    "packages/*/test/**/*.ts",
+    "packages/generators/*/src/**/*.ts",
+    "packages/generators/*/test/**/*.ts",
+    "scripts/**/*.mjs"
+  ]
+}

@@ -9,7 +9,7 @@ imports the matching runtime library. Generators do not implement behavior; the 
 ([`docs/design.md` §14](../../docs/design.md)).
 
 | Plugin | Emits against | Phase | Status |
-|--------|---------------|-------|--------|
+| --- | --- | --- | --- |
 | [`py-fastapi/`](py-fastapi/) | Pydantic AI (+ LangGraph or plain async) | Phase 0 | Not implemented |
 
 Planned but **not yet scaffolded**: `ts-vercel` (Vercel AI SDK + zod), `dotnet-semantickernel`

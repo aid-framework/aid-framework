@@ -1,0 +1,10 @@
+specVersion: "0.1"
+
+project:
+  name: probe
+
+models:
+  offline:
+    provider: fake
+    modelId: fake-1
+    apiKeyEnv: SOME_KEY

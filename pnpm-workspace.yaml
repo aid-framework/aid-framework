@@ -1,0 +1,8 @@
+packages:
+  - 'packages/*'
+  - 'packages/generators/*'
+
+# pnpm blocks lifecycle scripts unless allowed here, and strictDepBuilds makes
+# `pnpm install` fail while any dependency has one outstanding.
+allowBuilds:
+  lefthook: true

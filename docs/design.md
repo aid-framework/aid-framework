@@ -36,6 +36,7 @@ That is 70–85% of a typical AI service, and none of it is the product. The fra
 ### Why now
 
 Two shifts make this the right moment:
+
 1. **Interfaces have stabilized** where it matters: provider HTTP APIs, **MCP** for tools, **OpenTelemetry GenAI** semantic conventions for tracing, JSON Schema for structured output. You can now build on stable layers instead of chasing hype.
 2. **Deterministic generation for structure + assisted generation for intent.** Generate the structure deterministically; use LLMs to draft specs from prose and to stub business logic. Never use an LLM to generate structure.
 
@@ -48,6 +49,7 @@ Generated **code** is deterministic (byte-stable, golden-file tested). Model **b
 ## 3. Goals & Non-Goals
 
 ### Goals
+
 - Single stack-independent spec as the source of truth.
 - Idiomatic generated output per stack — built *on top of* the ecosystem (LangGraph, LlamaIndex, Pydantic AI, Vercel AI SDK, Semantic Kernel), not reinventing it.
 - **Edit-safe regeneration**: developer prompt/tool/eval work never fights the generator.
@@ -57,6 +59,7 @@ Generated **code** is deterministic (byte-stable, golden-file tested). Model **b
 - Full eject path (no lock-in).
 
 ### Non-Goals (for now)
+
 - Training foundation models. (Phase 4 covers *fine-tuning pipelines*, not pretraining.)
 - A general-purpose orchestration language that replaces LangGraph/DSPy/LlamaIndex.
 - A hosted platform / inference service. We generate code that deploys anywhere.
@@ -82,7 +85,7 @@ Generated **code** is deterministic (byte-stable, golden-file tested). Model **b
 
 ## 5. Architecture
 
-```
+```text
 ┌───────────────────────────────────────────────────────────────────────┐
 │  1. SPEC (source of truth)                                            │
 │     models · prompts · tools · retrievers · agents · pipelines ·      │
@@ -261,7 +264,7 @@ deployments:
 ### 6.2 Spec surface, easiest -> hardest to abstract
 
 | Tier | What | Difficulty | Notes |
-|------|------|-----------|-------|
+| ------ | ------ | ----------- | ------- |
 | 1 | Model aliases, provider wiring, params | Easy | Stable interfaces; high confidence |
 | 2 | Prompt templating, variables, few-shot | Easy | Registry + rendering; version it |
 | 3 | Structured output / schema binding | Easy–Medium | JSON Schema; repair loop in runtime |
@@ -277,6 +280,7 @@ deployments:
 ## 7. The IR (Intermediate Representation)
 
 ### 7.1 Design requirements
+
 - **Closed-world, fully resolved.** No unresolved refs at codegen time.
 - **Explicit over implied.** Defaults materialized once, not per generator.
 - **Capability-driven.** Every node declares what it needs; generators declare what they support; mismatches fail **before** codegen.
@@ -507,13 +511,14 @@ interface Generator {
 `plan()` before `emit()` stays — it enables `--dry-run`, drift detection, and deterministic testing without touching disk.
 
 ### 8.2 Determinism contract
+
 - No timestamps, host names, or random IDs in output (fixed via seeded/hashed schemes).
 - Stable ordering (models/prompts/tools/pipelines sorted by stable ID).
 - Formatter-normalized output (Ruff/Black, Prettier). **Note:** the contract applies to *generated code*, never to model output.
 
 ### 8.3 Output layout (per generated AI app)
 
-```
+```text
 app/
 ├── generated/              # generator-owned — NEVER edit (banner + hash)
 │   ├── gateway/            # provider adapters, routing, budgets
@@ -563,27 +568,34 @@ The runtime resolves the token via DI, enforces `auth`/`requiresConfirmation`/`i
 The runtime is the real framework. One library per stack, versioned independently, thin over ecosystem libs.
 
 **Model Gateway**
+
 - Provider adapters (OpenAI/Anthropic/Azure/Bedrock/Google/Ollama/vLLM) with a unified streaming interface.
 - Alias -> pinned model resolution; capability negotiation; ordered fallbacks; escalation routing (cheap -> strong).
 - Retries + backoff, rate-limit/token-bucket, prompt cache, semantic cache, token + cost accounting.
 
 **Prompt Registry**
+
 - Versioned prompts, typed rendering, few-shot assembly.
 - Structured-output enforcement (JSON Schema/Pydantic/zod) + parse-repair loop.
 
 **Retrieval**
+
 - Connectors + chunkers + embedders; vector store adapters (pgvector first); hybrid search; rerank; context assembly with citations.
 
 **Agent Runtime**
+
 - Loop over ecosystem orchestration (LangGraph/LlamaIndex/Pydantic AI/Vercel AI SDK); tool-schema generation; tool executor; step/token/cost budgets; handoffs; HITL interrupts; memory.
 
 **Guardrails Engine**
+
 - Stage-aware policy evaluation (input/output/retrieval/tool-call); adopt existing engines (Guardrails AI / NeMo Guardrails / provider moderation).
 
 **Eval Harness**
+
 - Datasets, metrics (incl. LLM-as-judge), thresholds, baseline diffing, CI gating, synthetic dataset generation.
 
 **Observability & Cost**
+
 - OTel GenAI spans per LLM/retrieval/tool call; replay; PII redaction in traces; cost/latency dashboards. Integrate Langfuse/LangSmith/Phoenix rather than rebuild.
 
 **Non-responsibility:** the runtime contains no app-specific prompts, tools, or rubrics.
@@ -595,6 +607,7 @@ The runtime is the real framework. One library per stack, versioned independentl
 `aid.manifest.json` records per file: `path`, `owner` (`generated`|`business`), `sha256`, `generator`, `generatorVersion`.
 
 Regeneration algorithm:
+
 1. Plan the new file set.
 2. For a `generated` file whose on-disk hash != recorded hash -> **user edited generated code**. Do not silently overwrite: write `.aid-rej` and fail with guidance (`aid eject <path>` or `--force`).
 3. For a `business` file: create only if missing; never overwrite (prompt/tool/rubric work is sacred).
@@ -610,7 +623,7 @@ Because prompts, tools, and rubrics are *code-reviewed artifacts*, they live in 
 ## 11. CLI
 
 | Command | Purpose |
-|---------|---------|
+| --------- | --------- |
 | `aid init` | Scaffold a new AI app from a spec. |
 | `aid gen [--target <t>] [--dry-run] [--force]` | Generate/regenerate code from spec. |
 | `aid dev` | Generate + run locally (defaults to a local model like Ollama for cheap iteration). |
@@ -634,6 +647,7 @@ The part most generator projects under-invest in — and the part AI makes manda
 **Two regimes, explicitly separated:**
 
 **A. Codegen (deterministic)**
+
 1. Spec/IR unit tests — parsing, normalization, capability negotiation, policy AST.
 2. **Golden-file tests per generator** — fixture spec -> expected file tree; any diff is reviewable.
 3. **Determinism test** — generate twice, assert byte-identical.
@@ -656,7 +670,7 @@ The part most generator projects under-invest in — and the part AI makes manda
 Five independently versioned artifacts:
 
 | Artifact | Versioned by | Compatibility |
-|----------|-------------|---------------|
+| ---------- | ------------- | --------------- |
 | Spec / DSL | `specVersion` | Backward-compatible minor; migration tool for major |
 | IR | `irVersion` | Generators declare `irRange` |
 | Generator | own semver | Declares `irRange` + target runtime range + `emitsAgainst` lib ranges |
@@ -670,6 +684,7 @@ Rules: semver everywhere; a published compatibility matrix; `aid doctor` reports
 ## 14. Roadmap
 
 ### Phase 0 — Foundations (MVP, prove the thesis)
+
 - Spec v0.1 (models, prompts, tools, one pipeline) + JSON Schema.
 - IR v0.x + validation + capability negotiation.
 - CLI: `init`, `gen --dry-run`, `validate`.
@@ -678,26 +693,31 @@ Rules: semver everywhere; a published compatibility matrix; `aid doctor` reports
 - Golden-file + determinism tests + a minimal eval harness. **Exit criteria: spec -> running traced AI endpoint with a passing eval gate.**
 
 ### Phase 1 — Retrieval + polyglot proof
+
 - RAG: `aid ingest`, chunking/embedding/pgvector, hybrid + rerank, citations; retrieval evals.
 - **Second target: `ts-vercel`** (Vercel AI SDK + zod).
 - Extract the **cross-target conformance eval suite**; both runtimes pass it.
 
 ### Phase 2 — Production concerns
+
 - Agents: full loop, handoffs, memory, HITL, budgets (token/cost/step) enforced in runtime.
 - Guardrails engine + red-team safety suite; tool permissioning + least privilege.
 - Cost/latency dashboards; semantic + prompt caching; streaming + concurrency.
 
 ### Phase 3 — Business-logic focus (the payoff)
+
 - `business/prompts` + `business/tools` + `business/rubrics` as first-class, reviewable tiers.
 - **LLM-assisted authoring**: prose -> spec draft; spec -> tool + rubric stubs. Never structure.
 - Eval-driven prompt optimization (borrow DSPy's compile step); baseline diffing; `aid doctor`, `eject`, upgrade codemods.
 
 ### Phase 4 — Ecosystem
+
 - More targets (`dotnet-semantickernel`, `java-spring-ai`); plugin SDK + registry.
 - Fine-tuning pipelines (dataset curation, PEFT/LoRA, serving) + model eval gates.
 - **Optional** UI/chat tier (read-only-first, never full-CRUD-first).
 
 ### Phase 5 — Adoption
+
 - Docs, per-stack quickstarts, migration guides, community generators + provider adapters.
 
 ---
@@ -705,7 +725,7 @@ Rules: semver everywhere; a published compatibility matrix; `aid doctor` reports
 ## 15. Risks & Mitigations
 
 | # | Risk | Impact | Mitigation |
-|---|------|--------|-----------|
+| --- | ------ | -------- | ----------- |
 | 1 | **Non-determinism** makes correctness fuzzy | No trustworthy CI | Two regimes: golden files (code) + eval suites w/ statistical thresholds (behavior); record/replay cassettes |
 | 2 | **Model deprecation / churn** | Constant breakage | Pin `modelId`; bind logic to aliases; capability negotiation; ordered fallbacks; alias bumps are eval-gated |
 | 3 | **Cost blowups** | Surprise bills, unhappy users | Budgets in IR; enforced in runtime; cost/latency gates in CI |
@@ -724,7 +744,7 @@ Rules: semver everywhere; a published compatibility matrix; `aid doctor` reports
 ## 16. Prior Art & Positioning
 
 | Project | Model | Take |
-|---------|-------|------|
+| --------- | ------- | ------ |
 | **DSPy** | Declarative signatures -> compiled/optimized prompts | **Closest philosophy** (declare intent, compile the prompt). We add full-app scaffold, polyglot targets, tools, retrieval, and eval-gated regeneration |
 | **LangGraph / LlamaIndex / Haystack** | Orchestration runtimes | We **emit against** them; we own the IR + gateway + evals + codegen |
 | **Pydantic AI / Instructor** | Typed, structured-output agents | Use as the structured-output runtime for the Python target |
