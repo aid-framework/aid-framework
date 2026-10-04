@@ -30,6 +30,7 @@ export const DIAGNOSTIC_CODES = {
   metricUnavailableInCi: 'spec/metric-unavailable-in-ci',
 } as const;
 
+/** Codes are namespaced `<layer>/<slug>`. This layer's own codes are `spec/*`. */
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[keyof typeof DIAGNOSTIC_CODES];
 
 /** A location inside a spec document: object keys and array indices, from the root. */
@@ -42,9 +43,13 @@ export interface SourcePosition {
   column: number;
 }
 
-export interface Diagnostic {
+/**
+ * `C` is the emitting layer's own closed code union, so a later layer keeps typo
+ * checking on its codes while every layer still reports one shared shape.
+ */
+export interface Diagnostic<C extends string = DiagnosticCode> {
   severity: Severity;
-  code: DiagnosticCode;
+  code: C;
   message: string;
   /** Where in the document the problem is. Empty means "the document as a whole". */
   path: DiagnosticPath;
@@ -56,18 +61,22 @@ export interface Diagnostic {
 }
 
 /** The subset of fields a diagnostic factory needs. `path` defaults to the document root. */
-export interface DiagnosticInit {
-  code: DiagnosticCode;
+export interface DiagnosticInit<C extends string = DiagnosticCode> {
+  code: C;
   message: string;
   path?: DiagnosticPath;
   hint?: string;
 }
 
-export function errorDiagnostic(init: DiagnosticInit): Diagnostic {
+export function errorDiagnostic<C extends string = DiagnosticCode>(
+  init: DiagnosticInit<C>,
+): Diagnostic<C> {
   return { severity: 'error', path: [], ...init };
 }
 
-export function warningDiagnostic(init: DiagnosticInit): Diagnostic {
+export function warningDiagnostic<C extends string = DiagnosticCode>(
+  init: DiagnosticInit<C>,
+): Diagnostic<C> {
   return { severity: 'warning', path: [], ...init };
 }
 
@@ -84,11 +93,13 @@ export function formatPath(path: DiagnosticPath): string {
   return out === '' ? '<document>' : out;
 }
 
-export function hasErrors(diagnostics: readonly Diagnostic[]): boolean {
+export function hasErrors<C extends string>(diagnostics: readonly Diagnostic<C>[]): boolean {
   return diagnostics.some((diagnostic) => diagnostic.severity === 'error');
 }
 
-export function countBySeverity(diagnostics: readonly Diagnostic[]): Record<Severity, number> {
+export function countBySeverity<C extends string>(
+  diagnostics: readonly Diagnostic<C>[],
+): Record<Severity, number> {
   const counts: Record<Severity, number> = { error: 0, warning: 0 };
   for (const diagnostic of diagnostics) {
     counts[diagnostic.severity] += 1;
@@ -101,7 +112,9 @@ export function countBySeverity(diagnostics: readonly Diagnostic[]): Record<Seve
  * reports in schema-traversal order, and the golden-file tests compare rendered
  * output byte for byte, so the sort is what makes output reproducible.
  */
-export function sortDiagnostics(diagnostics: readonly Diagnostic[]): Diagnostic[] {
+export function sortDiagnostics<C extends string>(
+  diagnostics: readonly Diagnostic<C>[],
+): Diagnostic<C>[] {
   return [...diagnostics].sort((left, right) => {
     if (left.file !== right.file) {
       return (left.file ?? '') < (right.file ?? '') ? -1 : 1;
@@ -123,7 +136,7 @@ export function sortDiagnostics(diagnostics: readonly Diagnostic[]): Diagnostic[
 }
 
 /** Renders one diagnostic without a trailing newline. */
-export function formatDiagnostic(diagnostic: Diagnostic): string {
+export function formatDiagnostic<C extends string>(diagnostic: Diagnostic<C>): string {
   const file = diagnostic.file ?? '<spec>';
   const location =
     diagnostic.line === undefined ? file : `${file}:${diagnostic.line}:${diagnostic.column ?? 1}`;
@@ -140,7 +153,7 @@ export function formatDiagnostic(diagnostic: Diagnostic): string {
 }
 
 /** Renders a whole report, one diagnostic per block, with a trailing newline. */
-export function formatDiagnostics(diagnostics: readonly Diagnostic[]): string {
+export function formatDiagnostics<C extends string>(diagnostics: readonly Diagnostic<C>[]): string {
   if (diagnostics.length === 0) {
     return '';
   }

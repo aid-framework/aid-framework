@@ -1,0 +1,51 @@
+{
+  "$comment": "Offline model catalog. Lookups are deterministic and never touch the network. `models` maps a provider model id to its limits and, optionally, a `costProfiles` key.",
+  "version": "0.1.0",
+  "costProfiles": {
+    "openai-gpt-4o-mini": { "inputPerMTok": 0.15, "outputPerMTok": 0.6 },
+    "openai-gpt-4o": { "inputPerMTok": 2.5, "outputPerMTok": 10 },
+    "openai-gpt-4.1-mini": { "inputPerMTok": 0.4, "outputPerMTok": 1.6 },
+    "openai-gpt-4.1": { "inputPerMTok": 2, "outputPerMTok": 8 },
+    "openai-text-embedding-3-small": { "inputPerMTok": 0.02, "outputPerMTok": 0 },
+    "anthropic-claude-3-5-haiku": { "inputPerMTok": 0.8, "outputPerMTok": 4 },
+    "anthropic-claude-3-5-sonnet": { "inputPerMTok": 3, "outputPerMTok": 15 },
+    "azure-gpt-4o-mini": { "inputPerMTok": 0.165, "outputPerMTok": 0.66 }
+  },
+  "models": {
+    "gpt-4o-mini": {
+      "provider": "openai",
+      "limits": { "contextTokens": 128000, "maxOutputTokens": 16384 },
+      "costProfiles": ["openai-gpt-4o-mini", "azure-gpt-4o-mini"]
+    },
+    "gpt-4o": {
+      "provider": "openai",
+      "limits": { "contextTokens": 128000, "maxOutputTokens": 16384 },
+      "costProfiles": ["openai-gpt-4o"]
+    },
+    "gpt-4.1-mini": {
+      "provider": "openai",
+      "limits": { "contextTokens": 1047576, "maxOutputTokens": 32768 },
+      "costProfiles": ["openai-gpt-4.1-mini"]
+    },
+    "gpt-4.1": {
+      "provider": "openai",
+      "limits": { "contextTokens": 1047576, "maxOutputTokens": 32768 },
+      "costProfiles": ["openai-gpt-4.1"]
+    },
+    "text-embedding-3-small": {
+      "provider": "openai",
+      "limits": { "contextTokens": 8191 },
+      "costProfiles": ["openai-text-embedding-3-small"]
+    },
+    "claude-3-5-haiku-latest": {
+      "provider": "anthropic",
+      "limits": { "contextTokens": 200000, "maxOutputTokens": 8192 },
+      "costProfiles": ["anthropic-claude-3-5-haiku"]
+    },
+    "claude-3-5-sonnet-latest": {
+      "provider": "anthropic",
+      "limits": { "contextTokens": 200000, "maxOutputTokens": 8192 },
+      "costProfiles": ["anthropic-claude-3-5-sonnet"]
+    }
+  }
+}

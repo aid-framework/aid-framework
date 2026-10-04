@@ -1,0 +1,89 @@
+specVersion: "0.1"
+project:
+  name: determinism
+  namespace: acme.det
+  targets: [py-fastapi]
+types:
+  Verdict:
+    kind: struct
+    fields:
+      label:
+        type: string
+        required: true
+        enum: [yes, no]
+      score:
+        type: number
+        required: true
+        minimum: 0
+        maximum: 1
+models:
+  judge:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    params:
+      temperature: 0.2
+      topP: 0.9
+      maxTokens: 256
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  judge_text:
+    version: 3
+    model: judge
+    template: "Judge: {{text}}"
+    variables:
+      text:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: Verdict
+tools:
+  record:
+    description: Record a verdict.
+    input: Verdict
+    output: Verdict
+    sideEffects: write
+    auth: hasScope("verdicts:write")
+    handler:
+      kind: business
+      symbol: record
+    timeoutMs: 2000
+    retries: 1
+    idempotency: key
+pipelines:
+  judge_document:
+    description: Judge a document.
+    trigger:
+      http:
+        method: post
+        path: /judge
+    steps:
+      - generate:
+          prompt: judge_text
+          input:
+            text: "{{event.text}}"
+          as: verdict
+      - tool:
+          tool: record
+          input:
+            label: "{{verdict.label}}"
+            score: 0.5
+          as: recorded
+      - emit:
+          event: Verdict
+evals:
+  judge_suite:
+    target: pipeline:judge_document
+    dataset:
+      source: file
+      uri: datasets/judge.jsonl
+    metrics:
+      - kind: json-schema
+        schema: Verdict
+      - kind: cost
+        max: 1.5
+    gate:
+      ci: true
+      maxRegression: 0.1
+      samples: 7

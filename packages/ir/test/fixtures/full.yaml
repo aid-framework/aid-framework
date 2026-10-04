@@ -1,0 +1,164 @@
+specVersion: "0.1"
+project:
+  name: support-desk
+  namespace: acme.support
+  description: Ticket triage and refund handling.
+  targets: [py-fastapi]
+types:
+  TicketClassification:
+    kind: struct
+    description: Structured triage output.
+    fields:
+      category:
+        type: string
+        required: true
+        enum: [billing, shipping, account, other]
+      confidence:
+        type: number
+        required: true
+        minimum: 0
+        maximum: 1
+      summary:
+        type: string
+        required: true
+  RefundRequest:
+    kind: struct
+    fields:
+      order_id:
+        type: string
+        required: true
+      amount_usd:
+        type: number
+        required: true
+      reason:
+        type: string
+  RefundResult:
+    kind: struct
+    fields:
+      refund_id:
+        type: string
+        required: true
+      accepted:
+        type: boolean
+        required: true
+  TicketEvent:
+    kind: struct
+    fields:
+      ticket_id:
+        type: string
+        required: true
+      category:
+        type: string
+        required: true
+models:
+  triage:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema, tools]
+    params:
+      temperature: 0
+      maxTokens: 512
+    limits:
+      maxInputTokens: 32000
+      maxOutputTokens: 1024
+    apiKeyEnv: OPENAI_API_KEY
+  triage_backup:
+    provider: openai
+    modelId: gpt-4.1-mini
+    apiKeyEnv: OPENAI_API_KEY
+  local_stub:
+    provider: fake
+    modelId: fake-echo
+prompts:
+  classify_ticket:
+    version: 2
+    model: triage
+    template: |
+      Classify the support ticket below.
+
+      Subject: {{subject}}
+      Body: {{body}}
+    variables:
+      subject:
+        type: string
+        required: true
+      body:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: TicketClassification
+  summarize_ticket:
+    version: 1
+    model: local_stub
+    template: "Summarize in one line: {{transcript}}"
+    variables:
+      transcript:
+        type: string
+        required: true
+    output:
+      kind: text
+tools:
+  fetch_order:
+    description: Read an order record.
+    input: RefundRequest
+    output: RefundResult
+    sideEffects: read
+    auth: isAuthenticated()
+    handler:
+      kind: business
+      symbol: fetch_order
+    timeoutMs: 5000
+    idempotency: natural
+  issue_refund:
+    description: Issue a refund against an order.
+    input: RefundRequest
+    output: RefundResult
+    sideEffects: write
+    auth: hasRole("support_agent") and hasScope("refunds:write")
+    handler:
+      kind: business
+      symbol: issue_refund
+    timeoutMs: 10000
+    retries: 2
+    idempotency: key
+pipelines:
+  handle_ticket:
+    description: Triage an inbound ticket and post the refund decision.
+    trigger:
+      http:
+        method: post
+        path: /tickets/{ticket_id}
+    steps:
+      - generate:
+          prompt: classify_ticket
+          input:
+            subject: "{{event.subject}}"
+            body: "{{event.body}}"
+          as: classification
+      - tool:
+          tool: issue_refund
+          input:
+            order_id: "{{event.order_id}}"
+            amount_usd: 42.5
+            reason: "{{classification.summary}}"
+          as: refund
+      - emit:
+          event: TicketEvent
+evals:
+  refund_regression:
+    target: pipeline:handle_ticket
+    dataset:
+      source: file
+      uri: datasets/refunds.jsonl
+    metrics:
+      - kind: json-schema
+        schema: RefundResult
+      - kind: cost
+        max: 0.25
+      - kind: latency
+        maxMs: 4000
+    gate:
+      ci: true
+      maxRegression: 0.05
+      samples: 3

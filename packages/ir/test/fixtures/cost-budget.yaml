@@ -1,0 +1,52 @@
+specVersion: "0.1"
+project:
+  name: cost-budget
+models:
+  fast:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  classify:
+    version: 1
+    model: fast
+    template: "Classify this ticket into a category: {{text}}"
+    variables:
+      text:
+        type: string
+        required: true
+    output:
+      kind: text
+pipelines:
+  classify_text:
+    trigger:
+      http:
+        method: post
+        path: /classify
+    steps:
+      - generate:
+          prompt: classify
+          input:
+            text: "{{event.text}}"
+          as: label
+evals:
+  over_budget:
+    target: pipeline:classify_text
+    dataset:
+      source: file
+      uri: datasets/classify.jsonl
+    metrics:
+      - kind: cost
+        max: 0.0000001
+    gate:
+      ci: true
+  within_budget:
+    target: pipeline:classify_text
+    dataset:
+      source: file
+      uri: datasets/classify.jsonl
+    metrics:
+      - kind: cost
+        max: 100
+    gate:
+      ci: true

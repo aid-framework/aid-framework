@@ -1,0 +1,35 @@
+specVersion: "0.1"
+project:
+  name: referential-binding
+models:
+  fast:
+    provider: fake
+    modelId: fake-echo
+prompts:
+  classify:
+    version: 1
+    model: fast
+    template: "Classify {{text}}"
+    variables:
+      text:
+        type: string
+        required: true
+    output:
+      kind: text
+pipelines:
+  order:
+    trigger:
+      http:
+        method: post
+        path: /order
+    steps:
+      - generate:
+          prompt: classify
+          input:
+            text: "{{later}}"
+          as: first
+      - generate:
+          prompt: classify
+          input:
+            text: "{{first}}"
+          as: later

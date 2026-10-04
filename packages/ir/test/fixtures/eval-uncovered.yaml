@@ -1,0 +1,38 @@
+specVersion: "0.1"
+project:
+  name: coverage-gap
+types:
+  Ping:
+    kind: struct
+    fields:
+      ok:
+        type: boolean
+        required: true
+pipelines:
+  covered:
+    trigger:
+      http:
+        method: get
+        path: /covered
+    steps:
+      - emit:
+          event: Ping
+  uncovered:
+    trigger:
+      http:
+        method: get
+        path: /uncovered
+    steps:
+      - emit:
+          event: Ping
+evals:
+  covered_suite:
+    target: pipeline:covered
+    dataset:
+      source: file
+      uri: datasets/covered.jsonl
+    metrics:
+      - kind: json-schema
+        schema: Ping
+    gate:
+      ci: true

@@ -1,0 +1,48 @@
+specVersion: "0.1"
+project:
+  name: unauth-write
+types:
+  Note:
+    kind: struct
+    fields:
+      note_id:
+        type: string
+        required: true
+      text:
+        type: string
+        required: true
+models:
+  fast:
+    provider: fake
+    modelId: fake-echo
+tools:
+  log_note:
+    description: Append a note to an account.
+    input: Note
+    output: Note
+    sideEffects: write
+    handler:
+      kind: business
+      symbol: log_note
+  wipe_account:
+    description: Destroy an account and all its data.
+    input: Note
+    output: Note
+    sideEffects: destructive
+    auth: hasRole("admin")
+    handler:
+      kind: business
+      symbol: wipe_account
+pipelines:
+  post_note:
+    trigger:
+      http:
+        method: post
+        path: /notes
+    steps:
+      - tool:
+          tool: log_note
+          input:
+            note_id: "{{event.note_id}}"
+            text: "{{event.text}}"
+          as: written

@@ -1,0 +1,62 @@
+specVersion: "0.1"
+project:
+  name: broken-refs
+types:
+  Order:
+    kind: struct
+    fields:
+      order_id:
+        type: string
+        required: true
+      label:
+        type: MissingType
+models:
+  fast:
+    provider: fake
+    modelId: fake-echo
+prompts:
+  summarize:
+    version: 1
+    model: fast
+    template: "Summarize: {{text}}"
+    variables:
+      text:
+        type: string
+        required: true
+    output:
+      kind: text
+tools:
+  read_order:
+    description: Read an order.
+    input: Order
+    output: Order
+    sideEffects: read
+    handler:
+      kind: business
+      symbol: read_order
+pipelines:
+  summarize_order:
+    trigger:
+      http:
+        method: post
+        path: /summarize
+    steps:
+      - tool:
+          tool: summarize
+          input:
+            text: "{{event.text}}"
+          as: summary
+      - generate:
+          prompt: missing_prompt
+          input:
+            text: "{{summary}}"
+          as: generated
+evals:
+  order_suite:
+    target: pipeline:missing_pipeline
+    dataset:
+      source: file
+      uri: datasets/orders.jsonl
+    metrics:
+      - kind: exact
+        field: summary

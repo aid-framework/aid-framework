@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
+  },
+  "references": [{ "path": "../spec" }],
+  "//": "The .json glob does two jobs: the imported catalog needs it to be a project file (TS6307), and schema/ir.schema.json reaches dist only by program inclusion.",
+  "include": ["src/**/*.ts", "src/**/*.json"]
+}

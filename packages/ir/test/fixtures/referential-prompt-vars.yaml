@@ -1,0 +1,31 @@
+specVersion: "0.1"
+project:
+  name: referential-prompt-vars
+models:
+  fast:
+    provider: fake
+    modelId: fake-echo
+prompts:
+  classify:
+    version: 1
+    model: fast
+    template: "Classify {{text}}"
+    variables:
+      text:
+        type: string
+        required: true
+      unused_hint:
+        type: string
+        required: false
+    output:
+      kind: text
+  summarise:
+    version: 1
+    model: fast
+    template: "Summarise {{summary}}"
+    variables:
+      style:
+        type: string
+        required: false
+    output:
+      kind: text

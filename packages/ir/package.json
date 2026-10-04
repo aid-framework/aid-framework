@@ -1,0 +1,39 @@
+{
+  "name": "@aid/ir",
+  "version": "0.0.0",
+  "description": "The AID Framework intermediate representation: IR v0.1 shapes, the spec-to-IR builder, six build-time gates, the PolicyExpr parser, and canonical JSON serialization.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./ir.schema.json": "./dist/schema/ir.schema.json",
+    "./catalog/models.json": "./dist/catalog/models.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@aid/spec": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3"
+  }
+}
