@@ -1,0 +1,33 @@
+specVersion: "0.1"
+project:
+  name: unauth-path
+types:
+  Note:
+    kind: struct
+    fields:
+      text:
+        type: string
+        required: true
+tools:
+  # Has auth, so the tool-level rule passes, but the policy is not about identity.
+  apply_credit:
+    description: Apply store credit.
+    input: Note
+    output: Note
+    sideEffects: write
+    auth: '"a" == "b"'
+    handler:
+      kind: business
+      symbol: apply_credit
+pipelines:
+  credit:
+    trigger:
+      http:
+        method: post
+        path: /credit
+    steps:
+      - tool:
+          tool: apply_credit
+          input:
+            text: "{{event.text}}"
+          as: applied

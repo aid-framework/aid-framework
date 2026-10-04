@@ -1,0 +1,26 @@
+specVersion: "0.1"
+project:
+  name: referential-type-cycle
+types:
+  Ticket:
+    kind: struct
+    fields:
+      ticket_id:
+        type: string
+        required: true
+      parent:
+        type: Ticket
+      owner:
+        type: Owner
+  Owner:
+    kind: struct
+    fields:
+      name:
+        type: string
+        required: true
+      ticket:
+        type: Ticket
+models:
+  fast:
+    provider: fake
+    modelId: fake-echo

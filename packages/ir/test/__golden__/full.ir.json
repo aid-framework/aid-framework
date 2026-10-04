@@ -1,0 +1,487 @@
+{
+  "agents": [],
+  "deployments": [],
+  "embeddings": [],
+  "evals": [
+    {
+      "costBudget": 0.25,
+      "dataset": {
+        "source": "file",
+        "uri": "datasets/refunds.jsonl"
+      },
+      "gate": {
+        "ci": true,
+        "maxRegression": 0.05,
+        "samples": 3
+      },
+      "id": "refund_regression",
+      "latencyBudgetP95Ms": 4000,
+      "metrics": [
+        {
+          "kind": "json-schema",
+          "schema": {
+            "kind": "named",
+            "list": false,
+            "name": "RefundResult",
+            "resolved": true
+          }
+        },
+        {
+          "kind": "cost",
+          "max": 0.25
+        },
+        {
+          "kind": "latency",
+          "maxMs": 4000
+        }
+      ],
+      "target": {
+        "id": "handle_ticket",
+        "kind": "pipeline",
+        "qualified": "pipeline:handle_ticket",
+        "valid": true
+      },
+      "traits": []
+    }
+  ],
+  "guardrails": [],
+  "irVersion": "0.1.0",
+  "memory": [],
+  "models": [
+    {
+      "capabilities": [],
+      "fallbacks": [],
+      "id": "local_stub",
+      "identity": "model:local_stub",
+      "limits": {
+        "contextTokens": 128000
+      },
+      "modelId": "fake-echo",
+      "params": {},
+      "provider": "fake",
+      "traits": []
+    },
+    {
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "capabilities": [
+        "json-schema",
+        "tool-calling"
+      ],
+      "costProfile": {
+        "inputPerMTok": 0.15,
+        "outputPerMTok": 0.6
+      },
+      "costProfileId": "openai-gpt-4o-mini",
+      "fallbacks": [],
+      "id": "triage",
+      "identity": "model:triage",
+      "limits": {
+        "contextTokens": 32000,
+        "maxOutputTokens": 1024
+      },
+      "modelId": "gpt-4o-mini",
+      "params": {
+        "maxTokens": 512,
+        "temperature": 0
+      },
+      "provider": "openai",
+      "traits": []
+    },
+    {
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "capabilities": [],
+      "costProfile": {
+        "inputPerMTok": 0.4,
+        "outputPerMTok": 1.6
+      },
+      "costProfileId": "openai-gpt-4.1-mini",
+      "fallbacks": [],
+      "id": "triage_backup",
+      "identity": "model:triage_backup",
+      "limits": {
+        "contextTokens": 1047576,
+        "maxOutputTokens": 32768
+      },
+      "modelId": "gpt-4.1-mini",
+      "params": {},
+      "provider": "openai",
+      "traits": []
+    }
+  ],
+  "observability": {
+    "redact": [],
+    "trace": true
+  },
+  "pipelines": [
+    {
+      "description": "Triage an inbound ticket and post the refund decision.",
+      "errorPolicy": {
+        "retries": 0
+      },
+      "id": "handle_ticket",
+      "identity": "pipeline:handle_ticket",
+      "observability": {
+        "redact": [],
+        "trace": true
+      },
+      "steps": [
+        {
+          "as": "classification",
+          "input": {
+            "body": {
+              "kind": "reference",
+              "path": [
+                "event",
+                "body"
+              ]
+            },
+            "subject": {
+              "kind": "reference",
+              "path": [
+                "event",
+                "subject"
+              ]
+            }
+          },
+          "kind": "generate",
+          "model": "triage",
+          "prompt": "classify_ticket"
+        },
+        {
+          "as": "refund",
+          "input": {
+            "amount_usd": {
+              "kind": "literal",
+              "value": 42.5
+            },
+            "order_id": {
+              "kind": "reference",
+              "path": [
+                "event",
+                "order_id"
+              ]
+            },
+            "reason": {
+              "kind": "reference",
+              "path": [
+                "classification",
+                "summary"
+              ]
+            }
+          },
+          "kind": "tool",
+          "tool": "issue_refund"
+        },
+        {
+          "event": "TicketEvent",
+          "kind": "emit"
+        }
+      ],
+      "trigger": {
+        "kind": "http",
+        "method": "post",
+        "path": "/tickets/{ticket_id}"
+      }
+    }
+  ],
+  "project": {
+    "description": "Ticket triage and refund handling.",
+    "name": "support-desk",
+    "namespace": "acme.support",
+    "targets": [
+      "py-fastapi"
+    ]
+  },
+  "prompts": [
+    {
+      "evals": [],
+      "examples": [],
+      "guardrails": [],
+      "id": "classify_ticket",
+      "identity": "prompt:classify_ticket@2",
+      "model": "triage",
+      "output": {
+        "kind": "structured",
+        "schema": {
+          "kind": "named",
+          "list": false,
+          "name": "TicketClassification",
+          "resolved": true
+        }
+      },
+      "params": {},
+      "template": "Classify the support ticket below.\n\nSubject: {{subject}}\nBody: {{body}}\n",
+      "traits": [],
+      "variables": [
+        {
+          "name": "body",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "string"
+          }
+        },
+        {
+          "name": "subject",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "string"
+          }
+        }
+      ],
+      "version": 2
+    },
+    {
+      "evals": [],
+      "examples": [],
+      "guardrails": [],
+      "id": "summarize_ticket",
+      "identity": "prompt:summarize_ticket@1",
+      "model": "local_stub",
+      "output": {
+        "kind": "text"
+      },
+      "params": {},
+      "template": "Summarize in one line: {{transcript}}",
+      "traits": [],
+      "variables": [
+        {
+          "name": "transcript",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "string"
+          }
+        }
+      ],
+      "version": 1
+    }
+  ],
+  "requiredCapabilities": [
+    "http-trigger",
+    "json-schema",
+    "tool-calling",
+    "otel"
+  ],
+  "retrievers": [],
+  "runtime": {
+    "controlFlow": "plain-async"
+  },
+  "specVersion": "0.1",
+  "stores": [],
+  "tools": [
+    {
+      "auth": {
+        "args": [],
+        "kind": "call",
+        "name": "isAuthenticated"
+      },
+      "description": "Read an order record.",
+      "handler": {
+        "kind": "business",
+        "symbol": "fetch_order"
+      },
+      "id": "fetch_order",
+      "idempotency": "natural",
+      "identity": "tool:fetch_order",
+      "input": {
+        "kind": "named",
+        "list": false,
+        "name": "RefundRequest",
+        "resolved": true
+      },
+      "name": "fetch_order",
+      "output": {
+        "kind": "named",
+        "list": false,
+        "name": "RefundResult",
+        "resolved": true
+      },
+      "requiresConfirmation": false,
+      "retries": 0,
+      "sideEffects": "read",
+      "timeoutMs": 5000,
+      "traits": []
+    },
+    {
+      "auth": {
+        "kind": "and",
+        "left": {
+          "args": [
+            {
+              "kind": "string",
+              "value": "support_agent"
+            }
+          ],
+          "kind": "call",
+          "name": "hasRole"
+        },
+        "right": {
+          "args": [
+            {
+              "kind": "string",
+              "value": "refunds:write"
+            }
+          ],
+          "kind": "call",
+          "name": "hasScope"
+        }
+      },
+      "description": "Issue a refund against an order.",
+      "handler": {
+        "kind": "business",
+        "symbol": "issue_refund"
+      },
+      "id": "issue_refund",
+      "idempotency": "key",
+      "identity": "tool:issue_refund",
+      "input": {
+        "kind": "named",
+        "list": false,
+        "name": "RefundRequest",
+        "resolved": true
+      },
+      "name": "issue_refund",
+      "output": {
+        "kind": "named",
+        "list": false,
+        "name": "RefundResult",
+        "resolved": true
+      },
+      "requiresConfirmation": false,
+      "retries": 2,
+      "sideEffects": "write",
+      "timeoutMs": 10000,
+      "traits": []
+    }
+  ],
+  "types": [
+    {
+      "fields": [
+        {
+          "name": "amount_usd",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "number"
+          }
+        },
+        {
+          "name": "order_id",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "string"
+          }
+        },
+        {
+          "name": "reason",
+          "required": false,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "string"
+          }
+        }
+      ],
+      "id": "RefundRequest",
+      "kind": "struct"
+    },
+    {
+      "fields": [
+        {
+          "name": "accepted",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "boolean"
+          }
+        },
+        {
+          "name": "refund_id",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "string"
+          }
+        }
+      ],
+      "id": "RefundResult",
+      "kind": "struct"
+    },
+    {
+      "description": "Structured triage output.",
+      "fields": [
+        {
+          "enum": [
+            "billing",
+            "shipping",
+            "account",
+            "other"
+          ],
+          "name": "category",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "string"
+          }
+        },
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "name": "confidence",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "number"
+          }
+        },
+        {
+          "name": "summary",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "string"
+          }
+        }
+      ],
+      "id": "TicketClassification",
+      "kind": "struct"
+    },
+    {
+      "fields": [
+        {
+          "name": "category",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "string"
+          }
+        },
+        {
+          "name": "ticket_id",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "string"
+          }
+        }
+      ],
+      "id": "TicketEvent",
+      "kind": "struct"
+    }
+  ]
+}

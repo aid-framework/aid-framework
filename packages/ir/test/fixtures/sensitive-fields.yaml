@@ -1,0 +1,43 @@
+# Sensitive names are inferred from the field name, because spec v0.1 has no way to
+# declare them. The default redact set must cover every inferred name; the negative
+# case (a declared config that under-covers) needs a hand-built IR.
+specVersion: "0.1"
+project:
+  name: sensitive-fields
+types:
+  Credentials:
+    kind: struct
+    fields:
+      username:
+        type: string
+        required: true
+      password:
+        type: string
+        required: true
+models:
+  fast:
+    provider: fake
+    modelId: fake-echo
+prompts:
+  greet:
+    version: 1
+    model: fast
+    template: "Greet {{username}}"
+    variables:
+      username:
+        type: string
+        required: true
+    output:
+      kind: text
+pipelines:
+  greet_user:
+    trigger:
+      http:
+        method: get
+        path: /greet
+    steps:
+      - generate:
+          prompt: greet
+          input:
+            username: "{{event.username}}"
+          as: greeting

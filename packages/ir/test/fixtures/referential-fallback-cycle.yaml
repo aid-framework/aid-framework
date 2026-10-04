@@ -1,0 +1,39 @@
+specVersion: "0.1"
+project:
+  name: fallback-cycle
+models:
+  primary:
+    provider: fake
+    modelId: fake-echo
+    fallbacks: [secondary]
+  secondary:
+    provider: fake
+    modelId: fake-echo
+    fallbacks: [primary]
+pipelines:
+  ping:
+    trigger:
+      http:
+        method: get
+        path: /ping
+    steps:
+      - emit:
+          event: Ping
+evals:
+  ping_suite:
+    target: pipeline:ping
+    dataset:
+      source: file
+      uri: datasets/ping.jsonl
+    metrics:
+      - kind: json-schema
+        schema: Ping
+    gate:
+      ci: true
+types:
+  Ping:
+    kind: struct
+    fields:
+      ok:
+        type: boolean
+        required: true

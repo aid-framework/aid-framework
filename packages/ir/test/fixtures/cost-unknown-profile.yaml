@@ -1,0 +1,51 @@
+specVersion: "0.1"
+project:
+  name: cost-unknown
+models:
+  ghost:
+    provider: fake
+    modelId: ghost-unlisted-1
+prompts:
+  classify:
+    version: 1
+    model: ghost
+    template: "Classify: {{text}}"
+    variables:
+      text:
+        type: string
+        required: true
+    output:
+      kind: text
+pipelines:
+  classify_text:
+    trigger:
+      http:
+        method: post
+        path: /classify
+    steps:
+      - generate:
+          prompt: classify
+          input:
+            text: "{{event.text}}"
+          as: label
+evals:
+  budgeted:
+    target: pipeline:classify_text
+    dataset:
+      source: file
+      uri: datasets/classify.jsonl
+    metrics:
+      - kind: cost
+        max: 0.5
+    gate:
+      ci: true
+  unbudgeted:
+    target: pipeline:classify_text
+    dataset:
+      source: file
+      uri: datasets/classify.jsonl
+    metrics:
+      - kind: exact
+        field: label
+    gate:
+      ci: true

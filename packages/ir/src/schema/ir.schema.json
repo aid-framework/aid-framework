@@ -1,0 +1,874 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aid-framework.dev/schema/ir-0.1.json",
+  "title": "AID IR v0.1",
+  "description": "The packed intermediate representation produced from an AID spec document. Every top-level key is always present; deferred collections are empty arrays in Phase 0 rather than absent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "irVersion",
+    "specVersion",
+    "project",
+    "types",
+    "models",
+    "prompts",
+    "tools",
+    "retrievers",
+    "embeddings",
+    "stores",
+    "memory",
+    "agents",
+    "pipelines",
+    "evals",
+    "guardrails",
+    "deployments",
+    "observability",
+    "runtime",
+    "requiredCapabilities"
+  ],
+  "properties": {
+    "irVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semver of the IR format, independent of specVersion."
+    },
+    "specVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "The spec language version this IR was built from."
+    },
+    "project": { "$ref": "#/$defs/project" },
+    "types": { "type": "array", "items": { "$ref": "#/$defs/typeShape" } },
+    "models": { "type": "array", "items": { "$ref": "#/$defs/model" } },
+    "prompts": { "type": "array", "items": { "$ref": "#/$defs/prompt" } },
+    "tools": { "type": "array", "items": { "$ref": "#/$defs/tool" } },
+    "pipelines": { "type": "array", "items": { "$ref": "#/$defs/pipeline" } },
+    "evals": { "type": "array", "items": { "$ref": "#/$defs/eval" } },
+    "retrievers": { "type": "array", "items": { "$ref": "#/$defs/retriever" } },
+    "embeddings": { "type": "array", "items": { "$ref": "#/$defs/embedding" } },
+    "stores": { "type": "array", "items": { "$ref": "#/$defs/vectorStore" } },
+    "memory": { "type": "array", "items": { "$ref": "#/$defs/memory" } },
+    "agents": { "type": "array", "items": { "$ref": "#/$defs/agent" } },
+    "guardrails": { "type": "array", "items": { "$ref": "#/$defs/guardrail" } },
+    "deployments": { "type": "array", "items": { "$ref": "#/$defs/deployment" } },
+    "observability": { "$ref": "#/$defs/observability" },
+    "runtime": { "$ref": "#/$defs/runtime" },
+    "requiredCapabilities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/requiredCapability" },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "requiredCapability": {
+      "enum": [
+        "http-trigger",
+        "json-schema",
+        "streaming",
+        "tool-calling",
+        "cursor-memory",
+        "otel",
+        "vision",
+        "audio",
+        "embeddings",
+        "rerank",
+        "long-context",
+        "reasoning",
+        "prompt-cache"
+      ]
+    },
+    "modelCapability": {
+      "enum": [
+        "json-schema",
+        "streaming",
+        "tool-calling",
+        "vision",
+        "audio",
+        "embeddings",
+        "rerank",
+        "long-context",
+        "reasoning",
+        "prompt-cache"
+      ]
+    },
+    "provider": {
+      "enum": [
+        "openai",
+        "openai-compatible",
+        "anthropic",
+        "azure",
+        "bedrock",
+        "google",
+        "ollama",
+        "vllm",
+        "fake",
+        "custom"
+      ]
+    },
+    "identifier": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+    "typeName": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]{0,63}$" },
+    "trait": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "value": true
+      }
+    },
+    "typeRef": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "list"],
+          "properties": {
+            "kind": { "const": "primitive" },
+            "name": { "enum": ["string", "number", "integer", "boolean"] },
+            "list": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "list", "resolved"],
+          "properties": {
+            "kind": { "const": "named" },
+            "name": { "$ref": "#/$defs/typeName" },
+            "list": { "type": "boolean" },
+            "resolved": {
+              "type": "boolean",
+              "description": "False when the name matches no entry in `types`; the referential gate rejects those."
+            }
+          }
+        }
+      ]
+    },
+    "typeField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "required"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "type": { "$ref": "#/$defs/typeRef" },
+        "required": { "type": "boolean" },
+        "description": { "type": "string" },
+        "enum": {
+          "type": "array",
+          "items": { "type": ["string", "number", "boolean"] }
+        },
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" },
+        "sensitive": { "type": "boolean" }
+      }
+    },
+    "typeShape": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "fields"],
+      "properties": {
+        "id": { "$ref": "#/$defs/typeName" },
+        "kind": { "const": "struct" },
+        "description": { "type": "string" },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/typeField" } }
+      }
+    },
+    "modelParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "temperature": { "type": "number" },
+        "topP": { "type": "number" },
+        "maxTokens": { "type": "integer", "minimum": 1 },
+        "seed": { "type": "integer" },
+        "stop": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "modelLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contextTokens"],
+      "properties": {
+        "contextTokens": { "type": "integer", "minimum": 1 },
+        "maxOutputTokens": { "type": "integer", "minimum": 1 },
+        "rpm": { "type": "number", "minimum": 0 },
+        "tpm": { "type": "number", "minimum": 0 }
+      }
+    },
+    "costProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputPerMTok", "outputPerMTok"],
+      "properties": {
+        "inputPerMTok": { "type": "number", "minimum": 0 },
+        "outputPerMTok": { "type": "number", "minimum": 0 }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity",
+        "provider",
+        "modelId",
+        "capabilities",
+        "params",
+        "limits",
+        "fallbacks",
+        "traits"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity": { "type": "string", "pattern": "^model:[a-z][a-z0-9_]{0,63}$" },
+        "provider": { "$ref": "#/$defs/provider" },
+        "modelId": { "type": "string", "minLength": 1 },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/modelCapability" },
+          "uniqueItems": true
+        },
+        "params": { "$ref": "#/$defs/modelParams" },
+        "limits": { "$ref": "#/$defs/modelLimits" },
+        "costProfile": { "$ref": "#/$defs/costProfile" },
+        "costProfileId": { "type": "string", "minLength": 1 },
+        "fallbacks": { "type": "array", "items": { "$ref": "#/$defs/identifier" } },
+        "cache": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "prompt": { "type": "boolean" },
+            "semantic": { "type": "boolean" }
+          }
+        },
+        "baseUrl": { "type": "string", "minLength": 1 },
+        "apiKeyEnv": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    },
+    "promptVariable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "required"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "type": { "$ref": "#/$defs/typeRef" },
+        "required": { "type": "boolean" },
+        "default": true,
+        "description": { "type": "string" },
+        "sensitive": { "type": "boolean" }
+      }
+    },
+    "promptOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["text", "json", "structured"] },
+        "schema": { "$ref": "#/$defs/typeRef" }
+      }
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "identity",
+        "model",
+        "template",
+        "variables",
+        "output",
+        "params",
+        "examples",
+        "guardrails",
+        "evals",
+        "traits"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "version": { "type": "integer", "minimum": 1 },
+        "identity": {
+          "type": "string",
+          "pattern": "^prompt:[a-z][a-z0-9_]{0,63}@[1-9][0-9]*$"
+        },
+        "model": { "$ref": "#/$defs/identifier" },
+        "template": { "type": "string" },
+        "variables": { "type": "array", "items": { "$ref": "#/$defs/promptVariable" } },
+        "output": { "$ref": "#/$defs/promptOutput" },
+        "params": { "$ref": "#/$defs/modelParams" },
+        "examples": { "type": "array", "items": true },
+        "guardrails": { "type": "array", "items": { "type": "string" } },
+        "evals": { "type": "array", "items": { "type": "string" } },
+        "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    },
+    "policyExpr": {
+      "type": "object",
+      "description": "A parsed PolicyExpr node. Operands recurse, so the shape is validated structurally rather than exhaustively.",
+      "additionalProperties": true,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["literal", "comparison", "and", "or", "not", "call"] }
+      },
+      "$comment": "Intentionally loose: the AST's `kind` discriminator is enforced, the recursive operand shape is checked by the parser that produced it."
+    },
+    "toolHandler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["generated", "business", "mcp"] },
+        "symbol": { "type": "string" },
+        "mcp": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["server", "tool"],
+          "properties": {
+            "server": { "type": "string" },
+            "tool": { "type": "string" }
+          }
+        }
+      }
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity",
+        "name",
+        "description",
+        "input",
+        "output",
+        "sideEffects",
+        "requiresConfirmation",
+        "timeoutMs",
+        "retries",
+        "idempotency",
+        "handler",
+        "traits"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity": { "type": "string", "pattern": "^tool:[a-z][a-z0-9_]{0,63}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "input": { "$ref": "#/$defs/typeRef" },
+        "output": { "$ref": "#/$defs/typeRef" },
+        "sideEffects": { "enum": ["none", "read", "write", "destructive"] },
+        "requiresConfirmation": { "type": "boolean" },
+        "auth": { "$ref": "#/$defs/policyExpr" },
+        "timeoutMs": { "type": "integer", "minimum": 0 },
+        "retries": { "type": "integer", "minimum": 0 },
+        "idempotency": { "enum": ["none", "key", "natural"] },
+        "handler": { "$ref": "#/$defs/toolHandler" },
+        "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    },
+    "pipelineTrigger": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "method", "path"],
+          "properties": {
+            "kind": { "const": "http" },
+            "method": { "type": "string", "minLength": 1 },
+            "path": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "schedule"],
+          "properties": {
+            "kind": { "const": "schedule" },
+            "schedule": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "event"],
+          "properties": {
+            "kind": { "const": "event" },
+            "event": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "manual" } }
+        }
+      ]
+    },
+    "stepInputValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "literal" },
+            "value": { "type": ["string", "number", "boolean", "null"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path"],
+          "properties": {
+            "kind": { "const": "reference" },
+            "path": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "template"],
+          "properties": {
+            "kind": { "const": "template" },
+            "template": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "stepInput": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/stepInputValue" }
+    },
+    "step": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "prompt", "model", "input", "as"],
+          "properties": {
+            "kind": { "const": "generate" },
+            "prompt": { "$ref": "#/$defs/identifier" },
+            "model": { "$ref": "#/$defs/identifier" },
+            "input": { "$ref": "#/$defs/stepInput" },
+            "as": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "tool", "input", "as"],
+          "properties": {
+            "kind": { "const": "tool" },
+            "tool": { "$ref": "#/$defs/identifier" },
+            "input": { "$ref": "#/$defs/stepInput" },
+            "as": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "event"],
+          "properties": {
+            "kind": { "const": "emit" },
+            "event": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "errorPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["retries"],
+      "properties": {
+        "retries": { "type": "integer", "minimum": 0 },
+        "fallback": { "type": "string" },
+        "deadLetter": { "type": "string" }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace", "redact"],
+      "properties": {
+        "trace": { "type": "boolean" },
+        "redact": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "pipeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "identity", "trigger", "steps", "errorPolicy", "observability"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity": { "type": "string", "pattern": "^pipeline:[a-z][a-z0-9_]{0,63}$" },
+        "description": { "type": "string" },
+        "trigger": { "$ref": "#/$defs/pipelineTrigger" },
+        "steps": { "type": "array", "items": { "$ref": "#/$defs/step" } },
+        "errorPolicy": { "$ref": "#/$defs/errorPolicy" },
+        "observability": { "$ref": "#/$defs/observability" }
+      }
+    },
+    "evalTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "qualified", "valid"],
+      "properties": {
+        "kind": { "enum": ["pipeline", "prompt"] },
+        "id": { "type": "string" },
+        "qualified": { "type": "string" },
+        "valid": {
+          "type": "boolean",
+          "description": "False when `qualified` is not a `kind:id` pair with a known kind; the referential gate rejects those."
+        }
+      }
+    },
+    "evalDataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source"],
+      "properties": {
+        "source": { "enum": ["inline", "file", "synthetic"] },
+        "uri": { "type": "string" }
+      }
+    },
+    "metric": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "field"],
+          "properties": {
+            "kind": { "const": "exact" },
+            "field": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "field"],
+          "properties": {
+            "kind": { "const": "contains" },
+            "field": { "type": "string" },
+            "value": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "schema"],
+          "properties": {
+            "kind": { "const": "json-schema" },
+            "schema": { "$ref": "#/$defs/typeRef" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "expect", "ordered"],
+          "properties": {
+            "kind": { "const": "tool-trace" },
+            "expect": { "type": "array", "items": { "type": "string" } },
+            "ordered": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "max"],
+          "properties": {
+            "kind": { "const": "cost" },
+            "max": { "type": "number", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "maxMs"],
+          "properties": {
+            "kind": { "const": "latency" },
+            "maxMs": { "type": "number", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "rubric"],
+          "properties": {
+            "kind": { "const": "llm-judge" },
+            "rubric": { "type": "string" },
+            "field": { "type": "string" },
+            "model": { "type": "string" },
+            "threshold": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      ]
+    },
+    "evalGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ci", "maxRegression", "samples"],
+      "properties": {
+        "ci": { "type": "boolean" },
+        "maxRegression": { "type": "number", "minimum": 0 },
+        "samples": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "eval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "target", "dataset", "metrics", "gate", "traits"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "description": { "type": "string" },
+        "target": { "$ref": "#/$defs/evalTarget" },
+        "dataset": { "$ref": "#/$defs/evalDataset" },
+        "metrics": { "type": "array", "items": { "$ref": "#/$defs/metric" } },
+        "gate": { "$ref": "#/$defs/evalGate" },
+        "costBudget": { "type": "number", "minimum": 0 },
+        "latencyBudgetP95Ms": { "type": "number", "minimum": 0 },
+        "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "namespace", "targets"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "namespace": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "targets": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["controlFlow"],
+      "properties": {
+        "controlFlow": { "const": "plain-async" },
+        "orchestration": { "type": "string" }
+      }
+    },
+    "retriever": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source",
+        "chunking",
+        "embedModel",
+        "store",
+        "index",
+        "topK",
+        "refresh",
+        "traits"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "uri"],
+          "properties": {
+            "kind": { "enum": ["file", "s3", "http", "db", "mcp"] },
+            "uri": { "type": "string" },
+            "glob": { "type": "string" }
+          }
+        },
+        "chunking": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy", "size", "overlap", "keepMetadata"],
+          "properties": {
+            "strategy": { "enum": ["fixed", "recursive", "semantic", "code"] },
+            "size": { "type": "integer", "minimum": 1 },
+            "overlap": { "type": "integer", "minimum": 0 },
+            "keepMetadata": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "embedModel": { "type": "string" },
+        "store": { "type": "string" },
+        "index": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["metric", "hybrid"],
+          "properties": {
+            "metric": { "enum": ["cosine", "dot", "l2"] },
+            "hybrid": { "type": "boolean" },
+            "params": { "type": "object" }
+          }
+        },
+        "topK": { "type": "integer", "minimum": 1 },
+        "rerank": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model", "topN"],
+          "properties": {
+            "model": { "type": "string" },
+            "topN": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "filters": { "type": "array", "items": { "type": "string" } },
+        "refresh": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {
+            "mode": { "enum": ["full", "incremental"] },
+            "schedule": { "type": "string" }
+          }
+        },
+        "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    },
+    "embedding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "provider", "modelId", "traits"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "provider": { "$ref": "#/$defs/provider" },
+        "modelId": { "type": "string" },
+        "dimensions": { "type": "integer", "minimum": 1 },
+        "costProfile": { "$ref": "#/$defs/costProfile" },
+        "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    },
+    "vectorStore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "traits"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": {
+          "enum": ["memory", "pgvector", "qdrant", "pinecone", "weaviate", "custom"]
+        },
+        "uri": { "type": "string" },
+        "dimensions": { "type": "integer", "minimum": 1 },
+        "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "scope", "tokenBudget", "redact", "traits"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": {
+          "enum": ["buffer", "window", "summary", "semantic", "episodic", "vector"]
+        },
+        "scope": { "enum": ["session", "user", "tenant", "global"] },
+        "tokenBudget": { "type": "integer", "minimum": 1 },
+        "summarizeModel": { "type": "string" },
+        "store": { "type": "string" },
+        "ttl": { "type": "string" },
+        "redact": { "type": "array", "items": { "type": "string" } },
+        "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "instructions",
+        "model",
+        "tools",
+        "retrievers",
+        "memory",
+        "guardrails",
+        "maxSteps",
+        "handoffs",
+        "traits"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "name": { "type": "string" },
+        "instructions": { "type": "string" },
+        "model": { "type": "string" },
+        "tools": { "type": "array", "items": { "type": "string" } },
+        "retrievers": { "type": "array", "items": { "type": "string" } },
+        "memory": { "type": "array", "items": { "type": "string" } },
+        "guardrails": { "type": "array", "items": { "type": "string" } },
+        "structuredOutput": { "$ref": "#/$defs/typeRef" },
+        "maxSteps": { "type": "integer", "minimum": 1 },
+        "maxTokensBudget": { "type": "integer", "minimum": 1 },
+        "maxCostBudget": { "type": "number", "minimum": 0 },
+        "handoffs": { "type": "array", "items": { "type": "string" } },
+        "humanInTheLoop": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["when", "channel"],
+          "properties": {
+            "when": { "$ref": "#/$defs/policyExpr" },
+            "channel": { "type": "string" }
+          }
+        },
+        "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    },
+    "guardrail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "stages", "policies", "action", "onFail", "traits"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "stages": {
+          "type": "array",
+          "items": { "enum": ["input", "output", "retrieval", "tool-call"] }
+        },
+        "policies": { "type": "array", "items": { "type": "string" } },
+        "action": { "enum": ["block", "redact", "flag", "escalate"] },
+        "onFail": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["message", "log"],
+          "properties": {
+            "message": { "type": "string" },
+            "fallbackPrompt": { "type": "string" },
+            "log": { "type": "boolean" }
+          }
+        },
+        "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "target", "streaming", "secrets", "env", "traits"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "target": { "enum": ["serverless", "container", "batch", "edge"] },
+        "streaming": { "type": "boolean" },
+        "concurrency": { "type": "integer", "minimum": 1 },
+        "autoscale": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min", "max", "metric"],
+          "properties": {
+            "min": { "type": "integer", "minimum": 0 },
+            "max": { "type": "integer", "minimum": 1 },
+            "metric": { "type": "string" }
+          }
+        },
+        "secrets": { "type": "array", "items": { "type": "string" } },
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "value": { "type": "string" },
+              "secret": { "type": "boolean" }
+            }
+          }
+        },
+        "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    }
+  }
+}

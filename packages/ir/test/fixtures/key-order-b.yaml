@@ -1,0 +1,101 @@
+# Same document as key-order-a.yaml. Object keys are reordered throughout and the
+# whitespace differs; array order is preserved, because an array's order is
+# meaningful while an object's is not. Any difference in the canonical IR is a
+# canonicalizer bug rather than a real change.
+project:
+    namespace: acme.det
+    targets:
+      - py-fastapi
+    name: determinism
+
+specVersion: "0.1"
+
+types:
+    Verdict:
+        fields:
+            label:
+                enum: [yes, no]
+                required: true
+                type: string
+            score:
+                maximum: 1
+                minimum: 0
+                required: true
+                type: number
+        kind: struct
+
+models:
+    judge:
+        apiKeyEnv: OPENAI_API_KEY
+        params:
+            topP: 0.9
+            maxTokens: 256
+            temperature: 0.2
+        modelId: gpt-4o-mini
+        capabilities: [json-schema]
+        provider: openai
+
+prompts:
+    judge_text:
+        output:
+            schema: Verdict
+            kind: structured
+        variables:
+            text:
+                required: true
+                type: string
+        model: judge
+        template: "Judge: {{text}}"
+        version: 3
+
+tools:
+    record:
+        retries: 1
+        idempotency: key
+        output: Verdict
+        handler:
+            symbol: record
+            kind: business
+        auth: 'hasScope("verdicts:write")'
+        sideEffects: write
+        timeoutMs: 2000
+        input: Verdict
+        description: Record a verdict.
+
+evals:
+    judge_suite:
+        gate:
+            samples: 7
+            maxRegression: 0.1
+            ci: true
+        metrics:
+            - schema: Verdict
+              kind: json-schema
+            - kind: cost
+              max: 1.5
+        dataset:
+            uri: datasets/judge.jsonl
+            source: file
+        target: pipeline:judge_document
+
+pipelines:
+    judge_document:
+        description: Judge a document.
+        steps:
+            - generate:
+                  as: verdict
+                  input:
+                      text: "{{event.text}}"
+                  prompt: judge_text
+            - tool:
+                  as: recorded
+                  input:
+                      score: 0.5
+                      label: "{{verdict.label}}"
+                  tool: record
+            - emit:
+                  event: Verdict
+        trigger:
+            http:
+                path: /judge
+                method: post
