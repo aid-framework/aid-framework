@@ -1,9 +1,12 @@
 # The git tag is the source of truth for the version, so nothing here commits to
-# main.
+# main. The tag is gated on a successful CI run for the exact commit released:
+# `workflow_run` hands us that run's head_sha.
 name: Release
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
     inputs:
@@ -25,28 +28,69 @@ jobs:
     name: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # A failed CI run must never reach the release job.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: write
+      actions: read
     outputs:
       released: ${{ steps.publish.outputs.released }}
       version: ${{ steps.publish.outputs.version }}
-      reason: ${{ steps.plan.outputs.reason }}
+      reason: ${{ steps.plan.outputs.reason || steps.resolve.outputs.reason }}
     steps:
-      - name: Checkout
+      - name: Resolve the CI-validated commit
+        id: resolve
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            sha="$RUN_HEAD_SHA"
+          else
+            # A dispatch target is only releasable once CI has validated it.
+            sha="$DISPATCH_SHA"
+            validated=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&status=completed&per_page=100" \
+              --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')
+            if [ "$validated" -eq 0 ]; then
+              {
+                echo "resolved=false"
+                echo "reason=no completed successful CI run for $sha; skipping release"
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          {
+            echo "resolved=true"
+            echo "sha=$sha"
+            echo "reason=CI validated $sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the validated commit
+        if: steps.resolve.outputs.resolved == 'true'
         uses: actions/checkout@v7
         with:
+          ref: ${{ steps.resolve.outputs.sha }}
           fetch-depth: 0
           fetch-tags: true
 
       - name: Set up Node.js
+        if: steps.resolve.outputs.resolved == 'true'
         uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 
       - name: Decide whether to release
         id: plan
+        if: steps.resolve.outputs.resolved == 'true'
         shell: bash
         env:
+          TARGET_SHA: ${{ steps.resolve.outputs.sha }}
           FORCE_RELEASE: ${{ inputs.force_release }}
         run: |
           set -euo pipefail
@@ -56,11 +100,11 @@ jobs:
           last_tag=$(node scripts/version.mjs latest --config release.config.json --tags-file tags.txt)
 
           if [ -n "$last_tag" ]; then
-            git diff --name-only --no-renames "$last_tag" HEAD > changed-files.txt
+            git diff --name-only --no-renames "$last_tag" "$TARGET_SHA" > changed-files.txt
             echo "changed paths since $last_tag:"
           else
             empty_tree=$(git hash-object -t tree /dev/null)
-            git diff --name-only --no-renames "$empty_tree" HEAD > changed-files.txt
+            git diff --name-only --no-renames "$empty_tree" "$TARGET_SHA" > changed-files.txt
             echo "no release tag yet; treating the whole history as the change set:"
           fi
           cat changed-files.txt
@@ -86,10 +130,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.plan.outputs.tag }}
+          TARGET_SHA: ${{ steps.resolve.outputs.sha }}
         run: |
           set -euo pipefail
-          echo "released=true" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "released=true"
+            echo "version=$VERSION"
+          } >> "$GITHUB_OUTPUT"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -97,8 +144,15 @@ jobs:
           if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
             echo "tag $VERSION already exists; leaving it untouched"
           else
-            git tag -a "$VERSION" -m "$VERSION"
+            git tag -a "$VERSION" "$TARGET_SHA" -m "$VERSION"
             git push origin "refs/tags/$VERSION"
+          fi
+
+          # The tag must point at the commit CI validated, never a newer tip.
+          tagged=$(git rev-parse "$VERSION^{commit}")
+          if [ "$tagged" != "$TARGET_SHA" ]; then
+            echo "::error::tag $VERSION points at $tagged, expected $TARGET_SHA"
+            exit 1
           fi
 
           if gh release view "$VERSION" >/dev/null 2>&1; then
@@ -111,19 +165,32 @@ jobs:
           fi
 
       - name: Summarize
-        if: always() && steps.plan.outcome == 'success'
+        if: always() && steps.resolve.outcome == 'success'
         shell: bash
         env:
+          RESOLVED: ${{ steps.resolve.outputs.resolved }}
+          SKIP_REASON: ${{ steps.resolve.outputs.reason }}
+          SHA: ${{ steps.resolve.outputs.sha }}
           RELEASE: ${{ steps.plan.outputs.release }}
           VERSION: ${{ steps.plan.outputs.tag }}
           REASON: ${{ steps.plan.outputs.reason }}
         run: |
           {
-            if [ "$RELEASE" = "true" ]; then
+            if [ "$RESOLVED" != "true" ]; then
+              echo "### Release skipped"
+              echo
+              echo "\`$SKIP_REASON\`"
+            elif [ "$RELEASE" = "true" ]; then
               echo "### Released \`$VERSION\`"
+              echo
+              echo "Validated commit: \`$SHA\`"
+              echo
+              echo "\`$REASON\`"
             else
               echo "### No release cut"
+              echo
+              echo "Validated commit: \`$SHA\`"
+              echo
+              echo "\`$REASON\`"
             fi
-            echo
-            echo "\`$REASON\`"
           } >> "$GITHUB_STEP_SUMMARY"
