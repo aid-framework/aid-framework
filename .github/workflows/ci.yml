@@ -1,5 +1,6 @@
-# These jobs are the intended required status checks. The `main` ruleset has no
-# required_status_checks rule today, so they are advisory until one is added.
+# The `main` ruleset requires the `node`, `workflows` and `licenses` contexts, with
+# strict_required_status_checks_policy enabled. The `python` job below is a real
+# gate but is not a required check, so it reports as advisory.
 name: CI
 
 on:
@@ -53,6 +54,41 @@ jobs:
       # Coverage thresholds live in vitest.config.ts.
       - name: Test
         run: pnpm test:coverage
+
+  python:
+    name: python
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: runtimes/python
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # 3.11 deliberately: it is the floor declared in pyproject.toml and the
+      # target of the mypy and ruff configs, so the floor stays proven.
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: runtimes/python/pyproject.toml
+
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+
+      - name: Test
+        run: pytest
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format check
+        run: ruff format --check .
+
+      - name: Typecheck
+        run: mypy
 
   workflows:
     name: workflows
