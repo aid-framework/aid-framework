@@ -1,0 +1,120 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aid-runtime-python"
+version = "0.1.0"
+description = "The AID Framework Python runtime: model gateway with pinning and cost budgets, prompt registry, tool executor, OTel GenAI tracing, plain-async pipeline, and an eval harness that gates on statistical regression against a stored baseline."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "The AID Framework authors" }]
+keywords = ["ai", "codegen", "llm", "evals", "opentelemetry", "pydantic"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+]
+# Deliberately narrow. One HTTP provider adapter ships here; provider breadth is
+# out of scope. `pydantic-ai-slim` is used only for structured output, not as an
+# orchestration dependency -- pipeline control flow is plain async.
+dependencies = [
+  "httpx>=0.27,<1",
+  "opentelemetry-api>=1.24,<2",
+  "pydantic>=2.7,<3",
+  "pydantic-ai-slim>=2,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.11,<3",
+  "opentelemetry-sdk>=1.24,<2",
+  "pytest>=8,<10",
+  "pytest-asyncio>=0.24,<2",
+  "ruff>=0.6,<1",
+]
+
+[project.urls]
+Homepage = "https://github.com/aid-framework/aid-framework"
+Documentation = "https://github.com/aid-framework/aid-framework/blob/main/docs/design.md"
+Issues = "https://github.com/aid-framework/aid-framework/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+aid_runtime = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra --strict-markers --strict-config"
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "A",     # builtins shadowing
+  "ANN",   # annotations
+  "ASYNC", # async correctness
+  "B",     # bugbear
+  "C4",    # comprehensions
+  "DTZ",   # naive datetimes
+  "E",     # pycodestyle errors
+  "ERA",   # commented-out code
+  "F",     # pyflakes
+  "I",     # import sorting
+  "LOG",   # logging
+  "N",     # pep8-naming
+  "PT",    # pytest style
+  "PTH",   # pathlib over os.path
+  "RET",   # return simplification
+  "RUF",   # ruff-specific
+  "S",     # bandit
+  "SIM",   # simplify
+  "T20",   # no print()
+  "TID",   # tidy imports
+  "UP",    # pyupgrade
+  "W",     # pycodestyle warnings
+]
+ignore = [
+  # `Any` is unavoidable at the provider/tool boundary, where the payload is
+  # shaped by the remote model rather than by us.
+  "ANN401",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+  "ANN001", # fixtures and test callables take untyped parameters
+  "ANN201",
+  "ANN202",
+  "S101",   # assert is the point of a test
+]
+# The fake provider is a deterministic simulation, not a source of randomness
+# with security implications; bandit cannot tell the difference.
+"src/aid_runtime/providers/fake.py" = ["S311"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+files = ["src", "tests"]
+strict = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# pydantic-ai ships type hints but no `py.typed` marker on every release line.
+module = ["pydantic_ai.*"]
+follow_untyped_imports = true

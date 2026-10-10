@@ -1,0 +1,26 @@
+{
+  "dataset": "capitals",
+  "dataset_version": "1.0.0",
+  "model": "fake-small-1",
+  "metrics": [
+    {
+      "metric": "exact-match",
+      "runs": 10,
+      "mean": 0.525,
+      "stdev": 0.21889875894272828
+    },
+    {
+      "metric": "contains",
+      "runs": 10,
+      "mean": 1.0,
+      "stdev": 0.0
+    },
+    {
+      "metric": "json-valid",
+      "runs": 10,
+      "mean": 0.0,
+      "stdev": 0.0
+    }
+  ],
+  "note": "Recorded from FakeProvider(accuracy=0.6, seed=0) over 10 runs. The spread is the point: this baseline exists to show that a non-deterministic system can still be gated."
+}
