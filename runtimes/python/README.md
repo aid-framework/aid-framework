@@ -11,8 +11,9 @@ asserted in `tests/test_package.py` so it cannot drift.
 Requires Python 3.11+.
 
 ```sh
-pip install -e ".[dev]"   # the runtime plus its test/lint/type tooling
+pip install -e ".[dev]"        # the runtime plus its test/lint/type tooling
 pytest -q
+pip install -e ".[pgvector]"   # only if you want the pgvector store adapter
 ```
 
 ## What it provides
@@ -25,12 +26,13 @@ pytest -q
 | `structured.py` | `build_agent` — structured output via Pydantic AI only |
 | `tools.py` | `Tool` / `ToolExecutor` — declared definitions, argument validation, structured results |
 | `pipeline.py` | `Pipeline` / `PipelineContext` — plain-async named steps over a frozen context |
+| `retrieval/` | Retrieval: connectors, chunkers, the `Embedder` / `Reranker` / `VectorStore` protocols, hybrid fusion, citations, and retrieval metrics |
 | `evals/` | Datasets, metrics, and the statistical baseline gate |
 | `tracing.py` | OTel GenAI spans: `llm_span`, `record_usage`, `record_cost`, `record_exception` |
 | `cost.py` | `Budget`, `CostLedger`, `estimate_cost_usd` |
 | `types.py` | The request/response/usage/spec models everything else is typed against |
 
-98 names are exported from `aid_runtime`. The layering is acyclic and one-directional: `errors` and `types` import
+169 names are exported from `aid_runtime`. The layering is acyclic and one-directional: `errors` and `types` import
 nothing else in the package, `gateway` is imported only by the package `__init__` and the eval runner, and no
 core module imports a higher layer back.
 
@@ -111,6 +113,45 @@ Two deliberate limits:
 
 `cost` is the enforced budget; a latency p95 budget belongs with Phase 2 dashboards, not here.
 
+## Retrieval
+
+`retrieval/` is an IR-driven layer: `binding_from_spec(retriever, embedding=..., store=...)` folds the IR's
+`retrievers`, `embeddings` and `stores` entries into one `RetrieverBinding`, which a `Retriever` then ingests
+and searches through. The runtime consumes the names the IR emits, field for field.
+
+- Three protocols, in the same style as `providers.Provider`: `Embedder`, `Reranker`, `VectorStore`. Phase 1
+  ships the implementations listed below and no others.
+- `FakeDeterministicEmbedder` maps text to a stable unit vector with a hash — keyless and offline, which is
+  what lets a retrieval gate run in CI. `OpenAICompatibleEmbedder` is the one hosted adapter: a single POST to
+  `/embeddings` over `httpx`, with the retry, timeout and error-chaining behaviour of the HTTP provider.
+- `LexicalReranker` is the only reranker. It is deterministic and lexical; there is no hosted rerank adapter.
+- Chunk ids are **content hashes**, so re-ingesting the same input produces the same ids and a no-op diff.
+  Ingest is therefore held to idempotence rather than to the byte-identical codegen guarantee.
+- **Pinning.** `embedModel` names an IR `embeddings` entry and resolves at codegen time to an exact `modelId`
+  plus its recorded width; the resolved id, width and store `kind` travel into the generated code. An alias is
+  never resolved at runtime, because a baseline recorded against a floating model means nothing.
+- **Cost.** Embedding calls charge the existing `CostLedger` through the existing `Budget`, using the catalog's
+  `CostProfile` for the pinned model. There is no retrieval-specific budgeting machinery.
+
+`RetrievalMetric` (`RecallAtK`, `MeanReciprocalRank`, `CitationGrounding`) is deliberately a **separate
+protocol** from the shipped `Metric`, which scores a single string prediction. Retrieval scores a *retrieved
+set*: recall@k and MRR need the ranked ids, and citation-grounding needs the passages behind the citations.
+Widening `Metric` would have changed an interface the existing gate already threshold-checks, for every
+existing implementation — so retrieval is sampled through `RetrievalGate.sample(...)` instead, producing a
+standard `EvalRun`, and then judged by the **unchanged** `BaselineGate`. Retrieval metrics are deterministic,
+so they pass the gate's own eligibility check.
+
+### pgvector
+
+`PgVectorStore` is a thin adapter over `psycopg` and the `vector` extension. Two consequences worth stating:
+
+- It is **locally provisioned and not covered by any gate.** No CI job starts a database, and no required
+  check touches one; the in-memory adapter carries the store gates, and the two adapters share the same
+  `VectorStore` protocol and the same `similarity` semantics. `compose.pgvector.yml` beside this README brings
+  up a database for local use.
+- The `[pgvector]` extra is **import-safe when absent**: importing `aid_runtime` or `aid_runtime.retrieval`
+  never imports the driver, and the adapter loading it raises a `ConfigurationError` naming the extra.
+
 ## Control flow is plain async
 
 `Pipeline` is a list of named async (or plain) steps over a `PipelineContext` that is **frozen**, so a step
@@ -150,9 +191,15 @@ sample of it still varies, which is exactly the property the gate has to tolerat
 **Non-responsibility:** no app-specific prompts, tools, or rubrics. Those belong to the generated app's
 `business/` tier ([`docs/design.md` §8.4](../../docs/design.md), the seam).
 
-**Status:** Phase 0 scope implemented. One thing declared but not implemented, on purpose: `ModelGateway.stream`
-and the `streaming` capability name a request/response-only transport and raise `FeatureDeferredError` rather
-than pretending. Also deferred (§14): escalation routing, retrieval, memory, guardrails, prompt/semantic
-caching, rate limiting, token buckets, and adapters beyond the one HTTP provider and the fake.
+**Status:** Phase 0 scope implemented, plus the Phase 1 retrieval runtime. One thing declared but not
+implemented, on purpose: `ModelGateway.stream` and the `streaming` capability name a request/response-only
+transport and raise `FeatureDeferredError` rather than pretending. Retrieval likewise fails loudly rather than
+approximating: non-file sources, `semantic` chunking, `incremental` refresh, retriever `filters`, a hosted
+reranker, and the `qdrant` / `pinecone` / `weaviate` / `custom` store kinds all raise `FeatureDeferredError`.
+Also deferred (§14): escalation routing, memory, guardrails, prompt/semantic caching, rate limiting, token
+buckets, and adapters beyond the one HTTP provider and the fake.
+
+Emitting retrieval into a generated app and indexing it from the CLI are later layers, so this package adds no
+entry point for either.
 
 Reference: [`docs/design.md` §9, §12, §14, §17 #2](../../docs/design.md).

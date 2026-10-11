@@ -1,0 +1,48 @@
+# A pgvector database for local work on `aid_runtime.retrieval.PgVectorStore`.
+#
+# This file is for humans. It is deliberately not referenced by any CI job: nothing in
+# the gate suite starts a database, and no required check touches one. The store adapter
+# shares its protocol and its similarity semantics with `InMemoryVectorStore`, and the
+# in-memory adapter is what the gates exercise.
+#
+#   docker compose -f compose.pgvector.yml up -d
+#   pip install -e ".[pgvector]"
+#   export PGVECTOR_URL=postgresql://aid:aid@localhost:5433/aid
+#
+# The URL above is the one to point a store at:
+#
+#   VectorStoreSpec(id="docs", kind="pgvector", uri="env:PGVECTOR_URL", dimensions=1536)
+#
+# `env:PGVECTOR_URL` names the variable rather than embedding the credential, so a
+# generated app carries a reference and not a secret.
+#
+#   docker compose -f compose.pgvector.yml down -v
+#
+# Any image works, provided it actually contains the extension: the adapter issues
+# `CREATE EXTENSION IF NOT EXISTS vector` and fails loudly if the image cannot.
+
+name: aid-pgvector
+
+services:
+  pgvector:
+    # Pinned to an exact release, for the same reason model aliases are pinned: a
+    # "latest" tag would silently change what the adapter talks to.
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: aid
+      POSTGRES_PASSWORD: aid
+      POSTGRES_DB: aid
+    # 5433 rather than 5432, so bringing this up cannot collide with a database a
+    # developer is already running.
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aid -d aid"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgvector-data:

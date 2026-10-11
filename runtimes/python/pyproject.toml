@@ -31,6 +31,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# pgvector is optional and locally provisioned. The driver is imported lazily inside
+# the adapter, so the default install and the `dev` extra both work with this extra
+# absent -- which is the only state CI is ever in. There is deliberately no CI job
+# for it; the adapter is not gate-covered, and the in-memory store carries the gates.
+pgvector = ["psycopg[binary]>=3.1,<4"]
 dev = [
   "mypy>=1.11,<3",
   "opentelemetry-sdk>=1.24,<2",
@@ -118,3 +123,10 @@ warn_unreachable = true
 # pydantic-ai ships type hints but no `py.typed` marker on every release line.
 module = ["pydantic_ai.*"]
 follow_untyped_imports = true
+
+[[tool.mypy.overrides]]
+# The pgvector driver is an optional extra and is absent wherever the gates run, so
+# there is nothing to resolve. Everything read off it is confined to `Any` inside the
+# one adapter that is allowed to touch it.
+module = ["psycopg.*"]
+ignore_missing_imports = true
