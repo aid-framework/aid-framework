@@ -207,6 +207,22 @@ importers:
         specifier: ^26.6.3
         version: 26.6.4
 
+  packages/generators/py-fastapi:
+    dependencies:
+      '@aid/generator-sdk':
+        specifier: workspace:*
+        version: link:../../generator-sdk
+      '@aid/ir':
+        specifier: workspace:*
+        version: link:../../ir
+      '@aid/spec':
+        specifier: workspace:*
+        version: link:../../spec
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.3
+        version: 26.6.4
+
   packages/ir:
     dependencies:
       '@aid/spec':

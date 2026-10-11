@@ -1,0 +1,171 @@
+{
+  "files": [
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "business",
+      "path": "app/business/__init__.py",
+      "sha256": "c62919f81381d1056aed5e2916e5167e359d0117717e62627b395669c05a9520"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "business",
+      "path": "app/business/prompts/__init__.py",
+      "sha256": "94a17e1a6d3c6aa7d9ddb7f84dcacc22474dab672df7d6026ad3151fb9049b50"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "business",
+      "path": "app/business/tools/__init__.py",
+      "sha256": "cd8269092e6465b950725b13eeeaebb06b4cd1ae629bea1d0324621d67bbfee2"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "business",
+      "path": "app/business/tools/lookup_customer.py",
+      "sha256": "ab7fb67bf25174887cbe800e9235637006513b1a95c18dd00c236aa17f84f22b"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/__init__.py",
+      "sha256": "c33cd7adfbfb9beff2d57056308a2469707c5bea948579a7562ca1bb663c6b71"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/contracts/__init__.py",
+      "sha256": "f3f980f9434c99d472da20e51b0d481d539cf0107429eb75fcf1f301e674c792"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/contracts/lookup_customer.py",
+      "sha256": "5c17458e57efebd072b9a26869dfc61ae8bfc0edd20393cd4810045bdedde4a1"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/deps.py",
+      "sha256": "6a7b817cfba4da6a6c97c01d7783d5e48c8ff5a4eb200bb5c4195ca275678ef9"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/evals/__init__.py",
+      "sha256": "15a2bbb61ca83e520b29d748db13f67c1cc8bc7ba8e5b589d39da28227a0051b"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/evals/classify_quality.py",
+      "sha256": "a70ddf20f5c4a7ee5c4c7c364e402d16431695009aba4f0f0b8c9d16347321fb"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/gateway/__init__.py",
+      "sha256": "97df7e6e9549291524821f7f5d197f6cdaee9475af6a848d683c7ed4ae58988d"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/gateway/models.py",
+      "sha256": "5acceb755da6b2274ef1a4490d524887a070fe17ed503a1e535e6ae2f7ac76f0"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/observability.py",
+      "sha256": "066d7156151c8348b9510dff766e5be908814789f39233f15d7f43026707b2c9"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/pipelines/__init__.py",
+      "sha256": "6108a47d15f5e1ba454ebb722ef45fa7874c63c1eaa1d1bcf9346b58273faedd"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/pipelines/answer_ticket.py",
+      "sha256": "76a3ad270426a2a2d8705648abcbfc821aff0976ad77ee502e0a20a5520922d1"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/prompts/__init__.py",
+      "sha256": "f7fc70e61314328c573589756392398bc588d82e7ee1d2732ddfd073de97f03a"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/prompts/classify_ticket.py",
+      "sha256": "135a82fadd60933cf2bed9cb95f48e70112741163eaaded5b6008f0a6e00cefd"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/requests.py",
+      "sha256": "933855b303c08e24aaae6b4dc92365f0023303fd302cb27e8d15b8692a90ed46"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/routes/__init__.py",
+      "sha256": "6642eb7b560e3b592dc48e1a1a63066f637aacdeae22489ef6b3a843adc37b62"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/routes/answer_ticket.py",
+      "sha256": "8d89557f403e4eac50986d7d61e262d368ce328a8e85d36291367fe1089dfaf3"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/schemas.py",
+      "sha256": "e318062a55b8f8302e49690fb9fb97c4ced3073570109f7865f322d736a9d798"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/tools/__init__.py",
+      "sha256": "dc411aef220b7ca53b14a496ba71a624e8edf5ee20d14d90063dfdc733f777c8"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/tools/lookup_customer.py",
+      "sha256": "a8b43b5d6568d308c7f84601527eab010b380455c55c33364c0f1c6d28ca90ff"
+    }
+  ],
+  "generatedBy": {
+    "generator": "@aid/generator-py-fastapi",
+    "generatorVersion": "0.1.0",
+    "irVersion": "0.1.0"
+  },
+  "manifestVersion": 1
+}

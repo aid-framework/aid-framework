@@ -1,0 +1,163 @@
+specVersion: "0.1"
+
+# The Phase 0 example: the smallest spec that still exercises every contract the
+# py-fastapi target emits -- a model gateway with a pinned model and a fallback, a
+# prompt the registry serves, a business tool behind a generated adapter, a structured
+# output, an HTTP route, and an eval that gates on a statistical threshold.
+
+project:
+  name: support-copilot
+  namespace: aid.examples.support
+  description: Classifies an inbound support ticket and answers it with a structured reply.
+  targets:
+    - py-fastapi
+
+types:
+  Ticket:
+    kind: struct
+    fields:
+      subject:
+        type: string
+        required: true
+        description: The ticket subject line.
+      body:
+        type: string
+        required: true
+        description: The ticket body, as the customer wrote it.
+  Customer:
+    kind: struct
+    fields:
+      id:
+        type: string
+        required: true
+        description: The account identifier.
+      name:
+        type: string
+        required: true
+        description: The account name, for the reply to address.
+      plan:
+        type: string
+        required: true
+        enum: [free, pro, enterprise]
+      open_tickets:
+        type: integer
+        required: true
+        minimum: 0
+        description: How many tickets the account already has open.
+  Answer:
+    kind: struct
+    fields:
+      summary:
+        type: string
+        required: true
+        description: One sentence describing what the customer is asking for.
+      category:
+        type: string
+        required: true
+        enum: [billing, bug, howto, other]
+      confidence:
+        type: number
+        required: true
+        minimum: 0
+        maximum: 1
+
+models:
+  fast:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [json-schema, tools]
+    params:
+      temperature: 0.2
+      maxTokens: 512
+    costProfile: openai-gpt-4o-mini
+    limits:
+      maxInputTokens: 8192
+      maxOutputTokens: 512
+    fallbacks: [offline]
+  # The fallback is the fake provider, so the example runs end to end with no network
+  # and no key. The eval gate samples against this one.
+  offline:
+    provider: fake
+    modelId: fake-deterministic-1
+    capabilities: [json-schema, tools]
+
+prompts:
+  classify_ticket:
+    version: 1
+    model: fast
+    template: |
+      You classify inbound support tickets for the ACME support desk.
+
+      Subject: {{ subject }}
+
+      Answer with a JSON object holding exactly three fields:
+        * summary: one sentence describing the customer's problem
+        * category: one of billing, bug, howto, other
+        * confidence: your confidence in the category, a number between 0 and 1
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: Answer
+
+tools:
+  lookup_customer:
+    description: Look up the account that filed a ticket.
+    input: Ticket
+    output: Customer
+    handler:
+      kind: business
+      symbol: lookup_customer
+    sideEffects: read
+    timeoutMs: 5000
+    retries: 1
+    idempotency: key
+    # No `auth:` predicate here on purpose: the runtime has no authorization hook yet,
+    # so `hasScope("customers:read")` would be an unenforced claim. The validator
+    # refuses to emit one rather than let the spec imply a check nothing performs.
+
+evals:
+  classify_quality:
+    description: Whether the classifier returns a well-formed answer for each ticket.
+    # The spec language names an eval's target as `pipeline:<id>`, and a pipeline counts
+    # as one subject only when a single prompt is rendered against a single model.
+    target: pipeline:answer_ticket
+    dataset:
+      source: file
+      uri: evals/classify_quality.json
+    metrics:
+      - kind: json-schema
+        schema: Answer
+    gate:
+      # `ci: true` is what makes this a gate rather than a report. An `llm-judge` metric
+      # is deliberately absent: the spec layer refuses one under a CI gate, and design
+      # §11 defers it, so the app's gate measures only what the runtime can compute
+      # deterministically.
+      ci: true
+      maxRegression: 0.05
+      samples: 5
+
+pipelines:
+  answer_ticket:
+    description: Classify a ticket and return a structured answer.
+    trigger:
+      http:
+        method: post
+        path: /tickets/answer
+    steps:
+      - tool:
+          tool: lookup_customer
+          input:
+            subject: "{{ event.subject }}"
+            body: "{{ event.body }}"
+          as: customer
+      - generate:
+          prompt: classify_ticket
+          input:
+            subject: "{{ event.subject }}"
+          as: answer
+      - emit:
+          event: Answer

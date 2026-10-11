@@ -1,6 +1,7 @@
-# The `main` ruleset requires the `node`, `workflows` and `licenses` contexts, with
-# strict_required_status_checks_policy enabled. The `python` job below is a real
-# gate but is not a required check, so it reports as advisory.
+# The `main` ruleset requires the `node`, `workflows`, `licenses` and `python`
+# contexts, with strict_required_status_checks_policy enabled, so all four block a
+# merge. The `evals` job below is deliberately *not* in that list and reports as
+# advisory.
 name: CI
 
 on:
@@ -80,6 +81,64 @@ jobs:
 
       - name: Test
         run: pytest
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format check
+        run: ruff format --check .
+
+      - name: Typecheck
+        run: mypy
+
+  # Advisory, on purpose: `evals` is not a required context in the `main` ruleset.
+  # It is the only job that covers `examples/support-copilot` -- the `python` job is
+  # scoped to `runtimes/python` -- so the example's eval gate, lint and type check
+  # live here rather than being implied by a green `python`.
+  evals:
+    name: evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: examples/support-copilot
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            runtimes/python/pyproject.toml
+            examples/support-copilot/pyproject.toml
+
+      # The example depends on `aid-runtime-python` by name and that distribution is
+      # not on an index, so the runtime is installed from the checkout first.
+      - name: Install runtime
+        run: python -m pip install -e "../../runtimes/python"
+
+      - name: Install example
+        run: python -m pip install -e ".[dev]"
+
+      # The gate samples the model N times and compares the result with the stored
+      # baseline under a tolerance, so it is statistical by design: a run that merely
+      # differs from the baseline passes, and only a regression fails.
+      #
+      # `python -m app.generated.evals.classify_quality` is the production entry point
+      # and targets the model the app is configured with, so running it here would
+      # need a provider key. The offline gate -- the deterministic fake provider
+      # answering the stored baseline, plus the falsifying case where the model gets
+      # worse -- runs through the example's own harness below.
+      - name: Eval gate
+        run: pytest tests/test_eval_gate.py -v
+
+      # The gate step above runs verbosely so its evidence is visible in CI; the rest
+      # of the suite follows without the gate file, so it does not run twice.
+      - name: Test
+        run: pytest --ignore=tests/test_eval_gate.py
 
       - name: Lint
         run: ruff check .

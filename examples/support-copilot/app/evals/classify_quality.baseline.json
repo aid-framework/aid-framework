@@ -1,0 +1,14 @@
+{
+  "dataset": "classify_quality",
+  "dataset_version": "1",
+  "model": "fast",
+  "metrics": [
+    {
+      "metric": "json-valid",
+      "runs": 5,
+      "mean": 1.0,
+      "stdev": 0.0
+    }
+  ],
+  "note": "Recorded from the deterministic fake provider at accuracy=1.0, so the eval gate runs in CI without a network or an API key."
+}

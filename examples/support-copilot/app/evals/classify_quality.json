@@ -1,0 +1,18 @@
+{
+  "name": "classify_quality",
+  "version": "1",
+  "cases": [
+    {
+      "id": "double-charge",
+      "input": "I was charged twice for my subscription this month."
+    },
+    {
+      "id": "export-crash",
+      "input": "The app crashes every time I export a report."
+    },
+    {
+      "id": "csv-howto",
+      "input": "How do I export my data to a CSV file?"
+    }
+  ]
+}
