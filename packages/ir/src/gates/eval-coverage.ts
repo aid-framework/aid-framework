@@ -12,6 +12,8 @@ import { type GateOptions, type GateResult, reporter, type SuppressedCheck } fro
 
 const SUPPRESSED: SuppressedCheck[] = [];
 
+type Reporter = ReturnType<typeof reporter>;
+
 export function evalCoverageGate(ir: IR, options: GateOptions): GateResult {
   const diagnostics: IrDiagnostic[] = [];
   const report = reporter(options);
@@ -34,5 +36,30 @@ export function evalCoverageGate(ir: IR, options: GateOptions): GateResult {
     );
   }
 
+  checkRetrievalCoverage(ir, diagnostics, report);
+
   return { diagnostics, suppressed: SUPPRESSED };
+}
+
+/**
+ * A retrieval surface with no retrieval metric is unmeasured: an `exact-match` eval says
+ * nothing about whether the right chunks were retrieved, because it only sees the answer
+ * that retrieval fed into. The rule is spec-wide rather than per-retriever because a
+ * `retrieval` metric names no retriever -- it asserts what a query should bring back.
+ */
+function checkRetrievalCoverage(ir: IR, diagnostics: IrDiagnostic[], report: Reporter): void {
+  if (ir.retrievers.length === 0) return;
+  const measured = ir.evals.some((evalShape) =>
+    evalShape.metrics.some((metric) => metric.kind === 'retrieval'),
+  );
+  if (measured) return;
+  const names = ir.retrievers.map((retriever) => retriever.id).join(', ');
+  diagnostics.push(
+    report.warn({
+      code: IR_DIAGNOSTIC_CODES.evalUncovered,
+      message: `the eval-coverage gate flagged this retrieval surface: the IR declares the retriever(s) ${names} but no eval carries a "retrieval" metric, so nothing measures what they retrieve`,
+      path: ['retrievers'],
+      hint: 'add an eval with a metric of kind "retrieval", and gate it in CI so the measurement runs',
+    }),
+  );
 }

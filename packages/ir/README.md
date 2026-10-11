@@ -19,19 +19,21 @@ stores, memory, agents, pipelines, evals, guardrails, deployments, observability
 requiredCapabilities
 ```
 
-Phase 0 populates `types`, `models`, `prompts`, `tools`, `pipelines`, and `evals`.
+Phase 0 populates `types`, `models`, `prompts`, `tools`, `pipelines`, and `evals`. Phase 1 adds `stores` and
+`retrievers` from their spec sections and derives `embeddings` from the embedding models a spec declares.
 
 ### Empty collections are a contract, not an omission
 
-Seven collections are **present and empty by design**. They are `[]` rather than omitted or `undefined`, and
+Five collections are **present and empty by design**. They are `[]` rather than omitted or `undefined`, and
 the JSON Schema requires each of them, so a later phase can fill one in without touching a single consumer.
 An empty array is otherwise indistinguishable from "not implemented", so the two reasons are worth keeping
 apart:
 
-- `retrievers`, `agents`, `guardrails`, `memory`, `deployments` — sections the spec **defers**. Layer 1 lists
-  them in `DEFERRED_SECTIONS`, so no spec can populate them yet.
-- `embeddings`, `stores` — not spec sections at all. They exist only in the IR, as shape reserved for a
-  later phase.
+- `agents`, `guardrails`, `memory`, `deployments` — sections the spec **defers**. Layer 1 lists them in
+  `DEFERRED_SECTIONS`, so no spec can populate them yet.
+- `embeddings` — not a spec section at all. It exists only in the IR: a spec declares embedding capacity by
+  giving a model the `embeddings` capability and pointing a retriever at it, so the collection is derived
+  from that content rather than written out by hand. Empty means "this app embeds nothing".
 
 `observability` and `runtime` are objects rather than arrays, present with Phase 0 defaults: tracing on, and
 a runtime descriptor naming plain-async control flow.

@@ -58,6 +58,7 @@ export type PlanProblemCode =
   | 'unsupported-placeholder'
   | 'unsupported-provider'
   | 'unsupported-redact'
+  | 'unsupported-step'
   | 'unsupported-target'
   | 'unsupported-tool-auth'
   | 'unsupported-tool-confirmation'
@@ -709,7 +710,7 @@ export function responsePlan(
  * placeholder inside a string carries no type for it.
  */
 function checkStepTemplates(step: StepShape, path: string, problems: PlanProblem[]): void {
-  if (step.kind === 'emit') return;
+  if (step.kind === 'emit' || step.kind === 'retrieve') return;
   for (const [key, value] of Object.entries(step.input ?? {})) {
     if (value.kind !== 'template') continue;
     const names = templatePlaceholders(value.template);
@@ -791,11 +792,15 @@ export function requestPlan(ir: IR, pipeline: PipelineShape): RequestPlan {
       return;
     }
 
+    // A `retrieve` step has no input to infer a request field from, and `checkPipelines`
+    // refuses it outright for this target, so it contributes no field here.
+    if (step.kind === 'retrieve') return;
+
     const wanted = new Map<string, TypeRef>();
     if (step.kind === 'generate') {
       const prompt = prompts.get(step.prompt);
       for (const variable of prompt?.variables ?? []) wanted.set(variable.name, variable.type);
-    } else {
+    } else if (step.kind === 'tool') {
       const tool = tools.get(step.tool);
       const input = tool === undefined ? undefined : structFields(tool.input, types);
       for (const field of input?.fields ?? []) wanted.set(field.name, field.type);
@@ -997,6 +1002,17 @@ export function checkPipelines(ir: IR): PlanProblem[] {
         const required = fields?.fields.filter((field) => field.required).map((f) => f.name) ?? [];
         checkArgumentKeys(keys, fields, required, `${path}.input`, problems, `tool '${tool.id}'`);
         bindings.push({ name: step.as, type: tool.output });
+        return;
+      }
+      if (step.kind === 'retrieve') {
+        problems.push(
+          problem(
+            'unsupported-step',
+            path,
+            'Phase 0 emits no wiring for a retrieve step; this target has no retrieval ' +
+              'runtime to call, so the step cannot be generated',
+          ),
+        );
         return;
       }
       const prompt = prompts.get(step.prompt);

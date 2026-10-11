@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { catalogCostProfile, estimateEvalCost, IR_DIAGNOSTIC_CODES } from '../../src/index.js';
-import { diagnosticAt, first, gateFixture, onlyDiagnosticWith } from '../helpers.js';
+import {
+  catalogCostProfile,
+  estimateEvalCost,
+  IR_DIAGNOSTIC_CODES,
+  runGates,
+} from '../../src/index.js';
+import {
+  byId,
+  diagnosticAt,
+  first,
+  gateFixture,
+  mutateIR,
+  onlyDiagnosticWith,
+} from '../helpers.js';
 
 const UNKNOWN_PROFILE = 'cost-unknown-profile.yaml';
 
@@ -71,5 +83,21 @@ describe('cost gate', () => {
     expect(catalogCostProfile('gpt-4o-mini')).toBeDefined();
     expect(catalogCostProfile('gpt-4o-mini')).toEqual(catalogCostProfile('gpt-4o-mini'));
     expect(catalogCostProfile('ghost-unlisted-1')).toBeUndefined();
+  });
+
+  it('charges a retrieve step for embedding the chunks it pulls back', () => {
+    const { diagnostics } = gateFixture('cost-retrieval-budget.yaml').byGate.cost;
+    const exceeded = onlyDiagnosticWith(diagnostics, IR_DIAGNOSTIC_CODES.costBudgetExceeded);
+    expect(exceeded.severity).toBe('warning');
+    expect(exceeded.path).toEqual(['evals', 'retrieval_cost', 'metrics']);
+    expect(exceeded.message).toContain('"retrieval_cost" is estimated at 0.002000 per run');
+    expect(exceeded.message).toContain('budget of 0.000001');
+  });
+
+  it('clears the same retrieval cost once the budget allows it', () => {
+    const ir = mutateIR('cost-retrieval-budget.yaml');
+    byId(ir.evals, 'retrieval_cost').costBudget = 1;
+
+    expect(runGates(ir).byGate.cost.diagnostics).toEqual([]);
   });
 });

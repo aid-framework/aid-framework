@@ -1,16 +1,17 @@
 /**
  * IR v0.1 shapes (`docs/design.md` §7.2).
  *
- * Every top-level collection in §7.2 is present in the IR, always. The sections
- * Phase 0 populates are `types`, `models`, `prompts`, `tools`, `pipelines`, and
- * `evals`. The rest are **present and empty (`[]`)** by design, never omitted and
- * never `undefined`: that stability is what lets a later phase fill them without a
- * breaking reshape. They are empty for two different reasons, and the difference
- * matters. `agents`, `retrievers`, `guardrails`, `memory`, and `deployments` are
- * spec sections the DSL defines but Phase 0 defers (`DEFERRED_SECTIONS`), so a
- * spec cannot populate them yet. `embeddings` and `stores` have no spec section at
- * all: they are IR-only scaffolding, declared here so §7.2's shape is complete.
- * `observability` and `runtime` are objects carrying Phase 0 defaults, not arrays.
+ * Every top-level collection in §7.2 is present in the IR, always. Phase 0 populates
+ * `types`, `models`, `prompts`, `tools`, `pipelines`, and `evals`; the retrieval
+ * surface adds `stores` and `retrievers` and derives `embeddings` from the models that
+ * declare the `embeddings` capability. The rest are **present and empty (`[]`)** by
+ * design, never omitted and never `undefined`: that stability is what lets a later
+ * phase fill them without a breaking reshape. They are empty for two different
+ * reasons, and the difference matters. `agents`, `guardrails`, `memory`, and
+ * `deployments` are spec sections the DSL defines but defers (`DEFERRED_SECTIONS`), so
+ * a spec cannot populate them yet. `embeddings` has no spec section at all: it is
+ * IR-only scaffolding, derived rather than declared, declared here so §7.2's shape is
+ * complete. `observability` and `runtime` are objects carrying defaults, not arrays.
  */
 
 import type { ModelCapability, RequiredCapability } from './capabilities.js';
@@ -71,11 +72,18 @@ export function pipelineIdentity(id: string): string {
   return `pipeline:${id}`;
 }
 
-/** Free-form, generator-specific annotation. Phase 0 declares none. */
+/** Free-form, generator-specific annotation. Spec v0.1 declares `citations` only. */
 export interface Trait {
   name: string;
   value?: unknown;
 }
+
+/**
+ * Traits a retriever can declare in spec v0.1. A generator may emit behavior only
+ * for a trait it recognizes, so an unrecognized one is dropped rather than kept
+ * and silently ignored.
+ */
+export const RETRIEVAL_TRAITS = ['citations'] as const;
 
 /** §7.2's provider union plus the two Phase 0 spec spellings. */
 export const PROVIDERS = [
@@ -220,6 +228,11 @@ export interface GenerateStep {
   model: string;
   input: StepInput;
   as: string;
+  /**
+   * Binding whose retrieved items and citations are inlined into the prompt. The
+   * referential gate resolves the name against the bindings in scope.
+   */
+  context?: string;
 }
 
 export interface ToolStep {
@@ -234,7 +247,19 @@ export interface EmitStep {
   event: string;
 }
 
-export type StepShape = GenerateStep | ToolStep | EmitStep;
+/**
+ * A retrieval step. `query` stays the declared template text, because the runtime
+ * interpolates it per request; the referential gate reads its placeholders to
+ * reject a reference to a binding that does not exist yet.
+ */
+export interface RetrieveStep {
+  kind: 'retrieve';
+  retriever: string;
+  query: string;
+  as: string;
+}
+
+export type StepShape = GenerateStep | RetrieveStep | ToolStep | EmitStep;
 
 export interface ErrorPolicy {
   retries: number;
@@ -284,7 +309,8 @@ export type MetricShape =
   | { kind: 'tool-trace'; expect: string[]; ordered: boolean }
   | { kind: 'cost'; max: number }
   | { kind: 'latency'; maxMs: number }
-  | { kind: 'llm-judge'; rubric: string; field?: string; model?: string; threshold?: number };
+  | { kind: 'llm-judge'; rubric: string; field?: string; model?: string; threshold?: number }
+  | { kind: 'retrieval'; expectDocs: string[]; k: number };
 
 export interface EvalGate {
   ci: boolean;
@@ -319,9 +345,10 @@ export interface RuntimeShape {
 }
 
 /**
- * Deferred collections, shaped per design §7.2 and empty in Phase 0. They exist
- * now so a later phase can fill them without a breaking reshape; an empty array
- * is otherwise indistinguishable from "not implemented".
+ * Shaped per design §7.2. Populated from the `retrievers` spec section as of the
+ * retrieval surface; the collections that remain deferred (`agents`, `guardrails`,
+ * `memory`, `deployments`) are empty, since an empty array is otherwise
+ * indistinguishable from "not implemented".
  */
 export interface RetrieverShape {
   id: string;
@@ -335,15 +362,20 @@ export interface RetrieverShape {
   embedModel: string;
   /** Vector store id. */
   store: string;
-  index: { metric: 'cosine' | 'dot' | 'l2'; hybrid: boolean; params?: Record<string, unknown> };
+  index: { metric: IndexMetric; hybrid: boolean; params?: Record<string, unknown> };
   topK: number;
+  /** A deterministic lexical reranker in Phase 1, named by a model alias. */
   rerank?: { model: string; topN: number };
   filters?: string[];
   refresh: { mode: 'full' | 'incremental'; schedule?: string };
   traits: Trait[];
 }
 
-/** IR-only scaffolding: the design defines no spec section or shape for embeddings. */
+/**
+ * One per model that declares the `embeddings` capability, so a runtime can pick an
+ * embedder without re-reading `models`. Embeddings have no spec section of their
+ * own; the model alias is the id, which keeps `retriever.embedModel` resolvable.
+ */
 export interface EmbeddingShape {
   id: string;
   provider: Provider;
@@ -353,10 +385,35 @@ export interface EmbeddingShape {
   traits: Trait[];
 }
 
-/** IR-only scaffolding: the design defines no spec section or shape for vector stores. */
+/** The vector-distance metrics the IR models. Spec v0.1 can declare any of them. */
+export const INDEX_METRICS = ['cosine', 'dot', 'l2'] as const;
+
+export type IndexMetric = (typeof INDEX_METRICS)[number];
+
+export function isIndexMetric(value: string): value is IndexMetric {
+  return (INDEX_METRICS as readonly string[]).includes(value);
+}
+
+/** Vector store kinds the IR models. Spec v0.1 can declare `memory` and `pgvector`. */
+export const VECTOR_STORE_KINDS = [
+  'memory',
+  'pgvector',
+  'qdrant',
+  'pinecone',
+  'weaviate',
+  'custom',
+] as const;
+
+export type VectorStoreKind = (typeof VECTOR_STORE_KINDS)[number];
+
+export function isVectorStoreKind(value: string): value is VectorStoreKind {
+  return (VECTOR_STORE_KINDS as readonly string[]).includes(value);
+}
+
 export interface VectorStoreShape {
   id: string;
-  kind: 'memory' | 'pgvector' | 'qdrant' | 'pinecone' | 'weaviate' | 'custom';
+  kind: VectorStoreKind;
+  /** `env:NAME` for a hosted store; absent for `memory`. */
   uri?: string;
   dimensions?: number;
   traits: Trait[];
@@ -458,18 +515,24 @@ export const IR_COLLECTIONS = [
 
 export type IrCollection = (typeof IR_COLLECTIONS)[number];
 
-/** Spec section -> IR collection, for the sections Phase 0 populates. */
+/** Spec section -> IR collection, for the sections spec v0.1 populates. */
 export const POPULATED_COLLECTION_BY_SECTION = {
   types: 'types',
   models: 'models',
   prompts: 'prompts',
   tools: 'tools',
+  stores: 'stores',
+  retrievers: 'retrievers',
   evals: 'evals',
   pipelines: 'pipelines',
 } as const;
 
-/** IR collections with no Phase 0 spec section: present and empty by design. */
-export const IR_ONLY_COLLECTIONS = ['embeddings', 'stores'] as const;
+/**
+ * IR collections with no spec section: present and populated by derivation rather
+ * than declared. Embeddings come from the models that declare the `embeddings`
+ * capability, so a spec never names one.
+ */
+export const IR_ONLY_COLLECTIONS = ['embeddings'] as const;
 
 /**
  * Supported spec sections that map to an IR object rather than a collection.

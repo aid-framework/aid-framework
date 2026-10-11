@@ -24,28 +24,23 @@ export const SUPPORTED_SECTIONS = [
   'models',
   'prompts',
   'tools',
+  'stores',
+  'retrievers',
   'evals',
   'pipelines',
 ] as const;
 
 /**
- * Sections the design doc defines but Phase 0 does not implement, so the error can
+ * Sections the design doc defines but spec v0.1 does not implement, so the error can
  * say "not yet" instead of "unknown key".
  */
-export const DEFERRED_SECTIONS = [
-  'agents',
-  'retrievers',
-  'guardrails',
-  'memory',
-  'deployments',
-] as const;
+export const DEFERRED_SECTIONS = ['agents', 'guardrails', 'memory', 'deployments'] as const;
 
-/** Pipeline step kinds implemented in Phase 0. */
-export const SUPPORTED_STEP_KINDS = ['generate', 'tool', 'emit'] as const;
+/** Pipeline step kinds implemented in spec v0.1. */
+export const SUPPORTED_STEP_KINDS = ['generate', 'retrieve', 'tool', 'emit'] as const;
 
 /** Pipeline step kinds the design doc describes for a later phase. */
 export const DEFERRED_STEP_KINDS = [
-  'retrieve',
   'rerank',
   'agent',
   'guard',
@@ -213,7 +208,7 @@ function dropConditionalWrappers(errors: readonly ErrorObject[]): ErrorObject[] 
 /**
  * True when a more precise diagnostic was already reported at this path or an
  * ancestor of it, which is how a scope error suppresses the `oneOf` cascade
- * beneath it (e.g. a `{ retrieve: ... }` step).
+ * beneath it (e.g. a `{ rerank: ... }` step).
  */
 function alreadyReported(path: DiagnosticPath, reported: ReadonlySet<string>): boolean {
   for (let depth = path.length; depth >= 0; depth -= 1) {
@@ -239,7 +234,7 @@ function scopeDiagnostics(
           code: DIAGNOSTIC_CODES.notSupported,
           message: `'${key}' is defined by the AID design but is not implemented in spec v0.1`,
           path: [key],
-          hint: `Phase 0 covers ${SUPPORTED_SECTIONS.join(', ')}. See docs/design.md section 14 and section 18.`,
+          hint: `spec v0.1 covers ${SUPPORTED_SECTIONS.join(', ')}. See docs/design.md section 14 and section 18.`,
         }),
       );
       reported.add(JSON.stringify([key]));
@@ -284,7 +279,7 @@ function stepDiagnostics(
         diagnostics.push(
           errorDiagnostic({
             code: DIAGNOSTIC_CODES.unsupportedStep,
-            message: `pipeline step '${deferredKey}' is not implemented in Phase 0`,
+            message: `pipeline step '${deferredKey}' is not implemented in spec v0.1`,
             path,
             hint: `supported steps are ${SUPPORTED_STEP_KINDS.join(', ')}`,
           }),
@@ -356,6 +351,20 @@ function templateDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnos
           }
         }
       }
+
+      const query = asRecord(asRecord(body.retrieve).query);
+      if (typeof query === 'string') {
+        const problem = findMalformedTemplate(query);
+        if (problem !== undefined) {
+          diagnostics.push(
+            errorDiagnostic({
+              code: DIAGNOSTIC_CODES.malformedTemplate,
+              message: `step ${index} (retrieve) query ${problem}`,
+              path: ['pipelines', pipelineName, 'steps', index, 'retrieve', 'query'],
+            }),
+          );
+        }
+      }
     });
   }
 }
@@ -376,7 +385,7 @@ function bindingDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnost
     const seen = new Map<string, number>();
     steps.forEach((step, index) => {
       const body = asRecord(step);
-      for (const kind of ['generate', 'tool'] as const) {
+      for (const kind of ['generate', 'retrieve', 'tool'] as const) {
         const binding = asRecord(body[kind]).as;
         if (typeof binding !== 'string') {
           continue;
@@ -424,6 +433,78 @@ function metricDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnosti
         );
       }
     });
+  }
+}
+
+/**
+ * Sub-features reserved *inside* a section spec v0.1 does implement. `DEFERRED_SECTIONS`
+ * and `DEFERRED_STEP_KINDS` can only speak about a whole section or a whole step kind,
+ * so a key that exists but is not served needs its own rule here. The schema keeps the
+ * design doc's enum, so a spec can be written against the final spelling today and be
+ * told which phase serves it, instead of having the key silently ignored.
+ */
+function retrievalDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnostic[]): void {
+  const retrievers = asRecord(spec.retrievers);
+
+  for (const [name, retrieverNode] of Object.entries(retrievers)) {
+    const retriever = asRecord(retrieverNode);
+    const at = (...rest: PathSegment[]): DiagnosticPath => ['retrievers', name, ...rest];
+
+    const source = asRecord(retriever.source);
+    if (typeof source.kind === 'string' && source.kind !== 'file') {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'retrievers.${name}.source.kind: ${source.kind}' is defined by the AID design but is not implemented in spec v0.1`,
+          path: at('source', 'kind'),
+          hint: 'spec v0.1 indexes a local `file` source; the remote loaders (s3, http, db, mcp) belong to the phase that ships them',
+        }),
+      );
+    }
+
+    if (asRecord(retriever.chunking).strategy === 'semantic') {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'retrievers.${name}.chunking.strategy: semantic' is defined by the AID design but is not implemented in spec v0.1`,
+          path: at('chunking', 'strategy'),
+          hint: 'semantic chunking needs an embedding pass over the whole source at ingest; spec v0.1 chunks by size (fixed, recursive, code)',
+        }),
+      );
+    }
+
+    const refresh = asRecord(retriever.refresh);
+    if (refresh.mode === 'incremental') {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'retrievers.${name}.refresh.mode: incremental' is defined by the AID design but is not implemented in spec v0.1`,
+          path: at('refresh', 'mode'),
+          hint: 'spec v0.1 rebuilds the index (mode: full); an incremental refresh the runtime does not honour would claim more than it does',
+        }),
+      );
+    }
+    if (refresh.schedule !== undefined) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'retrievers.${name}.refresh.schedule' is defined by the AID design but is not implemented in spec v0.1`,
+          path: at('refresh', 'schedule'),
+          hint: 'scheduling an incremental refresh needs the ingestion runtime a later phase ships; spec v0.1 refreshes on rebuild',
+        }),
+      );
+    }
+
+    if (retriever.filters !== undefined) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'retrievers.${name}.filters' is defined by the AID design but is not implemented in spec v0.1`,
+          path: at('filters'),
+          hint: 'spec v0.1 ranks the whole index; filter expressions belong to a later phase',
+        }),
+      );
+    }
   }
 }
 
@@ -481,6 +562,7 @@ export function validateSpec(value: unknown, options: ValidateOptions = {}): Dia
   templateDiagnostics(spec, diagnostics);
   bindingDiagnostics(spec, diagnostics);
   metricDiagnostics(spec, diagnostics);
+  retrievalDiagnostics(spec, diagnostics);
 
   return withPositions(diagnostics, options);
 }

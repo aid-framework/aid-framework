@@ -20,13 +20,17 @@ import {
   DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_OBSERVABILITY,
   DEFAULT_RUNTIME,
+  type EmbeddingShape,
   type ErrorPolicy,
   type EvalShape,
   type EvalTarget,
+  type GenerateStep,
   type Idempotency,
   type IR,
   IR_VERSION,
+  isIndexMetric,
   isProvider,
+  isVectorStoreKind,
   type MetricShape,
   type ModelLimits,
   type ModelParams,
@@ -43,16 +47,21 @@ import {
   type Provider,
   pipelineIdentity,
   promptIdentity,
+  RETRIEVAL_TRAITS,
+  type RetrieverShape,
+  type RetrieveStep,
   type SideEffects,
   type StepInput,
   type StepInputValue,
   type StepShape,
   type ToolHandler,
   type ToolShape,
+  type Trait,
   type TypeField,
   type TypeRef,
   type TypeShape,
   toolIdentity,
+  type VectorStoreShape,
 } from './shapes.js';
 
 export const DEFAULT_TARGET = 'py-fastapi';
@@ -61,6 +70,18 @@ export const DEFAULT_TOOL_RETRIES = 0;
 export const DEFAULT_IDEMPOTENCY: Idempotency = 'none';
 export const DEFAULT_EVAL_MAX_REGRESSION = 0;
 export const DEFAULT_EVAL_SAMPLES = 5;
+/**
+ * Retrieval defaults. The spec schema requires every one of these fields, so they
+ * are only reached by a value that skipped validation; they mirror the §6 example
+ * rather than inventing a policy a valid spec could disagree with.
+ */
+export const DEFAULT_SOURCE_KIND = 'file';
+export const DEFAULT_CHUNK_STRATEGY = 'recursive';
+export const DEFAULT_CHUNK_SIZE = 800;
+export const DEFAULT_CHUNK_OVERLAP = 0;
+export const DEFAULT_INDEX_METRIC = 'cosine';
+export const DEFAULT_RETRIEVER_TOP_K = 5;
+export const DEFAULT_REFRESH_MODE = 'full';
 
 const BINDING_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
 const TYPE_NAME_PATTERN = /^([A-Za-z][A-Za-z0-9]*)(\[\])?$/;
@@ -97,6 +118,9 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
   const models = buildModels(root.models);
   const prompts = buildPrompts(root.prompts, context);
   const tools = buildTools(root.tools, context);
+  const stores = buildStores(root.stores);
+  const retrievers = buildRetrievers(root.retrievers);
+  const embeddings = buildEmbeddings(models);
   const sensitive = sensitiveNames({ types, prompts });
   const observability = buildObservability(root.observability, sensitive);
   const promptModels = new Map(prompts.map((prompt) => [prompt.id, prompt.model]));
@@ -111,9 +135,9 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
     models,
     prompts,
     tools,
-    retrievers: [],
-    embeddings: [],
-    stores: [],
+    retrievers,
+    embeddings,
+    stores,
     memory: [],
     agents: [],
     pipelines,
@@ -404,6 +428,133 @@ function asSideEffects(raw: unknown): SideEffects {
     : 'none';
 }
 
+function buildStores(raw: unknown): VectorStoreShape[] {
+  const record = asRecord(raw) ?? {};
+  return sortedKeys(record).map((id) => {
+    const entry = asRecord(record[id]) ?? {};
+    const store: VectorStoreShape = {
+      id,
+      kind: asStoreKind(entry.kind),
+      traits: [],
+    };
+    const uri = asString(entry.uri);
+    const dimensions = asNumber(entry.dimensions);
+    if (uri !== undefined) store.uri = uri;
+    if (dimensions !== undefined) store.dimensions = dimensions;
+    return store;
+  });
+}
+
+function asStoreKind(raw: unknown): VectorStoreShape['kind'] {
+  const value = asString(raw);
+  return value !== undefined && isVectorStoreKind(value) ? value : 'memory';
+}
+
+function buildRetrievers(raw: unknown): RetrieverShape[] {
+  const record = asRecord(raw) ?? {};
+  return sortedKeys(record).map((id) => {
+    const entry = asRecord(record[id]) ?? {};
+    const source = asRecord(entry.source) ?? {};
+    const chunking = asRecord(entry.chunking) ?? {};
+    const index = asRecord(entry.index) ?? {};
+    const refresh = asRecord(entry.refresh) ?? {};
+
+    const retriever: RetrieverShape = {
+      id,
+      source: buildRetrieverSource(source),
+      chunking: {
+        strategy: asChunkStrategy(chunking.strategy),
+        size: asNumber(chunking.size) ?? DEFAULT_CHUNK_SIZE,
+        overlap: asNumber(chunking.overlap) ?? DEFAULT_CHUNK_OVERLAP,
+        keepMetadata: asStringArray(chunking.keepMetadata),
+      },
+      embedModel: asString(entry.embedModel) ?? '',
+      store: asString(entry.store) ?? '',
+      index: {
+        metric: asIndexMetric(index.metric),
+        hybrid: asBoolean(index.hybrid) ?? false,
+      },
+      topK: asNumber(entry.topK) ?? DEFAULT_RETRIEVER_TOP_K,
+      refresh: buildRefresh(refresh),
+      traits: buildRetrievalTraits(entry.traits),
+    };
+
+    const rerank = asRecord(entry.rerank);
+    if (rerank !== undefined) {
+      retriever.rerank = {
+        model: asString(rerank.model) ?? '',
+        topN: asNumber(rerank.topN) ?? retriever.topK,
+      };
+    }
+    const filters = asStringArray(entry.filters);
+    if (filters.length > 0) retriever.filters = filters;
+    const params = asRecord(index.params);
+    if (params !== undefined) retriever.index.params = params;
+    return retriever;
+  });
+}
+
+function buildRetrieverSource(raw: Record<string, unknown>): RetrieverShape['source'] {
+  const value = asString(raw.kind);
+  const kind: RetrieverShape['source']['kind'] =
+    value === 's3' || value === 'http' || value === 'db' || value === 'mcp' ? value : 'file';
+  const source: RetrieverShape['source'] = { kind, uri: asString(raw.uri) ?? '' };
+  const glob = asString(raw.glob);
+  if (glob !== undefined) source.glob = glob;
+  return source;
+}
+
+function buildRefresh(raw: Record<string, unknown>): RetrieverShape['refresh'] {
+  const mode = asString(raw.mode);
+  const refresh: RetrieverShape['refresh'] = {
+    mode: mode === 'incremental' ? 'incremental' : DEFAULT_REFRESH_MODE,
+  };
+  const schedule = asString(raw.schedule);
+  if (schedule !== undefined) refresh.schedule = schedule;
+  return refresh;
+}
+
+function asChunkStrategy(raw: unknown): RetrieverShape['chunking']['strategy'] {
+  const value = asString(raw);
+  return value === 'fixed' || value === 'semantic' || value === 'code'
+    ? value
+    : DEFAULT_CHUNK_STRATEGY;
+}
+
+function asIndexMetric(raw: unknown): RetrieverShape['index']['metric'] {
+  const value = asString(raw);
+  return value !== undefined && isIndexMetric(value) ? value : DEFAULT_INDEX_METRIC;
+}
+
+function buildRetrievalTraits(raw: unknown): Trait[] {
+  return asStringArray(raw)
+    .filter((name): name is (typeof RETRIEVAL_TRAITS)[number] =>
+      (RETRIEVAL_TRAITS as readonly string[]).includes(name),
+    )
+    .map((name) => ({ name }));
+}
+
+/**
+ * One entry per model declaring `embeddings`, keyed by the model alias so
+ * `retriever.embedModel` and `store.dimensions` can be checked against it.
+ */
+function buildEmbeddings(models: ModelShape[]): EmbeddingShape[] {
+  return models
+    .filter((model) => model.capabilities.includes('embeddings'))
+    .map((model) => {
+      const embedding: EmbeddingShape = {
+        id: model.id,
+        provider: model.provider,
+        modelId: model.modelId,
+        traits: [],
+      };
+      const dimensions = catalogModel(model.modelId)?.dimensions;
+      if (dimensions !== undefined) embedding.dimensions = dimensions;
+      if (model.costProfile !== undefined) embedding.costProfile = model.costProfile;
+      return embedding;
+    });
+}
+
 function asIdempotency(raw: unknown): Idempotency {
   const value = asString(raw);
   return value === 'key' || value === 'natural' || value === 'none' ? value : DEFAULT_IDEMPOTENCY;
@@ -451,13 +602,20 @@ function buildStep(raw: unknown, promptModels: Map<string, string>): StepShape {
   const generate = asRecord(record.generate);
   if (generate !== undefined) {
     const prompt = asString(generate.prompt) ?? '';
-    return {
+    const step: GenerateStep = {
       kind: 'generate',
       prompt,
       model: promptModels.get(prompt) ?? '',
       input: buildStepInput(generate.input),
       as: asString(generate.as) ?? '',
     };
+    const context = asString(generate.context);
+    if (context !== undefined) step.context = context;
+    return step;
+  }
+  const retrieve = asRecord(record.retrieve);
+  if (retrieve !== undefined) {
+    return buildRetrieveStep(retrieve);
   }
   const tool = asRecord(record.tool);
   if (tool !== undefined) {
@@ -470,6 +628,16 @@ function buildStep(raw: unknown, promptModels: Map<string, string>): StepShape {
   }
   const emit = asRecord(record.emit);
   return { kind: 'emit', event: asString(emit?.event) ?? '' };
+}
+
+/** `query` stays as declared: the runtime interpolates it per request. */
+export function buildRetrieveStep(retrieve: Record<string, unknown>): RetrieveStep {
+  return {
+    kind: 'retrieve',
+    retriever: asString(retrieve.retriever) ?? '',
+    query: asString(retrieve.query) ?? '',
+    as: asString(retrieve.as) ?? '',
+  };
 }
 
 function buildStepInput(raw: unknown): StepInput {
@@ -575,6 +743,14 @@ function buildMetric(raw: unknown, context: BuildContext): MetricShape | undefin
       const maxMs = asNumber(record.maxMs);
       return maxMs === undefined ? undefined : { kind: 'latency', maxMs };
     }
+    case 'retrieval':
+      return {
+        kind: 'retrieval',
+        expectDocs: asStringArray(record.expectDocs),
+        // The cut-off is what the metric scores against; 1 is the narrowest reading
+        // of a k the spec must declare anyway.
+        k: asNumber(record.k) ?? 1,
+      };
     case 'llm-judge': {
       const rubric = asString(record.rubric);
       if (rubric === undefined) return undefined;

@@ -3,7 +3,7 @@
   "$id": "https://aid-framework.dev/schemas/spec/0.1/spec.schema.json",
   "$comment": "Conditional branches (`then`, and a `not` inside one) that require a property also declare it as `\"properties\": { \"<name>\": true }`. That is deliberately not a constraint - a boolean `true` schema permits anything. It exists because the validator runs Ajv with `strict: true`, and Ajv's `strictRequired` rule rejects a `required` entry whose property is not declared in that same subschema object. Keeping the branch self-contained satisfies the rule without changing its meaning; the valid and invalid fixtures in packages/spec/test cover both directions.",
   "title": "AID Framework spec v0.1",
-  "description": "The declarative source of truth for an AID application. Hand-authored against design doc §6, narrowed to the Phase 0 surface (§14): models, prompts, tools, evals and pipelines. Top-level keys outside this set are rejected rather than ignored, so a feature that has not been implemented cannot be silently dropped. See packages/spec/README.md for the scope boundary and the deferred keys.",
+  "description": "The declarative source of truth for an AID application. Hand-authored against design doc §6, narrowed to the implemented surface (§14): the Phase 0 sections (models, prompts, tools, evals, pipelines) plus Phase 1 retrieval (stores, retrievers, the retrieve step and the retrieval metric). Top-level keys outside this set are rejected rather than ignored, so a feature that has not been implemented cannot be silently dropped. Within an implemented section, a sub-feature Phase 1 does not serve is rejected by a spec-local rule (`spec/not-supported`) rather than by the schema, so the enum stays the design doc's and the message can name the phase. See packages/spec/README.md for the scope boundary and the deferred keys.",
   "type": "object",
   "required": ["specVersion", "project"],
   "additionalProperties": false,
@@ -38,6 +38,20 @@
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/name" },
       "additionalProperties": { "$ref": "#/$defs/tool" }
+    },
+    "stores": {
+      "description": "Vector store instances. `kind: memory` is the fully supported default and needs no service; `kind: pgvector` is declarable here and its adapter ships with the retrieval runtime.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/store" }
+    },
+    "retrievers": {
+      "description": "Retrievers: what to index, how to chunk it, which embedding model and store to use, and how to rank.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/retriever" }
     },
     "evals": {
       "type": "object",
@@ -147,10 +161,10 @@
           "minLength": 1
         },
         "capabilities": {
-          "description": "Declared model capabilities. Only json-schema is negotiated in Phase 0 (a structured-output prompt must bind a model that declares it); the others are recorded in the IR for the capability gate to use in later phases.",
+          "description": "Declared model capabilities. json-schema is negotiated within a prompt (a structured-output prompt must bind a model that declares it) and embeddings within a retriever (a retriever's embedModel must declare it); the others are recorded in the IR for the capability gate to use in later phases.",
           "type": "array",
           "uniqueItems": true,
-          "items": { "enum": ["json-schema", "tools", "streaming"] }
+          "items": { "enum": ["json-schema", "tools", "streaming", "embeddings"] }
         },
         "params": {
           "type": "object",
@@ -320,6 +334,145 @@
         }
       }
     },
+    "store": {
+      "type": "object",
+      "required": ["kind", "dimensions"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "`memory` is the fully supported default and is what every gated test uses; `pgvector` is declarable in Phase 1 but no gate requires a database, so a pgvector-backed app is never the only thing that can pass.",
+          "enum": ["memory", "pgvector"]
+        },
+        "uri": {
+          "$comment": "The pattern *is* the requirement: it cannot express a literal DSN, so a committed credential is out of scope by construction - the same trick `model.apiKeyEnv` uses. The security gate re-checks the resolved value, because the IR can carry a uri the schema never saw.",
+          "type": "string",
+          "pattern": "^env:[A-Z][A-Z0-9_]{0,63}$"
+        },
+        "dimensions": {
+          "description": "Vector width. It must agree with the embedding model's own width; the normalize gate compares the two.",
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "const": "pgvector" } },
+            "required": ["kind"]
+          },
+          "then": { "required": ["uri"], "properties": { "uri": true } }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "memory" } },
+            "required": ["kind"]
+          },
+          "then": { "not": { "required": ["uri"], "properties": { "uri": true } } }
+        }
+      ]
+    },
+    "retriever": {
+      "type": "object",
+      "required": ["source", "chunking", "embedModel", "store", "index", "topK", "refresh"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "object",
+          "required": ["kind", "uri"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "description": "Only `file` is implemented in Phase 1. s3/http/db/mcp are reserved by the design and rejected by a spec-local rule until the phase that ships their loaders, so a spec can be written against the final spelling without being silently ignored.",
+              "enum": ["file", "s3", "http", "db", "mcp"]
+            },
+            "uri": { "type": "string", "minLength": 1 },
+            "glob": { "type": "string", "minLength": 1 }
+          }
+        },
+        "chunking": {
+          "type": "object",
+          "required": ["strategy", "size", "overlap"],
+          "additionalProperties": false,
+          "properties": {
+            "strategy": {
+              "description": "`semantic` is reserved: it needs an embedding pass over the whole source at ingest, which Phase 1 does not implement, so a spec-local rule rejects it.",
+              "enum": ["fixed", "recursive", "semantic", "code"]
+            },
+            "size": {
+              "description": "Target chunk size in characters. The cost gate turns it into tokens at a fixed characters-per-token ratio, so estimates compare.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "overlap": { "type": "integer", "minimum": 0 },
+            "keepMetadata": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/name" }
+            }
+          }
+        },
+        "embedModel": {
+          "description": "Model alias that must declare the `embeddings` capability; the referential gate enforces that.",
+          "$ref": "#/$defs/name"
+        },
+        "store": { "$ref": "#/$defs/name" },
+        "index": {
+          "type": "object",
+          "required": ["metric"],
+          "additionalProperties": false,
+          "properties": {
+            "metric": { "enum": ["cosine", "dot", "l2"] },
+            "hybrid": {
+              "description": "Blend the lexical and the vector ranking instead of ranking on the vector alone. Off by default, so a retrieval that needs no lexical half declares nothing.",
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
+        "topK": {
+          "description": "Candidates the retriever returns per query. This is the retriever's value; Phase 1 has no step-level override.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "rerank": {
+          "type": "object",
+          "required": ["model", "topN"],
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "description": "Model alias the reranker is bound to. Phase 1 ships a deterministic lexical reranker, so the alias is a `fake` or local model; a hosted reranker adapter is a later phase's seam.",
+              "$ref": "#/$defs/name"
+            },
+            "topN": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "filters": {
+          "description": "Reserved: the expression form is not implemented in Phase 1, so a spec-local rule rejects it rather than accepting a filter nothing applies.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "refresh": {
+          "type": "object",
+          "required": ["mode"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "description": "`incremental` and `schedule` are reserved: an index that claims to refresh incrementally but is rebuilt from scratch is a lie, so a spec-local rule rejects both until the ingestion runtime honours them.",
+              "enum": ["full", "incremental"]
+            },
+            "schedule": { "type": "string", "minLength": 1 }
+          }
+        },
+        "traits": {
+          "description": "Behavioural traits the generated retrieval path must honour. `citations` means retrieved items carry the source path and offsets a generated answer can cite.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["citations"] }
+        }
+      }
+    },
     "eval": {
       "type": "object",
       "required": ["target", "dataset", "metrics"],
@@ -459,6 +612,25 @@
             "model": { "$ref": "#/$defs/name" },
             "threshold": { "type": "number", "minimum": 0, "maximum": 1 }
           }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "expectDocs", "k"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "description": "Deterministic and offline: it compares the ranking against known-correct source paths, so unlike llm-judge it is allowed under gate.ci.",
+              "const": "retrieval"
+            },
+            "expectDocs": {
+              "description": "Source paths, spelled relative to the retriever's source uri, that the ranking must place inside the top k. A warning in the eval-coverage gate if a spec declares retrievers and no eval measures them.",
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "k": { "type": "integer", "minimum": 1 }
+          }
         }
       ]
     },
@@ -505,6 +677,10 @@
               "properties": {
                 "prompt": { "$ref": "#/$defs/name" },
                 "input": { "$ref": "#/$defs/stepInput" },
+                "context": {
+                  "description": "Binding name holding retrieved items: a retrieve step's result. The generator passes the items to the prompt and returns the citation list alongside the model call.",
+                  "$ref": "#/$defs/binding"
+                },
                 "as": { "$ref": "#/$defs/binding" }
               }
             }
@@ -523,6 +699,28 @@
               "properties": {
                 "tool": { "$ref": "#/$defs/name" },
                 "input": { "$ref": "#/$defs/stepInput" },
+                "as": { "$ref": "#/$defs/binding" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["retrieve"],
+          "additionalProperties": false,
+          "properties": {
+            "retrieve": {
+              "description": "One retrieval over a declared retriever, bound to `as` for a later generate step's `context`. Retrieval is an explicit pipeline step rather than something a step does implicitly, so what was searched and in what order stays visible in the spec.",
+              "type": "object",
+              "required": ["retriever", "query", "as"],
+              "additionalProperties": false,
+              "properties": {
+                "retriever": { "$ref": "#/$defs/name" },
+                "query": {
+                  "description": "Mustache-style text, checked for well-formedness like a prompt template. A placeholder naming a later step's binding is a build-time IR error, not a schema one.",
+                  "type": "string",
+                  "minLength": 1
+                },
                 "as": { "$ref": "#/$defs/binding" }
               }
             }

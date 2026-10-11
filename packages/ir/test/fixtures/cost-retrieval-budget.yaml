@@ -1,0 +1,68 @@
+specVersion: "0.1"
+project:
+  name: handbook
+  namespace: acme.handbook
+  targets: [py-fastapi]
+types:
+  Answer:
+    kind: struct
+    fields:
+      text:
+        type: string
+        required: true
+models:
+  embed:
+    provider: fake
+    modelId: text-embedding-3-small
+    capabilities: [embeddings]
+stores:
+  docs:
+    kind: memory
+    dimensions: 1536
+retrievers:
+  handbook:
+    source:
+      kind: file
+      uri: ./docs
+    chunking:
+      strategy: recursive
+      size: 4000
+      overlap: 200
+    embedModel: embed
+    store: docs
+    index:
+      metric: cosine
+    topK: 100
+    refresh:
+      mode: full
+pipelines:
+  index_handbook:
+    description: Retrieve handbook chunks and nothing else, so retrieval is the only cost.
+    trigger:
+      http:
+        method: post
+        path: /search
+    steps:
+      - retrieve:
+          retriever: handbook
+          query: "{{event.question}}"
+          as: chunks
+      - emit:
+          event: Answer
+evals:
+  retrieval_cost:
+    description: Cost of one retrieval call.
+    target: pipeline:index_handbook
+    dataset:
+      source: file
+      uri: datasets/retrieval.jsonl
+    metrics:
+      - kind: cost
+        max: 0.000001
+      - kind: retrieval
+        expectDocs: [getting-started.md]
+        k: 5
+    gate:
+      ci: true
+      maxRegression: 0.05
+      samples: 3

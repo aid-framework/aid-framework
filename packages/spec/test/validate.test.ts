@@ -32,14 +32,16 @@ describe('spec version', () => {
     });
   });
 
-  it('lists only the Phase 0 sections as supported', () => {
+  it('lists the spec v0.1 sections as supported', () => {
     expect([...SUPPORTED_SECTIONS].sort()).toEqual([
       'evals',
       'models',
       'pipelines',
       'project',
       'prompts',
+      'retrievers',
       'specVersion',
+      'stores',
       'tools',
       'types',
     ]);
@@ -50,7 +52,7 @@ describe('spec version', () => {
       (DEFERRED_STEP_KINDS as readonly string[]).includes(kind),
     );
     expect(overlap).toEqual([]);
-    expect([...SUPPORTED_STEP_KINDS].sort()).toEqual(['emit', 'generate', 'tool']);
+    expect([...SUPPORTED_STEP_KINDS].sort()).toEqual(['emit', 'generate', 'retrieve', 'tool']);
   });
 });
 
@@ -102,9 +104,45 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
     code: DIAGNOSTIC_CODES.malformedTemplate,
     path: ['prompts', 'classify', 'template'],
   },
+  'retriever-filters.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['retrievers', 'knowledge', 'filters'],
+  },
+  'retriever-incremental-refresh.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['retrievers', 'knowledge', 'refresh', 'mode'],
+  },
+  'retriever-refresh-schedule.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['retrievers', 'knowledge', 'refresh', 'schedule'],
+  },
+  'retriever-semantic-chunking.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['retrievers', 'knowledge', 'chunking', 'strategy'],
+  },
+  'retriever-source-remote.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['retrievers', 'knowledge', 'source', 'kind'],
+  },
+  'retriever-without-store.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['retrievers', 'knowledge', 'store'],
+  },
   'step-with-two-kinds.spec.yaml': {
     code: DIAGNOSTIC_CODES.unsupportedStep,
     path: ['pipelines', 'probe', 'steps', 0],
+  },
+  'store-literal-dsn.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['stores', 'docs', 'uri'],
+  },
+  'store-memory-with-uri.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['stores', 'docs'],
+  },
+  'store-pgvector-without-uri.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['stores', 'docs', 'uri'],
   },
   'structured-without-schema.spec.yaml': {
     code: DIAGNOSTIC_CODES.schemaViolation,
@@ -147,7 +185,7 @@ describe('invalid fixtures', () => {
     expect(result.diagnostics).toHaveLength(1);
     // The message names the section; the hint names the phase.
     expect(result.diagnostics[0]?.message).toContain("'agents'");
-    expect(result.diagnostics[0]?.hint).toContain('Phase 0');
+    expect(result.diagnostics[0]?.hint).toContain('spec v0.1');
   });
 
   it('points a deferred section at its own line', () => {
@@ -192,13 +230,13 @@ describe('rule-level unit tests', () => {
     expect(codes(typo)).toEqual([DIAGNOSTIC_CODES.unknownKey]);
   });
 
-  it('tells the reader what Phase 0 does cover', () => {
+  it('tells the reader what spec v0.1 does cover', () => {
     const [diagnostic] = validateSpec({
       specVersion: '0.1',
       project: { name: 'p' },
-      retrievers: {},
+      memory: {},
     });
-    expect(diagnostic?.message).toContain('retrievers');
+    expect(diagnostic?.message).toContain('memory');
     expect(diagnostic?.hint).toContain(SUPPORTED_SECTIONS.join(', '));
   });
 

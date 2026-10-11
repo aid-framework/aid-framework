@@ -119,4 +119,51 @@ describe('capability gate', () => {
       gateFixture('full.yaml', { targetCapabilities: PYTHON }).byGate.capability.diagnostics,
     ).toEqual([]);
   });
+
+  it('derives rerank from a retriever that declares a reranker', () => {
+    const { ir } = gateFixture('retrieval.yaml');
+    expect([...ir.requiredCapabilities].sort()).toEqual([
+      'embeddings',
+      'http-trigger',
+      'json-schema',
+      'otel',
+      'rerank',
+    ]);
+    expect(deriveRequiredCapabilities(ir)).toContain('rerank');
+  });
+
+  it('derives rerank only from a retriever that declares a reranker', () => {
+    const { ir } = gateFixture('retrieval.yaml');
+    expect(deriveRequiredCapabilities(ir)).toContain('rerank');
+
+    // Layer 1 has no rerank step shape (`StepShape` is generate|retrieve|tool|emit)
+    // and no rerank spec model capability, so a retriever's reranker is the only
+    // source the derivation reads; `{kind: 'rerank'}` stays reserved for later.
+    expect(ir.retrievers.some((retriever) => retriever.rerank !== undefined)).toBe(true);
+  });
+
+  it('does not derive rerank when nothing in the IR reranks', () => {
+    const ir = mutateIR('retrieval.yaml');
+    delete first(ir.retrievers).rerank;
+    expect(deriveRequiredCapabilities(ir)).not.toContain('rerank');
+    expect(deriveRequiredCapabilities(ir)).toContain('embeddings');
+  });
+
+  it('refuses a reranked spec on a target that does not implement reranking', () => {
+    const { byGate } = gateFixture('retrieval.yaml', { targetCapabilities: PYTHON });
+    const missing = byGate.capability.diagnostics.filter(
+      (diagnostic) => diagnostic.code === IR_DIAGNOSTIC_CODES.capabilityMissing,
+    );
+    const text = messagesOf(missing);
+    for (const capability of ['embeddings', 'rerank']) {
+      expect(text).toContain(`requires "${capability}", which this target does not declare`);
+    }
+  });
+
+  it('accepts the same spec once the target declares both capabilities', () => {
+    const { byGate } = gateFixture('retrieval.yaml', {
+      targetCapabilities: { 'py-fastapi': [...PYTHON['py-fastapi'], 'embeddings', 'rerank'] },
+    });
+    expect(byGate.capability.diagnostics).toEqual([]);
+  });
 });

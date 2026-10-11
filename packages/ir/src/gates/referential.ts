@@ -13,7 +13,15 @@ import type { IR, PipelineShape, StepInputValue, StepShape, TypeRef } from '../s
 import { type GateOptions, type GateResult, reporter, type SuppressedCheck } from './contract.js';
 
 /** The id namespaces a reference can name. */
-const NAMESPACES = ['types', 'models', 'prompts', 'tools', 'pipelines'] as const;
+const NAMESPACES = [
+  'types',
+  'models',
+  'prompts',
+  'tools',
+  'stores',
+  'retrievers',
+  'pipelines',
+] as const;
 
 type Namespace = (typeof NAMESPACES)[number];
 
@@ -43,6 +51,8 @@ export function referentialGate(ir: IR, options: GateOptions): GateResult {
       models: new Set(ir.models.map((entry) => entry.id)),
       prompts: new Set(ir.prompts.map((entry) => entry.id)),
       tools: new Set(ir.tools.map((entry) => entry.id)),
+      stores: new Set(ir.stores.map((entry) => entry.id)),
+      retrievers: new Set(ir.retrievers.map((entry) => entry.id)),
       pipelines: new Set(ir.pipelines.map((entry) => entry.id)),
     },
   };
@@ -51,6 +61,7 @@ export function referentialGate(ir: IR, options: GateOptions): GateResult {
   checkModels(ir, scope, diagnostics, report);
   checkPrompts(ir, scope, diagnostics, report);
   checkTools(ir, diagnostics, report);
+  checkRetrieval(ir, scope, diagnostics, report);
   checkPipelines(ir, scope, diagnostics, report);
   checkEvals(ir, scope, diagnostics, report);
 
@@ -247,6 +258,57 @@ function checkTools(ir: IR, diagnostics: IrDiagnostic[], report: Reporter): void
   }
 }
 
+/**
+ * A retriever's own references: the store it writes to and reads from, the model that
+ * embeds for it, and the model that reranks (when one is declared).
+ *
+ * The embedding model is held to a second condition the other references do not have:
+ * it must *declare* `embeddings`, because the IR derives the `embeddings` collection
+ * from exactly that declaration, and an embedder that cannot produce vectors would
+ * otherwise only fail at retrieval time, in the runtime, on a real query.
+ */
+function checkRetrieval(ir: IR, scope: Scope, diagnostics: IrDiagnostic[], report: Reporter): void {
+  const models = new Map(ir.models.map((model) => [model.id, model]));
+  for (const retriever of ir.retrievers) {
+    const base = ['retrievers', retriever.id];
+    if (!scope.names.stores.has(retriever.store)) {
+      reportRef(retriever.store, 'stores', scope, [...base, 'store'], diagnostics, report);
+    }
+
+    const embedModel = models.get(retriever.embedModel);
+    if (embedModel === undefined) {
+      reportRef(
+        retriever.embedModel,
+        'models',
+        scope,
+        [...base, 'embedModel'],
+        diagnostics,
+        report,
+      );
+    } else if (!embedModel.capabilities.includes('embeddings')) {
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.modelCapabilityMissing,
+          message: `the referential gate rejected this embedding model: retriever "${retriever.id}" embeds with model "${embedModel.id}", which does not declare the "embeddings" capability`,
+          path: [...base, 'embedModel'],
+          hint: 'declare "embeddings" on the model, or point embedModel at a model that does',
+        }),
+      );
+    }
+
+    if (retriever.rerank !== undefined && !scope.names.models.has(retriever.rerank.model)) {
+      reportRef(
+        retriever.rerank.model,
+        'models',
+        scope,
+        [...base, 'rerank', 'model'],
+        diagnostics,
+        report,
+      );
+    }
+  }
+}
+
 function checkPipelines(ir: IR, scope: Scope, diagnostics: IrDiagnostic[], report: Reporter): void {
   for (const pipeline of ir.pipelines) {
     checkPipelineSteps(pipeline, ir, scope, diagnostics, report);
@@ -279,6 +341,10 @@ function checkPipelineSteps(
       if (!scope.names.tools.has(step.tool)) {
         reportRef(step.tool, 'tools', scope, [...base, 'tool'], diagnostics, report);
       }
+    } else if (step.kind === 'retrieve') {
+      if (!scope.names.retrievers.has(step.retriever)) {
+        reportRef(step.retriever, 'retrievers', scope, [...base, 'retriever'], diagnostics, report);
+      }
     } else if (!scope.names.types.has(step.event)) {
       reportRef(step.event, 'types', scope, [...base, 'event'], diagnostics, report);
     }
@@ -297,14 +363,14 @@ function checkPipelineSteps(
       );
     }
 
-    for (const [key, value] of Object.entries(step.input)) {
+    for (const { path, value } of stepReferences(step)) {
       for (const root of referencedRoots(value)) {
         if (bound.has(root) || !allBindings.has(root)) continue;
         diagnostics.push(
           report.error({
             code: IR_DIAGNOSTIC_CODES.bindingForwardReference,
             message: `the referential gate rejected this reference: "${root}" is bound by a later step of pipeline "${pipeline.id}"`,
-            path: [...base, 'input', key],
+            path: [...base, ...path],
             hint: 'bindings are defined before use',
           }),
         );
@@ -315,9 +381,29 @@ function checkPipelineSteps(
   });
 }
 
+/** Where one step's references live, so the forward-reference rule covers every kind. */
+function stepReferences(step: StepShape): { path: (string | number)[]; value: StepInputValue }[] {
+  if (step.kind === 'emit') return [];
+  if (step.kind === 'retrieve') {
+    return [{ path: ['query'], value: { kind: 'template', template: step.query } }];
+  }
+  const references = Object.entries(step.input).map(([key, value]) => ({
+    path: ['input', key],
+    value,
+  }));
+  if (step.kind === 'generate' && step.context !== undefined) {
+    references.push({ path: ['context'], value: { kind: 'reference', path: [step.context] } });
+  }
+  return references;
+}
+
 /**
  * A required prompt variable with no default has to be supplied by the step, or
  * the generated call has nothing to render the placeholder from.
+ *
+ * A retrieved context is one of the ways a step supplies one: `context` names the
+ * binding whose items are inlined into the prompt, so a variable with that name is
+ * fed by it. That is the only channel the retrieved items reach the prompt through.
  */
 function checkPromptInput(
   step: StepShape & { kind: 'generate' },
@@ -331,6 +417,7 @@ function checkPromptInput(
   for (const variable of prompt.variables) {
     if (!variable.required || variable.default !== undefined) continue;
     if (Object.hasOwn(step.input, variable.name)) continue;
+    if (step.context === variable.name) continue;
     diagnostics.push(
       report.error({
         code: IR_DIAGNOSTIC_CODES.promptInputMissing,

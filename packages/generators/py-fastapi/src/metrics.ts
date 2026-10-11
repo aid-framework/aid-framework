@@ -1,8 +1,8 @@
 /**
  * The IR's eval metric vocabulary mapped onto the runtime's metrics.
  *
- * The mapping is deliberately partial. The runtime ships four metrics, and three of
- * the IR's seven kinds have no runtime implementation in Phase 0, so they are
+ * The mapping is deliberately partial. The runtime ships four metrics, and four of
+ * the IR's eight kinds have no runtime implementation in Phase 0, so they are
  * *rejected* rather than silently dropped: a metric that is declared but not measured
  * makes a baseline report a passing gate over an unmeasured claim, which is worse than
  * refusing to generate. The same reasoning rejects the parts of a supported metric the
@@ -116,6 +116,13 @@ export function mapMetric(metric: MetricShape): MetricMapping {
       return {
         measured: false,
         reason: 'the runtime records tool calls but no metric compares them',
+      };
+    case 'retrieval':
+      return {
+        measured: false,
+        reason:
+          'the runtime has no retrieval metric; a retrieval eval measures a retriever this ' +
+          'target does not ship',
       };
   }
 }

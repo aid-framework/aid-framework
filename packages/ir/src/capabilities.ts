@@ -53,6 +53,7 @@ export const SPEC_MODEL_CAPABILITY_MAP = {
   'json-schema': 'json-schema',
   streaming: 'streaming',
   tools: 'tool-calling',
+  embeddings: 'embeddings',
 } as const;
 
 export function isRequiredCapability(value: string): value is RequiredCapability {
@@ -106,6 +107,12 @@ export function deriveRequiredCapabilities(ir: IR): RequiredCapability[] {
   }
   if (ir.retrievers.length > 0 || ir.embeddings.length > 0) {
     derived.add('embeddings');
+  }
+  // Reranking is a separate requirement from embedding: a target can serve a
+  // retriever while it cannot rerank, so `rerank` is derived only from a retriever
+  // that actually declares a reranker.
+  if (ir.retrievers.some((retriever) => retriever.rerank !== undefined)) {
+    derived.add('rerank');
   }
   if (ir.memory.length > 0) {
     derived.add('cursor-memory');

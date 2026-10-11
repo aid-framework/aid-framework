@@ -160,4 +160,77 @@ describe('referential gate', () => {
       valid: true,
     });
   });
+
+  it('resolves every reference a retrieval surface declares', () => {
+    expect(referential('retrieval.yaml').diagnostics).toEqual([]);
+  });
+
+  it('rejects a retriever whose store does not exist', () => {
+    const missing = onlyDiagnosticWith(
+      referential('referential-store-missing.yaml').diagnostics,
+      IR_DIAGNOSTIC_CODES.refUnresolved,
+    );
+    expect(missing.severity).toBe('error');
+    expect(missing.path).toEqual(['retrievers', 'handbook', 'store']);
+    expect(missing.message).toContain('no store named "archive" exists');
+  });
+
+  it('rejects a retriever whose embedding model does not exist', () => {
+    const missing = onlyDiagnosticWith(
+      referential('referential-embed-model-missing.yaml').diagnostics,
+      IR_DIAGNOSTIC_CODES.refUnresolved,
+    );
+    expect(missing.path).toEqual(['retrievers', 'handbook', 'embedModel']);
+    expect(missing.message).toContain('no model named "ghost_embedder" exists');
+  });
+
+  it('rejects an embedding model that does not declare the embeddings capability', () => {
+    const missing = onlyDiagnosticWith(
+      referential('referential-embed-model-no-capability.yaml').diagnostics,
+      IR_DIAGNOSTIC_CODES.modelCapabilityMissing,
+    );
+    expect(missing.severity).toBe('error');
+    expect(missing.path).toEqual(['retrievers', 'handbook', 'embedModel']);
+    expect(missing.message).toContain('does not declare the "embeddings" capability');
+  });
+
+  it('rejects a retriever whose rerank model does not exist', () => {
+    const missing = onlyDiagnosticWith(
+      referential('referential-rerank-model-missing.yaml').diagnostics,
+      IR_DIAGNOSTIC_CODES.refUnresolved,
+    );
+    expect(missing.path).toEqual(['retrievers', 'handbook', 'rerank', 'model']);
+    expect(missing.message).toContain('no model named "ghost_reranker" exists');
+  });
+
+  it('rejects a retrieve step that names no declared retriever', () => {
+    const missing = onlyDiagnosticWith(
+      referential('referential-retriever-missing.yaml').diagnostics,
+      IR_DIAGNOSTIC_CODES.refUnresolved,
+    );
+    expect(missing.severity).toBe('error');
+    expect(missing.path).toEqual(['pipelines', 'answer_question', 'steps', 0, 'retriever']);
+    expect(missing.message).toContain('no retriever named "ghost_retriever" exists');
+  });
+
+  it('rejects a generate step whose context binding is not yet in scope', () => {
+    const forward = onlyDiagnosticWith(
+      referential('referential-context-forward.yaml').diagnostics,
+      IR_DIAGNOSTIC_CODES.bindingForwardReference,
+    );
+    expect(forward.severity).toBe('error');
+    expect(forward.path).toEqual(['pipelines', 'answer_question', 'steps', 0, 'context']);
+    expect(forward.message).toContain('"context" is bound by a later step');
+  });
+
+  it('counts a retrieved context as supplying a required prompt variable', () => {
+    expect(referential('retrieval.yaml').diagnostics).toEqual([]);
+
+    const missing = onlyDiagnosticWith(
+      referential('referential-context-missing.yaml').diagnostics,
+      IR_DIAGNOSTIC_CODES.promptInputMissing,
+    );
+    expect(missing.path).toEqual(['pipelines', 'answer_question', 'steps', 1, 'input']);
+    expect(missing.message).toContain('requires "context"');
+  });
 });

@@ -1,0 +1,23 @@
+specVersion: "0.1"
+
+project:
+  name: probe
+
+retrievers:
+  knowledge:
+    source:
+      kind: file
+      uri: ./docs
+    chunking:
+      strategy: recursive
+      size: 800
+      overlap: 100
+    embedModel: embed
+    store: docs
+    index:
+      metric: cosine
+    topK: 5
+    filters:
+      - "locale == 'en'"
+    refresh:
+      mode: full

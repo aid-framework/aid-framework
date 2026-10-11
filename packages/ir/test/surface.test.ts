@@ -50,7 +50,7 @@ const ir = buildFixture('full.yaml').ir;
 describe('ir/* diagnostics', () => {
   it('names every code ir/<slug>, distinct from the spec namespace', () => {
     const codes = Object.values(IR_DIAGNOSTIC_CODES);
-    expect(codes.length).toBe(37);
+    expect(codes.length).toBe(40);
     expect(new Set(codes).size).toBe(codes.length);
     for (const code of codes) {
       expect(code).toMatch(/^ir\/[a-z0-9-]+$/);
@@ -181,7 +181,7 @@ describe('IR shape constants', () => {
 
   it('pins the collection accounting constants', () => {
     expect(IR_COLLECTIONS.length).toBe(13);
-    expect(IR_ONLY_COLLECTIONS).toEqual(['embeddings', 'stores']);
+    expect(IR_ONLY_COLLECTIONS).toEqual(['embeddings']);
     expect(NON_COLLECTION_SECTIONS).toEqual(['specVersion', 'project']);
   });
 
