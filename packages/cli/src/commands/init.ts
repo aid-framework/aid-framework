@@ -19,7 +19,7 @@
  * project that `aid validate` immediately rejects.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
 import type { CliContext } from '../context.js';
@@ -42,18 +42,39 @@ export interface InitOptions {
 }
 
 /**
+ * Lower-case a directory name, keep only `[a-z0-9]`, and collapse every run of anything
+ * else into a single `-`.
+ *
+ * A loop rather than a regular expression on purpose: trimming with `/^-+|-+$/g` after
+ * collapsing is quadratic on a name that is mostly separators, and the directory name is
+ * input this command does not control. Emitting the separator only between two kept
+ * characters means the result can never begin or end with one, so no trim pass is needed.
+ */
+function slugify(name: string): string {
+  let slug = '';
+  let separatorPending = false;
+  for (const character of name.toLowerCase()) {
+    if (!((character >= 'a' && character <= 'z') || (character >= '0' && character <= '9'))) {
+      separatorPending = true;
+      continue;
+    }
+    if (separatorPending && slug !== '') slug += '-';
+    separatorPending = false;
+    slug += character;
+  }
+  return slug;
+}
+
+/**
  * A `project.name` from a directory name. The spec's pattern is `^[a-z][a-z0-9-]{0,63}$`,
  * and a directory called `My App` or `2024-prototype` is not a reason to fail `aid init`
  * with a schema error about a field the caller never wrote.
  */
 export function projectNameFor(directory: string): string {
-  const slug = basename(directory)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64);
+  const slug = slugify(basename(directory)).slice(0, 64);
   if (slug === '') return 'app';
-  return /^[a-z]/.test(slug) ? slug : `app-${slug}`.slice(0, 64);
+  const first = slug.charAt(0);
+  return first >= 'a' && first <= 'z' ? slug : `app-${slug}`.slice(0, 64);
 }
 
 export function starterSpec(target: string, projectName: string): string {
@@ -92,6 +113,29 @@ function starterReadme(projectName: string, target: Target): string {
   ].join('\n');
 }
 
+/**
+ * Create a file, reporting whether this call is the one that created it.
+ *
+ * The exclusive flag makes the create itself the existence check, so a file that appears
+ * between a probe and a write cannot be clobbered -- a check-then-act refusal is not a
+ * refusal. Returns `false` when the path already exists, and rethrows anything else.
+ */
+function createExclusively(path: string, data: string): boolean {
+  try {
+    writeFileSync(path, data, { encoding: 'utf8', flag: 'wx' });
+    return true;
+  } catch (error) {
+    if (isAlreadyExists(error)) return false;
+    throw error;
+  }
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'EEXIST'
+  );
+}
+
 export function init(context: CliContext, options: InitOptions): CommandOutcome {
   const command = 'init';
   const target = resolveTarget(options.target);
@@ -124,27 +168,33 @@ export function init(context: CliContext, options: InitOptions): CommandOutcome 
   }
 
   const specAbsolute = absolutePath(root, specPath);
-  if (existsSync(specAbsolute) && !options.force) {
-    return outcome({
-      command,
-      exitCode: EXIT_FAILURE,
-      fields,
-      diagnostics: [
-        cliError({
-          code: CLI_DIAGNOSTIC_CODES.refusingToOverwrite,
-          message: `"${specPath}" already exists.`,
-          path: [specPath],
-          hint: 'Pass --force to overwrite it, or run `aid gen` to regenerate from the spec that is already there.',
-        }),
-      ],
-    });
-  }
-
   const written: string[] = [];
   const skipped: string[] = [];
 
   mkdirSync(absolutePath(root, parentPath(specPath)), { recursive: true });
-  writeFileSync(specAbsolute, source.text, 'utf8');
+
+  // Created exclusively so that "does it already exist" and "write it" are one syscall. The
+  // refusal holds even if the file appears between a check and a write, and no separate
+  // `existsSync` has to stay true for the guarantee to mean anything. `--force` is the one
+  // path meant to replace the file, so it writes normally; nothing else reaches the write.
+  if (!createExclusively(specAbsolute, source.text)) {
+    if (!options.force) {
+      return outcome({
+        command,
+        exitCode: EXIT_FAILURE,
+        fields,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.refusingToOverwrite,
+            message: `"${specPath}" already exists.`,
+            path: [specPath],
+            hint: 'Pass --force to overwrite it, or run `aid gen` to regenerate from the spec that is already there.',
+          }),
+        ],
+      });
+    }
+    writeFileSync(specAbsolute, source.text, 'utf8');
+  }
   written.push(specPath);
 
   // A README is the one file written here whose contents are the caller's, so it is
@@ -152,11 +202,10 @@ export function init(context: CliContext, options: InitOptions): CommandOutcome 
   // routinely just to overwrite a spec. Replacing prose a person wrote as a side effect
   // of resetting a spec is not what `--force` was asked for.
   const readmeAbsolute = join(root, 'README.md');
-  if (existsSync(readmeAbsolute)) {
-    skipped.push('README.md');
-  } else {
-    writeFileSync(readmeAbsolute, starterReadme(projectNameFor(root), target), 'utf8');
+  if (createExclusively(readmeAbsolute, starterReadme(projectNameFor(root), target))) {
     written.push('README.md');
+  } else {
+    skipped.push('README.md');
   }
 
   // The generation runs against the scaffolded project root, not the caller's working

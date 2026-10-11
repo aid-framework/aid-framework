@@ -52,6 +52,16 @@ describe('projectNameFor', () => {
       expect(projectNameFor(input)).toMatch(/^[a-z][a-z0-9-]{0,63}$/);
     }
   });
+
+  it('collapses long runs of separators', () => {
+    // Directory names are input this command does not control. Collapsing and trimming has
+    // to stay linear on a name that is mostly separators, so the run lengths here are well
+    // past anything a real directory name holds.
+    const dashes = '-'.repeat(50_000);
+    expect(projectNameFor(`${dashes}a${dashes}b${dashes}`)).toBe('a-b');
+    expect(projectNameFor(dashes)).toBe('app');
+    expect(projectNameFor(`2024${dashes}prototype`)).toBe('app-2024-prototype');
+  });
 });
 
 describe('aid init', () => {
