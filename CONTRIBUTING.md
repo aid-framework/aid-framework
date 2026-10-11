@@ -61,12 +61,12 @@ Pull requests whose commits are not signed off will be asked to amend before mer
 
 ## Development setup
 
-Phase 0 is in progress. The root toolchain and `packages/spec` are real and buildable; `packages/ir`,
-`packages/generator-sdk`, `packages/cli`, `packages/generators/*`, and `runtimes/*` are still README
-stubs. Python tooling (`uv`) is not needed until the `py-fastapi` target and the Python runtime land.
+Phase 0 has landed: the spec DSL, the IR, the generator SDK, the `py-fastapi` generator, the `aid` CLI, the
+Python runtime, and one example app are implemented and tested. You need Node.js 24 (see `.nvmrc`), pnpm,
+and [uv](https://docs.astral.sh/uv/) for anything that touches Python — the runtime, the example, and the
+eval and end-to-end gates.
 
-You need Node.js 24 (see `.nvmrc`) and pnpm. Enable pnpm through Corepack instead of installing it
-globally:
+Enable pnpm through Corepack instead of installing it globally:
 
 ```bash
 git clone https://github.com/aid-framework/aid-framework.git
@@ -83,18 +83,45 @@ Then, from the repository root:
 | `pnpm typecheck` | Type-check sources, tests, and the `scripts/` helpers |
 | `pnpm test` | Run the unit, spec-validation, and release-gate tests |
 | `pnpm test:coverage` | The same tests with the coverage thresholds enforced |
+| `pnpm e2e` | Regenerate `examples/support-copilot`, assert the result is byte-identical to the committed snapshot, then boot it and answer a real request |
 | `pnpm lint` | Biome, markdownlint, and config validation |
 | `pnpm lint:actions` | actionlint over `.github/workflows` |
 | `pnpm lint:licenses` | Dependency licence audit |
 | `pnpm check` | `pnpm lint && pnpm typecheck && pnpm test` — the full local gate |
 | `pnpm format` | Apply Biome formatting |
 
-`pnpm check` is the gate CI runs, so run it before opening a pull request. The golden-file,
-determinism, eval-harness, and end-to-end checks are added by the pull requests that introduce their
-content, and only become required checks at that point.
+`pnpm check` is the gate CI runs, so run it before opening a pull request — but it is not the whole of CI.
+The Python side has its own gates, and `pnpm e2e` needs the runtime and the example importable, so install
+both once:
 
-Golden-file tests assert that generation is **deterministic** — generating twice from the same spec
-must produce byte-identical output (`docs/design.md` §8.2, §12).
+```bash
+uv venv --python 3.11
+uv pip install --python .venv -e "runtimes/python[dev]" -e "examples/support-copilot[dev]"
+```
+
+Then, from the directory each gate is scoped to (CI runs them as separate jobs):
+
+```bash
+# runtimes/python
+cd runtimes/python
+../../.venv/bin/pytest
+../../.venv/bin/ruff check . && ../../.venv/bin/ruff format --check . && ../../.venv/bin/mypy
+
+# examples/support-copilot
+cd examples/support-copilot
+../../.venv/bin/pytest
+
+# the end-to-end check, from the repository root
+AID_PYTHON=.venv/bin/python pnpm e2e
+```
+
+`pnpm e2e` needs `pnpm build` first: it drives the compiled CLI, exactly as a user would.
+
+Golden-file tests assert that generation is **deterministic** — generating twice from the same spec must
+produce byte-identical output — and the end-to-end check extends that from "twice" to "the committed
+snapshot": it regenerates the example, compares the trees byte for byte, and then boots the regenerated app
+and answers a real request, so generated code that merely looks plausible still fails the build
+(`docs/design.md` §8.2, §12).
 
 ## Repository layout
 
@@ -122,7 +149,8 @@ See the table in [`README.md`](README.md). In short:
 5. **Never hand-edit generated code.** Files under `generated/` are generator-owned. Change the spec,
    generator, or runtime instead; use the eject path if you truly need to own an artifact
    (`docs/design.md` §10).
-6. **Keep main green.** CI runs both regimes — golden files *and* evals, plus cost and latency gates.
+6. **Keep main green.** CI runs both regimes — golden files *and* evals — plus the end-to-end check that
+   regenerates the example and boots it. Cost and latency gates are not wired up yet.
 7. **Be patient and kind.** This is a young project; reviewers may ask design questions before merging code.
 
 ## Reporting bugs

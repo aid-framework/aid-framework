@@ -194,6 +194,25 @@ importers:
         specifier: ^2.9.1
         version: 2.9.1
 
+  packages/cli:
+    dependencies:
+      '@aid/generator-py-fastapi':
+        specifier: workspace:*
+        version: link:../generators/py-fastapi
+      '@aid/generator-sdk':
+        specifier: workspace:*
+        version: link:../generator-sdk
+      '@aid/ir':
+        specifier: workspace:*
+        version: link:../ir
+      '@aid/spec':
+        specifier: workspace:*
+        version: link:../spec
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.3
+        version: 26.6.4
+
   packages/generator-sdk:
     dependencies:
       '@aid/ir':

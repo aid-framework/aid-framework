@@ -1,0 +1,24 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
+  },
+  "references": [
+    {
+      "path": "../spec"
+    },
+    {
+      "path": "../ir"
+    },
+    {
+      "path": "../generator-sdk"
+    },
+    {
+      "path": "../generators/py-fastapi"
+    }
+  ],
+  "include": ["src/**/*.ts"]
+}

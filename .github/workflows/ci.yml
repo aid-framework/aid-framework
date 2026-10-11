@@ -1,7 +1,9 @@
 # The `main` ruleset requires the `node`, `workflows`, `licenses` and `python`
 # contexts, with strict_required_status_checks_policy enabled, so all four block a
-# merge. The `evals` job below is deliberately *not* in that list and reports as
-# advisory.
+# merge. The `evals` and `e2e` jobs below are deliberately *not* in that list and
+# report as advisory for a merge -- but `e2e` does gate *releases*: release.yml fires
+# on `workflow_run` for this workflow's overall conclusion, so a red `e2e` stops the
+# tag even though a merge can still proceed.
 name: CI
 
 on:
@@ -148,6 +150,63 @@ jobs:
 
       - name: Typecheck
         run: mypy
+
+  # The only job that runs the *generated* app rather than the generator's outputs as
+  # text: it regenerates the example with the shipped `aid` binary, asserts the result is
+  # byte-identical to what is committed, then boots the regenerated tree and answers a
+  # real request over a real socket. Generated code that looks plausible but cannot run is
+  # the failure mode unit tests are blind to.
+  #
+  # `needs: node` because that job runs the codegen tests; booting generated code whose
+  # own tests already failed would only add noise.
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: node
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            runtimes/python/pyproject.toml
+            examples/support-copilot/pyproject.toml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      # The example depends on `aid-runtime-python` by name and that distribution is not
+      # on an index, so the runtime is installed from the checkout first. Installing the
+      # committed example then provides fastapi and uvicorn -- the runtime deliberately
+      # does not depend on a web framework. The regenerated copy is imported from its own
+      # directory, and `scripts/e2e-example.mjs` asserts that it was the one imported.
+      - name: Install the runtime and the example's dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -e runtimes/python
+          python -m pip install -e examples/support-copilot
+
+      # Regenerate, compare byte for byte, boot, and hit the endpoint.
+      - name: End to end
+        run: pnpm e2e
 
   workflows:
     name: workflows
