@@ -1,5 +1,16 @@
 # Publishing is dormant by construction, and this file says exactly what would wake it up.
 #
+# WARNING: this workflow is deliberately NOT triggered by `release: published`. GitHub
+# suppresses workflow runs for events authored by `GITHUB_TOKEN`, and `release.yml` creates
+# its GitHub Releases with `GH_TOKEN: ${{ github.token }}`. A `release: published` trigger
+# here could therefore never fire: it would sit in this file advertising an automatic path
+# that is unreachable, and a maintainer who enabled publishing and waited for a release to
+# wake this job would see nothing and reasonably read it as broken. That is exactly why it
+# is not used. The automatic route is now `release.yml` calling this file through
+# `workflow_call`, which is not suppressed -- `workflow_call` runs the called workflow inside
+# the caller's own run rather than as a new run for a `GITHUB_TOKEN`-authored event.
+# `workflow_dispatch` remains for manual runs.
+#
 # Nothing in this repository is publishable as it stands, and the gate is two-deep so that
 # stays true even after a mistake:
 #
@@ -29,8 +40,13 @@
 name: Publish
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to look for (defaults to the latest tag). Publishing also needs AID_PUBLISH_ENABLED=true and credentials."
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
     inputs:
       version:
@@ -44,7 +60,7 @@ permissions:
 
 concurrency:
   # A cancelled publish is a half-published registry; never run two releases at once.
-  group: publish-${{ github.event.release.tag_name || inputs.version || github.ref }}
+  group: publish-${{ inputs.version || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -74,11 +90,10 @@ jobs:
         id: detect
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
           DISPATCH_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          version="${RELEASE_TAG:-$DISPATCH_VERSION}"
+          version="$DISPATCH_VERSION"
           args=(--github-output "$GITHUB_OUTPUT")
           if [ -n "$version" ]; then
             args+=(--version "$version")
