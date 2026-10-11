@@ -46,7 +46,14 @@ def _spec_payload(**changes: Any) -> dict[str, Any]:
 def test_capability_values_are_the_model_side_vocabulary() -> None:
     """A change here silently breaks the IR's capability negotiation."""
     values = {capability.value for capability in Capability}
-    assert values == {"tool-calling", "structured-output", "streaming", "long-context"}
+    assert values == {
+        "tool-calling",
+        "structured-output",
+        "streaming",
+        "long-context",
+        "embeddings",
+        "rerank",
+    }
     assert str(Capability.STREAMING) == "streaming"
 
 
