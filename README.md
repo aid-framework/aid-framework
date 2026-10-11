@@ -4,8 +4,10 @@
 retrieval, agents, pipelines, evals, guardrails, memory, and deployments — and compile it into idiomatic,
 runnable AI services across multiple language stacks.
 
-> **Status: pre-alpha.** This repository is being bootstrapped. [`docs/design.md`](docs/design.md) is the
-> authoritative design document; Phase 0 implementation has not started.
+> **Status: pre-alpha.** [`docs/design.md`](docs/design.md) is the authoritative design document. Phase 0
+> has landed: the spec DSL, the IR, the generator SDK, the `py-fastapi` generator with one example app, the
+> Python runtime, and the `aid` CLI. The CLI implements `init`, `validate`, `gen`, and `eval` today; `dev`,
+> `ingest`, `trace`, `cost`, `guard`, `migrate`, `eject`, and `doctor` are specified but not implemented.
 
 ## The problem
 
@@ -55,14 +57,32 @@ the IR, the CLI surface, and the roadmap.
 
 ## Quickstart
 
-> Placeholder — the CLI is not implemented yet. The intended flow:
+You need Node.js 24 (see [`.nvmrc`](.nvmrc)) and [uv](https://docs.astral.sh/uv/); `corepack enable` puts
+pnpm on your PATH. `aid` is not on a registry yet, so this drives the compiled CLI from the checkout.
 
 ```bash
-aid init my-app --spec app.spec.yaml   # scaffold from a spec
-aid gen --dry-run                      # inspect the file set without writing
-aid gen && aid dev                     # generate, then run locally
-aid eval --baseline                    # run evals and gate on regressions
+corepack enable
+pnpm install --frozen-lockfile
+pnpm build
+
+cd examples/support-copilot
+node ../../packages/cli/dist/cli.js validate       # spec → IR → every build-time gate
+node ../../packages/cli/dist/cli.js gen --dry-run  # report the change set, and write nothing
+node ../../packages/cli/dist/cli.js gen            # reconcile the tree with the spec
 ```
+
+Scaffolding a new project, and the options every command takes:
+
+```bash
+node packages/cli/dist/cli.js init my-app --gen                      # from a starter spec
+node packages/cli/dist/cli.js init my-app --from app.spec.yaml --gen # importing an existing spec
+node packages/cli/dist/cli.js <command> --help
+```
+
+`aid eval` runs the project's generated eval module through the Python toolchain and gates on regressions,
+so its dependencies have to be installed first
+(`uv pip install -e runtimes/python -e examples/support-copilot`). [`packages/cli/`](packages/cli/) documents
+each command; [`examples/support-copilot/`](examples/support-copilot/) is the runnable end-to-end example.
 
 ## Contributing
 
