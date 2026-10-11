@@ -1,0 +1,140 @@
+# Publishing is dormant by construction, and this file says exactly what would wake it up.
+#
+# Nothing in this repository is publishable as it stands, and the gate is two-deep so that
+# stays true even after a mistake:
+#
+#   1. `detect` asks `scripts/detect-publishable.mjs` whether any manifest may be published
+#      for the version being released. A manifest counts only if it declares a name and a
+#      version, is not `private`, does not carry the `0.0.0` workspace placeholder, and
+#      declares the exact version being released -- `release.yml` tags the commit and never
+#      rewrites a manifest, so the tag is the source of truth for this repository. The
+#      example app is installed by the docs and is not an artifact.
+#   2. `publish` runs only if (1) found something *and* the repository variable
+#      `AID_PUBLISH_ENABLED` is the string `true`. Otherwise it reports **Skipped**, which
+#      is neither a pass nor a failure: a publish job that goes green having published
+#      nothing, or that fails because there was nothing to do, would both be worse than no
+#      job at all.
+#
+# So there are three things a maintainer must do before a release publishes anything, and
+# none of them are done here because they are decisions rather than defaults:
+#
+#   * align a manifest's version with a release (or start versioning manifests at all --
+#     every workspace `package.json` is `0.0.0` today);
+#   * set the `AID_PUBLISH_ENABLED` repository variable to `true`;
+#   * choose a registry for each artifact and provision credentials or trusted publishing.
+#
+# No registry, token, secret or scope is configured in this repository, and this workflow
+# references none. If a release ever does land on a publishable artifact while enabled, the
+# job fails loudly instead of reporting a success that published nothing.
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to look for (defaults to the latest tag). Publishing also needs AID_PUBLISH_ENABLED=true and credentials."
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  # A cancelled publish is a half-published registry; never run two releases at once.
+  group: publish-${{ github.event.release.tag_name || inputs.version || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: detect
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      publishable: ${{ steps.detect.outputs.publishable }}
+      count: ${{ steps.detect.outputs.count }}
+      version: ${{ steps.detect.outputs.version }}
+      artifacts: ${{ steps.detect.outputs.artifacts }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # The script infers the released version from the tags when no version is given.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Look for publishable artifacts
+        id: detect
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG:-$DISPATCH_VERSION}"
+          args=(--github-output "$GITHUB_OUTPUT")
+          if [ -n "$version" ]; then
+            args+=(--version "$version")
+          fi
+          node scripts/detect-publishable.mjs "${args[@]}"
+
+      - name: Summarize
+        if: always() && steps.detect.outcome == 'success'
+        shell: bash
+        env:
+          PUBLISHABLE: ${{ steps.detect.outputs.publishable }}
+          COUNT: ${{ steps.detect.outputs.count }}
+          VERSION: ${{ steps.detect.outputs.version }}
+          ENABLED: ${{ vars.AID_PUBLISH_ENABLED }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Publish detection"
+            echo
+            if [ "$PUBLISHABLE" = "true" ]; then
+              echo "**$COUNT** artifact(s) may be published for \`$VERSION\`."
+            else
+              echo "Nothing is publishable for \`${VERSION:-the version being released}\`."
+              echo
+              echo "This is the expected state: the release workflow tags a commit, and no"
+              echo "manifest in the repository declares that version yet."
+            fi
+            echo
+            if [ "$ENABLED" = "true" ]; then
+              echo "\`AID_PUBLISH_ENABLED\` is \`true\`."
+            else
+              echo "\`AID_PUBLISH_ENABLED\` is not \`true\`, so the publish job is skipped"
+              echo "whatever detection found."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: publish
+    needs: detect
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Job-level on purpose: when nothing is publishable, this job reports Skipped rather
+    # than a green run that published nothing or a red run with nothing wrong.
+    if: needs.detect.outputs.publishable == 'true' && vars.AID_PUBLISH_ENABLED == 'true'
+    steps:
+      # The only reachable state today: something is publishable, publishing is enabled, and
+      # no registry or credential exists in this repository. Failing loudly is the only
+      # honest outcome -- a green job here would be a claim about a registry that nothing
+      # performed. Activating publishing means adding a real step below (with credentials or
+      # trusted publishing for a chosen registry) and deleting this guard.
+      - name: Fail loudly while no registry is configured
+        shell: bash
+        env:
+          ARTIFACTS: ${{ needs.detect.outputs.artifacts }}
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "::error::\`$ARTIFACTS\` is publishable for $VERSION and AID_PUBLISH_ENABLED is true, but this workflow has no publish step and this repository has no registry credentials. Configure a registry and credentials, add the publish step, and remove this guard."
+          exit 1
