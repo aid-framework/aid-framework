@@ -16,6 +16,12 @@ export default defineConfig({
         find: /^@aid\/spec$/,
         replacement: fileURLToPath(new URL('./packages/spec/src/index.ts', import.meta.url)),
       },
+      {
+        find: /^@aid\/generator-sdk$/,
+        replacement: fileURLToPath(
+          new URL('./packages/generator-sdk/src/index.ts', import.meta.url),
+        ),
+      },
     ],
   },
   test: {

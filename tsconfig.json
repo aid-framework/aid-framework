@@ -5,6 +5,7 @@
   "references": [
     { "path": "packages/spec" },
     { "path": "packages/ir" },
-    { "path": "packages/generator-sdk" }
+    { "path": "packages/generator-sdk" },
+    { "path": "packages/generators/py-fastapi" }
   ]
 }

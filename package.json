@@ -20,6 +20,7 @@
     "lint:actions": "node scripts/check-workflows.mjs",
     "lint:licenses": "node scripts/check-licenses.mjs",
     "format": "biome format --write .",
+    "generate:example": "node packages/generators/py-fastapi/scripts/generate-example.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest --coverage.enabled=false",
