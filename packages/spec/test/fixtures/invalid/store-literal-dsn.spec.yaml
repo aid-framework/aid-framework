@@ -1,0 +1,10 @@
+specVersion: "0.1"
+
+project:
+  name: probe
+
+stores:
+  docs:
+    kind: pgvector
+    uri: postgres://aid:hunter2@db.internal:5432/aid
+    dimensions: 1536

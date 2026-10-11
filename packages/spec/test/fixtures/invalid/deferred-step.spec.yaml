@@ -10,6 +10,7 @@ pipelines:
         method: post
         path: /probe
     steps:
-      - retrieve:
+      - rerank:
           retriever: knowledge
+          topN: 3
           as: docs

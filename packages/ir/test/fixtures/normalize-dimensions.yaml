@@ -1,0 +1,76 @@
+specVersion: "0.1"
+project:
+  name: handbook
+  namespace: acme.handbook
+  targets: [py-fastapi]
+types:
+  Answer:
+    kind: struct
+    fields:
+      text:
+        type: string
+        required: true
+models:
+  answer:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [json-schema]
+  embed:
+    provider: fake
+    modelId: text-embedding-3-small
+    capabilities: [embeddings]
+stores:
+  docs:
+    kind: memory
+    dimensions: 768
+retrievers:
+  handbook:
+    source:
+      kind: file
+      uri: ./docs
+    chunking:
+      strategy: recursive
+      size: 800
+      overlap: 100
+    embedModel: embed
+    store: docs
+    index:
+      metric: cosine
+    topK: 5
+    refresh:
+      mode: full
+prompts:
+  answer_from_handbook:
+    version: 1
+    model: answer
+    template: "Answer {{question}} from: {{context}}"
+    variables:
+      question:
+        type: string
+        required: true
+      context:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: Answer
+pipelines:
+  answer_question:
+    trigger:
+      http:
+        method: post
+        path: /answer
+    steps:
+      - retrieve:
+          retriever: handbook
+          query: "{{event.question}}"
+          as: context
+      - generate:
+          prompt: answer_from_handbook
+          input:
+            question: "{{event.question}}"
+          context: context
+          as: answer
+      - emit:
+          event: Answer

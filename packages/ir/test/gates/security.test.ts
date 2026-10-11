@@ -153,4 +153,35 @@ describe('policyAuthenticates', () => {
     expect(policyAuthenticates(astOf('"a" == "b"'))).toBe(false);
     expect(policyAuthenticates(astOf('1 < 2'))).toBe(false);
   });
+
+  it('accepts a store that reaches its service through the environment', () => {
+    expect(gateFixture('retrieval.yaml').byGate.security.diagnostics).toEqual([]);
+  });
+
+  it('rejects a store carrying a literal connection string, fail-closed', () => {
+    const ir = mutateIR('retrieval.yaml');
+    first(ir.stores).uri = 'postgres://aid:hunter2@db.internal:5432/aid';
+
+    const secret = onlyDiagnosticWith(
+      runGates(ir).byGate.security.diagnostics,
+      IR_DIAGNOSTIC_CODES.securityStoreSecret,
+    );
+    expect(secret.severity).toBe('error');
+    expect(secret.path).toEqual(['stores', 'docs', 'uri']);
+    expect(secret.message).toContain('a literal connection string');
+    expect(secret.hint).toContain('env:<NAME>');
+  });
+
+  it('rejects a source uri that carries an inline credential', () => {
+    const ir = mutateIR('retrieval.yaml');
+    first(ir.retrievers).source.uri = 'https://aid:hunter2@docs.internal/handbook';
+
+    const secret = onlyDiagnosticWith(
+      runGates(ir).byGate.security.diagnostics,
+      IR_DIAGNOSTIC_CODES.securityStoreSecret,
+    );
+    expect(secret.severity).toBe('error');
+    expect(secret.path).toEqual(['retrievers', 'handbook', 'source', 'uri']);
+    expect(secret.message).toContain('inline credential');
+  });
 });

@@ -5,9 +5,9 @@ the parser, and the validator that runs before anything reaches the IR.
 
 **Responsibility**
 
-- Define the spec surface: `specVersion`, `project`, `types`, `models`, `prompts`, `tools`, `evals`,
-  `pipelines` in spec v0.1; `retrievers`, `agents`, `guardrails`, `memory`, `deployments` in later phases
-  (`docs/design.md` §6).
+- Define the spec surface: `specVersion`, `project`, `types`, `models`, `prompts`, `tools`, `retrievers`,
+  `stores`, `evals`, `pipelines` in spec v0.1; `agents`, `guardrails`, `memory`, `deployments` in later
+  phases (`docs/design.md` §6).
 - Ship a JSON Schema so editors can validate and autocomplete specs.
 - Parse YAML into a typed, position-aware document; report errors with file/line context.
 - Validate the spec's own rules (referential integrity, required fields, version compatibility).
@@ -16,13 +16,18 @@ the parser, and the validator that runs before anything reaches the IR.
 security gates — those are build-time gates in the IR (`docs/design.md` §7.4).
 
 **Status:** implemented for spec v0.1 (`specVersion`, `project`, `types`, `models`, `prompts`, `tools`,
-`evals`, `pipelines`). Agents, retrievers, guardrails, memory, and deployments are defined by the design
-doc but are not part of this version: using one produces an explicit `spec/not-supported` error naming the
-phase it belongs to, rather than a generic schema failure.
+`evals`, `pipelines`) plus Phase 1's retrieval surface (`retrievers`, `stores`, a `retrieve` step, the
+`embeddings` model capability, and a `retrieval` eval metric). Agents, guardrails, memory, and deployments
+are defined by the design doc but are not part of this version: using one produces an explicit
+`spec/not-supported` error naming the phase it belongs to, rather than a generic schema failure. Phase 1
+defers part of its own surface the same way: a `source.kind` other than `file`, `chunking.strategy:
+semantic`, `refresh.mode: incremental`, filter expressions, and a standalone rerank step are accepted by
+the schema's enums and rejected by the validator as not-yet-supported.
 
-Pipeline steps are limited to `generate`, `tool`, and `emit`. `tool` steps are invoked explicitly by the
+Pipeline steps are `generate`, `retrieve`, `tool`, and `emit`. `tool` steps are invoked explicitly by the
 pipeline, not selected by the model — that is what keeps Phase 0 on plain async control flow while still
-exercising the tool, business-logic, auth, and tracing seams.
+exercising the tool, business-logic, auth, and tracing seams. `retrieve` is executable but has no runtime
+in this layer: it is IR shape only, and the gates fail closed for any target that cannot honour it.
 
 **Diagnostics are part of the contract.** Every code in `src/diagnostics.ts` is asserted in tests and
 printed by `aid validate`; rename one and it is a breaking change. `spec/not-supported` (defined by the

@@ -6,11 +6,15 @@
  * fails *closed* on an unpriced model that someone declared a budget for: an unpriced
  * model cannot be shown to fit a budget, and silently assuming it does is the failure
  * mode this gate exists to prevent.
+ *
+ * A retrieval path is not free by omission: the candidate chunks a retriever materialises
+ * are charged to the model that embeds them, so a retriever with a wide `topK` over large
+ * chunks shows up in the estimate and can exceed a declared budget on its own.
  */
 
 import { catalogCostProfile } from '../catalog/index.js';
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
-import type { EvalShape, IR, ModelShape, PromptShape } from '../shapes.js';
+import type { CostProfile, EvalShape, IR, ModelShape, PromptShape, StepShape } from '../shapes.js';
 import { type GateOptions, type GateResult, reporter, type SuppressedCheck } from './contract.js';
 
 const SUPPRESSED: SuppressedCheck[] = [];
@@ -89,7 +93,8 @@ export function costGate(ir: IR, options: GateOptions): GateResult {
 
 /**
  * The estimated per-run cost of one eval target: the sum over the models on the
- * target's path of its prompt tokens and its bounded output tokens.
+ * target's path of its prompt tokens and its bounded output tokens, plus the work the
+ * target's retrievers do.
  */
 export function estimateEvalCost(ir: IR, evalShape: EvalShape): EvalCostEstimate {
   const prompts = new Map(ir.prompts.map((prompt) => [prompt.id, prompt]));
@@ -101,22 +106,16 @@ export function estimateEvalCost(ir: IR, evalShape: EvalShape): EvalCostEstimate
   for (const prompt of used) {
     const model = models.get(prompt.model);
     if (model === undefined) continue;
-    const inputTokens = Math.ceil(prompt.template.length / CHARS_PER_TOKEN);
-    const outputTokens =
-      model.params?.maxTokens ?? model.limits?.maxOutputTokens ?? DEFAULT_OUTPUT_TOKENS;
-    const existing = estimates.get(model.id);
-    if (existing === undefined) {
-      estimates.set(model.id, {
-        model: model.id,
-        inputTokens,
-        outputTokens,
-        cost: priceRun(model, inputTokens, outputTokens),
-      });
-    } else {
-      existing.inputTokens += inputTokens;
-      existing.outputTokens += outputTokens;
-      existing.cost = priceRun(model, existing.inputTokens, existing.outputTokens);
-    }
+    addEstimate(
+      estimates,
+      model,
+      Math.ceil(prompt.template.length / CHARS_PER_TOKEN),
+      model.params?.maxTokens ?? model.limits?.maxOutputTokens ?? DEFAULT_OUTPUT_TOKENS,
+    );
+  }
+
+  for (const part of retrievalParts(ir, evalShape, models)) {
+    addEstimate(estimates, part.model, part.inputTokens, 0);
   }
 
   const parts = [...estimates.values()].sort((left, right) =>
@@ -133,13 +132,33 @@ export function estimateEvalCost(ir: IR, evalShape: EvalShape): EvalCostEstimate
   return result;
 }
 
+function addEstimate(
+  estimates: Map<string, ModelCostEstimate>,
+  model: ModelShape,
+  inputTokens: number,
+  outputTokens: number,
+): void {
+  const existing = estimates.get(model.id);
+  if (existing === undefined) {
+    estimates.set(model.id, {
+      model: model.id,
+      inputTokens,
+      outputTokens,
+      cost: priceRun(model, inputTokens, outputTokens),
+    });
+    return;
+  }
+  existing.inputTokens += inputTokens;
+  existing.outputTokens += outputTokens;
+  existing.cost = priceRun(model, existing.inputTokens, existing.outputTokens);
+}
+
 function priceRun(
   model: ModelShape,
   inputTokens: number,
   outputTokens: number,
 ): number | undefined {
-  const profile =
-    model.costProfile ?? catalogCostProfile(model.modelId, model.costProfileId)?.profile;
+  const profile = modelProfile(model);
   if (profile === undefined) return undefined;
   return (
     (inputTokens / 1_000_000) * profile.inputPerMTok +
@@ -147,20 +166,64 @@ function priceRun(
   );
 }
 
+function modelProfile(model: ModelShape): CostProfile | undefined {
+  return model.costProfile ?? catalogCostProfile(model.modelId, model.costProfileId)?.profile;
+}
+
+/** One model's share of a retrievers' per-run work, in input tokens. */
+interface RetrievalPart {
+  model: ModelShape;
+  inputTokens: number;
+}
+
+/**
+ * The per-run work a target's retrievers do: a retriever materialises `topK` candidate
+ * chunks, and each chunk is `chunking.size` characters, so the candidate set is
+ * `topK * ceil(size / CHARS_PER_TOKEN)` tokens. Those tokens are charged to the
+ * retriever's embedding model -- the model that produces them -- and not again to the
+ * generation model, whose estimate prices its prompt template.
+ *
+ * A reranker is charged only when its model is *modelled*: a model the catalog prices,
+ * or one the spec gives a costProfile. Phase 1 ships a deterministic lexical reranker
+ * that costs nothing to run, so charging an unpriced reranker would fail a declared
+ * budget closed on a model that has no rate to exceed it.
+ */
+function retrievalParts(
+  ir: IR,
+  evalShape: EvalShape,
+  models: Map<string, ModelShape>,
+): RetrievalPart[] {
+  const parts: RetrievalPart[] = [];
+  for (const step of stepsForTarget(ir, evalShape)) {
+    if (step.kind !== 'retrieve') continue;
+    const retriever = ir.retrievers.find((entry) => entry.id === step.retriever);
+    if (retriever === undefined) continue;
+    const inputTokens = retriever.topK * Math.ceil(retriever.chunking.size / CHARS_PER_TOKEN);
+    const embedModel = models.get(retriever.embedModel);
+    if (embedModel !== undefined) parts.push({ model: embedModel, inputTokens });
+    const rerankModel =
+      retriever.rerank === undefined ? undefined : models.get(retriever.rerank.model);
+    if (rerankModel !== undefined && modelProfile(rerankModel) !== undefined) {
+      parts.push({ model: rerankModel, inputTokens });
+    }
+  }
+  return parts;
+}
+
+/** The steps of the pipeline an eval target names, or none for a prompt target. */
+function stepsForTarget(ir: IR, evalShape: EvalShape): StepShape[] {
+  if (evalShape.target.kind === 'prompt') return [];
+  const pipeline = ir.pipelines.find((entry) => entry.id === evalShape.target.id);
+  return pipeline === undefined ? [] : pipeline.steps;
+}
+
 function promptsForTarget(
   ir: IR,
   evalShape: EvalShape,
   prompts: Map<string, PromptShape>,
 ): PromptShape[] {
-  if (evalShape.target.kind === 'prompt') {
-    const prompt = prompts.get(evalShape.target.id);
-    return prompt === undefined ? [] : [prompt];
-  }
-
-  const pipeline = ir.pipelines.find((entry) => entry.id === evalShape.target.id);
-  if (pipeline === undefined) return [];
   const found: PromptShape[] = [];
-  for (const step of pipeline.steps) {
+  for (const step of stepsForTarget(ir, evalShape)) {
     if (step.kind !== 'generate') continue;
     const prompt = prompts.get(step.prompt);
     if (prompt !== undefined) found.push(prompt);

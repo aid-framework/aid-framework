@@ -39,6 +39,29 @@ export default defineConfig({
         branches: 55,
         functions: 78,
         lines: 70,
+        // The retrieval surface (Phase 1, L1) lives almost entirely in these modules, so
+        // they carry per-module floors a few points under their measured level (gates
+        // 96/87/99/97, capabilities 97/90/100/96, build 84/65/99/90). Deleting the
+        // retrieval rules or their falsifying tests drops them well below these floors;
+        // the global floors stay untouched.
+        'packages/ir/src/gates/**': {
+          statements: 90,
+          branches: 80,
+          functions: 92,
+          lines: 91,
+        },
+        'packages/ir/src/capabilities.ts': {
+          statements: 91,
+          branches: 84,
+          functions: 92,
+          lines: 90,
+        },
+        'packages/ir/src/build.ts': {
+          statements: 79,
+          branches: 58,
+          functions: 92,
+          lines: 85,
+        },
       },
     },
   },

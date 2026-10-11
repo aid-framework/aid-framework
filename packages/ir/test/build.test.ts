@@ -83,9 +83,18 @@ describe('buildIR', () => {
   });
 
   it('marks every deferred collection present and empty, never undefined', () => {
-    for (const collection of [...DEFERRED_SECTIONS, ...IR_ONLY_COLLECTIONS]) {
+    for (const section of DEFERRED_SECTIONS) {
+      expect(ir[section], section).toEqual([]);
+    }
+  });
+
+  it('leaves the IR-only collection empty until retrieval content declares it', () => {
+    // `embeddings` has no spec section: it is derived from the embedding models and
+    // retrievers a spec declares, so `full.yaml` populates nothing here.
+    for (const collection of IR_ONLY_COLLECTIONS) {
       expect(ir[collection], collection).toEqual([]);
     }
+    expect(buildFixture('retrieval.yaml').ir.embeddings.length).toBeGreaterThan(0);
   });
 
   it('keeps observability and runtime as objects with Phase 0 defaults', () => {
@@ -112,7 +121,9 @@ describe('buildIR', () => {
   });
 
   it('covers every supported step kind', () => {
-    const kinds = ir.pipelines.flatMap((pipeline) => pipeline.steps.map((step) => step.kind));
+    const kinds = [...ir.pipelines, ...buildFixture('retrieval.yaml').ir.pipelines].flatMap(
+      (pipeline) => pipeline.steps.map((step) => step.kind),
+    );
     expect(new Set(kinds)).toEqual(new Set<string>(SUPPORTED_STEP_KINDS));
   });
 

@@ -17,7 +17,9 @@ import {
   DEFAULT_OBSERVABILITY,
   DEFAULT_RUNTIME,
   type EvalShape,
+  INDEX_METRICS,
   type IR,
+  isIndexMetric,
   type ModelShape,
   modelIdentity,
   type ObservabilityShape,
@@ -25,6 +27,7 @@ import {
   type PipelineShape,
   pipelineIdentity,
   promptIdentity,
+  type RetrieverShape,
   type StepShape,
   type ToolShape,
   toolIdentity,
@@ -117,7 +120,8 @@ function normalizePipeline(pipeline: PipelineShape, inherited: ObservabilityShap
 }
 
 function normalizeStep(step: StepShape): StepShape {
-  return step.kind === 'emit' ? step : { ...step, input: step.input ?? {} };
+  if (step.kind === 'emit' || step.kind === 'retrieve') return step;
+  return { ...step, input: step.input ?? {} };
 }
 
 function normalizeEval(evalShape: EvalShape): EvalShape {
@@ -188,6 +192,10 @@ export function normalizeGate(ir: IR, options: GateOptions): GateResult {
     checkModel(model, diagnostics, report);
   }
 
+  for (const retriever of normalized.retrievers) {
+    checkRetriever(retriever, normalized, diagnostics, report);
+  }
+
   return { diagnostics, suppressed: SUPPRESSED };
 }
 
@@ -212,6 +220,48 @@ function checkModel(model: ModelShape, diagnostics: IrDiagnostic[], report: Repo
       message: `the normalize gate rejected these params: model "${model.id}" requests maxTokens ${requested}, above the catalog limit of ${limit}`,
       path: ['models', model.id, 'params', 'maxTokens'],
       hint: 'lower the request, or pin a model whose limits allow it',
+    }),
+  );
+}
+
+/**
+ * A retriever's declarations have to agree with the model that embeds for it, and with
+ * the metric vocabulary. Neither is a value a generator could resolve on its own: a
+ * store whose width differs from the embedder's holds vectors a runtime cannot index,
+ * and a metric outside the vocabulary names a distance no adapter computes.
+ *
+ * The dimension rule compares only when the embedding model's width is *known* -- which
+ * it is when the model appears in the offline catalog. With one side undeclared there is
+ * nothing to be inconsistent with, so the store's own declaration stands as the only
+ * claim in the IR.
+ */
+function checkRetriever(
+  retriever: RetrieverShape,
+  ir: IR,
+  diagnostics: IrDiagnostic[],
+  report: Reporter,
+): void {
+  if (!isIndexMetric(retriever.index.metric)) {
+    diagnostics.push(
+      report.error({
+        code: IR_DIAGNOSTIC_CODES.indexMetricUnknown,
+        message: `the normalize gate rejected this index: metric "${retriever.index.metric}" is not one of ${INDEX_METRICS.join(', ')}`,
+        path: ['retrievers', retriever.id, 'index', 'metric'],
+        hint: 'declare a metric from the vocabulary, or extend it deliberately',
+      }),
+    );
+  }
+
+  const embedding = ir.embeddings.find((entry) => entry.id === retriever.embedModel);
+  const store = ir.stores.find((entry) => entry.id === retriever.store);
+  if (embedding?.dimensions === undefined || store?.dimensions === undefined) return;
+  if (embedding.dimensions === store.dimensions) return;
+  diagnostics.push(
+    report.error({
+      code: IR_DIAGNOSTIC_CODES.dimensionMismatch,
+      message: `the normalize gate rejected this store: "${store.id}" declares ${store.dimensions} dimensions, but embedding model "${embedding.id}" produces ${embedding.dimensions}`,
+      path: ['stores', store.id, 'dimensions'],
+      hint: "declare the store at the embedding model's width, or embed with a model that matches it",
     }),
   );
 }

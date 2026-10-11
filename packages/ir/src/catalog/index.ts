@@ -13,6 +13,8 @@ export interface CatalogModel {
   limits?: ModelLimits;
   /** Candidate `costProfiles` keys, most specific first. */
   costProfiles?: string[];
+  /** Vector width, for an embedding model. The normalization gate reads it. */
+  dimensions?: number;
 }
 
 export const CATALOG_VERSION: string = modelsCatalog.version;

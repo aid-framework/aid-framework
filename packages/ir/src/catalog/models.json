@@ -35,7 +35,8 @@
     "text-embedding-3-small": {
       "provider": "openai",
       "limits": { "contextTokens": 8191 },
-      "costProfiles": ["openai-text-embedding-3-small"]
+      "costProfiles": ["openai-text-embedding-3-small"],
+      "dimensions": 1536
     },
     "claude-3-5-haiku-latest": {
       "provider": "anthropic",

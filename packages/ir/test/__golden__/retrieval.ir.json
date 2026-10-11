@@ -1,0 +1,307 @@
+{
+  "agents": [],
+  "deployments": [],
+  "embeddings": [
+    {
+      "costProfile": {
+        "inputPerMTok": 0.02,
+        "outputPerMTok": 0
+      },
+      "dimensions": 1536,
+      "id": "embed",
+      "modelId": "text-embedding-3-small",
+      "provider": "fake",
+      "traits": []
+    }
+  ],
+  "evals": [
+    {
+      "dataset": {
+        "source": "file",
+        "uri": "datasets/handbook.jsonl"
+      },
+      "description": "Ranking quality and answer accuracy for the handbook retriever.",
+      "gate": {
+        "ci": true,
+        "maxRegression": 0.05,
+        "samples": 3
+      },
+      "id": "retrieval_quality",
+      "metrics": [
+        {
+          "expectDocs": [
+            "getting-started.md"
+          ],
+          "k": 3,
+          "kind": "retrieval"
+        },
+        {
+          "field": "text",
+          "kind": "exact"
+        }
+      ],
+      "target": {
+        "id": "answer_question",
+        "kind": "pipeline",
+        "qualified": "pipeline:answer_question",
+        "valid": true
+      },
+      "traits": []
+    }
+  ],
+  "guardrails": [],
+  "irVersion": "0.1.0",
+  "memory": [],
+  "models": [
+    {
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "capabilities": [
+        "json-schema"
+      ],
+      "costProfile": {
+        "inputPerMTok": 0.15,
+        "outputPerMTok": 0.6
+      },
+      "costProfileId": "openai-gpt-4o-mini",
+      "fallbacks": [],
+      "id": "answer",
+      "identity": "model:answer",
+      "limits": {
+        "contextTokens": 128000,
+        "maxOutputTokens": 16384
+      },
+      "modelId": "gpt-4o-mini",
+      "params": {
+        "maxTokens": 512,
+        "temperature": 0
+      },
+      "provider": "openai",
+      "traits": []
+    },
+    {
+      "capabilities": [
+        "embeddings"
+      ],
+      "costProfile": {
+        "inputPerMTok": 0.02,
+        "outputPerMTok": 0
+      },
+      "costProfileId": "openai-text-embedding-3-small",
+      "fallbacks": [],
+      "id": "embed",
+      "identity": "model:embed",
+      "limits": {
+        "contextTokens": 8191
+      },
+      "modelId": "text-embedding-3-small",
+      "params": {},
+      "provider": "fake",
+      "traits": []
+    },
+    {
+      "capabilities": [],
+      "fallbacks": [],
+      "id": "rerank",
+      "identity": "model:rerank",
+      "limits": {
+        "contextTokens": 128000
+      },
+      "modelId": "fake-lexical-rerank",
+      "params": {},
+      "provider": "fake",
+      "traits": []
+    }
+  ],
+  "observability": {
+    "redact": [],
+    "trace": true
+  },
+  "pipelines": [
+    {
+      "description": "Retrieve handbook excerpts, then answer from them with citations.",
+      "errorPolicy": {
+        "retries": 0
+      },
+      "id": "answer_question",
+      "identity": "pipeline:answer_question",
+      "observability": {
+        "redact": [],
+        "trace": true
+      },
+      "steps": [
+        {
+          "as": "context",
+          "kind": "retrieve",
+          "query": "{{event.question}}",
+          "retriever": "handbook"
+        },
+        {
+          "as": "answer",
+          "context": "context",
+          "input": {
+            "question": {
+              "kind": "reference",
+              "path": [
+                "event",
+                "question"
+              ]
+            }
+          },
+          "kind": "generate",
+          "model": "answer",
+          "prompt": "answer_from_handbook"
+        },
+        {
+          "event": "Answer",
+          "kind": "emit"
+        }
+      ],
+      "trigger": {
+        "kind": "http",
+        "method": "post",
+        "path": "/answer"
+      }
+    }
+  ],
+  "project": {
+    "description": "Answers handbook questions from retrieved documentation excerpts.",
+    "name": "handbook",
+    "namespace": "acme.handbook",
+    "targets": [
+      "py-fastapi"
+    ]
+  },
+  "prompts": [
+    {
+      "evals": [],
+      "examples": [],
+      "guardrails": [],
+      "id": "answer_from_handbook",
+      "identity": "prompt:answer_from_handbook@1",
+      "model": "answer",
+      "output": {
+        "kind": "structured",
+        "schema": {
+          "kind": "named",
+          "list": false,
+          "name": "Answer",
+          "resolved": true
+        }
+      },
+      "params": {},
+      "template": "Answer the question from the handbook excerpts.\n\nQuestion: {{question}}\nExcerpts: {{context}}\n",
+      "traits": [],
+      "variables": [
+        {
+          "name": "context",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "string"
+          }
+        },
+        {
+          "name": "question",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "string"
+          }
+        }
+      ],
+      "version": 1
+    }
+  ],
+  "requiredCapabilities": [
+    "http-trigger",
+    "json-schema",
+    "otel",
+    "embeddings",
+    "rerank"
+  ],
+  "retrievers": [
+    {
+      "chunking": {
+        "keepMetadata": [
+          "path"
+        ],
+        "overlap": 100,
+        "size": 800,
+        "strategy": "recursive"
+      },
+      "embedModel": "embed",
+      "id": "handbook",
+      "index": {
+        "hybrid": true,
+        "metric": "cosine"
+      },
+      "refresh": {
+        "mode": "full"
+      },
+      "rerank": {
+        "model": "rerank",
+        "topN": 3
+      },
+      "source": {
+        "glob": "**/*.md",
+        "kind": "file",
+        "uri": "./docs"
+      },
+      "store": "docs",
+      "topK": 5,
+      "traits": [
+        {
+          "name": "citations"
+        }
+      ]
+    }
+  ],
+  "runtime": {
+    "controlFlow": "plain-async"
+  },
+  "specVersion": "0.1",
+  "stores": [
+    {
+      "dimensions": 1536,
+      "id": "docs",
+      "kind": "memory",
+      "traits": []
+    },
+    {
+      "dimensions": 1536,
+      "id": "docs_pg",
+      "kind": "pgvector",
+      "traits": [],
+      "uri": "env:PGVECTOR_URL"
+    }
+  ],
+  "tools": [],
+  "types": [
+    {
+      "fields": [
+        {
+          "name": "citations",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": true,
+            "name": "string"
+          }
+        },
+        {
+          "name": "text",
+          "required": true,
+          "type": {
+            "kind": "primitive",
+            "list": false,
+            "name": "string"
+          }
+        }
+      ],
+      "id": "Answer",
+      "kind": "struct"
+    }
+  ]
+}

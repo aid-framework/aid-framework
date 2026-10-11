@@ -451,6 +451,18 @@
             "prompt": { "$ref": "#/$defs/identifier" },
             "model": { "$ref": "#/$defs/identifier" },
             "input": { "$ref": "#/$defs/stepInput" },
+            "as": { "$ref": "#/$defs/identifier" },
+            "context": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "retriever", "query", "as"],
+          "properties": {
+            "kind": { "const": "retrieve" },
+            "retriever": { "$ref": "#/$defs/identifier" },
+            "query": { "type": "string", "minLength": 1 },
             "as": { "$ref": "#/$defs/identifier" }
           }
         },
@@ -600,6 +612,16 @@
             "field": { "type": "string" },
             "model": { "type": "string" },
             "threshold": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "expectDocs", "k"],
+          "properties": {
+            "kind": { "const": "retrieval" },
+            "expectDocs": { "type": "array", "items": { "type": "string" } },
+            "k": { "type": "integer", "minimum": 1 }
           }
         }
       ]

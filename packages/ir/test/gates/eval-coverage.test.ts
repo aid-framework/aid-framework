@@ -59,4 +59,27 @@ describe('eval-coverage gate', () => {
     );
     expect(byGate[GATE].suppressed).toEqual([]);
   });
+
+  it('passes a retrieval spec whose eval carries a retrieval metric', () => {
+    expect(gateFixture('retrieval.yaml').byGate[GATE].diagnostics).toEqual([]);
+  });
+
+  it('warns once when a declared retriever no retrieval metric measures', () => {
+    const { byGate } = gateFixture('eval-retrievers-uncovered.yaml');
+    const uncovered = onlyDiagnosticWith(
+      byGate[GATE].diagnostics,
+      IR_DIAGNOSTIC_CODES.evalUncovered,
+    );
+    expect(uncovered.severity).toBe('warning');
+    expect(uncovered.path).toEqual(['retrievers']);
+    expect(uncovered.message).toContain('no eval carries a "retrieval" metric');
+    expect(uncovered.hint).toContain('metric of kind "retrieval"');
+  });
+
+  it('clears the warning once any eval measures retrieval', () => {
+    const ir = mutateIR('eval-retrievers-uncovered.yaml');
+    first(ir.evals).metrics = [{ kind: 'retrieval', expectDocs: ['getting-started.md'], k: 3 }];
+
+    expect(runGates(ir).byGate[GATE].diagnostics).toEqual([]);
+  });
 });

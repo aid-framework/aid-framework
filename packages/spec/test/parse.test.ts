@@ -78,7 +78,7 @@ describe('SourceDocument.positionAt', () => {
     if (!position) throw new Error('expected a source position for steps[0]');
 
     const line = full.text.split('\n')[position.line - 1];
-    expect(line).toContain('- tool:');
+    expect(line).toContain('- retrieve:');
   });
 });
 

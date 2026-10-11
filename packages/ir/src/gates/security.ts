@@ -6,6 +6,10 @@
  * access", never "open access". The one rule Phase 0 cannot enforce — guarding model
  * input and output with a guardrail runtime — is reported as suppressed, so it is
  * visibly deferred rather than silently passing.
+ *
+ * The same asymmetry covers retrieval: a store reaches its backing service through
+ * `env:NAME`, so a connection string that appears literally in the IR is an error. No
+ * required gate touches a database -- the rule reads the declarations, never the store.
  */
 
 import { sensitiveNames } from '../build.js';
@@ -16,6 +20,15 @@ import { type GateOptions, type GateResult, reporter, type SuppressedCheck } fro
 
 /** Builtins whose presence means the policy actually authenticates the caller. */
 const AUTHENTICATING_BUILTINS = ['isAuthenticated', 'hasRole', 'hasScope'] as const;
+
+/** The one uri form a store may carry: a reference into the environment. */
+const ENV_REFERENCE = /^env:[A-Z][A-Z0-9_]{0,63}$/;
+
+/**
+ * A uri whose authority carries userinfo, i.e. a credential inlined before the host.
+ * The userinfo cannot span a `/`, so a path segment that contains `@` is not a match.
+ */
+const URI_USERINFO = /^[a-z][a-z0-9+.-]*:\/\/[^/@\s]*@/i;
 
 const SUPPRESSED: SuppressedCheck[] = [
   {
@@ -34,6 +47,7 @@ export function securityGate(ir: IR, options: GateOptions): GateResult {
   }
 
   checkRedaction(ir, diagnostics, report);
+  checkStoreSecrets(ir, diagnostics, report);
 
   const tools = new Map(ir.tools.map((tool) => [tool.id, tool]));
   for (const pipeline of ir.pipelines) {
@@ -111,6 +125,44 @@ function checkRedactSet(
       hint: `add ${missing.join(', ')} to redact, or turn tracing off`,
     }),
   );
+}
+
+/**
+ * A retrieval store is a connection to something outside the app, so the only form a
+ * store `uri` may take is a reference into the environment. A literal DSN in the IR is
+ * a credential in the IR: it is serialized into the golden files, printed by any tool
+ * that reads them, and committed. The check is repeated here rather than left to the
+ * spec schema because the IR is a published contract that a non-TypeScript producer can
+ * write directly.
+ *
+ * A retriever's `source.uri` is legitimately a literal -- a path, or a bucket URL for
+ * the reserved kinds -- so it is not restricted to `env:`. What it may not do is inline
+ * a credential into the authority, which is what the userinfo scan catches.
+ */
+function checkStoreSecrets(ir: IR, diagnostics: IrDiagnostic[], report: Reporter): void {
+  for (const store of ir.stores) {
+    if (store.uri === undefined || ENV_REFERENCE.test(store.uri)) continue;
+    diagnostics.push(
+      report.error({
+        code: IR_DIAGNOSTIC_CODES.securityStoreSecret,
+        message: `the security gate rejected this store: "${store.id}" declares uri "${store.uri}", a literal connection string; a store reaches its backing service through env:NAME, so the value stays out of the IR`,
+        path: ['stores', store.id, 'uri'],
+        hint: 'set uri to env:<NAME> and provide the value through the environment',
+      }),
+    );
+  }
+
+  for (const retriever of ir.retrievers) {
+    if (!URI_USERINFO.test(retriever.source.uri)) continue;
+    diagnostics.push(
+      report.error({
+        code: IR_DIAGNOSTIC_CODES.securityStoreSecret,
+        message: `the security gate rejected this source: "${retriever.id}" declares a uri with an inline credential in its authority, which the IR would then carry everywhere it is written`,
+        path: ['retrievers', retriever.id, 'source', 'uri'],
+        hint: 'drop the credentials from the uri and supply them through the environment',
+      }),
+    );
+  }
 }
 
 /**

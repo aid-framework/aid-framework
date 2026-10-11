@@ -275,6 +275,83 @@ deployments:
 | 8 | Guardrails | Medium | Adopt engines; stage placement is subtle |
 | 9 | Fine-tuning pipelines, serving | Hard | **Phase 4** |
 
+### 6.3 Retrieval surface as implemented (Phase 1)
+
+§6.1 is the north star and stays that way. Spec v0.1 implements the retrieval *subset* of it — the DSL
+below is what `@aid/spec` accepts and `@aid/ir` resolves today. Tier 5 of the table above is what this
+section, §7.2's retrieval shapes, and §7.4's retrieval rules deliver; the runtime that executes it is a
+later layer.
+
+```yaml
+models:
+  embed:                             # capability value added by the retrieval surface
+    provider: fake                   # or openai | openai-compatible
+    modelId: text-embedding-3-small
+    capabilities: [embeddings]
+
+stores:                              # new top-level section
+  docs:
+    kind: memory                     # the fully supported default
+    dimensions: 1536
+  docs_pg:
+    kind: pgvector
+    uri: env:PGVECTOR_URL            # required for pgvector, forbidden for memory
+    dimensions: 1536
+
+retrievers:                          # new top-level section
+  handbook:
+    source: { kind: file, uri: ./docs, glob: "**/*.md" }
+    chunking: { strategy: recursive, size: 800, overlap: 100, keepMetadata: [path] }
+    embedModel: embed
+    store: docs
+    index: { metric: cosine, hybrid: true }
+    topK: 5
+    rerank: { model: rerank, topN: 3 }
+    refresh: { mode: full }
+    traits: [citations]
+
+evals:
+  retrieval_quality:
+    target: pipeline:answer
+    metrics:
+      - { kind: retrieval, expectDocs: [getting-started.md], k: 3 }   # added by the retrieval surface
+
+pipelines:
+  answer:
+    steps:
+      - retrieve: { retriever: handbook, query: "{{question}}", as: context }   # new step kind
+      - generate: { prompt: answer, context: context }        # binds the retrieved items + citations
+      - emit: Answer
+```
+
+**Deliberately deferred, while the schema keeps the enums** so that a spec can still name a deferred
+feature and receive a precise `spec/not-supported` diagnostic naming the phase it belongs to, rather than
+a generic schema failure:
+
+| Deferred | Why it is not in this surface |
+| --- | --- |
+| `source.kind` other than `file` (`s3`, `http`, `db`, `mcp`) | reserved; only a local file source is implemented |
+| `chunking.strategy: semantic` | needs an embedder-driven splitter, which is ingestion runtime |
+| `refresh.mode: incremental` and any `schedule` | needs change detection and a scheduled ingest loop |
+| rich `filters` expressions | needs a filter IR plus per-store translation |
+| a standalone `{kind: rerank}` **step** | reranking is a retriever option here; a step-level reranker needs its own binding semantics |
+
+`stores.kind` is `memory` or `pgvector`. `memory` is the only kind a required gate may depend on:
+**every gate runs offline**, so `pgvector` is declarable (and carries a required `env:` uri, which is also
+what keeps a literal DSN out of the IR) but is never *required* by a rule. The `aid ingest` command, the
+hosted embedding adapter, and the pgvector adapter are later layers.
+
+Two shape decisions worth stating explicitly:
+
+- **No step-level `topK` on `retrieve`.** The candidate width belongs to the retriever's index, so a
+  pipeline cannot quietly change what an eval measured.
+- **`embeddings` is derived, not declared.** A spec never writes an embedding entry: giving a model the
+  `embeddings` capability and pointing a retriever at it is what populates the IR collection. `rerank` is
+  derived the same way from a retriever that declares a reranker, so a target that cannot rerank refuses
+  the spec *before* codegen.
+
+Any spec that declares a retriever must carry at least one eval with a `retrieval` metric (§7.4).
+
 ---
 
 ## 7. The IR (Intermediate Representation)
@@ -367,6 +444,25 @@ type RetrieverShape = {
   traits: Trait[];
 };
 
+// Populated by derivation, not by a spec section: a spec gives a model the
+// `embeddings` capability and points a retriever at it (see §6.3).
+type EmbeddingShape = {
+  id: string;                      // the model alias that declares `embeddings`
+  provider: 'openai'|'openai-compatible'|'fake'|...;
+  modelId: string;                 // PINNED vendor id
+  dimensions?: number;             // must agree with every store the retriever writes to
+  costProfile?: { inputPerMTok: number; outputPerMTok: number };
+  traits: Trait[];
+};
+
+type VectorStoreShape = {
+  id: string;
+  kind: 'memory'|'pgvector'|'qdrant'|'pinecone'|'weaviate'|'custom';
+  uri?: string;                    // `env:NAME` for a hosted store; absent for `memory`
+  dimensions?: number;
+  traits: Trait[];
+};
+
 type AgentShape = {
   id: string; name: string;
   instructions: string;            // prompt ref
@@ -393,9 +489,11 @@ type PipelineShape = {
 };
 
 type StepShape =
-  | { kind: 'retrieve'; retriever: string; query: string; topK?: number; as: string }
+  | { kind: 'retrieve'; retriever: string; query: string; as: string }  // no step-level topK: see §6.3
+  | { kind: 'generate'; prompt: string; model?: string; input?: unknown; context?: string; as: string; stream?: boolean }
+  // `rerank` is reserved but NOT populated: reranking is a retriever option in
+  // Phase 1, and a standalone step needs its own binding semantics (§6.3).
   | { kind: 'rerank';   input: string; model: string; topN: number; as: string }
-  | { kind: 'generate'; prompt: string; model?: string; input?: unknown; as: string; stream?: boolean }
   | { kind: 'agent';    agent: string; input: unknown; as: string }
   | { kind: 'tool';     tool: string; input: unknown; as: string }
   | { kind: 'branch';   when: PolicyExpr; then: StepShape[]; else?: StepShape[] }
@@ -476,12 +574,16 @@ type DeploymentShape = {
 
 ### 7.4 IR validation (build-time gates)
 
-1. **Referential integrity** — every ref resolves (prompts, tools, models, retrievers, stores, memory, guardrails, pipelines).
-2. **Normalization** — model aliases resolved; defaults materialized; enums expanded; naming canonical.
-3. **Capability negotiation** — a prompt requiring `json-schema` must bind to a model declaring it; a target that cannot express cursor-style streaming or `long-context` fails loudly *before* codegen.
-4. **Cost/latency sanity** — estimated per-run cost vs. declared budgets; warn/fail on models without a `costProfile`.
-5. **Security gates** — every `write`/`destructive` tool has an `auth`; every pipeline touching untrusted input has an input guardrail; every trace config redacts declared PII fields. Fail-closed by default.
-6. **Eval coverage** — every agent/prompt marked `ci` has a dataset and at least one metric; a spec change without a linked eval warns.
+The six gates below are Phase 0's; the retrieval surface adds **exactly one retrieval rule to each**, so
+the retrieval contract is enforced by the same six gates rather than a seventh. Every rule runs offline:
+no network, no key, no database.
+
+1. **Referential integrity** — every ref resolves (prompts, tools, models, retrievers, stores, memory, guardrails, pipelines). *Retrieval:* a retriever's `store` and `embedModel` resolve, its `rerank.model` resolves if declared, a `retrieve` step's `retriever` resolves, an embedding model actually declares `embeddings`, and a `generate` step's `context` binding is in scope.
+2. **Normalization** — model aliases resolved; defaults materialized; enums expanded; naming canonical. *Retrieval:* `index.metric` is in the vocabulary, and a store's `dimensions` must agree with the embedding model that writes to it.
+3. **Capability negotiation** — a prompt requiring `json-schema` must bind to a model declaring it; a target that cannot express cursor-style streaming or `long-context` fails loudly *before* codegen. *Retrieval:* `embeddings` and `rerank` are **derived** from the IR's own content, and the target must declare each one it does not implement. `rerank` is separate from `embeddings` because a target can serve a retriever without being able to rerank.
+4. **Cost/latency sanity** — estimated per-run cost vs. declared budgets; warn/fail on models without a `costProfile`. *Retrieval:* a `retrieve` step is charged `topK` chunks × the tokens in one chunk to the embedding model that serves it, so a wide `topK` over large chunks shows up in the estimate instead of being free by omission.
+5. **Security gates** — every `write`/`destructive` tool has an `auth`; every pipeline touching untrusted input has an input guardrail; every trace config redacts declared PII fields. Fail-closed by default. *Retrieval:* a store's `uri` must be `env:NAME`, and no store or retriever may carry a literal DSN or an inline credential in its authority — a literal fails **closed**.
+6. **Eval coverage** — every agent/prompt marked `ci` has a dataset and at least one metric; a spec change without a linked eval warns. *Retrieval:* a spec that declares a retriever must carry at least one eval with a `retrieval` metric, because an `exact-match` eval only sees the answer retrieval fed into and says nothing about whether the right chunks came back.
 
 ---
 
@@ -685,6 +787,9 @@ Rules: semver everywhere; a published compatibility matrix; `aid doctor` reports
 
 ### Phase 0 — Foundations (MVP, prove the thesis)
 
+*(Complete: spec v0.1, IR v0.1, the six build-time gates, the `py-fastapi` target, and the golden-file and
+determinism tests are implemented.)*
+
 - Spec v0.1 (models, prompts, tools, one pipeline) + JSON Schema.
 - IR v0.x + validation + capability negotiation.
 - CLI: `init`, `gen --dry-run`, `validate`.
@@ -693,6 +798,13 @@ Rules: semver everywhere; a published compatibility matrix; `aid doctor` reports
 - Golden-file + determinism tests + a minimal eval harness. **Exit criteria: spec -> running traced AI endpoint with a passing eval gate.**
 
 ### Phase 1 — Retrieval + polyglot proof
+
+*(In progress. The spec + IR layer ships first because it is the frozen contract the rest of the phase
+consumes: §6.3's `stores`, `retrievers`, `retrieve` step, `embeddings` capability and `retrieval` metric
+are in the DSL and the IR, each of the six §7.4 gates carries its one retrieval rule, and `embeddings` and
+`rerank` are derived into `requiredCapabilities` so a target that cannot honour them refuses the spec
+before codegen. The retrieval runtime, `aid ingest`, the `ts-vercel` target and the conformance suite are
+the layers that follow.)*
 
 - RAG: `aid ingest`, chunking/embedding/pgvector, hybrid + rerank, citations; retrieval evals.
 - **Second target: `ts-vercel`** (Vercel AI SDK + zod).

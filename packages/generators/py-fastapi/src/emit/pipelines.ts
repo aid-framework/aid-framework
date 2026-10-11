@@ -146,11 +146,12 @@ export function renderReference(path: readonly string[]): string {
 /**
  * The inputs a step declares.
  *
- * An `emit` step takes none, so the union cannot be indexed directly; every caller
- * wants the same empty set for those rather than a branch of its own.
+ * An `emit` step takes none and a `retrieve` step carries a query instead, so the
+ * union cannot be indexed directly; every caller wants the same empty set for those
+ * rather than a branch of its own.
  */
 export function stepInputs(step: StepShape): Readonly<Record<string, StepInputValue>> {
-  return step.kind === 'emit' ? {} : step.input;
+  return step.kind === 'emit' || step.kind === 'retrieve' ? {} : step.input;
 }
 
 /** The roots a step reads, whether directly or inside a template. */

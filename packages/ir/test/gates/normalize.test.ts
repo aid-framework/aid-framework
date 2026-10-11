@@ -141,4 +141,38 @@ describe('normalize gate', () => {
     expect(stub.params).toEqual({});
     expect(stub.capabilities).toEqual([]);
   });
+
+  it('accepts the retrieval fixture as normalized', () => {
+    expect(gateFixture('retrieval.yaml').byGate.normalize.diagnostics).toEqual([]);
+  });
+
+  it('rejects a store whose dimensions contradict the embedding model', () => {
+    const mismatch = onlyDiagnosticWith(
+      gateFixture('normalize-dimensions.yaml').byGate.normalize.diagnostics,
+      IR_DIAGNOSTIC_CODES.dimensionMismatch,
+    );
+    expect(mismatch.severity).toBe('error');
+    expect(mismatch.path).toEqual(['stores', 'docs', 'dimensions']);
+    expect(mismatch.message).toContain('"docs" declares 768 dimensions');
+    expect(mismatch.message).toContain('"embed" produces 1536');
+  });
+
+  it('leaves a store with no declared width as the only claim to compare', () => {
+    const ir = mutateIR('retrieval.yaml');
+    delete first(ir.stores).dimensions;
+    expect(runGates(ir).byGate.normalize.diagnostics).toEqual([]);
+  });
+
+  it('rejects an index metric outside the vocabulary', () => {
+    const ir = mutateIR('retrieval.yaml');
+    (first(ir.retrievers).index as { metric: string }).metric = 'jaccard';
+
+    const unknown = onlyDiagnosticWith(
+      runGates(ir).byGate.normalize.diagnostics,
+      IR_DIAGNOSTIC_CODES.indexMetricUnknown,
+    );
+    expect(unknown.severity).toBe('error');
+    expect(unknown.path).toEqual(['retrievers', 'handbook', 'index', 'metric']);
+    expect(unknown.message).toContain('"jaccard" is not one of cosine, dot, l2');
+  });
 });

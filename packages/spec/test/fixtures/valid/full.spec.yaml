@@ -61,6 +61,13 @@ models:
     provider: fake
     modelId: fake-deterministic-1
     capabilities: [json-schema, tools]
+  embed:
+    provider: fake
+    modelId: text-embedding-3-small
+    capabilities: [embeddings]
+  rerank:
+    provider: fake
+    modelId: fake-lexical-rerank
 
 prompts:
   classify_ticket:
@@ -72,9 +79,13 @@ prompts:
       Subject: {{ ticket.subject }}
       Body: {{ ticket.body }}
       Locale: {{ ticket.locale }}
+      Handbook excerpts: {{ docs }}
     variables:
       ticket:
         type: Ticket
+        required: true
+      docs:
+        type: string
         required: true
     output:
       kind: structured
@@ -104,6 +115,39 @@ tools:
     idempotency: key
     auth: hasScope("customers:read")
 
+stores:
+  docs:
+    kind: memory
+    dimensions: 1536
+  docs_pg:
+    kind: pgvector
+    uri: env:PGVECTOR_URL
+    dimensions: 1536
+
+retrievers:
+  handbook:
+    source:
+      kind: file
+      uri: ./docs
+      glob: "**/*.md"
+    chunking:
+      strategy: recursive
+      size: 800
+      overlap: 100
+      keepMetadata: [path]
+    embedModel: embed
+    store: docs
+    index:
+      metric: cosine
+      hybrid: true
+    topK: 5
+    rerank:
+      model: rerank
+      topN: 3
+    refresh:
+      mode: full
+    traits: [citations]
+
 evals:
   classify_quality:
     description: Structured-output quality for the classification pipeline.
@@ -122,6 +166,9 @@ evals:
       - kind: tool-trace
         expect: [lookup_customer]
         ordered: false
+      - kind: retrieval
+        expectDocs: [getting-started.md]
+        k: 3
       - kind: cost
         max: 0.02
       - kind: latency
@@ -139,6 +186,10 @@ pipelines:
         method: post
         path: /tickets/answer
     steps:
+      - retrieve:
+          retriever: handbook
+          query: "{{ ticket.subject }}"
+          as: docs
       - tool:
           tool: lookup_customer
           input:
@@ -149,6 +200,7 @@ pipelines:
           input:
             ticket: "{{ ticket }}"
             customer: "{{ customer }}"
+          context: docs
           as: answer
       - emit:
           event: Answer

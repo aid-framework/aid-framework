@@ -9,24 +9,24 @@ import { describe, expect, it } from 'vitest';
 import { serializeIR } from '../src/index.js';
 import { buildFixture, goldenText } from './helpers.js';
 
-const GOLDEN = 'full.ir.json';
+const GOLDENS = [
+  { golden: 'full.ir.json', spec: 'full.yaml' },
+  { golden: 'retrieval.ir.json', spec: 'retrieval.yaml' },
+] as const;
 
-describe('canonical IR golden', () => {
+describe.each(GOLDENS)('canonical IR golden: $golden', ({ golden, spec }) => {
   it('matches the committed golden byte for byte', () => {
-    const actual = serializeIR(buildFixture('full.yaml').ir);
-    expect(actual).toBe(goldenText(GOLDEN));
+    expect(serializeIR(buildFixture(spec).ir)).toBe(goldenText(golden));
   });
 
   it('is already canonical on disk: LF endings and exactly one trailing newline', () => {
-    const golden = goldenText(GOLDEN);
-    expect(golden).not.toContain('\r');
-    expect(golden.endsWith('\n')).toBe(true);
-    expect(golden.endsWith('\n\n')).toBe(false);
+    const text = goldenText(golden);
+    expect(text).not.toContain('\r');
+    expect(text.endsWith('\n')).toBe(true);
+    expect(text.endsWith('\n\n')).toBe(false);
   });
 
   it('is byte-identical across two builds of the same spec', () => {
-    expect(serializeIR(buildFixture('full.yaml').ir)).toBe(
-      serializeIR(buildFixture('full.yaml').ir),
-    );
+    expect(serializeIR(buildFixture(spec).ir)).toBe(serializeIR(buildFixture(spec).ir));
   });
 });
