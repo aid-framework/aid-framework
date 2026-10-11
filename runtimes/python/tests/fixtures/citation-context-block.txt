@@ -1,0 +1,5 @@
+[1] a.md#0 :: first passage
+
+[2] b.md#0 :: second passage
+
+[3] a.md#1 :: third passage

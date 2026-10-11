@@ -8,6 +8,8 @@ documents rather than about chunking.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from aid_runtime.retrieval import (
     Citation,
     RetrievalResult,
@@ -16,6 +18,11 @@ from aid_runtime.retrieval import (
     cite,
 )
 from retrieval_support import chunk, result
+
+#: The exact block ``assemble_context`` renders for the three-passage corpus below,
+#: byte-for-byte and with ``\n`` endings. The renderer emits no trailing newline, so
+#: this fixture has none either.
+CONTEXT_BLOCK = Path(__file__).parent / "fixtures" / "citation-context-block.txt"
 
 
 def test_a_citation_is_derived_from_the_chunk_it_names() -> None:
@@ -91,6 +98,29 @@ def test_the_context_numbers_each_excerpt_by_its_rank() -> None:
 
     assert "[1] a.md#0 :: first passage" in context
     assert "[2] b.md#0 :: second passage" in context
+
+
+def test_the_whole_rendered_context_block_matches_its_golden() -> None:
+    # The substrings above pin the format and the ranks one excerpt at a time. This
+    # pins the whole block, separator included, and binds the public surface with it:
+    # ``RetrievalResult.context`` is the string a prompt actually receives, and a
+    # substring assertion would still pass if the separator stopped being a blank line.
+    # The third passage sits at rank 3 while carrying chunk index 1, so the golden can
+    # tell the rank that precedes an excerpt from the index appended to its citation.
+    retrieved = result(
+        "q",
+        [
+            chunk("a.md", "first passage"),
+            chunk("b.md", "second passage"),
+            chunk("a.md", "third passage", index=1),
+        ],
+    )
+
+    golden = CONTEXT_BLOCK.read_text(encoding="utf-8")
+
+    assert not golden.endswith("\n")  # the renderer emits no trailing newline
+    assert assemble_context(retrieved.items) == golden
+    assert retrieved.context == golden
 
 
 def test_an_empty_context_is_empty_rather_than_a_bare_header() -> None:
