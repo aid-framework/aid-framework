@@ -72,7 +72,7 @@ jobs:
       # 3.11 deliberately: it is the floor declared in pyproject.toml and the
       # target of the mypy and ruff configs, so the floor stays proven.
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -109,7 +109,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -178,7 +178,7 @@ jobs:
           cache: pnpm
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
