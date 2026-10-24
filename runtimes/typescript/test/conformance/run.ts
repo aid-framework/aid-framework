@@ -859,9 +859,15 @@ function compareMode(corpus: Corpus, pythonPath: string, typescriptPath: string)
     ...comparison(corpus, python, typescript),
   ];
   const total = corpus.cases.length;
+  // The counts are compared, not decorated: printing `==` when the counts disagree would
+  // have the first line of a red job assert the very equality that just failed, and a
+  // single relation for both joints would assert a false one in the other direction when
+  // the two runtimes agree with each other but not with the corpus.
+  const runtimesAgree = python.cases.length === typescript.cases.length;
+  const corpusAgrees = typescript.cases.length === total;
   line(`corpus: ${CORPUS_PATH}`);
   line(
-    `population: python ${python.cases.length} == typescript ${typescript.cases.length} == corpus ${total}`,
+    `population: python ${python.cases.length} ${runtimesAgree ? '==' : '!='} typescript ${typescript.cases.length} ${corpusAgrees ? '==' : '!='} corpus ${total}`,
   );
   if (total === 0) {
     line('  the corpus is empty; a comparison of nothing is a failure');
