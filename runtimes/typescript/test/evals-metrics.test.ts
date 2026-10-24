@@ -36,6 +36,29 @@ describe('normalize', () => {
   it('leaves inner punctuation alone', () => {
     expect(normalize('New  York, NY')).toBe('new york, ny');
   });
+
+  it('collapses a long run of spaces in one pass', () => {
+    // Predictions are model output, so their length is attacker-controlled. A `\s+`
+    // replace is linear per run but the run here is long enough that the result, not
+    // just the timing, is the assertion: exactly one space survives.
+    const run = ' '.repeat(200_000);
+    expect(normalize(`left${run}right`)).toBe('left right');
+    expect(normalize(`  ${run}  trimmed${run}  `)).toBe('trimmed');
+  });
+
+  it('strips a long run of leading and trailing punctuation', () => {
+    // The leading/trailing strips are the other quantifiers that could backtrack. Both
+    // ends consume a long run of the same six characters and leave the interior alone.
+    const run = ' .!?\'"'.repeat(20_000);
+    expect(normalize(`${run}center${run}`)).toBe('center');
+    expect(normalize(`${run}center. Stay${run}`)).toBe('center. stay');
+  });
+
+  it('treats every character in the strip set as punctuation at both ends', () => {
+    expect(normalize('...Paris!!!')).toBe('paris');
+    expect(normalize('?"\' Paris \'"?')).toBe('paris');
+    expect(normalize('. . .')).toBe('');
+  });
 });
 
 describe('MetricResult', () => {

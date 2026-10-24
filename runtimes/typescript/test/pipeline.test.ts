@@ -175,6 +175,36 @@ describe('Pipeline', () => {
     );
   });
 
+  it('names the type that actually reached the error, which is never None', async () => {
+    // `null` returns an empty context above, so the message can only describe a list,
+    // a primitive or a function. Naming that type keeps the diagnostic the reference
+    // produced, and asserting it keeps the dead arm from coming back.
+    const cases: readonly (readonly [unknown, string])[] = [
+      [[1, 2, 3], 'list'],
+      [42, 'number'],
+      ['text', 'string'],
+      [true, 'boolean'],
+      [() => undefined, 'function'],
+    ];
+
+    for (const [returned, pythonType] of cases) {
+      const pipeline = new Pipeline([
+        [
+          'bad',
+          // biome-ignore lint/suspicious/noExplicitAny: deliberately violating the contract
+          () => returned as any,
+        ],
+      ]);
+
+      const thrown = await pipeline.run().catch((error: unknown) => error);
+
+      expect(thrown).toBeInstanceOf(PipelineError);
+      expect((thrown as Error).message).toBe(
+        `step 'bad' failed: a pipeline step must return a PipelineContext, a mapping or None, got ${pythonType}`,
+      );
+    }
+  });
+
   it('ends early and successfully on StopPipeline, keeping the work done so far', async () => {
     const reached: string[] = [];
     const pipeline = new Pipeline([

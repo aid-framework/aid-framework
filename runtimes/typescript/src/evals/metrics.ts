@@ -14,8 +14,6 @@ import { repr } from '../internal/json.js';
 import { runStructured, structuredOutput } from '../structured.js';
 import type { EvalCase } from './dataset.js';
 
-const WHITESPACE = /\s+/g;
-
 /** One metric's verdict on one prediction. */
 export class MetricResult {
   readonly metric: string;
@@ -54,17 +52,69 @@ export interface Metric {
   score(entry: EvalCase, prediction: string): Promise<MetricResult>;
 }
 
-/** Casefold and collapse whitespace, then strip surrounding punctuation. */
+/**
+ * Casefold and collapse whitespace, then strip surrounding punctuation.
+ *
+ * None of this is written with a regex, and that is deliberate: a prediction is
+ * model output and therefore arbitrary-length input, while every spelling with a
+ * quantifier (`/\s+/g`, `/^[ .!?'"]+/`, `/[ .!?'"]+$/`) costs steps proportional to
+ * the run it consumes. A forward pass and a scan from each end are linear whatever
+ * arrives, and they produce exactly the strings the collapsed regexes did.
+ */
 export function normalize(text: string): string {
   // Upper-then-lower approximates Python's `str.casefold()`, which folds further than
   // `toLowerCase()` alone: 'ß' folds to 'ss', 'ſ' to 's', 'Σ' to 'σ'.
-  return text
-    .trim()
-    .replace(WHITESPACE, ' ')
-    .toUpperCase()
-    .toLowerCase()
-    .replace(/^[ .!?'"]+/, '')
-    .replace(/[ .!?'"]+$/, '');
+  const folded = collapseWhitespace(text.trim()).toUpperCase().toLowerCase();
+  let start = 0;
+  let end = folded.length;
+  while (start < end && PUNCTUATION.has(folded[start] as string)) start += 1;
+  while (end > start && PUNCTUATION.has(folded[end - 1] as string)) end -= 1;
+  return folded.slice(start, end);
+}
+
+/** The characters stripped from either end after folding. */
+const PUNCTUATION: ReadonlySet<string> = new Set([' ', '.', '!', '?', "'", '"']);
+
+/**
+ * The code points JavaScript's `\s` matches, as inclusive ranges.
+ *
+ * Spelled out rather than delegated to a regex so that {@link collapseWhitespace} is
+ * a single pass: the set is fixed, so a table lookup is all a collapse needs.
+ */
+const WHITESPACE_RANGES: readonly (readonly [number, number])[] = [
+  [0x09, 0x0d],
+  [0x20, 0x20],
+  [0xa0, 0xa0],
+  [0x1680, 0x1680],
+  [0x2000, 0x200a],
+  [0x2028, 0x2029],
+  [0x202f, 0x202f],
+  [0x205f, 0x205f],
+  [0x3000, 0x3000],
+  [0xfeff, 0xfeff],
+];
+
+function isWhitespace(codePoint: number): boolean {
+  for (const [low, high] of WHITESPACE_RANGES) {
+    if (codePoint >= low && codePoint <= high) return true;
+  }
+  return false;
+}
+
+/** Collapse every internal run of whitespace to one space, in a single pass. */
+function collapseWhitespace(text: string): string {
+  let out = '';
+  let pending = false;
+  for (const char of text) {
+    if (isWhitespace(char.codePointAt(0) as number)) {
+      pending = true;
+      continue;
+    }
+    if (pending && out.length > 0) out += ' ';
+    pending = false;
+    out += char;
+  }
+  return out;
 }
 
 /** Normalized string equality against `case.expected`. */

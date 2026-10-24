@@ -201,6 +201,21 @@ describe('FileConnector documents', () => {
     expect(documents.map((document) => document.docId)).toEqual(['a.md']);
   });
 
+  it('answers a pathologically nested glob without backtracking', async () => {
+    // A glob is configuration input, and `**/` repeated compiles to a nested quantifier,
+    // which made a non-matching tree exponential to reject. The assertion is the value:
+    // the deep path is found exactly when the pattern names it, and the missing file is
+    // rejected quickly rather than eventually.
+    const root = corpus({ 'a/b/c/d/deep.md': 'body', 'a/b/c/d/other.txt': 'body' });
+    const pattern = `${'**/'.repeat(12)}deep.md`;
+
+    const found = await new FileConnector(root, { glob: pattern }).documents();
+    const missing = await new FileConnector(root, { glob: `${'**/'.repeat(12)}absent.md` });
+
+    expect(found.map((document) => document.docId)).toEqual(['a/b/c/d/deep.md']);
+    expect(await missing.documents()).toEqual([]);
+  });
+
   it('is idempotent across two reads', async () => {
     const connector = new FileConnector(corpus({ 'a.md': 'body' }));
 

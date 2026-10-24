@@ -260,6 +260,20 @@ describe('OpenAICompatibleEmbedder embed', () => {
     expect(at(calls, 0).url).toBe('https://api.test/v1/embeddings');
   });
 
+  it('strips a long trailing run of slashes in a single backward scan', async () => {
+    // Same shape as the chat adapter: the base URL is configuration input, so a
+    // slash-anchored regex is polynomial here. Asserting the resolved URL is what
+    // distinguishes a linear strip from a quadratic one that happens to finish.
+    const { fetchImpl, calls } = stubFetch([body([vector(1)])]);
+
+    await new OpenAICompatibleEmbedder({
+      baseUrl: `https://api.test/v1${'/'.repeat(65_536)}`,
+      fetchImpl,
+    }).embed(['hello'], { model: MODEL });
+
+    expect(at(calls, 0).url).toBe('https://api.test/v1/embeddings');
+  });
+
   it('sends a bearer token only when an api key is set', async () => {
     const withKey = stubFetch([body([vector(1)])]);
     const withoutKey = stubFetch([body([vector(1)])]);

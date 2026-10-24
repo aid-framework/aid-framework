@@ -12,6 +12,7 @@
  */
 
 import { ProviderError, ProviderResponseError } from '../errors.js';
+import { stripTrailingSlashes } from '../internal/text.js';
 import {
   type Capability,
   type CompletionRequest,
@@ -88,7 +89,7 @@ export class OpenAICompatibleProvider implements Provider {
   private _closed = false;
 
   constructor(options: OpenAICompatibleOptions = {}) {
-    const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
+    const baseUrl = stripTrailingSlashes(options.baseUrl ?? DEFAULT_BASE_URL);
     if (!/^https?:\/\/[^/]/i.test(baseUrl)) {
       throw new RangeError(
         `base_url must be an absolute http(s) URL, got ${JSON.stringify(baseUrl)}`,

@@ -214,6 +214,30 @@ describe('OpenAICompatibleProvider', () => {
     expect(at(stub.calls, 0).url).toBe('https://api.openai.com/v1/chat/completions');
   });
 
+  it('strips a long trailing run of slashes from the base URL', async () => {
+    // The slash run is configuration input. A regex anchored on it is polynomial in the
+    // number of slashes, so this asserts the resolved URL for a run long enough that a
+    // quadratic strip would be visible rather than merely slow.
+    const slashes = '/'.repeat(65_536);
+    const stub = stubFetch([{ body: OK_BODY }]);
+    await provider(stub.fetch, { baseUrl: `https://api.test/v1${slashes}` }).complete(
+      ask('capital?'),
+      smallSpec(),
+    );
+
+    expect(at(stub.calls, 0).url).toBe('https://api.test/v1/chat/completions');
+  });
+
+  it('strips every slash, not just the trailing run, exactly as the reference does', async () => {
+    // `https://` has no non-slash after the scheme, so the strip leaves `https:` and the
+    // absolute-URL check rejects it. The message is the assertion: it names the stripped
+    // value, which pins the strip semantics rather than just the rejection.
+    const stub = stubFetch([{ body: OK_BODY }]);
+
+    expect(() => provider(stub.fetch, { baseUrl: 'https://' })).toThrow(/got "https:"/);
+    expect(stub.calls).toEqual([]);
+  });
+
   it('sends the model, the messages and no unset option', async () => {
     const stub = stubFetch([{ body: OK_BODY }]);
     await provider(stub.fetch).complete(ask('capital?'), smallSpec());

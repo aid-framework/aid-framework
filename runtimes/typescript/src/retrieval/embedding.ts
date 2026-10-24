@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto';
 
 import { ConfigurationError, ProviderError, ProviderResponseError } from '../errors.js';
 import { repr } from '../internal/json.js';
+import { stripTrailingSlashes } from '../internal/text.js';
 import { DEFAULT_BASE_URL, type FetchLike } from '../providers/http.js';
 import { TokenUsage } from '../types.js';
 import type { PinnedEmbedding } from './types.js';
@@ -166,7 +167,7 @@ export class OpenAICompatibleEmbedder implements Embedder {
     if (maxAttempts < 1) {
       throw new ConfigurationError('max_attempts must be at least 1');
     }
-    this._baseUrl = baseUrl.replace(/\/+$/, '');
+    this._baseUrl = stripTrailingSlashes(baseUrl);
     this._apiKey = options.apiKey;
     this._name = options.name ?? 'openai-compatible-embedder';
     this._maxAttempts = maxAttempts;

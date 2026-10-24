@@ -93,11 +93,17 @@ function asContext(value: unknown): PipelineContext {
   if (typeof value === 'object' && !Array.isArray(value)) {
     return new PipelineContext({ ...(value as Record<string, unknown>) });
   }
+  // `null` cannot reach this line -- it returned above -- so the old `NoneType` arm
+  // was unreachable and the message never named the one case it was written for.
+  // What does reach it is a list, a primitive or a function, and those are what the
+  // message now names.
   throw new PipelineError(
-    `a pipeline step must return a PipelineContext, a mapping or None, got ${
-      value === null ? 'NoneType' : typeof value
-    }`,
+    `a pipeline step must return a PipelineContext, a mapping or None, got ${describeValue(value)}`,
   );
+}
+
+function describeValue(value: unknown): string {
+  return Array.isArray(value) ? 'list' : typeof value;
 }
 
 /** Runs named steps in order, tracing each one. */

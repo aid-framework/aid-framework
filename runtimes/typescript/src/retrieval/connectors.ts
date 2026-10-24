@@ -30,12 +30,27 @@ import type { SourceKind, SourceSpec } from './types.js';
 /**
  * Compile a `*`/`**`/`?` glob into a matcher over POSIX relative paths.
  *
- * A regex is easier to reason about than a hand-rolled matcher here, and the
- * supported syntax is spelled out rather than approximated: anything beyond `*`,
- * `**` and `?` is matched literally.
+ * This used to build a regex, which is the compact spelling and the unsafe one: a glob
+ * is configuration input, and a double-star-plus-slash group compiles to a nested
+ * quantifier -- a star class inside a repeated group -- so a pattern with a dozen such
+ * groups costs a pathologically large number of steps to *fail* against a deep path.
+ * A glob repeating that group and pointing at a file the tree does not contain is an
+ * outage, not a typo.
+ *
+ * So this walks pattern tokens against positions instead: one pass per token over the
+ * path, no backtracking, `O(tokens * length)` in the worst case regardless of shape.
+ * The supported syntax is unchanged and still spelled out rather than approximated --
+ * anything beyond `*`, `**` and `?` matches literally.
  */
-function globToRegExp(pattern: string): RegExp {
-  let out = '';
+type GlobToken =
+  | { readonly kind: 'literal'; readonly char: string }
+  | { readonly kind: 'any-one' }
+  | { readonly kind: 'star' }
+  | { readonly kind: 'globstar' }
+  | { readonly kind: 'globstar-segment' };
+
+function tokenizeGlob(pattern: string): readonly GlobToken[] {
+  const tokens: GlobToken[] = [];
   for (let index = 0; index < pattern.length; index += 1) {
     const char = pattern[index] as string;
     if (char === '*') {
@@ -43,20 +58,72 @@ function globToRegExp(pattern: string): RegExp {
         index += 1;
         if (pattern[index + 1] === '/') {
           index += 1;
-          out += '(?:[^/]*/)*';
+          tokens.push({ kind: 'globstar-segment' });
         } else {
-          out += '.*';
+          tokens.push({ kind: 'globstar' });
         }
       } else {
-        out += '[^/]*';
+        tokens.push({ kind: 'star' });
       }
     } else if (char === '?') {
-      out += '[^/]';
+      tokens.push({ kind: 'any-one' });
     } else {
-      out += char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      tokens.push({ kind: 'literal', char });
     }
   }
-  return new RegExp(`^${out}$`);
+  return tokens;
+}
+
+function compileGlob(pattern: string): (path: string) => boolean {
+  const tokens = tokenizeGlob(pattern);
+  return (path: string): boolean => {
+    let reachable: boolean[] = new Array<boolean>(path.length + 1).fill(false);
+    reachable[0] = true;
+    for (const token of tokens) {
+      const next = new Array<boolean>(path.length + 1).fill(false);
+      switch (token.kind) {
+        case 'literal':
+          for (let end = 1; end <= path.length; end += 1) {
+            next[end] = reachable[end - 1] === true && path[end - 1] === token.char;
+          }
+          break;
+        case 'any-one':
+          for (let end = 1; end <= path.length; end += 1) {
+            next[end] = reachable[end - 1] === true && path[end - 1] !== '/';
+          }
+          break;
+        case 'star':
+          // Zero or more non-slash characters: stay put, or extend a run that has
+          // already stayed inside one segment.
+          for (let end = 0; end <= path.length; end += 1) {
+            const extendsRun = end > 0 && next[end - 1] === true && path[end - 1] !== '/';
+            next[end] = reachable[end] === true || extendsRun;
+          }
+          break;
+        case 'globstar':
+          // Zero or more of any character, slashes included.
+          for (let end = 0; end <= path.length; end += 1) {
+            const extendsRun = end > 0 && next[end - 1] === true;
+            next[end] = reachable[end] === true || extendsRun;
+          }
+          break;
+        case 'globstar-segment':
+          // `(?:[^/]*/)*`: zero or more whole segments, so it lands on any boundary
+          // that follows a slash, including the one it started on.
+          {
+            let anyBefore = false;
+            for (let end = 0; end <= path.length; end += 1) {
+              const lands = anyBefore && end > 0 && path[end - 1] === '/';
+              next[end] = reachable[end] === true || lands;
+              if (reachable[end] === true) anyBefore = true;
+            }
+          }
+          break;
+      }
+      reachable = next;
+    }
+    return reachable[path.length] === true;
+  };
 }
 
 /** One document read from a source, before chunking. */
@@ -130,7 +197,7 @@ export class FileConnector implements Connector {
 
   private paths(): readonly string[] {
     const pattern = this._glob ?? '**/*';
-    const matcher = globToRegExp(pattern);
+    const matcher = compileGlob(pattern);
     const found: string[] = [];
     const walk = (absolute: string): void => {
       for (const entry of readdirSync(absolute, { withFileTypes: true })) {
@@ -141,7 +208,7 @@ export class FileConnector implements Connector {
         }
         if (!entry.isFile()) continue;
         if (entry.name.startsWith('.')) continue;
-        if (!matcher.test(this.docId(child))) continue;
+        if (!matcher(this.docId(child))) continue;
         found.push(child);
       }
     };
