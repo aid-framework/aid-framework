@@ -1,0 +1,34 @@
+{
+  "name": "@aid/runtime",
+  "version": "0.0.0",
+  "description": "AID runtime for TypeScript: pinned-model gateway, prompt registry, tool dispatch, pipelines, structured output, eval gates and retrieval.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "zod": "^4.1.12"
+  }
+}

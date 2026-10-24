@@ -16,6 +16,8 @@
     "packages/*/test/**/*.ts",
     "packages/generators/*/src/**/*.ts",
     "packages/generators/*/test/**/*.ts",
+    "runtimes/typescript/src/**/*.ts",
+    "runtimes/typescript/test/**/*.ts",
     "scripts/**/*.mjs"
   ]
 }
