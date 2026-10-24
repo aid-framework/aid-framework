@@ -194,6 +194,22 @@ importers:
         specifier: ^2.9.1
         version: 2.9.1
 
+  examples/support-copilot-ts:
+    dependencies:
+      '@aid/runtime':
+        specifier: workspace:*
+        version: link:../../runtimes/typescript
+      zod:
+        specifier: ^4.1.12
+        version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.5
+        version: 26.6.5
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/cli:
     dependencies:
       '@aid/generator-py-fastapi':
@@ -202,6 +218,9 @@ importers:
       '@aid/generator-sdk':
         specifier: workspace:*
         version: link:../generator-sdk
+      '@aid/generator-ts-vercel':
+        specifier: workspace:*
+        version: link:../generators/ts-vercel
       '@aid/ir':
         specifier: workspace:*
         version: link:../ir
@@ -238,6 +257,22 @@ importers:
         specifier: workspace:*
         version: link:../../spec
     devDependencies:
+      '@types/node':
+        specifier: ^26.6.5
+        version: 26.6.5
+
+  packages/generators/ts-vercel:
+    dependencies:
+      '@aid/generator-sdk':
+        specifier: workspace:*
+        version: link:../../generator-sdk
+      '@aid/ir':
+        specifier: workspace:*
+        version: link:../../ir
+    devDependencies:
+      '@aid/spec':
+        specifier: workspace:*
+        version: link:../../spec
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.5

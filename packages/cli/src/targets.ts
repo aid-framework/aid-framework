@@ -14,26 +14,56 @@
  */
 
 import {
-  checkPlan,
+  checkPlan as checkPyFastApi,
   EVALS_INIT_PATH,
-  evalModulePath,
   PY_FASTAPI_MANIFEST,
+  evalModulePath as pyFastApiEvalModulePath,
   pyFastApiGenerator,
-  retrievalIngestModulePath,
+  retrievalIngestModulePath as pyFastApiIngestModulePath,
 } from '@aid/generator-py-fastapi';
 import {
   type Generator,
   type GeneratorManifest,
   managedRoots,
   type Plan,
-  phase0TargetCapabilities,
+  targetCapabilityDeclarations,
 } from '@aid/generator-sdk';
+import {
+  checkPlan as checkTsVercel,
+  TS_VERCEL_MANIFEST,
+  evalModulePath as tsVercelEvalModulePath,
+  tsVercelGenerator,
+  retrievalIngestModulePath as tsVercelIngestModulePath,
+  paths as tsVercelPaths,
+} from '@aid/generator-ts-vercel';
 import type { IR, TargetCapabilityDeclarations } from '@aid/ir';
 import { errorDiagnostic } from '@aid/spec';
 
 import type { CliDiagnostic } from './diagnostics.js';
 import { CLI_DIAGNOSTIC_CODES } from './diagnostics.js';
 import { parentPath } from './paths.js';
+
+/**
+ * What a generator's `checkPlan` reports, structurally.
+ *
+ * Each generator package declares its own problem type with its own code union, and they
+ * are not the same nominal type. The registry only ever reads the three fields every one
+ * of them carries, so it takes the shape rather than either generator's type.
+ */
+interface PlanProblemLike {
+  readonly code: string;
+  readonly path: string;
+  readonly message: string;
+}
+
+/**
+ * How `aid eval` and `aid ingest` run a target's generated entry points.
+ *
+ * Both commands used to assume CPython: they discover an interpreter and run `-m`. A
+ * target whose emitted modules are not Python has no such entry point, and the honest
+ * answer is a diagnostic, not a Python traceback about a missing module.
+ */
+export type TargetRunner = 'python' | 'node';
 
 export interface Target {
   /** The target id, as a spec's `project.targets` spells it. */
@@ -47,6 +77,8 @@ export interface Target {
   readonly evalsDir: string;
   readonly manifest: GeneratorManifest;
   readonly generator: Generator;
+  /** Which toolchain `aid eval` and `aid ingest` would need to run this target. */
+  readonly runner: TargetRunner;
   /** Everything that stops this target compiling the IR, as diagnostics. */
   check(ir: IR): readonly CliDiagnostic[];
   plan(ir: IR): Plan;
@@ -60,7 +92,34 @@ export interface Target {
   retrievalIngestModuleFile(retrieverId: string): string;
 }
 
-function targetFor(manifest: GeneratorManifest, generator: Generator): Target {
+/**
+ * Everything about a target the registry cannot derive from its manifest.
+ *
+ * The path helpers come from the generator package itself, so a generator that moves a
+ * file moves every command with it. `extension` is what turns a repo-relative path into
+ * the dotted module path a runner understands -- `.py` for CPython's `-m`, `.js` for the
+ * TypeScript runtime's emitted ESM.
+ */
+interface TargetModule {
+  readonly manifest: GeneratorManifest;
+  readonly generator: Generator;
+  readonly runner: TargetRunner;
+  readonly extension: string;
+  readonly evalsIndexPath: string;
+  readonly evalModulePath: (evalId: string) => string;
+  readonly retrievalIngestModulePath: (retrieverId: string) => string;
+  readonly checkPlan: (ir: IR) => readonly PlanProblemLike[];
+}
+
+function dotted(path: string, extension: string): string {
+  return path
+    .replace(new RegExp(`${extension.replace('.', '\\.')}$`), '')
+    .split('/')
+    .join('.');
+}
+
+function targetFor(module: TargetModule): Target {
+  const { manifest } = module;
   const roots = managedRoots(manifest);
   return {
     name: manifest.target,
@@ -68,15 +127,16 @@ function targetFor(manifest: GeneratorManifest, generator: Generator): Target {
     generatedDir: roots.generatedDir,
     businessDir: roots.businessDir,
     manifestPath: roots.manifestFilename,
-    evalsDir: parentPath(EVALS_INIT_PATH),
+    evalsDir: parentPath(module.evalsIndexPath),
     manifest,
-    generator,
+    generator: module.generator,
+    runner: module.runner,
     // `checkPlan` is the target's own compiler, and it throws the same problems
     // `plan` does. Reporting them through it means the CLI prints the target's codes
     // and paths verbatim: no catching, no renaming, no second opinion about what is
     // wrong with a spec.
     check(ir) {
-      return checkPlan(ir).map((problem) =>
+      return module.checkPlan(ir).map((problem) =>
         errorDiagnostic({
           code: problem.code,
           message: problem.message,
@@ -85,27 +145,55 @@ function targetFor(manifest: GeneratorManifest, generator: Generator): Target {
       );
     },
     plan(ir) {
-      return generator.plan(ir, {
+      return module.generator.plan(ir, {
         generatorVersion: manifest.version,
         root: manifest.output.root,
       });
     },
     evalModuleFile(evalId) {
-      return evalModulePath(evalId);
+      return module.evalModulePath(evalId);
     },
     evalModule(evalId) {
-      return evalModulePath(evalId).replace(/\.py$/, '').split('/').join('.');
+      return dotted(module.evalModulePath(evalId), module.extension);
     },
     retrievalIngestModuleFile(retrieverId) {
-      return retrievalIngestModulePath(retrieverId);
+      return module.retrievalIngestModulePath(retrieverId);
     },
     retrievalIngestModule(retrieverId) {
-      return retrievalIngestModulePath(retrieverId).replace(/\.py$/, '').split('/').join('.');
+      return dotted(module.retrievalIngestModulePath(retrieverId), module.extension);
     },
   };
 }
 
-export const TARGETS: readonly Target[] = [targetFor(PY_FASTAPI_MANIFEST, pyFastApiGenerator)];
+/**
+ * The registry. Order matters only for the default: the first entry is what `aid gen`,
+ * `aid validate` and `aid init` use when the caller names no target, and that has been
+ * `py-fastapi` since Phase 0.
+ */
+export const TARGETS: readonly Target[] = [
+  targetFor({
+    manifest: PY_FASTAPI_MANIFEST,
+    generator: pyFastApiGenerator,
+    runner: 'python',
+    extension: '.py',
+    evalsIndexPath: EVALS_INIT_PATH,
+    evalModulePath: pyFastApiEvalModulePath,
+    retrievalIngestModulePath: pyFastApiIngestModulePath,
+    checkPlan: checkPyFastApi,
+  }),
+  targetFor({
+    manifest: TS_VERCEL_MANIFEST,
+    generator: tsVercelGenerator,
+    runner: 'node',
+    // The generated modules are `.ts` on disk and `.js` once compiled; the dotted name
+    // is the same either way, and the path helpers hand back the file that exists.
+    extension: '.ts',
+    evalsIndexPath: tsVercelPaths.evalsIndex,
+    evalModulePath: tsVercelEvalModulePath,
+    retrievalIngestModulePath: tsVercelIngestModulePath,
+    checkPlan: checkTsVercel,
+  }),
+];
 
 const [primary] = TARGETS;
 if (primary === undefined) {
@@ -128,11 +216,15 @@ export function resolveTarget(name: string | undefined): Target | undefined {
 }
 
 /**
- * The capability declarations the build-time gates are run against. The SDK's set, so
- * the gate is judging the IR against what the generators on this machine really emit.
+ * The capability declarations the build-time gates are run against.
+ *
+ * Derived from this registry rather than from the SDK's own `phase0Generators`, because
+ * the registry is the list of generators this binary can actually run: a spec targeting
+ * `ts-vercel` must be judged against `ts-vercel`'s declaration, and the SDK cannot name
+ * a generator that depends on the SDK.
  */
 export function targetCapabilities(): TargetCapabilityDeclarations {
-  return phase0TargetCapabilities();
+  return targetCapabilityDeclarations(TARGETS.map((target) => target.manifest));
 }
 
 /** Diagnostics for a target id the registry does not know. */

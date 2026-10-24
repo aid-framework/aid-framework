@@ -2,6 +2,9 @@ packages:
   - 'packages/*'
   - 'packages/generators/*'
   - 'runtimes/typescript'
+  # The generated TypeScript example is installed like the Python one: its own
+  # project, with the runtime resolved from this workspace.
+  - 'examples/support-copilot-ts'
 
 # pnpm blocks lifecycle scripts unless allowed here, and strictDepBuilds makes
 # `pnpm install` fail while any dependency has one outstanding.

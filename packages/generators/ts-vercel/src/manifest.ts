@@ -1,0 +1,82 @@
+/**
+ * This generator's own manifest declaration.
+ *
+ * Written out here rather than aliased from `@aid/generator-sdk` for the same reason
+ * `py-fastapi` does it: the SDK's declaration is what the IR's capability gate
+ * consumes, this one is what the package emits from, and a test compares them. An
+ * alias would make that comparison vacuous.
+ *
+ * Two deliberate omissions, both recorded in the README:
+ *
+ * - `emitsAgainst.vectorStore` does not exist in the SDK's vocabulary. Declaring an
+ *   unknown `emitsAgainst` key is a hard manifest error (`manifestEmitsAgainstUnknown`),
+ *   so `pgvector` is expressed as the emitted vector-store kind instead: the IR's
+ *   `stores.<id>.kind` selects the runtime store, and this target supports `pgvector`.
+ * - `streaming` is not declared, because the emitted code does not honour it. Calling
+ *   `ModelGateway.stream` raises `FeatureDeferredError`, so declaring the capability
+ *   would be exactly the fail-open the capability discipline forbids.
+ */
+
+import {
+  type GeneratorManifest,
+  type GeneratorManifestInput,
+  parseManifest,
+  supportsIR,
+} from '@aid/generator-sdk';
+import { IR_VERSION } from '@aid/ir';
+
+export const TS_VERCEL_TARGET = 'ts-vercel';
+
+/**
+ * The capabilities this generator honours end to end. Each one has an emitter that
+ * binds it to a runtime surface: HTTP triggers become route handlers, `json-schema`
+ * becomes zod schemas, `tool-calling` becomes `Tool`/`ToolExecutor`, `otel` becomes
+ * traced gateway calls, and `embeddings`/`rerank` become retriever bindings.
+ */
+export const TS_VERCEL_CAPABILITIES = [
+  'http-trigger',
+  'json-schema',
+  'tool-calling',
+  'otel',
+  'embeddings',
+  'rerank',
+] as const;
+
+export const TS_VERCEL_MANIFEST_INPUT: GeneratorManifestInput = {
+  manifestVersion: 1,
+  name: '@aid/generator-ts-vercel',
+  target: TS_VERCEL_TARGET,
+  version: '0.1.0',
+  irRange: `^${IR_VERSION}`,
+  capabilities: [...TS_VERCEL_CAPABILITIES],
+  emitsAgainst: {
+    structuredOutput: 'zod',
+    tracing: 'otel-genai',
+  },
+  output: {
+    // A7: `app` collides with Next's own `app/` convention. The plan accepts the
+    // collision for parity with the SDK's `managedRoots` and flags it for review;
+    // it is accepted here and stated in the README rather than worked around.
+    root: 'app',
+    generatedDir: 'generated',
+    businessDir: 'business',
+  },
+};
+
+function requireValidManifest(input: GeneratorManifestInput): GeneratorManifest {
+  const { manifest, diagnostics } = parseManifest(input);
+  if (manifest === undefined) {
+    const rendered = diagnostics.map((d) => `  - ${d.code} at ${d.path}: ${d.message}`).join('\n');
+    throw new Error(`${input.name} is not a valid generator manifest:\n${rendered}`);
+  }
+  return manifest;
+}
+
+export const TS_VERCEL_MANIFEST: GeneratorManifest = requireValidManifest(TS_VERCEL_MANIFEST_INPUT);
+
+export const GENERATOR_NAME = TS_VERCEL_MANIFEST.name;
+export const GENERATOR_VERSION = TS_VERCEL_MANIFEST.version;
+
+export function supportsIrVersion(irVersion: string): boolean {
+  return supportsIR(TS_VERCEL_MANIFEST, irVersion);
+}

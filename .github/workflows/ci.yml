@@ -256,6 +256,19 @@ jobs:
       - name: End to end
         run: pnpm e2e
 
+      # The TypeScript target makes the same three claims against its own example. It needs
+      # nothing beyond the workspace install above -- no PyPI package, no web framework --
+      # which is why it joins this job rather than getting one of its own.
+      - name: End to end (TypeScript)
+        run: pnpm e2e:ts
+
+      # The root `pnpm test` is a single workspace run and the example names its suite
+      # directory `tests/`, so vitest does not collect it. This step is the only caller,
+      # and `examples/support-copilot-ts/scripts/run-tests.mjs` asserts the exact number
+      # of passing tests, so it cannot pass by running none of them.
+      - name: Example app tests (TypeScript)
+        run: pnpm --filter support-copilot-ts-example test
+
   workflows:
     name: workflows
     runs-on: ubuntu-latest
