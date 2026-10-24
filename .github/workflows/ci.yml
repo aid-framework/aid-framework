@@ -1,10 +1,11 @@
 # The `main` ruleset requires the `node`, `workflows`, `licenses` and `python`
 # contexts, with strict_required_status_checks_policy enabled, so all four block a
-# merge. The `evals` and `e2e` jobs below are deliberately *not* in that list and
-# report as advisory for a merge -- but `e2e` does gate *releases*: release.yml fires
-# on `workflow_run` for this workflow's overall conclusion, so a red `e2e` stops the
-# tag even though a merge can still proceed. `typescript` is advisory for the same
-# reason and joins that list as soon as the ruleset names it.
+# merge. The `evals`, `e2e` and `conformance` jobs below are deliberately *not* in
+# that list and report as advisory for a merge -- but `e2e` and `conformance` do gate
+# *releases*: release.yml fires on `workflow_run` for this workflow's overall
+# conclusion, so a red `e2e` or `conformance` stops the tag even though a merge can
+# still proceed. `typescript` is advisory for the same reason and joins that list as
+# soon as the ruleset names it.
 name: CI
 
 on:
@@ -323,3 +324,61 @@ jobs:
       # Apache-2.0 project: a copyleft runtime dependency is hard to unwind later.
       - name: Check dependency licences
         run: pnpm lint:licenses
+
+  # Advisory for a merge, gating for a release. One shared corpus of cases at the
+  # repository root, one thin runner per runtime, and a diff of the two verdict sets:
+  # the corpus is the contract, the runners are its two consumers, and a divergence in
+  # either direction fails the job.
+  conformance:
+    name: conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: node
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: runtimes/python/pyproject.toml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The TypeScript runner imports the compiled runtime, not the sources.
+      - name: Build
+        run: pnpm build
+
+      - name: Install the Python runtime
+        run: python -m pip install -e runtimes/python
+
+      # Each runner resolves the corpus itself and prints the path it resolved, so the
+      # log names the file both runtimes agreed on instead of asserting it in prose. An
+      # empty or unreadable corpus exits non-zero in both: a run that checks nothing is
+      # a failure, not a vacuous pass.
+      - name: Conformance (python)
+        run: python runtimes/python/tests/conformance/test_conformance.py "$RUNNER_TEMP/python-verdicts.json"
+
+      - name: Conformance (typescript)
+        run: node runtimes/typescript/test/conformance/run.ts "$RUNNER_TEMP/typescript-verdicts.json"
+
+      # The novel step. It requires equal populations, rejects an id emitted by only one
+      # runtime, rejects unknown and duplicated ids, and rejects any field that differs
+      # in a single digit -- so a case one runtime silently stopped checking fails here
+      # rather than passing quietly.
+      - name: Diff the runtimes' verdicts
+        run: >-
+          node runtimes/typescript/test/conformance/run.ts --compare
+          "$RUNNER_TEMP/python-verdicts.json" "$RUNNER_TEMP/typescript-verdicts.json"
