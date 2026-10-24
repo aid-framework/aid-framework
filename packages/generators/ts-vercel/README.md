@@ -154,7 +154,9 @@ value, non-`http` triggers, retriever `filters` and non-file sources. Each refus
 (regeneration safety across both tiers), `test/target.test.ts` (manifest, capability discipline, IR-only purity,
 layout) and [`packages/cli/test/targets.test.ts`](../../cli/test/targets.test.ts) (the registry cross-check). The
 example app is in [`examples/support-copilot-ts/`](../../../examples/support-copilot-ts/), and the end-to-end job
-runs `pnpm e2e:ts` after the Python example's `pnpm e2e` in the same `e2e` job.
+runs `pnpm e2e:ts` after the Python example's `pnpm e2e` in the same `e2e` job, then the example's own suite
+(`pnpm --filter support-copilot-ts-example test`), which the root `vitest` run does not collect and whose 7 passing
+tests are pinned by `examples/support-copilot-ts/scripts/run-tests.mjs`.
 
 Reference: [`docs/design.md` §8](../../../docs/design.md) (generator plugin model),
 [`§9`](../../../docs/design.md) (runtime libraries), [`§6.1`](../../../docs/design.md) (example spec),

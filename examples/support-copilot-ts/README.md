@@ -23,6 +23,7 @@ The committed tree **is** that generator's golden fixture, so `pnpm test` fails 
 | `tests/server.ts` | hand-written; the Node host the end-to-end job boots |
 | `tests/fake_gateway.ts` | hand-written; the deterministic gateway the tests and the host share |
 | `tests/app.test.ts`, `package.json`, `tsconfig.json` | hand-written |
+| `scripts/run-tests.mjs` | hand-written; runs the suite and pins the number of passing tests |
 | `app/docs/**`, `app/evals/*.json` | hand-written; the retriever's corpus and the two eval datasets |
 
 `app/api/tickets/answer/route.ts` is three lines of wiring: Next serves that file, and it delegates to
@@ -90,9 +91,11 @@ pnpm --filter support-copilot-ts-example test
 Seven `node:test` cases: the gateway pins its alias and its offline fallback, the business tool resolves a known
 account and falls back to an unknown one, the pipeline answers a ticket end to end, a failing tool surfaces as a
 502 naming the tool, a body that does not match the request schema is rejected, and the Next route shim serves the
-same handler the generator emitted. The suite is deliberately outside the root `vitest` config: it is the
-example's own test surface, run by the example's own script, and the root suite covers the generator that produced
-the tree.
+same handler the generator emitted. The suite sits outside the root `vitest` config, which collects
+`packages/**/test/**/*.ts` and never reaches `examples/`, so it is collected by nothing there: CI's single `e2e`
+job is its only caller, as `pnpm --filter support-copilot-ts-example test`. `scripts/run-tests.mjs` asserts that
+exactly seven tests pass, so the step cannot go green by running none of them, and `tsconfig.tests.json` includes
+`examples/*/tests/**/*.ts` so `pnpm typecheck` covers these files too.
 
 ## End to end
 
