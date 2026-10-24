@@ -152,7 +152,8 @@ value, non-`http` triggers, retriever `filters` and non-file sources. Each refus
 
 **Tests:** `test/golden.test.ts` (the example's committed tree *is* the golden fixture), `test/drift.test.ts`
 (regeneration safety across both tiers), `test/target.test.ts` (manifest, capability discipline, IR-only purity,
-layout) and [`packages/cli/test/targets.test.ts`](../../cli/test/targets.test.ts) (the registry cross-check). The
+layout), `test/text.test.ts` (the byte-level helpers, including the linear edge trim every emitter shares) and
+[`packages/cli/test/targets.test.ts`](../../cli/test/targets.test.ts) (the registry cross-check). The
 example app is in [`examples/support-copilot-ts/`](../../../examples/support-copilot-ts/), and the end-to-end job
 runs `pnpm e2e:ts` after the Python example's `pnpm e2e` in the same `e2e` job, then the example's own suite
 (`pnpm --filter support-copilot-ts-example test`), which the root `vitest` run does not collect and whose 7 passing
