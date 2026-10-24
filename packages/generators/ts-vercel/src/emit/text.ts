@@ -33,10 +33,26 @@ export function businessBanner(): string {
   ].join('\n');
 }
 
+/**
+ * Drop leading and trailing newlines.
+ *
+ * A scan, not a regex: `/^\n+/` is linear but `/\n+$/` is unanchored on the left, so a
+ * body carrying many newlines makes it retry "one-or-more, then end of input" at every
+ * position. CodeQL reads spec-derived strings as untrusted input and was right to flag
+ * that shape (`js/polynomial-redos`); this is linear in the part's length.
+ */
+function trimBlankEdges(part: string): string {
+  let start = 0;
+  while (start < part.length && part[start] === '\n') start += 1;
+  let end = part.length;
+  while (end > start && part[end - 1] === '\n') end -= 1;
+  return part.slice(start, end);
+}
+
 /** Join sections with single blank lines, dropping empty ones. */
 export function sections(...parts: readonly string[]): string {
   return parts
-    .map((part) => part.replace(/^\n+/, '').replace(/\n+$/, ''))
+    .map(trimBlankEdges)
     .filter((part) => part.length > 0)
     .join('\n\n');
 }
