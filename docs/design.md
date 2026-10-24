@@ -765,6 +765,48 @@ The part most generator projects under-invest in — and the part AI makes manda
 
 **Compatibility matrix tests** — spec x generator x runtime x model-alias versions.
 
+### Cross-target conformance suite (Phase 1)
+
+Item 6 is implemented as a shipped corpus, not as one suite per target. `conformance/corpus.json` at
+the repository root holds the cases; each runtime gets a thin runner that executes them against the
+real runtime code and emits a verdict. The corpus is the contract, the runners are its two consumers.
+Expectations are not duplicated per language, because two copies would drift and each would then
+agree with its own runtime rather than with the other one.
+
+| Path | Role |
+| --- | --- |
+| `conformance/corpus.json` | The shared cases: `id`, `op`, `description`, `input`, `expect`. |
+| `runtimes/python/tests/conformance/test_conformance.py` | Python consumer. Prints `corpus:` and `python: N/M`. |
+| `runtimes/typescript/test/conformance/run.ts` | TypeScript consumer, and the comparator. Prints `corpus:` and `typescript: N/M`. |
+| `.github/workflows/ci.yml` (`conformance`) | Runs both, then diffs the two verdict sets. |
+
+Six semantics are pinned bit for bit wherever they are numeric, all of them behaviour both runtimes
+already implement — the suite adds no runtime features:
+
+- **alias resolution** — a pinned alias to its concrete model, plus the closed failure modes.
+- **budget accounting** — cost estimates, ledger totals, and the exact breach arithmetic.
+- **prompt rendering** — padding, literal braces, missing and unused variables.
+- **structured-output repair** — the repair loop's prompts and its terminal error.
+- **retrieval ranking** — BM25, lexical rerank, and RRF scores against a fixed vector fixture.
+- **eval-gate math** — `z_critical`, the baseline comparison, and the four rationale branches.
+
+Each runner resolves the corpus path itself and prints what it resolved, and the job fails unless the
+two resolved paths are identical and the case count each runtime reports equals the count the corpus
+declares. A run that collected zero cases fails instead of passing vacuously — note that
+`node --test <empty-directory>` exits 0 and reports one passing test, which is exactly the vacuity
+this refuses. The comparator then requires equal populations, rejects an id emitted by only one
+runtime, rejects unknown and duplicated ids, and rejects a field that differs in its last digit:
+numbers compare within `1e-9`, so a drift in the sixth decimal is a failure rather than a rounding
+artefact.
+
+**Adding a case.** Add an entry to `conformance/corpus.json` and a handler branch for its `op` in both
+runners. Run both, then set `expect` to the value they agree on. If they disagree, that is a
+divergence to report and fix in the runtime — never an expectation to pick a winner for. Two things
+are deliberately left out of the corpus: message wording that differs between the runtimes for
+reasons unrelated to semantics (provider lists, known-name lists, validation-problem prose), and
+behaviour that turns on one runtime's floating-point summation, such as `statistics.stdev` returning
+an exact zero where a naive sum-of-squares returns `2e-16` over the same inputs.
+
 ---
 
 ## 13. Versioning & Compatibility

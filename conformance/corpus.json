@@ -1,0 +1,1135 @@
+{
+  "version": 1,
+  "description": "Language-neutral conformance corpus for the AID runtimes. One case per behaviour: `id` names it, `op` selects the operation, `input` is the language-neutral fixture and `expect` is the observable outcome. A runner maps `input` onto its own runtime's types, computes `observed` and compares. Floating-point results are rounded to 6 decimal places so that a case pins a behaviour rather than the last bit of one implementation's summation order; non-finite values are the strings \"inf\", \"-inf\" and \"nan\" because JSON has no representation for them. Nothing here is language-specific: no case names a module, a function or a type from either runtime.",
+  "cases": [
+    {
+      "id": "alias-pinned-resolution",
+      "op": "alias.resolve",
+      "description": "An alias resolves to the exact pinned provider model id, not to a provider default.",
+      "input": {
+        "alias": "cheap",
+        "aliases": {
+          "cheap": {
+            "name": "gpt-4o-mini-2024-07-18",
+            "provider": "fake",
+            "cost": {
+              "inputPer1kUsd": 0.00015,
+              "outputPer1kUsd": 0.0006
+            },
+            "contextWindow": 128000,
+            "maxOutputTokens": 16384,
+            "capabilities": ["structured-output", "tool-calling"]
+          },
+          "smart": {
+            "name": "gpt-4o-2024-08-06",
+            "provider": "fake",
+            "cost": {
+              "inputPer1kUsd": 0.0025,
+              "outputPer1kUsd": 0.01
+            },
+            "contextWindow": 128000,
+            "maxOutputTokens": 16384,
+            "capabilities": ["streaming", "structured-output", "tool-calling"]
+          }
+        }
+      },
+      "expect": {
+        "alias": "cheap",
+        "model": "gpt-4o-mini-2024-07-18",
+        "provider": "fake",
+        "contextWindow": 128000,
+        "maxOutputTokens": 16384,
+        "capabilities": ["structured-output", "tool-calling"],
+        "cost": {
+          "inputPer1kUsd": 0.00015,
+          "outputPer1kUsd": 0.0006
+        }
+      }
+    },
+    {
+      "id": "alias-unknown-is-closed",
+      "op": "alias.unknown",
+      "description": "The alias table is closed: an unknown alias is a configuration error that lists the pinned aliases, never a pass-through.",
+      "input": {
+        "alias": "frontier",
+        "aliases": {
+          "cheap": {
+            "name": "gpt-4o-mini-2024-07-18",
+            "provider": "fake",
+            "cost": {
+              "inputPer1kUsd": 0.00015,
+              "outputPer1kUsd": 0.0006
+            },
+            "contextWindow": 128000,
+            "maxOutputTokens": 16384,
+            "capabilities": ["structured-output", "tool-calling"]
+          },
+          "smart": {
+            "name": "gpt-4o-2024-08-06",
+            "provider": "fake",
+            "cost": {
+              "inputPer1kUsd": 0.0025,
+              "outputPer1kUsd": 0.01
+            },
+            "contextWindow": 128000,
+            "maxOutputTokens": 16384,
+            "capabilities": ["streaming", "structured-output", "tool-calling"]
+          }
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "unknown-alias",
+          "message": "unknown model alias 'frontier'; pinned aliases: cheap, smart"
+        }
+      }
+    },
+    {
+      "id": "alias-capability-missing",
+      "op": "alias.require",
+      "description": "A required capability the pinned model does not declare fails loudly and names it.",
+      "input": {
+        "alias": "cheap",
+        "capabilities": ["structured-output", "streaming"],
+        "aliases": {
+          "cheap": {
+            "name": "gpt-4o-mini-2024-07-18",
+            "provider": "fake",
+            "cost": {
+              "inputPer1kUsd": 0.00015,
+              "outputPer1kUsd": 0.0006
+            },
+            "contextWindow": 128000,
+            "maxOutputTokens": 16384,
+            "capabilities": ["structured-output", "tool-calling"]
+          },
+          "smart": {
+            "name": "gpt-4o-2024-08-06",
+            "provider": "fake",
+            "cost": {
+              "inputPer1kUsd": 0.0025,
+              "outputPer1kUsd": 0.01
+            },
+            "contextWindow": 128000,
+            "maxOutputTokens": 16384,
+            "capabilities": ["streaming", "structured-output", "tool-calling"]
+          }
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "capability-mismatch",
+          "message": "model alias 'cheap' does not support: streaming"
+        }
+      }
+    },
+    {
+      "id": "alias-table-sorted",
+      "op": "alias.table",
+      "description": "The visible alias table is sorted, so a diagnostic about it is stable regardless of declaration order.",
+      "input": {
+        "aliases": {
+          "smart": {
+            "name": "gpt-4o-2024-08-06",
+            "provider": "fake",
+            "cost": {
+              "inputPer1kUsd": 0.0025,
+              "outputPer1kUsd": 0.01
+            },
+            "contextWindow": 128000,
+            "maxOutputTokens": 16384,
+            "capabilities": ["streaming", "structured-output", "tool-calling"]
+          },
+          "cheap": {
+            "name": "gpt-4o-mini-2024-07-18",
+            "provider": "fake",
+            "cost": {
+              "inputPer1kUsd": 0.00015,
+              "outputPer1kUsd": 0.0006
+            },
+            "contextWindow": 128000,
+            "maxOutputTokens": 16384,
+            "capabilities": ["structured-output", "tool-calling"]
+          }
+        }
+      },
+      "expect": {
+        "aliases": ["cheap", "smart"]
+      }
+    },
+    {
+      "id": "budget-cost-estimate",
+      "op": "budget.estimate",
+      "description": "A call's price is per-1k-token pricing over the reported usage, rounded to six decimals.",
+      "input": {
+        "cost": {
+          "inputPer1kUsd": 0.0025,
+          "outputPer1kUsd": 0.01
+        },
+        "usage": {
+          "inputTokens": 1200,
+          "outputTokens": 400
+        }
+      },
+      "expect": {
+        "costUsd": 0.007
+      }
+    },
+    {
+      "id": "budget-ledger-summary",
+      "op": "budget.ledger",
+      "description": "The ledger accumulates every charge, total tokens, and per-model spend.",
+      "input": {
+        "cost": {
+          "inputPer1kUsd": 0.0025,
+          "outputPer1kUsd": 0.01
+        },
+        "budget": null,
+        "charges": [
+          {
+            "alias": "cheap",
+            "model": "gpt-4o-mini-2024-07-18",
+            "provider": "fake",
+            "inputTokens": 1000,
+            "outputTokens": 500
+          },
+          {
+            "alias": "cheap",
+            "model": "gpt-4o-mini-2024-07-18",
+            "provider": "fake",
+            "inputTokens": 1000,
+            "outputTokens": 500
+          },
+          {
+            "alias": "smart",
+            "model": "gpt-4o-2024-08-06",
+            "provider": "fake",
+            "inputTokens": 2000,
+            "outputTokens": 1000
+          }
+        ]
+      },
+      "expect": {
+        "error": {
+          "kind": "no-error",
+          "message": ""
+        },
+        "summary": {
+          "calls": 3,
+          "inputTokens": 4000,
+          "outputTokens": 2000,
+          "costUsd": 0.03,
+          "byModel": {
+            "gpt-4o-2024-08-06": 0.015,
+            "gpt-4o-mini-2024-07-18": 0.015
+          }
+        }
+      }
+    },
+    {
+      "id": "budget-usd-exceeded",
+      "op": "budget.ledger",
+      "description": "A USD ceiling crossed after charging reports the overspend, and the ledger still shows the spend that crossed it.",
+      "input": {
+        "cost": {
+          "inputPer1kUsd": 0.0025,
+          "outputPer1kUsd": 0.01
+        },
+        "budget": {
+          "maxUsd": 0.01,
+          "scope": "nightly"
+        },
+        "charges": [
+          {
+            "alias": "smart",
+            "model": "gpt-4o-2024-08-06",
+            "provider": "fake",
+            "inputTokens": 2000,
+            "outputTokens": 1000
+          }
+        ]
+      },
+      "expect": {
+        "error": {
+          "kind": "budget-exceeded",
+          "message": "budget 'nightly' exceeded: limit $0.010000, spent $0.015000 (over by $0.005000)"
+        },
+        "summary": {
+          "calls": 1,
+          "inputTokens": 2000,
+          "outputTokens": 1000,
+          "costUsd": 0.015,
+          "byModel": {
+            "gpt-4o-2024-08-06": 0.015
+          }
+        }
+      }
+    },
+    {
+      "id": "budget-token-exceeded",
+      "op": "budget.ledger",
+      "description": "A token ceiling crossed after charging reports the overflow in tokens, not dollars.",
+      "input": {
+        "cost": {
+          "inputPer1kUsd": 0.0025,
+          "outputPer1kUsd": 0.01
+        },
+        "budget": {
+          "maxTotalTokens": 1200,
+          "scope": "smoke"
+        },
+        "charges": [
+          {
+            "alias": "cheap",
+            "model": "gpt-4o-mini-2024-07-18",
+            "provider": "fake",
+            "inputTokens": 1000,
+            "outputTokens": 500
+          }
+        ]
+      },
+      "expect": {
+        "error": {
+          "kind": "budget-exceeded",
+          "message": "budget 'smoke' exceeded: limit 1200 tokens, spent 1500 tokens (over by 300 tokens)"
+        },
+        "summary": {
+          "calls": 1,
+          "inputTokens": 1000,
+          "outputTokens": 500,
+          "costUsd": 0.0075,
+          "byModel": {
+            "gpt-4o-mini-2024-07-18": 0.0075
+          }
+        }
+      }
+    },
+    {
+      "id": "budget-boundary-equal-spend-passes",
+      "op": "budget.ledger",
+      "description": "The ceiling refuses only spend that is strictly greater than it; spending exactly the ceiling is allowed.",
+      "input": {
+        "cost": {
+          "inputPer1kUsd": 0.0025,
+          "outputPer1kUsd": 0.01
+        },
+        "budget": {
+          "maxUsd": 0.0075,
+          "scope": "run"
+        },
+        "charges": [
+          {
+            "alias": "cheap",
+            "model": "gpt-4o-mini-2024-07-18",
+            "provider": "fake",
+            "inputTokens": 1000,
+            "outputTokens": 500
+          }
+        ]
+      },
+      "expect": {
+        "error": {
+          "kind": "no-error",
+          "message": ""
+        },
+        "summary": {
+          "calls": 1,
+          "inputTokens": 1000,
+          "outputTokens": 500,
+          "costUsd": 0.0075,
+          "byModel": {
+            "gpt-4o-mini-2024-07-18": 0.0075
+          }
+        }
+      }
+    },
+    {
+      "id": "prompt-render-padded",
+      "op": "prompt.render",
+      "description": "Fields are substituted in one pass, right-alignment pads to width, and doubled braces stay literal.",
+      "input": {
+        "name": "support-reply",
+        "version": "1.0",
+        "template": "Answer for {product:>12} in {style} style. Use {{braces}} literally.",
+        "values": {
+          "product": "widgets",
+          "style": "terse"
+        }
+      },
+      "expect": {
+        "name": "support-reply",
+        "version": "1.0",
+        "text": "Answer for      widgets in terse style. Use {braces} literally."
+      }
+    },
+    {
+      "id": "prompt-missing-variable",
+      "op": "prompt.render",
+      "description": "A missing variable is refused by name rather than rendered as an empty string.",
+      "input": {
+        "name": "summary",
+        "version": "1.0",
+        "template": "Summarise {document} for {audience}.",
+        "values": {
+          "document": "ticket-42"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "prompt-render",
+          "message": "prompt 'summary' v1.0 is missing variables: audience"
+        }
+      }
+    },
+    {
+      "id": "prompt-unused-variable",
+      "op": "prompt.render",
+      "description": "A supplied variable the template never interpolates is a typo, not harmless input, and is refused alongside the variables the template does use.",
+      "input": {
+        "name": "summary",
+        "version": "1.0",
+        "template": "Summarise {document}.",
+        "values": {
+          "document": "ticket-42",
+          "tone": "terse"
+        }
+      },
+      "expect": {
+        "error": {
+          "kind": "prompt-render",
+          "message": "prompt 'summary' v1.0 received unused variables: tone; template uses document"
+        }
+      }
+    },
+    {
+      "id": "prompt-registry-latest",
+      "op": "prompt.latest",
+      "description": "Rendering without an explicit version resolves the newest registered version of the prompt.",
+      "input": {
+        "templates": [
+          {
+            "name": "support-reply",
+            "version": "1.0",
+            "template": "Reply to {customer}."
+          },
+          {
+            "name": "support-reply",
+            "version": "1.1",
+            "template": "Reply to {customer} politely."
+          }
+        ],
+        "name": "support-reply",
+        "values": {
+          "customer": "Ada"
+        }
+      },
+      "expect": {
+        "name": "support-reply",
+        "version": "1.1",
+        "text": "Reply to Ada politely."
+      }
+    },
+    {
+      "id": "prompt-unknown-name",
+      "op": "prompt.latest",
+      "description": "An unknown prompt name is a not-found error that lists the registered names.",
+      "input": {
+        "templates": [
+          {
+            "name": "support-reply",
+            "version": "1.0",
+            "template": "Reply to {customer}."
+          },
+          {
+            "name": "triage",
+            "version": "1.0",
+            "template": "Classify {ticket}."
+          }
+        ],
+        "name": "summarise",
+        "values": {}
+      },
+      "expect": {
+        "error": {
+          "kind": "prompt-not-found",
+          "message": "no prompt 'summarise' (latest); registered: support-reply, triage"
+        }
+      }
+    },
+    {
+      "id": "structured-parse-fenced",
+      "op": "structured.parse",
+      "description": "A ```json fence is presentation, not invalidity: the payload inside it validates.",
+      "input": {
+        "schema": "Answer",
+        "text": "```json\n{\"score\": 7, \"answer\": \"ship it\"}\n```"
+      },
+      "expect": {
+        "value": {
+          "answer": "ship it",
+          "score": 7
+        }
+      }
+    },
+    {
+      "id": "structured-empty-output",
+      "op": "structured.parse",
+      "description": "Whitespace-only output is reported as an empty output for the named type instead of a JSON parse failure.",
+      "input": {
+        "schema": "Answer",
+        "text": "  \n\t "
+      },
+      "expect": {
+        "error": {
+          "kind": "structured-output",
+          "message": "model returned empty output for Answer after 1 attempt(s)"
+        }
+      }
+    },
+    {
+      "id": "structured-repair-loop",
+      "op": "structured.repair",
+      "description": "Each failed attempt appends the correction turn to the same original prompt, and the final error counts attempts twice: once from the failure and once from the exception's own suffix.",
+      "input": {
+        "schema": "Answer",
+        "prompt": "Return JSON with answer and score.",
+        "responses": ["", ""],
+        "retries": 1
+      },
+      "expect": {
+        "prompts": [
+          "Return JSON with answer and score.",
+          "Return JSON with answer and score.\n\nYour previous response could not be parsed. Reply with corrected JSON only, matching the required schema exactly. Errors: model returned empty output for Answer after 1 attempt(s)"
+        ],
+        "error": {
+          "kind": "structured-output",
+          "message": "Answer not produced from 2 attempt(s) after 2 attempt(s)"
+        }
+      }
+    },
+    {
+      "id": "structured-repair-recovers",
+      "op": "structured.repair",
+      "description": "A repair attempt that returns valid JSON ends the loop and yields the parsed value.",
+      "input": {
+        "schema": "Answer",
+        "prompt": "Return JSON with answer and score.",
+        "responses": ["", "```json\n{\"answer\": \"ok\", \"score\": 3}\n```"],
+        "retries": 2
+      },
+      "expect": {
+        "prompts": [
+          "Return JSON with answer and score.",
+          "Return JSON with answer and score.\n\nYour previous response could not be parsed. Reply with corrected JSON only, matching the required schema exactly. Errors: model returned empty output for Answer after 1 attempt(s)"
+        ],
+        "value": {
+          "answer": "ok",
+          "score": 3
+        }
+      }
+    },
+    {
+      "id": "retrieval-bm25-scores",
+      "op": "retrieval.bm25",
+      "description": "BM25 saturates term frequency and normalises by document length; the scores are a pure function of the corpus and query.",
+      "input": {
+        "documents": [
+          "Refunds are issued within five business days.",
+          "A refund requires an order id; refunds over 500 dollars need approval.",
+          "Shipping labels are printable from the order page."
+        ],
+        "query": "refund order"
+      },
+      "expect": {
+        "scores": [0.0, 1.261594, 0.494741]
+      }
+    },
+    {
+      "id": "retrieval-lexical-ranking",
+      "op": "retrieval.ranking",
+      "description": "The lexical ranking drops zero-scoring documents, orders by score and breaks ties on chunk id.",
+      "input": {
+        "documents": [
+          "Refund approval over 500 dollars needs a manager.",
+          "Shipping labels are printable from the order page.",
+          "Manager approval for a refund."
+        ],
+        "ids": ["chunk-refund-approval", "chunk-shipping", "chunk-manager-refund"],
+        "query": "refund approval",
+        "topK": 2
+      },
+      "expect": {
+        "ranking": [
+          {
+            "chunkId": "chunk-manager-refund",
+            "score": 1.078697
+          },
+          {
+            "chunkId": "chunk-refund-approval",
+            "score": 0.883228
+          }
+        ]
+      }
+    },
+    {
+      "id": "retrieval-rrf-fusion",
+      "op": "retrieval.rrf",
+      "description": "Reciprocal rank fusion sums 1/(k+rank) over rankings, so agreement between retrievers outranks a single top hit.",
+      "input": {
+        "rankings": [["chunk-a", "chunk-b", "chunk-c"], ["chunk-b", "chunk-a"]],
+        "k": null
+      },
+      "expect": {
+        "ranking": [
+          {
+            "chunkId": "chunk-a",
+            "score": 0.032522
+          },
+          {
+            "chunkId": "chunk-b",
+            "score": 0.032522
+          },
+          {
+            "chunkId": "chunk-c",
+            "score": 0.015873
+          }
+        ]
+      }
+    },
+    {
+      "id": "retrieval-cosine-similarity",
+      "op": "retrieval.similarity",
+      "description": "Cosine, dot and negative-L2 similarity against a fixed vector fixture, oriented so a larger number is a better match.",
+      "input": {
+        "query": [1.0, 0.0, 1.0],
+        "candidates": [[1.0, 0.5, 1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 1.0]],
+        "metrics": ["cosine", "dot", "l2"]
+      },
+      "expect": {
+        "scores": {
+          "cosine": [0.942809, 0.0, 1.0],
+          "dot": [2.0, 0.0, 2.0],
+          "l2": [-0.5, -1.732051, 0.0]
+        }
+      }
+    },
+    {
+      "id": "retrieval-lexical-rerank",
+      "op": "retrieval.lexical-score",
+      "description": "The lexical reranker scores query-term coverage and breaks ties toward an exact phrase match, bounded so it cannot promote an unrelated passage.",
+      "input": {
+        "query": "refund approval",
+        "texts": [
+          "Refund approval over 500 dollars needs a manager.",
+          "Shipping labels are printable from the order page.",
+          "Approval for refund"
+        ]
+      },
+      "expect": {
+        "scores": [1.0, 0.0, 1.0]
+      }
+    },
+    {
+      "id": "eval-z-critical-table",
+      "op": "eval.z-critical",
+      "description": "The critical value is taken from the tabulated levels at or below alpha, so an untabulated alpha rounds to the next stricter level and anything stricter than the table gets the strictest value.",
+      "input": {
+        "alphas": [0.2, 0.1, 0.05, 0.03, 0.025, 0.02, 0.01, 0.005, 0.001]
+      },
+      "expect": {
+        "values": [
+          {
+            "alpha": 0.2,
+            "z": 0.8416
+          },
+          {
+            "alpha": 0.1,
+            "z": 1.2816
+          },
+          {
+            "alpha": 0.05,
+            "z": 1.6449
+          },
+          {
+            "alpha": 0.03,
+            "z": 1.96
+          },
+          {
+            "alpha": 0.025,
+            "z": 1.96
+          },
+          {
+            "alpha": 0.02,
+            "z": 2.3263
+          },
+          {
+            "alpha": 0.01,
+            "z": 2.3263
+          },
+          {
+            "alpha": 0.005,
+            "z": 2.5758
+          },
+          {
+            "alpha": 0.001,
+            "z": 2.5758
+          }
+        ]
+      }
+    },
+    {
+      "id": "eval-gate-standard-error",
+      "op": "eval.gate",
+      "description": "The regression statistic divides the delta by the standard error of the difference of two means, so both spreads contribute: the same drop is judged against the noise in the run and in the baseline.",
+      "input": {
+        "thresholds": [
+          {
+            "metric": "accuracy",
+            "minMean": null,
+            "maxRegression": 0,
+            "alpha": 0.05
+          }
+        ],
+        "run": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "runs": 5,
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "values": [0.72, 0.68, 0.76, 0.7, 0.74]
+            }
+          ]
+        },
+        "baseline": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "model": "gpt-4o-2024-08-06",
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "runs": 8,
+              "mean": 0.8,
+              "stdev": 0.03
+            }
+          ]
+        }
+      },
+      "expect": {
+        "passed": false,
+        "dataset": "support-replies",
+        "datasetVersion": "1.0",
+        "runs": 5,
+        "varying": true,
+        "results": [
+          {
+            "metric": "accuracy",
+            "passed": false,
+            "currentMean": 0.72,
+            "currentStdev": 0.031623,
+            "baselineMean": 0.8,
+            "baselineStdev": 0.03,
+            "delta": 0.08,
+            "z": 4.525483,
+            "alpha": 0.05,
+            "maxRegression": 0.0,
+            "rationale": "accuracy: mean 0.7200 vs baseline 0.8000 -- delta +0.0800 exceeds max_regression 0.0000 and z=4.525 > 1.645 at alpha=0.05"
+          }
+        ]
+      }
+    },
+    {
+      "id": "eval-gate-degenerate-distributions",
+      "op": "eval.gate",
+      "description": "Two degenerate distributions have no standard error to divide by: a drop is then infinitely significant while an unchanged mean is not a drop at all. Both are decided on the delta branch or the infinite statistic, never by dividing by zero.",
+      "input": {
+        "thresholds": [
+          {
+            "metric": "accuracy",
+            "minMean": null,
+            "maxRegression": 0,
+            "alpha": 0.05
+          },
+          {
+            "metric": "groundedness",
+            "minMean": null,
+            "maxRegression": 0,
+            "alpha": 0.05
+          }
+        ],
+        "run": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "runs": 3,
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "values": [0.75, 0.75, 0.75]
+            },
+            {
+              "metric": "groundedness",
+              "values": [0.5, 0.5, 0.5]
+            }
+          ]
+        },
+        "baseline": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "model": "gpt-4o-2024-08-06",
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "runs": 5,
+              "mean": 0.8,
+              "stdev": 0
+            },
+            {
+              "metric": "groundedness",
+              "runs": 5,
+              "mean": 0.5,
+              "stdev": 0
+            }
+          ]
+        }
+      },
+      "expect": {
+        "passed": false,
+        "dataset": "support-replies",
+        "datasetVersion": "1.0",
+        "runs": 3,
+        "varying": false,
+        "results": [
+          {
+            "metric": "accuracy",
+            "passed": false,
+            "currentMean": 0.75,
+            "currentStdev": 0.0,
+            "baselineMean": 0.8,
+            "baselineStdev": 0.0,
+            "delta": 0.05,
+            "z": "inf",
+            "alpha": 0.05,
+            "maxRegression": 0.0,
+            "rationale": "accuracy: mean 0.7500 vs baseline 0.8000 -- delta +0.0500 exceeds max_regression 0.0000 and z=inf > 1.645 at alpha=0.05"
+          },
+          {
+            "metric": "groundedness",
+            "passed": true,
+            "currentMean": 0.5,
+            "currentStdev": 0.0,
+            "baselineMean": 0.5,
+            "baselineStdev": 0.0,
+            "delta": 0.0,
+            "z": 0.0,
+            "alpha": 0.05,
+            "maxRegression": 0.0,
+            "rationale": "groundedness: mean 0.5000 vs baseline 0.5000 -- delta +0.0000 is within max_regression 0.0000"
+          }
+        ]
+      }
+    },
+    {
+      "id": "eval-gate-floor-breach",
+      "op": "eval.gate",
+      "description": "The absolute floor is independent of the baseline: a mean under it fails before any comparison, and the rationale says which floor.",
+      "input": {
+        "thresholds": [
+          {
+            "metric": "accuracy",
+            "minMean": 0.75,
+            "maxRegression": 0.02,
+            "alpha": 0.05
+          }
+        ],
+        "run": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "runs": 3,
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "values": [0.6, 0.62, 0.61]
+            }
+          ]
+        },
+        "baseline": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "model": "gpt-4o-2024-08-06",
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "runs": 5,
+              "mean": 0.8,
+              "stdev": 0.02
+            }
+          ]
+        }
+      },
+      "expect": {
+        "passed": false,
+        "dataset": "support-replies",
+        "datasetVersion": "1.0",
+        "runs": 3,
+        "varying": true,
+        "results": [
+          {
+            "metric": "accuracy",
+            "passed": false,
+            "currentMean": 0.61,
+            "currentStdev": 0.01,
+            "baselineMean": 0.8,
+            "baselineStdev": 0.02,
+            "delta": 0.19,
+            "z": 17.847392,
+            "alpha": 0.05,
+            "maxRegression": 0.02,
+            "rationale": "accuracy: mean 0.6100 is below the absolute floor 0.7500 (baseline 0.8000)"
+          }
+        ]
+      }
+    },
+    {
+      "id": "eval-gate-within-delta",
+      "op": "eval.gate",
+      "description": "A drop inside max_regression passes on the delta alone, without a significance test.",
+      "input": {
+        "thresholds": [
+          {
+            "metric": "accuracy",
+            "minMean": null,
+            "maxRegression": 0.05,
+            "alpha": 0.05
+          }
+        ],
+        "run": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "runs": 3,
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "values": [0.78, 0.78, 0.78]
+            }
+          ]
+        },
+        "baseline": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "model": "gpt-4o-2024-08-06",
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "runs": 5,
+              "mean": 0.8,
+              "stdev": 0.02
+            }
+          ]
+        }
+      },
+      "expect": {
+        "passed": true,
+        "dataset": "support-replies",
+        "datasetVersion": "1.0",
+        "runs": 3,
+        "varying": false,
+        "results": [
+          {
+            "metric": "accuracy",
+            "passed": true,
+            "currentMean": 0.78,
+            "currentStdev": 0.0,
+            "baselineMean": 0.8,
+            "baselineStdev": 0.02,
+            "delta": 0.02,
+            "z": 2.236068,
+            "alpha": 0.05,
+            "maxRegression": 0.05,
+            "rationale": "accuracy: mean 0.7800 vs baseline 0.8000 -- delta +0.0200 is within max_regression 0.0500"
+          }
+        ]
+      }
+    },
+    {
+      "id": "eval-gate-noise-tolerated",
+      "op": "eval.gate",
+      "description": "A drop beyond max_regression still passes when a noisy baseline leaves the z statistic inside the critical value: variation is not a regression.",
+      "input": {
+        "thresholds": [
+          {
+            "metric": "accuracy",
+            "minMean": null,
+            "maxRegression": 0.02,
+            "alpha": 0.05
+          }
+        ],
+        "run": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "runs": 5,
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "values": [0.69, 0.71, 0.75, 0.79, 0.81]
+            }
+          ]
+        },
+        "baseline": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "model": "gpt-4o-2024-08-06",
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "runs": 10,
+              "mean": 0.8,
+              "stdev": 0.1
+            }
+          ]
+        }
+      },
+      "expect": {
+        "passed": true,
+        "dataset": "support-replies",
+        "datasetVersion": "1.0",
+        "runs": 5,
+        "varying": true,
+        "results": [
+          {
+            "metric": "accuracy",
+            "passed": true,
+            "currentMean": 0.75,
+            "currentStdev": 0.05099,
+            "baselineMean": 0.8,
+            "baselineStdev": 0.1,
+            "delta": 0.05,
+            "z": 1.282473,
+            "alpha": 0.05,
+            "maxRegression": 0.02,
+            "rationale": "accuracy: mean 0.7500 vs baseline 0.8000 -- delta +0.0500 exceeds max_regression but z=1.282 is not beyond 1.645 at alpha=0.05; consistent with run-to-run noise"
+          }
+        ]
+      }
+    },
+    {
+      "id": "eval-gate-regression",
+      "op": "eval.gate",
+      "description": "The same run against a tight baseline is a regression: the delta is beyond max_regression and the z statistic is beyond the critical value.",
+      "input": {
+        "thresholds": [
+          {
+            "metric": "accuracy",
+            "minMean": null,
+            "maxRegression": 0.02,
+            "alpha": 0.05
+          }
+        ],
+        "run": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "runs": 5,
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "values": [0.69, 0.71, 0.75, 0.79, 0.81]
+            }
+          ]
+        },
+        "baseline": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "model": "gpt-4o-2024-08-06",
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "runs": 5,
+              "mean": 0.8,
+              "stdev": 0.02
+            }
+          ]
+        }
+      },
+      "expect": {
+        "passed": false,
+        "dataset": "support-replies",
+        "datasetVersion": "1.0",
+        "runs": 5,
+        "varying": true,
+        "results": [
+          {
+            "metric": "accuracy",
+            "passed": false,
+            "currentMean": 0.75,
+            "currentStdev": 0.05099,
+            "baselineMean": 0.8,
+            "baselineStdev": 0.02,
+            "delta": 0.05,
+            "z": 2.041241,
+            "alpha": 0.05,
+            "maxRegression": 0.02,
+            "rationale": "accuracy: mean 0.7500 vs baseline 0.8000 -- delta +0.0500 exceeds max_regression 0.0200 and z=2.041 > 1.645 at alpha=0.05"
+          }
+        ]
+      }
+    },
+    {
+      "id": "eval-gate-summary",
+      "op": "eval.gate-summary",
+      "description": "The gate's human-readable summary names the dataset, the run count, whether the run varied, and marks each metric.",
+      "input": {
+        "thresholds": [
+          {
+            "metric": "accuracy",
+            "minMean": 0.75,
+            "maxRegression": 0.02,
+            "alpha": 0.05
+          },
+          {
+            "metric": "groundedness",
+            "minMean": null,
+            "maxRegression": 0.05,
+            "alpha": 0.05
+          }
+        ],
+        "run": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "runs": 3,
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "values": [0.6, 0.62, 0.61]
+            },
+            {
+              "metric": "groundedness",
+              "values": [0.9, 0.89, 0.9]
+            }
+          ]
+        },
+        "baseline": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "model": "gpt-4o-2024-08-06",
+          "metrics": [
+            {
+              "metric": "accuracy",
+              "runs": 5,
+              "mean": 0.8,
+              "stdev": 0.02
+            },
+            {
+              "metric": "groundedness",
+              "runs": 5,
+              "mean": 0.9,
+              "stdev": 0.01
+            }
+          ]
+        }
+      },
+      "expect": {
+        "passed": false,
+        "summary": "eval gate FAILED (support-replies@1.0, 3 runs, run-to-run variation: yes)\n  [FAIL] accuracy: mean 0.6100 is below the absolute floor 0.7500 (baseline 0.8000)\n  [ok  ] groundedness: mean 0.8967 vs baseline 0.9000 -- delta +0.0033 is within max_regression 0.0500"
+      }
+    }
+  ]
+}
