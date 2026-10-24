@@ -5,6 +5,6 @@
 
 from __future__ import annotations
 
-from . import classify_quality
+from . import classify_quality, handbook_quality
 
-__all__ = ["classify_quality"]
+__all__ = ["classify_quality", "handbook_quality"]

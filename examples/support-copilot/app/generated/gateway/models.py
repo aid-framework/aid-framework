@@ -19,6 +19,14 @@ from aid_runtime import (
 )
 
 ALIASES: dict[str, ModelSpec] = {
+    "embed": ModelSpec(
+        name="text-embedding-3-small",
+        provider="fake",
+        cost=CostProfile(input_per_1k_usd=0.00002, output_per_1k_usd=0),
+        context_window=8191,
+        max_output_tokens=1024,
+        capabilities=frozenset({Capability.EMBEDDINGS}),
+    ),
     "fast": ModelSpec(
         name="gpt-4o-mini",
         provider="openai",
@@ -26,6 +34,14 @@ ALIASES: dict[str, ModelSpec] = {
         context_window=8192,
         max_output_tokens=512,
         capabilities=frozenset({Capability.STRUCTURED_OUTPUT, Capability.TOOL_CALLING}),
+    ),
+    "lexical": ModelSpec(
+        name="fake-lexical-rerank",
+        provider="fake",
+        cost=CostProfile(input_per_1k_usd=0.0, output_per_1k_usd=0.0),
+        context_window=128000,
+        max_output_tokens=1024,
+        capabilities=frozenset({}),
     ),
     "offline": ModelSpec(
         name="fake-deterministic-1",

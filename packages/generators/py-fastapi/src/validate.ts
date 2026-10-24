@@ -22,6 +22,7 @@ import {
   PHASE_0_PROVIDERS,
   type PipelineShape,
   type PromptShape,
+  type RetrieverShape,
   type StepInput,
   type StepShape,
   type TypeRef,
@@ -29,7 +30,7 @@ import {
 } from '@aid/ir';
 
 import { PY_FASTAPI_MANIFEST, supportsIrVersion } from './manifest.js';
-import { judgeAlias, mapMetric } from './metrics.js';
+import { isRetrievalEval, judgeAlias, mapMetric } from './metrics.js';
 import { isUsableIdentifier, moduleName, providerAdapter } from './names.js';
 import { templatePlaceholders } from './placeholders.js';
 
@@ -58,6 +59,7 @@ export type PlanProblemCode =
   | 'unsupported-placeholder'
   | 'unsupported-provider'
   | 'unsupported-redact'
+  | 'unsupported-retriever'
   | 'unsupported-step'
   | 'unsupported-target'
   | 'unsupported-tool-auth'
@@ -74,16 +76,15 @@ export interface PlanProblem {
   readonly message: string;
 }
 
-/** IR collections this target has no runtime counterpart for in Phase 0. */
-export const UNSUPPORTED_COLLECTIONS = [
-  'agents',
-  'deployments',
-  'embeddings',
-  'guardrails',
-  'memory',
-  'retrievers',
-  'stores',
-] as const;
+/**
+ * IR collections this target has no runtime counterpart for.
+ *
+ * `embeddings`, `retrievers` and `stores` left this list when the target learned to emit
+ * retrieval wiring: `embeddings` is IR-only (derived from the models that declare the
+ * capability, so a spec never names one), and the retriever and store declarations are
+ * walked through `emit/retrieval.ts`.
+ */
+export const UNSUPPORTED_COLLECTIONS = ['agents', 'deployments', 'guardrails', 'memory'] as const;
 
 /** The binding names the generated entrypoint owns, so a step may not claim them. */
 export const RESERVED_BINDINGS = ['context', 'deps', 'event', 'response', 'steps'] as const;
@@ -143,7 +144,8 @@ export function checkCollections(ir: IR): PlanProblem[] {
       problem(
         'unsupported-collection',
         name,
-        `Phase 0 emits no wiring for '${name}'; remove it or use another target (declared: ${ids})`,
+        `this target emits no wiring for '${name}'; remove it or use another target ` +
+          `(declared: ${ids})`,
       ),
     );
   }
@@ -726,6 +728,262 @@ function checkStepTemplates(step: StepShape, path: string, problems: PlanProblem
   }
 }
 
+/** Whether a type reference is a single string, the only thing a query may interpolate. */
+function refIsString(ref: TypeRef | undefined): boolean {
+  return ref !== undefined && ref.kind === 'primitive' && ref.name === 'string' && !ref.list;
+}
+
+/**
+ * Every placeholder in a retrieval query, checked against what the generated step can
+ * actually resolve.
+ *
+ * The query is interpolated at run time and the runtime's `PipelineContext.require`
+ * raises for a name the step body does not hold, so a placeholder naming neither the
+ * request event nor a string binding in scope would type-check, pass every byte-level
+ * golden and drift test, and fail on the first request. It is refused here instead.
+ */
+function checkRetrieveQuery(
+  step: StepShape & { kind: 'retrieve' },
+  path: string,
+  bindings: readonly StepBinding[],
+  problems: PlanProblem[],
+): void {
+  for (const name of templatePlaceholders(step.query)) {
+    const [root, ...rest] = name.split('.');
+    if (root === 'event') {
+      if (rest.length === 1) continue;
+      problems.push(
+        problem(
+          'unsupported-placeholder',
+          `${path}.query`,
+          `a retrieval query interpolates one whole event field, so '${name}' has no single ` +
+            'string to substitute; write the placeholder as an event field',
+        ),
+      );
+      continue;
+    }
+    const binding = bindings.find((candidate) => candidate.name === root);
+    if (binding === undefined) {
+      problems.push(
+        problem(
+          'unsupported-placeholder',
+          `${path}.query`,
+          `retrieval query placeholder '${name}' names no binding in scope; the generated ` +
+            `step would ask the pipeline context for '${root}' and raise on the first request`,
+        ),
+      );
+      continue;
+    }
+    if (rest.length > 0 || !refIsString(binding.type)) {
+      problems.push(
+        problem(
+          'unsupported-placeholder',
+          `${path}.query`,
+          `retrieval query placeholder '${name}' resolves to binding '${binding.name}', which ` +
+            'is not a string, and a query is text',
+        ),
+      );
+    }
+  }
+}
+
+/**
+ * One retriever declaration, refused when the runtime it binds to would refuse it.
+ *
+ * These conditions are checked on the *declaration* rather than on the `retrieve` step
+ * that happens to use it, because a retriever no pipeline searches still gets a binding
+ * and an ingest entry point: an unused retriever with a misspelled store reference, or a
+ * corpus no connector can open, would still emit code that raises the first time anything
+ * is indexed. Every condition here is a `ConfigurationError` or `FeatureDeferredError`
+ * the runtime raises when the binding, the connector or the chunker is constructed --
+ * all of them at run time, which no byte-level golden or drift test can see.
+ */
+function checkRetrieverDeclaration(
+  ir: IR,
+  retriever: RetrieverShape,
+  path: string,
+  problems: PlanProblem[],
+): void {
+  const refuse = (message: string): void => {
+    problems.push(problem('unsupported-retriever', path, message));
+  };
+  if (retriever.source.kind !== 'file') {
+    refuse(
+      `retriever '${retriever.id}' indexes a '${retriever.source.kind}' source, which the ` +
+        "runtime's connector does not implement; Phase 1 indexes a local 'file' source",
+    );
+  }
+  if (retriever.chunking.strategy === 'semantic') {
+    refuse(
+      `retriever '${retriever.id}' chunks with 'semantic', which the runtime does not ` +
+        'implement: it needs an embedding pass over the whole source at ingest, and Phase 1 ' +
+        'chunks by size (fixed, recursive, code)',
+    );
+  }
+  if (retriever.refresh.mode !== 'full') {
+    refuse(
+      `retriever '${retriever.id}' declares a '${retriever.refresh.mode}' refresh, and the ` +
+        'runtime rebuilds the whole index on every ingest',
+    );
+  }
+  if ((retriever.filters ?? []).length > 0) {
+    refuse(
+      `retriever '${retriever.id}' declares filters, which the runtime does not implement yet`,
+    );
+  }
+  const store = ir.stores.find((entry) => entry.id === retriever.store);
+  if (store === undefined) {
+    problems.push(
+      problem(
+        'unresolved-reference',
+        `${path}.store`,
+        `retriever '${retriever.id}' names store '${retriever.store}', which is not declared`,
+      ),
+    );
+  } else if (store.kind !== 'memory' && store.kind !== 'pgvector') {
+    refuse(
+      `store '${store.id}' is a '${store.kind}' store, which this runtime has no adapter ` +
+        "for; Phase 1 ships 'memory' and 'pgvector'",
+    );
+  }
+  const embedding = ir.embeddings.find((entry) => entry.id === retriever.embedModel);
+  if (embedding === undefined) {
+    problems.push(
+      problem(
+        'unresolved-reference',
+        `${path}.embedModel`,
+        `retriever '${retriever.id}' names embedding model '${retriever.embedModel}', which is ` +
+          'not declared; an embeddings entry exists for each model declaring the capability',
+      ),
+    );
+  }
+  // The generated binding carries one fixed vector width, resolved from the embedding or
+  // the store. The runtime refuses a binding with neither, and refuses a store whose
+  // declared width disagrees with the width the embedding pins -- both at the first
+  // search, far from the declaration that caused them.
+  const width = embedding?.dimensions ?? store?.dimensions;
+  if (embedding !== undefined && store !== undefined) {
+    if (width === undefined) {
+      refuse(
+        `retriever '${retriever.id}' fixes no vector width: neither embedding ` +
+          `'${embedding.id}' nor store '${store.id}' declares 'dimensions', and a width ` +
+          'resolved at run time would let a store accept vectors a later run cannot compare',
+      );
+    } else if (
+      embedding.dimensions !== undefined &&
+      store.dimensions !== undefined &&
+      embedding.dimensions !== store.dimensions
+    ) {
+      refuse(
+        `retriever '${retriever.id}' pins ${embedding.dimensions} dimensions via embedModel ` +
+          `'${embedding.id}', but store '${store.id}' is declared ` +
+          `${store.dimensions}-dimensional; the two must agree before anything is indexed`,
+      );
+    }
+  }
+  if (retriever.rerank !== undefined) {
+    // The runtime's guard is `_LEXICAL_MARKER in spec.model.casefold()`, and the IR's
+    // `rerank.model` is the model *alias*: `referential.ts` resolves it against the models
+    // map and the generated binding carries it verbatim into `reranker_for`. So the alias
+    // is the string that has to say "lexical" -- checking the resolved `modelId` instead
+    // would pass a spec the runtime then refuses at the first search.
+    const declared = retriever.rerank.model;
+    if (!declared.toLowerCase().includes('lexical')) {
+      refuse(
+        `retriever '${retriever.id}' reranks with '${declared}', and the runtime's only ` +
+          'reranker is lexical: it matches the name the spec declares, so a name that does ' +
+          'not say so is refused rather than served by a reranker it never named',
+      );
+    }
+  }
+}
+
+/**
+ * Every declared retriever, refused once each, in declaration order.
+ *
+ * A retriever is wired as soon as it is declared, whether or not a pipeline searches it:
+ * the binding table and the ingest entry points are emitted for all of them. So the
+ * checks are per declaration, and a `retrieve` step only has to check that the retriever
+ * it names exists.
+ */
+export function checkRetrievers(ir: IR): PlanProblem[] {
+  const problems: PlanProblem[] = [];
+  for (const retriever of ir.retrievers) {
+    checkRetrieverDeclaration(ir, retriever, `retrievers.${retriever.id}`, problems);
+  }
+  return problems;
+}
+
+/**
+ * One `retrieve` step: its query placeholders, and the retriever it names.
+ *
+ * The retriever's own declaration is checked by {@link checkRetrievers}, so what is left
+ * here is what only the step can get wrong.
+ */
+function checkRetrieveStep(
+  ir: IR,
+  step: StepShape & { kind: 'retrieve' },
+  path: string,
+  bindings: readonly StepBinding[],
+  problems: PlanProblem[],
+): void {
+  checkRetrieveQuery(step, path, bindings, problems);
+  if (!ir.retrievers.some((entry) => entry.id === step.retriever)) {
+    problems.push(
+      problem(
+        'unresolved-reference',
+        `${path}.retriever`,
+        `retriever '${step.retriever}' is not declared`,
+      ),
+    );
+  }
+}
+
+/**
+ * The prompt variable a pipeline's retrieve step feeds, if any.
+ *
+ * A generate step names the binding whose retrieved items are inlined into the prompt,
+ * and the IR requires the prompt variable fed by it to carry the same name. An eval over
+ * such a pipeline supplies that variable empty: the model half of an eval measures the
+ * prompt, and the retrieved items are measured by a retrieval metric.
+ */
+export function evalContextVariable(
+  ir: IR,
+  evaluation: EvalShape,
+  prompt: PromptShape,
+): string | undefined {
+  if (evaluation.target.kind !== 'pipeline') return undefined;
+  const pipeline = ir.pipelines.find((entry) => entry.id === evaluation.target.id);
+  for (const step of pipeline?.steps ?? []) {
+    if (step.kind === 'generate' && step.prompt === prompt.id && step.context !== undefined) {
+      return step.context;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The retriever a `retrieval` metric measures, or `undefined` when the spec does not say.
+ *
+ * The IR carries `expectDocs` and `k` but no retriever id: `expectDocs` are source paths
+ * relative to *the* retriever's uri, so the declaration reads as one written with a single
+ * retriever in view. This resolves the one it means -- from the target pipeline's own
+ * retrieve steps first, since that is the narrowest statement the spec can make, and then
+ * from the spec itself when exactly one retriever is declared -- and reports `undefined`
+ * rather than guessing when neither narrows to one, because a wrong guess generates a gate
+ * that measures a retriever whose expected documents nobody declared.
+ */
+export function retrievalEvalRetriever(ir: IR, evaluation: EvalShape): string | undefined {
+  const pipeline = ir.pipelines.find((entry) => entry.id === evaluation.target.id);
+  const used = [
+    ...new Set(
+      (pipeline?.steps ?? []).flatMap((step) => (step.kind === 'retrieve' ? [step.retriever] : [])),
+    ),
+  ];
+  if (used.length === 1) return used[0];
+  return ir.retrievers.length === 1 ? ir.retrievers[0]?.id : undefined;
+}
+
 /** One field of the generated request model. */
 export interface RequestField {
   readonly name: string;
@@ -792,9 +1050,19 @@ export function requestPlan(ir: IR, pipeline: PipelineShape): RequestPlan {
       return;
     }
 
-    // A `retrieve` step has no input to infer a request field from, and `checkPipelines`
-    // refuses it outright for this target, so it contributes no field here.
-    if (step.kind === 'retrieve') return;
+    // A retrieval query is interpolated per request, so an `event.<field>` placeholder in
+    // it is a request field whose type the query itself fixes: a query is text, so the
+    // field is a string. `checkRetrieveQuery` refuses every other root, which is why this
+    // branch only ever reads whole event fields.
+    if (step.kind === 'retrieve') {
+      for (const name of templatePlaceholders(step.query)) {
+        const [root, field, ...rest] = name.split('.');
+        if (root !== 'event' || field === undefined || rest.length > 0) continue;
+        add(field, { kind: 'primitive', name: 'string', list: false }, `${path}.query`);
+      }
+      bindings.push({ name: step.as, type: undefined });
+      return;
+    }
 
     const wanted = new Map<string, TypeRef>();
     if (step.kind === 'generate') {
@@ -896,6 +1164,11 @@ export function checkPipelines(ir: IR): PlanProblem[] {
     }
     const bindings: StepBinding[] = [{ name: 'event', type: undefined }];
     const steps: readonly StepShape[] = pipeline.steps ?? [];
+    // The bindings that hold retrieved items, so a generate step's `context` name can be
+    // checked against the kind of binding that can fill it rather than only its presence.
+    const retrieved = new Set<string>(
+      steps.flatMap((step) => (step.kind === 'retrieve' ? [step.as] : [])),
+    );
     if (steps.length === 0) {
       problems.push(problem('missing-emit', `${base}.steps`, 'a pipeline needs at least one step'));
     }
@@ -1005,14 +1278,11 @@ export function checkPipelines(ir: IR): PlanProblem[] {
         return;
       }
       if (step.kind === 'retrieve') {
-        problems.push(
-          problem(
-            'unsupported-step',
-            path,
-            'Phase 0 emits no wiring for a retrieve step; this target has no retrieval ' +
-              'runtime to call, so the step cannot be generated',
-          ),
-        );
+        checkRetrieveStep(ir, step, path, bindings, problems);
+        // The binding stays untyped on purpose: a retrieval step yields items and a
+        // rendered context, not a struct, so `emit/ir.ts` reports no type for it and the
+        // generated call is the only thing that reads it.
+        bindings.push({ name: step.as, type: undefined });
         return;
       }
       const prompt = prompts.get(step.prompt);
@@ -1048,7 +1318,41 @@ export function checkPipelines(ir: IR): PlanProblem[] {
           );
         }
       }
+      // A retrieved context reaches the prompt through `step.context`, which the runtime
+      // refuses when the template does not use it, so both halves are checked here: the
+      // name has to be one the rendered template accepts, and it has to name a binding
+      // that actually holds retrieved items.
+      if (step.context !== undefined) {
+        if (!retrieved.has(step.context)) {
+          problems.push(
+            problem(
+              'unresolved-reference',
+              `${path}.context`,
+              `'${step.context}' is not a retrieval binding; the generated call inlines the ` +
+                "items of a 'retrieve' step, and only that step declares one",
+            ),
+          );
+        }
+        const accepted = new Set([
+          ...flatPlaceholders(prompt),
+          ...prompt.variables.filter((variable) => variable.required).map((v) => v.name),
+        ]);
+        if (!accepted.has(step.context)) {
+          problems.push(
+            problem(
+              'unused-input',
+              `${path}.context`,
+              `the runtime rejects a prompt value the template does not use: prompt ` +
+                `'${prompt.id}' neither interpolates '${step.context}' nor declares it ` +
+                'required, so the rendered call would raise',
+            ),
+          );
+        }
+      }
       for (const name of wanted) {
+        // The context variable is supplied by `step.context` rather than by an input key,
+        // so it is the one variable that is legitimately absent from the step's inputs.
+        if (name === step.context) continue;
         if (!keys.includes(name)) {
           problems.push(
             problem('missing-input', `${path}.input`, `prompt '${prompt.id}' requires '${name}'`),
@@ -1250,6 +1554,35 @@ export function checkEvals(ir: IR): PlanProblem[] {
     }
     const seen = new Set<string>();
     let deterministic = 0;
+    // The retrieval harness drives `RetrievalGate` over a ranked retrieved set, which does
+    // not compose with the prediction-per-case run `run_evaluation` performs, and this
+    // target emits one module per eval. Refusing is the honest outcome: an eval that
+    // declared both would generate a module that measures one and silently drops the other.
+    if (
+      evaluation.metrics.some((metric) => metric.kind === 'retrieval') &&
+      !isRetrievalEval(evaluation)
+    ) {
+      problems.push(
+        problem(
+          'unsupported-metric',
+          `${base}.metrics`,
+          'a retrieval metric is measured by RetrievalGate over a ranked retrieved set, and a ' +
+            'generated eval measures one prediction per case; this target emits one harness per ' +
+            'eval, so declare the retrieval metric in an eval of its own',
+        ),
+      );
+    }
+    if (isRetrievalEval(evaluation) && retrievalEvalRetriever(ir, evaluation) === undefined) {
+      problems.push(
+        problem(
+          'unresolved-reference',
+          `${base}.metrics`,
+          'a retrieval metric names no retriever, and this spec declares more than one, so the ' +
+            'expected documents have no documented uri to resolve against; retrieve from it in ' +
+            "the eval's target pipeline, or declare one retriever",
+        ),
+      );
+    }
     for (const [index, metric] of evaluation.metrics.entries()) {
       const path = `${base}.metrics[${index}]`;
       const mapping = mapMetric(metric);
@@ -1338,15 +1671,18 @@ export function checkEvals(ir: IR): PlanProblem[] {
       );
     }
     if (prompt !== undefined) {
-      const names = renderNames(prompt);
+      // The variable a retrieve step feeds is supplied empty rather than by the dataset:
+      // the dataset row is one string, and it fills the variable the eval measures.
+      const context = evalContextVariable(ir, evaluation, prompt);
+      const names = renderNames(prompt).filter((name) => name !== context);
       if (names.length !== 1) {
         problems.push(
           problem(
             'unsupported-eval-input',
             `${base}.target`,
             `prompt '${prompt.id}' renders ${names.length} values ` +
-              `(${names.join(', ') || '<none>'}), and Phase 0 maps a dataset row to exactly one ` +
-              'prompt variable',
+              `(${names.join(', ') || '<none>'}), and this target maps a dataset row to ` +
+              'exactly one prompt variable',
           ),
         );
       }
@@ -1364,6 +1700,7 @@ export function checkPlan(ir: IR): PlanProblem[] {
     ...checkObservability(ir),
     ...checkTypes(ir),
     ...checkModels(ir),
+    ...checkRetrievers(ir),
     ...checkPrompts(ir),
     ...checkTools(ir),
     ...checkPipelines(ir),

@@ -40,11 +40,22 @@ async def customer(ctx: PipelineContext) -> PipelineContext:
     return ctx.with_values(customer=customer)
 
 
+async def handbook(ctx: PipelineContext) -> PipelineContext:
+    """Search the `handbook` index and bind the cited passages."""
+
+    deps = cast(Deps, ctx.require("deps"))
+    event = cast(AnswerTicketRequest, ctx.require("event"))
+
+    handbook = await deps.retriever("handbook").retrieve(f"{event.subject}")
+    return ctx.with_values(handbook=handbook)
+
+
 async def answer(ctx: PipelineContext) -> PipelineContext:
     """Run prompt `classify_ticket` v1 on model `fast`."""
 
     deps = cast(Deps, ctx.require("deps"))
     event = cast(AnswerTicketRequest, ctx.require("event"))
+    handbook = ctx.require("handbook")
 
     async def _call(text: str) -> str:
         """Ask the model for one completion."""
@@ -60,7 +71,7 @@ async def answer(ctx: PipelineContext) -> PipelineContext:
     _rendered = deps.prompts.render(
         "classify_ticket",
         version="1",
-        values={"subject": event.subject},
+        values={"handbook": handbook.context, "subject": event.subject},
     )
     answer = await run_structured(_call, Answer, _rendered.text)
     return ctx.with_values(answer=answer)
@@ -69,4 +80,4 @@ async def answer(ctx: PipelineContext) -> PipelineContext:
 def answer_ticket_pipeline() -> Pipeline:
     """The `answer_ticket` pipeline, in the order the spec declares it."""
 
-    return Pipeline.of(customer, answer)
+    return Pipeline.of(customer, handbook, answer)

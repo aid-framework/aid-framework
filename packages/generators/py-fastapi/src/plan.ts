@@ -25,6 +25,7 @@ import { orderedEvals, orderedPrompts, orderedTools } from './emit/order.js';
 import { emitBusinessInit, emitGeneratedInit } from './emit/package.js';
 import { emitPipelines } from './emit/pipelines.js';
 import { emitBusinessPromptsInit, emitPromptModule, emitPromptsInit } from './emit/prompts.js';
+import { emitRetrieval } from './emit/retrieval.js';
 import { emitSchemas } from './emit/schemas.js';
 import { emitBusinessToolsInit, emitToolAdapter, emitToolsInit } from './emit/tools.js';
 import { PyFastApiPlanError } from './errors.js';
@@ -54,7 +55,7 @@ export function filesFor(ir: IR): GeneratedFile[] {
     emitGeneratedInit(ir),
     emitSchemas(ir),
     emitObservability(ir),
-    emitDeps(),
+    emitDeps(ir),
     emitGatewayModels(ir),
     emitGatewayInit(),
     ...tools.map((tool) => emitToolAdapter(ir, tool)),
@@ -66,6 +67,7 @@ export function filesFor(ir: IR): GeneratedFile[] {
     ...tools.map((tool) => emitToolContract(tool)),
     emitEvalsInit(ir),
     ...orderedEvals(ir).map((evaluation) => emitEval(ir, evaluation)),
+    ...emitRetrieval(ir),
     emitBusinessInit(ir),
     emitBusinessToolsInit(ir),
     ...tools.map((tool) => emitBusinessToolSeed(tool)),

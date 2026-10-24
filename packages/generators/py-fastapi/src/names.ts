@@ -185,6 +185,14 @@ export function annotationFor(ref: TypeRef, optional: boolean): string {
 }
 
 /**
+ * The model name a declared reranker resolves to.
+ *
+ * The runtime's `reranker_for` matches the name it is handed, not the spec's alias, so
+ * the resolution happens exactly once here and both the emitted binding and the
+ * validator that refuses a name the runtime cannot honour read the same answer. A name
+ * that is not the alias of a declared model is already the model name.
+ */
+/**
  * The IR's model capability vocabulary mapped onto the runtime's `Capability`
  * enum.
  *
@@ -200,13 +208,27 @@ const MODEL_CAPABILITY_MEMBERS: Readonly<Record<string, string>> = {
   'tool-calling': 'Capability.TOOL_CALLING',
   streaming: 'Capability.STREAMING',
   'long-context': 'Capability.LONG_CONTEXT',
+  embeddings: 'Capability.EMBEDDINGS',
 };
 
-/** Target capabilities the emitted wiring itself satisfies, and the wiring that does it. */
+/**
+ * Target capabilities the emitted wiring itself satisfies, and the wiring that does it.
+ *
+ * `embeddings` and `rerank` are here for the same reason `http-trigger` is: they are
+ * promises about what *this target emits*. `embeddings` is also a model-side capability
+ * -- an embedding model advertises `Capability.EMBEDDINGS` -- but the retriever that
+ * consumes it is wired by the generated bindings module and the generated `retrieve`
+ * step, and a target that stopped emitting them would have to stop declaring it.
+ * `rerank` is target-side only: the runtime names `Capability.RERANK`, but no provider
+ * serves reranking in Phase 1 -- the one reranker is the runtime's own `LexicalReranker`
+ * -- so a model that declares it is recorded as unrepresentable rather than advertised.
+ */
 export const TARGET_WIRED_CAPABILITIES: Readonly<Record<string, string>> = {
   'http-trigger': 'the FastAPI route generated in app/generated/app.py',
   'json-schema': 'the Pydantic models generated in app/generated/schemas.py',
   otel: "the runtime's tracer, named by the generated entrypoint",
+  embeddings: 'the retriever bindings generated in app/generated/retrieval/bindings.py',
+  rerank: 'the reranker each generated binding resolves through the runtime',
 };
 
 /** A target-capability declaration read three ways, so no promise goes unaccounted for. */
@@ -246,12 +268,17 @@ export type ProviderAdapter = 'OpenAICompatibleProvider' | 'FakeProvider';
 /** What each provider adapter can do at all, as `Capability` member expressions. */
 export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, readonly string[]>> = {
   FakeProvider: [
+    'Capability.EMBEDDINGS',
     'Capability.LONG_CONTEXT',
     'Capability.STREAMING',
     'Capability.STRUCTURED_OUTPUT',
     'Capability.TOOL_CALLING',
   ],
-  OpenAICompatibleProvider: ['Capability.STRUCTURED_OUTPUT', 'Capability.TOOL_CALLING'],
+  OpenAICompatibleProvider: [
+    'Capability.EMBEDDINGS',
+    'Capability.STRUCTURED_OUTPUT',
+    'Capability.TOOL_CALLING',
+  ],
 };
 
 /** What a pinned model advertises, and which declared capabilities that left out. */

@@ -8,7 +8,17 @@
  */
 
 import { compareIds, sortById } from '@aid/generator-sdk';
-import type { EvalShape, IR, ModelShape, PipelineShape, PromptShape, ToolShape } from '@aid/ir';
+import type {
+  EmbeddingShape,
+  EvalShape,
+  IR,
+  ModelShape,
+  PipelineShape,
+  PromptShape,
+  RetrieverShape,
+  ToolShape,
+  VectorStoreShape,
+} from '@aid/ir';
 
 export function orderedModels(ir: IR): ModelShape[] {
   return sortById(ir.models);
@@ -38,4 +48,19 @@ export function orderedPrompts(ir: IR): PromptShape[] {
     const byId = compareIds(left.id, right.id);
     return byId !== 0 ? byId : left.version - right.version;
   });
+}
+
+/** Embedding models in declared-id order. */
+export function orderedEmbeddings(ir: IR): EmbeddingShape[] {
+  return sortById(ir.embeddings);
+}
+
+/** Vector stores in declared-id order. */
+export function orderedStores(ir: IR): VectorStoreShape[] {
+  return sortById(ir.stores);
+}
+
+/** Retrievers in declared-id order. */
+export function orderedRetrievers(ir: IR): RetrieverShape[] {
+  return sortById(ir.retrievers);
 }

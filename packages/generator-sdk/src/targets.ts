@@ -39,7 +39,15 @@ export const PY_FASTAPI_MANIFEST_INPUT: GeneratorManifestInput = {
   target: PY_FASTAPI_TARGET,
   version: '0.1.0',
   irRange: `^${IR_VERSION}`,
-  capabilities: ['http-trigger', 'json-schema', 'streaming', 'tool-calling', 'otel'],
+  capabilities: [
+    'http-trigger',
+    'json-schema',
+    'streaming',
+    'tool-calling',
+    'otel',
+    'embeddings',
+    'rerank',
+  ],
   emitsAgainst: {
     structuredOutput: 'pydantic',
     tracing: 'otel-genai',

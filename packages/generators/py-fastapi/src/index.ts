@@ -5,7 +5,8 @@
  * the filesystem at all: `plan` is a pure function of the IR, and the runtime library
  * (`aid-runtime-python`) holds the behaviour. Generated code is declarative wiring --
  * model aliases, prompt templates, request and response models, routes, tool adapters,
- * the eval definitions -- and everything it calls into already exists in the runtime.
+ * the eval definitions, retriever bindings with their ingest entry points -- and
+ * everything it calls into already exists in the runtime.
  *
  * `pyFastApiGenerator` is the object a loader or the CLI drives; its identity fields
  * are read off {@link PY_FASTAPI_MANIFEST} so the manifest a loader validates and the
@@ -40,6 +41,12 @@ export {
   routePath,
 } from './emit/pipelines.js';
 export { BUSINESS_PROMPTS_INIT_PATH, PROMPTS_INIT_PATH, promptPath } from './emit/prompts.js';
+export {
+  CITATIONS_CONTRACT_PATH,
+  RETRIEVAL_BINDINGS_PATH,
+  RETRIEVAL_INIT_PATH,
+} from './emit/retrieval.js';
+export { RETRIEVAL_INGEST_INIT_PATH, retrievalIngestModulePath } from './emit/retrievalIngest.js';
 export { SCHEMAS_PATH } from './emit/schemas.js';
 export { TOOLS_INIT_PATH, toolAdapterPath } from './emit/tools.js';
 export { PyFastApiPlanError } from './errors.js';
@@ -54,6 +61,7 @@ export {
 /** The metric mapping, so the eval gate's metric names are assertable without emitting. */
 export {
   deterministicMetrics,
+  isRetrievalEval,
   jsonSchemaMetric,
   judgeAlias,
   metricBindings,
@@ -67,6 +75,7 @@ export type { PlanProblem, PlanProblemCode, RequestField, RequestPlan } from './
  */
 export {
   checkPlan,
+  checkRetrievers,
   evalSubject,
   modelsUnderTest,
   renderNames,

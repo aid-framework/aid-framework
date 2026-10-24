@@ -20,7 +20,7 @@ import type { IR } from '@aid/ir';
 import { buildIR, runGates } from '@aid/ir';
 import { checkSpecText } from '@aid/spec';
 
-import { PY_FASTAPI_MANIFEST, planPyFastApi } from '../src/index.js';
+import { PY_FASTAPI_MANIFEST, PY_FASTAPI_TARGET, planPyFastApi } from '../src/index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -93,7 +93,12 @@ export function buildForSpecText(text: string, file = EXAMPLE_SPEC_PATH): Exampl
   const { ir, diagnostics } = buildIR(spec.value, { file });
   requireNoErrors('the spec did not lower to an IR', diagnostics);
 
-  const gates = runGates(ir);
+  // The catalog is injected rather than defaulted, exactly as the CLI injects it: the
+  // gate's own fallback is `@aid/ir`'s placeholder vocabulary, which is narrower than
+  // this target's declaration and would reject a spec this generator emits.
+  const gates = runGates(ir, {
+    targetCapabilities: { [PY_FASTAPI_TARGET]: PY_FASTAPI_MANIFEST.capabilities },
+  });
   requireNoErrors('the IR did not pass the build gates', gates.diagnostics);
 
   return { ir, plan: planPyFastApi(ir) };

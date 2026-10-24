@@ -154,7 +154,18 @@ export function stepInputs(step: StepShape): Readonly<Record<string, StepInputVa
   return step.kind === 'emit' || step.kind === 'retrieve' ? {} : step.input;
 }
 
-/** The roots a step reads, whether directly or inside a template. */
+/**
+ * The roots a step reads, whether directly, inside a template, or through the retrieve
+ * binding a generate step inlines.
+ *
+ * `step.context` is not an input key, so it has to be named here for the generated body
+ * to open the local that holds the retrieved items: the rendered call reads them. A
+ * `retrieve` step's query is interpolated the same way a template input is, so its
+ * placeholders name roots too -- and unlike an input they are not reachable through
+ * `stepInputs`, which is empty for that step kind. Omitting them emits a query that
+ * reads a local the body never opened, which fails at request time rather than at build
+ * time because nothing byte-compares a name against the scope it lands in.
+ */
 export function referencedRoots(step: StepShape): string[] {
   const roots: string[] = [];
   const add = (name: string): void => {
@@ -168,6 +179,11 @@ export function referencedRoots(step: StepShape): string[] {
       for (const name of templatePlaceholders(value.template)) add(name);
     }
   }
+  if (step.kind === 'retrieve') {
+    for (const name of templatePlaceholders(step.query)) add(name);
+  }
+  const retrieved = step.kind === 'generate' ? step.context : undefined;
+  if (retrieved !== undefined) add(retrieved);
   return roots.sort(byName);
 }
 
@@ -266,14 +282,20 @@ function promptValues(
   context: ExpressionContext,
 ): (readonly [string, string])[] {
   const inputs = stepInputs(step);
+  // The retrieved context is not a step input. The runtime inlines the items a
+  // `retrieve` step bound and the prompt reads their rendered form, so what the mapping
+  // carries is the binding's `.context` rather than the binding itself.
+  const retrieved = step.kind === 'generate' ? step.context : undefined;
   return sortedPairs(
     renderNames(prompt).map((name) => [
       name,
-      valueExpression(
-        require(inputs[name], `an input for variable '${name}' of prompt '${prompt.id}'`),
-        context,
-        true,
-      ),
+      retrieved !== undefined && name === retrieved
+        ? `${renderReference([retrieved])}.context`
+        : valueExpression(
+            require(inputs[name], `an input for variable '${name}' of prompt '${prompt.id}'`),
+            context,
+            true,
+          ),
     ]),
   );
 }
@@ -492,6 +514,49 @@ function emitToolStep(
   return lines.join('\n');
 }
 
+function emitRetrieveStep(
+  ir: IR,
+  step: StepShape,
+  context: ExpressionContext,
+  imports: StepImports,
+  request: string,
+): string {
+  const retrieverId = require(step.kind === 'retrieve'
+    ? step.retriever
+    : undefined, 'a retriever for a retrieve step');
+  const retriever = require(ir.retrievers.find(
+    (entry) => entry.id === retrieverId,
+  ), `the '${retrieverId}' retriever a retrieve step names`);
+  const key = stepFunctionName(step);
+  // The query is interpolated per request, so it is rendered as the f-string the
+  // runtime's `PipelineContext.require` can fill in; the validator has already checked
+  // that every placeholder names a value the step body holds.
+  const query = valueExpression(
+    { kind: 'template', template: step.kind === 'retrieve' ? step.query : '' },
+    context,
+    false,
+  );
+
+  imports.runtime.add('PipelineContext');
+  imports.runtime.add('Pipeline');
+  const lines = [`async def ${key}(ctx: PipelineContext) -> PipelineContext:`];
+  lines.push(
+    pythonDoc(`Search the \`${retriever.id}\` index and bind the cited passages.`, INDENT),
+  );
+  lines.push(...localLines(step, context, imports, request).map((line) => `${INDENT}${line}`));
+  lines.push('');
+  lines.push(
+    callStatement(
+      `${key} = await `,
+      `${DEPS_BINDING}.retriever(${pythonString(retriever.id)}).retrieve`,
+      [query],
+      INDENT,
+    ),
+  );
+  lines.push(`${INDENT}return ctx.with_values(${key}=${key})`);
+  return lines.join('\n');
+}
+
 export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
   const types = typeTable(ir);
   const scopes = scopesOf(pipeline, ir);
@@ -511,7 +576,9 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
     blocks.push(
       step.kind === 'generate'
         ? emitGenerateStep(ir, step, context, imports, request)
-        : emitToolStep(ir, step, context, imports, request),
+        : step.kind === 'retrieve'
+          ? emitRetrieveStep(ir, step, context, imports, request)
+          : emitToolStep(ir, step, context, imports, request),
     );
   });
 

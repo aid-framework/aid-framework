@@ -1,7 +1,7 @@
 """The offline wiring the example's tests share.
 
-`build_gateway(providers=...)`, `build_deps(gateway=..., tools=...)` and
-`build_executor(lookup_customer=...)` are seams the generator emits deliberately
+`build_gateway(providers=...)`, `build_deps(gateway=..., tools=..., retrievers=...)`
+and `build_executor(lookup_customer=...)` are seams the generator emits deliberately
 (see `packages/generators/py-fastapi/README.md`): a test replaces the provider or
 one tool and then runs the *generated* application, rather than reimplementing
 it. Nothing here reaches the network, so the eval gate below can be a CI gate.
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 
-from aid_runtime import FakeProvider, ToolExecutor
+from aid_runtime import FakeProvider, Retriever, ToolExecutor
 
 from app.generated.deps import Deps, build_deps
 from app.generated.gateway import build_gateway
@@ -51,13 +51,18 @@ def fake_deps(
     accuracy: float = 1.0,
     seed: int = 0,
     tools: ToolExecutor | None = None,
+    retrievers: dict[str, Retriever] | None = None,
 ) -> Deps:
     """The generated app's dependencies, with the network replaced by the fake provider.
 
     `default_providers()` is replaced wholesale, so the OpenAI adapter is never
-    constructed and no API key is needed.
+    constructed and no API key is needed. `retrievers` is the same kind of seam one
+    level down: the app's retrievers are built from the spec by default, and a test
+    passes its own when it needs to control what is indexed -- a memory store is
+    per-process, so a caller that ingested in this process is the only caller that
+    can read it back.
     """
 
     provider = fake_provider(accuracy=accuracy, seed=seed)
     gateway = build_gateway(providers={"fake": provider, "openai": provider})
-    return build_deps(gateway=gateway, tools=tools)
+    return build_deps(gateway=gateway, tools=tools, retrievers=retrievers)

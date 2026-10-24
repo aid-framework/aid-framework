@@ -1,12 +1,23 @@
 /**
  * The IR's eval metric vocabulary mapped onto the runtime's metrics.
  *
- * The mapping is deliberately partial. The runtime ships four metrics, and four of
- * the IR's eight kinds have no runtime implementation in Phase 0, so they are
- * *rejected* rather than silently dropped: a metric that is declared but not measured
- * makes a baseline report a passing gate over an unmeasured claim, which is worse than
- * refusing to generate. The same reasoning rejects the parts of a supported metric the
- * runtime cannot see -- `ExactMatch` and `NormalizedContains` compare the whole
+ * The mapping is deliberately partial. Of the IR's eight kinds, six reach a runtime
+ * metric here; the other two are *rejected* rather than silently dropped, because a
+ * metric that is declared but not measured makes a baseline report a passing gate over
+ * an unmeasured claim, which is worse than refusing to generate -- and each rejection
+ * carries the reason it cannot be measured. `tool-trace` and `latency` have no runtime
+ * implementation in Phase 0.
+ *
+ * `retrieval` is measured, but not by the prediction-per-case harness: the runtime scores
+ * a ranked, cited retrieved set with `RetrievalGate` over the family `retrieval_metrics`
+ * builds, so its mapping names the IR kind rather than one runtime metric -- the runtime
+ * names those itself, and the generated thresholds are built from the metric objects so
+ * the two cannot drift. `expectDocs` and `k` reach the runtime through `RetrievalCase`,
+ * which is why the expression takes no arguments. Because that harness is not the
+ * prediction-per-case one, an eval that declares `retrieval` alongside a prediction metric
+ * is refused in `checkEvals` rather than half-measured.
+ *
+ * The same reasoning rejects the parts of a supported metric the runtime cannot see -- `ExactMatch` and `NormalizedContains` compare the whole
  * prediction against the case's `expected`, so a `field` selector would be ignored.
  *
  * Everything here is pure: the table is data, so every branch (including the rejection
@@ -119,12 +130,29 @@ export function mapMetric(metric: MetricShape): MetricMapping {
       };
     case 'retrieval':
       return {
-        measured: false,
-        reason:
-          'the runtime has no retrieval metric; a retrieval eval measures a retriever this ' +
-          'target does not ship',
+        measured: true,
+        name: 'retrieval',
+        deterministic: true,
+        expression: 'retrieval_metrics()',
       };
   }
+}
+
+/**
+ * Whether this eval is measured by the retrieval harness rather than the
+ * prediction-per-case one.
+ *
+ * True when the eval declares at least one metric and every one of them is `retrieval`:
+ * the retrieval harness drives `RetrievalGate` over a ranked retrieved set, which does not
+ * compose with a prediction-per-case run, so `checkEvals` refuses an eval that declares a
+ * retrieval metric alongside another kind. This is therefore either all or nothing, and
+ * the emitter can branch on it.
+ */
+export function isRetrievalEval(evaluation: EvalShape): boolean {
+  return (
+    evaluation.metrics.length > 0 &&
+    evaluation.metrics.every((metric) => metric.kind === 'retrieval')
+  );
 }
 
 /** The distinct runtime metric names an eval measures, sorted. */

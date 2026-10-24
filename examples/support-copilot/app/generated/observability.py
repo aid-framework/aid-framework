@@ -15,13 +15,22 @@ def generated_capabilities() -> dict[str, Any]:
 
     return {
         "capabilities": {
-            "declared": ["http-trigger", "json-schema", "otel", "streaming", "tool-calling"],
+            "declared": [
+                "embeddings",
+                "http-trigger",
+                "json-schema",
+                "otel",
+                "rerank",
+                "streaming",
+                "tool-calling",
+            ],
             "modelWired": [
+                "Capability.EMBEDDINGS",
                 "Capability.STREAMING",
                 "Capability.STRUCTURED_OUTPUT",
                 "Capability.TOOL_CALLING",
             ],
-            "targetWired": ["http-trigger", "json-schema", "otel"],
+            "targetWired": ["embeddings", "http-trigger", "json-schema", "otel", "rerank"],
             "unwired": [],
         },
         "emitsAgainst": {"structuredOutput": "pydantic", "tracing": "otel-genai"},
@@ -29,10 +38,12 @@ def generated_capabilities() -> dict[str, Any]:
         "irVersion": "0.1.0",
         "models": {
             "advertised": {
+                "embed": ["Capability.EMBEDDINGS"],
                 "fast": ["Capability.STRUCTURED_OUTPUT", "Capability.TOOL_CALLING"],
+                "lexical": [],
                 "offline": ["Capability.STRUCTURED_OUTPUT", "Capability.TOOL_CALLING"],
             },
-            "unrepresentable": {"fast": [], "offline": []},
+            "unrepresentable": {"embed": [], "fast": [], "lexical": [], "offline": []},
         },
         "observability": {"redact": [], "trace": True},
         "target": "py-fastapi",
