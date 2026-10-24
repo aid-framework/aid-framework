@@ -26,6 +26,10 @@ export const CLI_DIAGNOSTIC_CODES = {
   pythonMissing: 'cli/python-missing',
   suiteNotFound: 'cli/suite-not-found',
   evalModulesMissing: 'cli/eval-modules-missing',
+  retrieverRequired: 'cli/retriever-required',
+  retrieverConflict: 'cli/retriever-conflict',
+  retrieverNotFound: 'cli/retriever-not-found',
+  ingestModulesMissing: 'cli/ingest-modules-missing',
   runnerFailed: 'cli/runner-failed',
   runnerWarned: 'cli/runner-warned',
 } as const;

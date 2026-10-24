@@ -20,6 +20,11 @@ describe('dispatch', () => {
     expect(run.code).toBe(2);
     expect(run.stdout).toContain('Usage: aid <command>');
     expect(run.stdout).toContain('init');
+    // The listing goes to stdout: a caller redirecting `aid 2>/dev/null` still gets it,
+    // and the ingest row is asserted with its summary because the pre-L4 CLI mentioned
+    // the word `ingest` in its unknown-command error and nothing else.
+    expect(run.stderr).toBe('');
+    expect(run.stdout).toMatch(/^\s*ingest\s{2,}index a retriever corpus/m);
   });
 
   it('exits 0 when help was asked for explicitly', () => {
