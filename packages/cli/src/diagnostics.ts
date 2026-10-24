@@ -30,6 +30,7 @@ export const CLI_DIAGNOSTIC_CODES = {
   retrieverConflict: 'cli/retriever-conflict',
   retrieverNotFound: 'cli/retriever-not-found',
   ingestModulesMissing: 'cli/ingest-modules-missing',
+  runnerUnsupported: 'cli/runner-unsupported',
   runnerFailed: 'cli/runner-failed',
   runnerWarned: 'cli/runner-warned',
 } as const;

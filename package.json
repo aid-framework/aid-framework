@@ -25,6 +25,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest --coverage.enabled=false",
     "e2e": "node scripts/e2e-example.mjs",
+    "e2e:ts": "node scripts/e2e-example-ts.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "prepare": "lefthook install"
   },

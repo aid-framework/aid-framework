@@ -189,6 +189,23 @@ export function ingest(context: CliContext, options: IngestOptions): CommandOutc
     });
   }
 
+  if (target.runner !== 'python') {
+    return outcome({
+      command,
+      // Exit 2, not 1: this command has no runner for this target, so nothing was
+      // ingested and the corpus was not judged.
+      exitCode: EXIT_USAGE,
+      fields: scoped,
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.runnerUnsupported,
+          message: `\`aid ingest\` runs generated Python modules, and ${target.name} emits TypeScript.`,
+          hint: 'The emitted ingest module exports `ingest()`; run it with Node.',
+        }),
+      ],
+    });
+  }
+
   const interpreter = discoverInterpreter(context);
   if (interpreter === undefined) {
     return outcome({

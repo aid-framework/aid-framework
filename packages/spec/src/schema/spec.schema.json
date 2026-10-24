@@ -102,7 +102,7 @@
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": { "enum": ["py-fastapi"] }
+          "items": { "enum": ["py-fastapi", "ts-vercel"] }
         }
       }
     },

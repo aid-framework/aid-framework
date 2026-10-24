@@ -18,6 +18,9 @@
     },
     {
       "path": "../generators/py-fastapi"
+    },
+    {
+      "path": "../generators/ts-vercel"
     }
   ],
   "include": ["src/**/*.ts"]

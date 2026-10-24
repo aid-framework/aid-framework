@@ -256,6 +256,12 @@ jobs:
       - name: End to end
         run: pnpm e2e
 
+      # The TypeScript target makes the same three claims against its own example. It needs
+      # nothing beyond the workspace install above -- no PyPI package, no web framework --
+      # which is why it joins this job rather than getting one of its own.
+      - name: End to end (TypeScript)
+        run: pnpm e2e:ts
+
   workflows:
     name: workflows
     runs-on: ubuntu-latest

@@ -87,6 +87,20 @@ export default defineConfig({
           functions: 66,
           lines: 68,
         },
+        // The ts-vercel generator (Phase 1, L6) is imported only by the CLI and its own
+        // tests, so without a floor here deleting those tests would still leave a green
+        // suite. Floors sit a few points under the measured level (87/61/63/88 for
+        // statements, branches, functions and lines). `functions` is the lowest generator
+        // figure in the repo because the emitters are many small helpers that a single
+        // planned spec does not reach, which is why its floor is stated rather than
+        // rounded up to the global one. The global floors above stay untouched and are
+        // not lowered by this entry.
+        'packages/generators/ts-vercel/src/**': {
+          statements: 85,
+          branches: 58,
+          functions: 60,
+          lines: 86,
+        },
       },
     },
   },

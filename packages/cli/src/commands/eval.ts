@@ -181,6 +181,23 @@ export function evaluate(context: CliContext, options: EvalOptions): CommandOutc
     });
   }
 
+  if (target.runner !== 'python') {
+    return outcome({
+      command,
+      // Exit 2, not 1: this command has no runner for this target, so no eval ran and
+      // nothing about the project was judged. `1` would read as "the evals failed".
+      exitCode: EXIT_USAGE,
+      fields: { ...fields, suites },
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.runnerUnsupported,
+          message: `\`aid eval\` runs generated Python modules, and ${target.name} emits TypeScript.`,
+          hint: 'The emitted eval module exports `sample()` and `evaluate(run, baseline)`; run it with Node.',
+        }),
+      ],
+    });
+  }
+
   const interpreter = discoverInterpreter(context);
   if (interpreter === undefined) {
     return outcome({
