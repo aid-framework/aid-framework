@@ -1,6 +1,7 @@
 packages:
   - 'packages/*'
   - 'packages/generators/*'
+  - 'runtimes/typescript'
 
 # pnpm blocks lifecycle scripts unless allowed here, and strictDepBuilds makes
 # `pnpm install` fail while any dependency has one outstanding.

@@ -26,7 +26,11 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['packages/**/test/**/*.test.ts', 'scripts/**/*.test.mjs'],
+    include: [
+      'packages/**/test/**/*.test.ts',
+      'runtimes/typescript/test/**/*.test.ts',
+      'scripts/**/*.test.mjs',
+    ],
     exclude: ['**/node_modules/**', '**/dist/**'],
     // Golden-file tests compare byte-for-byte, so never retry silently.
     retry: 0,
@@ -61,6 +65,27 @@ export default defineConfig({
           branches: 58,
           functions: 92,
           lines: 85,
+        },
+        // The TypeScript runtime (Phase 1, L5) mirrors the Python surface. Its floors are
+        // a few points under the measured level (src 95/90/96/96, retrieval 95/92/95/96,
+        // evals 93/86/97/95). They exist so that deleting the runtime's tests cannot look
+        // like a green build: without them the suite still passes, because nothing else
+        // imports this package. The global floors above stay untouched and are not
+        // lowered by any of these.
+        'runtimes/typescript/src/**': {
+          statements: 90,
+          branches: 83,
+          functions: 90,
+          lines: 91,
+        },
+        'runtimes/typescript/src/retrieval/pgvector.ts': {
+          // The adapter resolves its driver lazily and ships without a database, so its
+          // SQL path is deliberately unreachable in CI (D2) and this floor is the lowest
+          // in the repo. It still has to hold: measured 73/77/71/73.
+          statements: 68,
+          branches: 70,
+          functions: 66,
+          lines: 68,
         },
       },
     },

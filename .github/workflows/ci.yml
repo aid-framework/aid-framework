@@ -3,7 +3,8 @@
 # merge. The `evals` and `e2e` jobs below are deliberately *not* in that list and
 # report as advisory for a merge -- but `e2e` does gate *releases*: release.yml fires
 # on `workflow_run` for this workflow's overall conclusion, so a red `e2e` stops the
-# tag even though a merge can still proceed.
+# tag even though a merge can still proceed. `typescript` is advisory for the same
+# reason and joins that list as soon as the ruleset names it.
 name: CI
 
 on:
@@ -57,6 +58,53 @@ jobs:
       # Coverage thresholds live in vitest.config.ts.
       - name: Test
         run: pnpm test:coverage
+
+  # The TypeScript runtime mirrors runtimes/python. It is its own job rather than extra
+  # steps on `node` for two reasons: it is the only package that carries a project
+  # reference of its own, and its dependency set (zod, @opentelemetry/api) is the one
+  # place a new runtime dependency can enter.
+  #
+  # No database: the pgvector adapter resolves its driver lazily and the tests reach it
+  # only through guards that never open a connection, so this job needs no Postgres
+  # service (D2). The runtime's per-module coverage floors live in vitest.config.ts and
+  # are enforced by the `node` job, which runs coverage across the whole workspace.
+  #
+  # Advisory on purpose: `typescript` is not yet a required context in the `main`
+  # ruleset (see the header), so this job reports without blocking a merge.
+  typescript:
+    name: typescript
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Builds the runtime through its project reference, so a declaration that does not
+      # compile fails here on its own rather than only inside the full solution build.
+      - name: Build
+        run: pnpm build
+
+      # This is the step that proves the runtime's tests are typechecked at all: they are
+      # collected by tsconfig.tests.json, and without an entry there a type error in a
+      # runtime test would pass unnoticed. It runs after Build because that config
+      # imports @aid/ir and @aid/spec from dist.
+      - name: Typecheck
+        run: pnpm exec tsc -p tsconfig.tests.json
+
+      - name: Test
+        run: pnpm exec vitest run runtimes/typescript
 
   python:
     name: python
