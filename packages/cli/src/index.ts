@@ -1,5 +1,5 @@
 /**
- * `@aid/cli` - the `aid` command: init, validate, gen and eval.
+ * `@aid/cli` - the `aid` command: init, validate, gen, ingest and eval.
  *
  * The CLI is glue. Every judgement it reports -- whether a spec parses, what the IR is,
  * what a target can emit, which generated file was hand-edited, whether an eval regressed
@@ -17,6 +17,8 @@ export type { EvalOptions } from './commands/eval.js';
 export { evaluate } from './commands/eval.js';
 export type { GenerateOptions, GenerateSuccess } from './commands/gen.js';
 export { generate } from './commands/gen.js';
+export type { IngestOptions } from './commands/ingest.js';
+export { ingest } from './commands/ingest.js';
 export type { InitOptions } from './commands/init.js';
 export { init, projectNameFor, starterSpec } from './commands/init.js';
 export type { ValidateOptions } from './commands/validate.js';
@@ -42,6 +44,7 @@ export type {
   ReadSpec,
 } from './pipeline.js';
 export { compile, lowerSpec, provenanceFor, readManifest, readSpec } from './pipeline.js';
+export { discoverInterpreter, INTERPRETERS, interpreterCommand, invoke } from './python.js';
 export type { Target } from './targets.js';
 export {
   DEFAULT_SPEC_PATH,

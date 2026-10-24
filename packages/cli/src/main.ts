@@ -16,6 +16,7 @@ import type { ParsedArguments } from './args.js';
 import { booleanFlag, JSON_FLAG, parseArguments, valueFlag } from './args.js';
 import { evaluate } from './commands/eval.js';
 import { generate } from './commands/gen.js';
+import { ingest } from './commands/ingest.js';
 import { init } from './commands/init.js';
 import { validate } from './commands/validate.js';
 import type { CliContext } from './context.js';
@@ -81,6 +82,26 @@ export const COMMANDS: readonly Command[] = [
         target: args.values.get('target'),
         dryRun: args.booleans.has('dry-run'),
         force: args.booleans.has('force'),
+      }),
+  },
+  {
+    name: 'ingest',
+    summary: 'index a retriever corpus into the store the spec declares',
+    usage: 'ingest [spec] [--target <name>] [--retriever <id> | --all] [--dry-run]',
+    flags: [
+      valueFlag('retriever', 'id', 'ingest one declared retriever, by the id the spec used'),
+      booleanFlag('all', 'ingest every retriever the spec declares'),
+      booleanFlag('dry-run', 'report what a run would write, and write nothing'),
+      TARGET_FLAG,
+      JSON_FLAG,
+    ],
+    run: (context, args) =>
+      ingest(context, {
+        spec: args.positionals[0],
+        target: args.values.get('target'),
+        retriever: args.values.get('retriever'),
+        all: args.booleans.has('all'),
+        dryRun: args.booleans.has('dry-run'),
       }),
   },
   {

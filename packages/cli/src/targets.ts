@@ -19,6 +19,7 @@ import {
   evalModulePath,
   PY_FASTAPI_MANIFEST,
   pyFastApiGenerator,
+  retrievalIngestModulePath,
 } from '@aid/generator-py-fastapi';
 import {
   type Generator,
@@ -53,6 +54,10 @@ export interface Target {
   evalModule(evalId: string): string;
   /** The repo-relative file the generated eval module for `evalId` lives in. */
   evalModuleFile(evalId: string): string;
+  /** The dotted module path of the generated ingest module for `retrieverId`. */
+  retrievalIngestModule(retrieverId: string): string;
+  /** The repo-relative file the generated ingest module for `retrieverId` lives in. */
+  retrievalIngestModuleFile(retrieverId: string): string;
 }
 
 function targetFor(manifest: GeneratorManifest, generator: Generator): Target {
@@ -90,6 +95,12 @@ function targetFor(manifest: GeneratorManifest, generator: Generator): Target {
     },
     evalModule(evalId) {
       return evalModulePath(evalId).replace(/\.py$/, '').split('/').join('.');
+    },
+    retrievalIngestModuleFile(retrieverId) {
+      return retrievalIngestModulePath(retrieverId);
+    },
+    retrievalIngestModule(retrieverId) {
+      return retrievalIngestModulePath(retrieverId).replace(/\.py$/, '').split('/').join('.');
     },
   };
 }
