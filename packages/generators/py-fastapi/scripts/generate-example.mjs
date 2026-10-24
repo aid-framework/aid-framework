@@ -25,7 +25,12 @@ import {
 } from '@aid/generator-sdk';
 import { buildIR, runGates } from '@aid/ir';
 import { checkSpecText } from '@aid/spec';
-import { GENERATOR_NAME, GENERATOR_VERSION } from '../dist/manifest.js';
+import {
+  GENERATOR_NAME,
+  GENERATOR_VERSION,
+  PY_FASTAPI_MANIFEST,
+  PY_FASTAPI_TARGET,
+} from '../dist/manifest.js';
 import { planPyFastApi } from '../dist/plan.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -59,7 +64,14 @@ if (buildErrors.length > 0) {
   fail(['app.spec.yaml did not lower to an IR:', ...render(buildErrors)]);
 }
 
-const gates = runGates(ir);
+// The capabilities this generator declares travel with the IR, the way they do under
+// the CLI. Left to its default, `runGates` falls back to `@aid/ir`'s placeholder
+// catalog, which declares no retrieval at all: the example would then be gated against a
+// narrower vocabulary than the target really has, and a spec asking for retrieval would
+// be rejected here while `aid gen` accepted it.
+const gates = runGates(ir, {
+  targetCapabilities: { [PY_FASTAPI_TARGET]: PY_FASTAPI_MANIFEST.capabilities },
+});
 const gateErrors = gates.diagnostics.filter((diagnostic) => diagnostic.severity === 'error');
 if (gateErrors.length > 0) {
   fail(['the IR did not pass the build gates:', ...render(gateErrors)]);

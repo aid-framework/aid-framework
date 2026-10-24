@@ -17,10 +17,13 @@ CLASSIFY_TICKET = PromptTemplate(
         "\n"
         "Subject: {subject}\n"
         "\n"
+        "Handbook excerpts retrieved for the subject, or nothing when nothing matched.\n"
+        "{handbook}\n"
+        "\n"
         "Answer with a JSON object holding exactly three fields:\n"
         "  * summary: one sentence describing the customer's problem\n"
         "  * category: one of billing, bug, howto, other\n"
         "  * confidence: your confidence in the category, a number between 0 and 1\n"
     ),
-    required=("subject",),
+    required=("handbook", "subject"),
 )

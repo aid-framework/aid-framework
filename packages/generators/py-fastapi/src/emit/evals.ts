@@ -18,9 +18,15 @@
  * variable. An eval that paraphrased the prompt would measure a prompt nobody calls.
  */
 
-import type { EvalShape, IR, PromptShape } from '@aid/ir';
+import type { EvalShape, IR, MetricShape, PromptShape } from '@aid/ir';
 
-import { jsonSchemaMetric, judgeAlias, metricBindings, usesJudge } from '../metrics.js';
+import {
+  isRetrievalEval,
+  jsonSchemaMetric,
+  judgeAlias,
+  metricBindings,
+  usesJudge,
+} from '../metrics.js';
 import { className, moduleName } from '../names.js';
 import { INDENT, MAX_LINE, pythonNumber, pythonString } from '../python.js';
 import {
@@ -32,7 +38,12 @@ import {
   tupleLiteral,
 } from '../template.js';
 import type { EvalSubject } from '../validate.js';
-import { evalSubject, renderNames } from '../validate.js';
+import {
+  evalContextVariable,
+  evalSubject,
+  renderNames,
+  retrievalEvalRetriever,
+} from '../validate.js';
 import type { EmittedFile } from './file.js';
 import { GENERATED_ROOT, generated } from './file.js';
 import { orderedEvals } from './order.js';
@@ -83,9 +94,11 @@ export function evalSubjectOf(ir: IR, evaluation: EvalShape): EvalSubject {
   return require(result.ok ? result.subject : undefined, `the subject of eval '${evaluation.id}'`);
 }
 
-/** The one prompt variable a dataset's input fills. */
-export function variableUnderTest(prompt: PromptShape): string {
-  return require(renderNames(prompt)[0], `the variable of prompt '${prompt.id}'`);
+/** The one prompt variable a dataset's input fills: every rendered name but the retrieved context. */
+export function variableUnderTest(prompt: PromptShape, contextVariable?: string): string {
+  return require(renderNames(prompt).find(
+    (name) => name !== contextVariable,
+  ), `the variable of prompt '${prompt.id}'`);
 }
 
 /** Every metric expression is `ClassName(...)`, so the class is the prefix. */
@@ -113,11 +126,14 @@ function datasetLoader(injectSchema: boolean): string {
     ),
     `${INDENT}if not DATASET_PATH.is_file():`,
     `${INDENT}${INDENT}raise FileNotFoundError(f"{EVAL_ID} expects its dataset at {DATASET_PATH}")`,
-    `${INDENT}loaded = Dataset.from_path(DATASET_PATH)`,
   ];
   if (!injectSchema) {
-    return [...load, `${INDENT}return loaded`].join('\n');
+    // Returned straight from the call rather than through a local: a local that exists
+    // only to be returned is what `RET504` reports, and it is an error here, so the
+    // shorter form is the correct one rather than a style preference.
+    return [...load, `${INDENT}return Dataset.from_path(DATASET_PATH)`].join('\n');
   }
+  load.push(`${INDENT}loaded = Dataset.from_path(DATASET_PATH)`);
   const oneLine = `${INDENT}return case.model_copy(update={"metadata": {**case.metadata, "json_schema": JSON_SCHEMA}})`;
   const copy =
     oneLine.length <= MAX_LINE
@@ -205,7 +221,30 @@ function metricsBuilder(inline: readonly string[], judge: string | undefined): s
   ].join('\n');
 }
 
-function runnerBuilder(): string {
+/**
+ * The `render` call, wrapped when it would overflow the line.
+ *
+ * The argument list grew by one constant when a retrieval step started feeding the prompt,
+ * and at that width the single-line form is longer than a line may be. `ruff format` is
+ * gated in CI, so an over-long emission is a failing check rather than a cosmetic one.
+ */
+function renderCall(contextVariable: string | undefined): string[] {
+  const args = [
+    'PROMPT',
+    'version=PROMPT_VERSION',
+    contextVariable === undefined
+      ? 'values={PROMPT_VARIABLE: case.input}'
+      : 'values={PROMPT_VARIABLE: case.input, CONTEXT_VARIABLE: ""}',
+  ];
+  const head = `${INDENT}${INDENT}rendered = deps.prompts.render(`;
+  const oneLineArgs = `${INDENT}${INDENT}${INDENT}${args.join(', ')},`;
+  if (oneLineArgs.length + 1 <= MAX_LINE) {
+    return [head, oneLineArgs, `${INDENT}${INDENT})`];
+  }
+  return [head, ...args.map((arg) => `${INDENT}${INDENT}${INDENT}${arg},`), `${INDENT}${INDENT})`];
+}
+
+function runnerBuilder(contextVariable: string | undefined): string {
   return [
     'def build_runner(deps: Deps) -> GatewayRunner:',
     pythonDoc(
@@ -213,14 +252,18 @@ function runnerBuilder(): string {
         '`request_for` renders the same prompt and version the pipeline renders, with the ' +
         "case's input as the prompt's one variable, so the eval measures the prompt the " +
         "app sends rather than a paraphrase of it. The fallback chain is the pipeline's too, " +
-        'so the measurement covers the app as wired rather than only its primary model.',
+        'so the measurement covers the app as wired rather than only its primary model.' +
+        (contextVariable === undefined
+          ? ''
+          : ` The dataset row is one string, so the variable the pipeline's retrieve step ` +
+            `feeds (${contextVariable}) is supplied empty: the prompt registry refuses a ` +
+            'render that omits a variable the template uses, and the retrieved items are ' +
+            'measured by a retrieval metric rather than by the model half of this eval.'),
       INDENT,
     ),
     '',
     `${INDENT}def request_for(case: EvalCase) -> CompletionRequest:`,
-    `${INDENT}${INDENT}rendered = deps.prompts.render(`,
-    `${INDENT}${INDENT}${INDENT}PROMPT, version=PROMPT_VERSION, values={PROMPT_VARIABLE: case.input}`,
-    `${INDENT}${INDENT})`,
+    ...renderCall(contextVariable),
     `${INDENT}${INDENT}return CompletionRequest.prompt(rendered.text)`,
     '',
     `${INDENT}return GatewayRunner(`,
@@ -252,10 +295,14 @@ function runBuilder(samples: number, judged: boolean): string {
 }
 
 export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
+  if (isRetrievalEval(evaluation)) {
+    return emitRetrievalEval(ir, evaluation);
+  }
   const subject = evalSubjectOf(ir, evaluation);
   const prompt = subject.prompt;
   const model = subject.model;
-  const variable = variableUnderTest(prompt);
+  const contextVariable = evalContextVariable(ir, evaluation, prompt);
+  const variable = variableUnderTest(prompt, contextVariable);
   const judge = judgeAlias(evaluation);
   const schema = jsonSchemaMetric(evaluation);
   const bindings = metricBindings(evaluation);
@@ -292,6 +339,9 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
     `PROMPT = ${pythonString(prompt.id)}`,
     `PROMPT_VERSION = ${pythonString(promptVersion(prompt.version))}`,
     `PROMPT_VARIABLE = ${pythonString(variable)}`,
+    contextVariable === undefined
+      ? undefined
+      : `CONTEXT_VARIABLE = ${pythonString(contextVariable)}`,
     `SAMPLES = ${pythonNumber(evaluation.gate.samples)}`,
     `MAX_REGRESSION = ${pythonNumber(evaluation.gate.maxRegression)}`,
     judged ? `JUDGE_MODEL = ${pythonString(judge ?? '')}` : undefined,
@@ -347,7 +397,7 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
           ? undefined
           : `LlmJudge(judge_call, rubric=${pythonString(rubric)})`,
       ),
-      runnerBuilder(),
+      runnerBuilder(contextVariable),
       runBuilder(evaluation.gate.samples, judged),
       [
         'def gate(measured: EvalRun, baseline: EvalBaseline) -> GateResult:',
@@ -358,21 +408,188 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
         ),
         `${INDENT}return BaselineGate(thresholds(), metrics=metrics()).evaluate(measured, baseline)`,
       ].join('\n'),
-      [
-        'async def evaluate(deps: Deps | None = None) -> GateResult:',
-        pythonDoc('Measure the app and compare the result against the stored baseline.', INDENT),
-        `${INDENT}return gate(await run(deps=deps), load_baseline())`,
-      ].join('\n'),
-      [
-        'def main() -> int:',
-        pythonDoc('Run the gate, print its summary, and exit non-zero on a regression.', INDENT),
-        `${INDENT}result = asyncio.run(evaluate())`,
-        `${INDENT}print(result.summary())`,
-        `${INDENT}return 1 if result.failures() else 0`,
-      ].join('\n'),
-      ['if __name__ == "__main__":', `${INDENT}raise SystemExit(main())`].join('\n'),
+      ...gateEntrypoints(),
     ]),
   );
+}
+
+/**
+ * The three blocks every generated eval ends with, whichever harness it drives.
+ *
+ * Shared rather than repeated: the exit status is the verdict the CLI and the `evals` CI job
+ * both read, so a retrieval eval that exited differently from a classification eval would
+ * make the two disagree about the same failure.
+ */
+function gateEntrypoints(): string[] {
+  return [
+    [
+      'async def evaluate(deps: Deps | None = None) -> GateResult:',
+      pythonDoc('Measure the app and compare the result against the stored baseline.', INDENT),
+      `${INDENT}return gate(await run(deps=deps), load_baseline())`,
+    ].join('\n'),
+    [
+      'def main() -> int:',
+      pythonDoc('Run the gate, print its summary, and exit non-zero on a regression.', INDENT),
+      `${INDENT}result = asyncio.run(evaluate())`,
+      `${INDENT}print(result.summary())`,
+      `${INDENT}return 1 if result.failures() else 0`,
+    ].join('\n'),
+    ['if __name__ == "__main__":', `${INDENT}raise SystemExit(main())`].join('\n'),
+  ];
+}
+
+/**
+ * The module for an eval every one of whose metrics is `retrieval`.
+ *
+ * The shape differs from the prediction-per-case module in three ways, and each follows from
+ * what is measured. The subject is a retriever, so a dataset row is a *query* -- what a
+ * support ticket asks is what the handbook is searched for -- and the expected documents and
+ * `k` travel in `RetrievalCase`, which mirrors the IR's `retrieval` node field for field. The
+ * gate is `RetrievalGate`, sampling the retriever the app itself is wired with, taken from
+ * `Deps` so the measurement covers the app as configured rather than a private copy. And the
+ * runtime is what decides which metrics a retrieval run produces, so the thresholds are built
+ * from the metric objects rather than from names repeated here.
+ */
+function emitRetrievalEval(ir: IR, evaluation: EvalShape): EmittedFile {
+  const metric = require(evaluation.metrics.find(
+    (entry): entry is Extract<MetricShape, { kind: 'retrieval' }> => entry.kind === 'retrieval',
+  ), `the retrieval metric of eval '${evaluation.id}'`);
+  const retriever = require(retrievalEvalRetriever(
+    ir,
+    evaluation,
+  ), `the retriever measured by eval '${evaluation.id}'`);
+
+  const constants = [
+    `EVAL_ID = ${pythonString(evaluation.id)}`,
+    `RETRIEVER = ${pythonString(retriever)}`,
+    `SAMPLES = ${pythonNumber(evaluation.gate.samples)}`,
+    `MAX_REGRESSION = ${pythonNumber(evaluation.gate.maxRegression)}`,
+    `EXPECT_DOCS = ${tupleLiteral(
+      metric.expectDocs.map((doc) => pythonString(doc)),
+      INDENT,
+      'EXPECT_DOCS = ',
+    )}`,
+    `TOP_K = ${pythonNumber(metric.k)}`,
+    `DATASET_PATH = ${pathExpression(datasetRelativePath(evaluation.dataset.uri ?? ''))}`,
+    `BASELINE_PATH = ${pathExpression(baselineRelativePath(evaluation.id))}`,
+  ];
+
+  return generated(
+    evalModulePath(evaluation.id),
+    assemble([
+      HEADER,
+      pythonDoc(
+        `The \`${evaluation.id}\` eval${evaluation.description === undefined ? '.' : `: ${evaluation.description}`}\n\n` +
+          `It samples the retriever \`${retriever}\` ${evaluation.gate.samples} times over the ` +
+          "dataset's queries, against the same retriever the app is wired with, and hands the " +
+          'result to a baseline gate over the retrieval metrics the runtime ships. It never ' +
+          "decides correctness itself: the expected documents and `k` are the spec's " +
+          'declaration, and the gate compares a mean against a tolerance rather than a ranking ' +
+          'against a stored order.',
+      ),
+      importBlock([
+        [
+          'import asyncio',
+          importFrom('pathlib', ['Path']),
+          importFrom('typing', ['TYPE_CHECKING']),
+        ],
+        [
+          importFrom('aid_runtime', [
+            'Dataset',
+            'EvalBaseline',
+            'RetrievalCase',
+            'RetrievalGate',
+            'RetrievalMetric',
+            'Threshold',
+            'retrieval_metrics',
+          ]),
+        ],
+        [importFrom('..deps', ['Deps', 'build_deps'])],
+      ]),
+      [
+        'if TYPE_CHECKING:',
+        `${INDENT}from aid_runtime import ${['EvalRun', 'GateResult'].join(', ')}`,
+      ].join('\n'),
+      constants.join('\n'),
+      datasetLoader(false),
+      baselineLoader(),
+      [
+        'def thresholds() -> tuple[Threshold, ...]:',
+        pythonDoc(
+          'The tolerances the gate applies.\n\n' +
+            'Each threshold names a metric `retrieval_metrics()` builds, so the two cannot ' +
+            'drift: the runtime is what decides which metrics a retrieval run produces. As ' +
+            'everywhere else here, `max_regression` is a tolerance over the mean of SAMPLES ' +
+            'runs rather than an exact match.',
+          INDENT,
+        ),
+        `${INDENT}return tuple(`,
+        `${INDENT}${INDENT}Threshold(metric=metric.name, max_regression=MAX_REGRESSION)`,
+        `${INDENT}${INDENT}for metric in retrieval_metrics()`,
+        `${INDENT})`,
+      ].join('\n'),
+      [
+        'def metrics() -> tuple[RetrievalMetric, ...]:',
+        pythonDoc(
+          'The retrieval metrics the runtime ships, in the order it ships them. The spec ' +
+            'declares one `retrieval` metric because that is the question it asks -- did the ' +
+            'right documents come back -- and the runtime answers it with the family of ' +
+            'measurements that question needs.',
+          INDENT,
+        ),
+        `${INDENT}return retrieval_metrics()`,
+      ].join('\n'),
+      [
+        'def cases(dataset: Dataset) -> tuple[RetrievalCase, ...]:',
+        pythonDoc(
+          "The dataset's queries as retrieval cases.\n\n" +
+            'A case carries the query and the documents that should answer it, and a dataset ' +
+            'row is the query: what a ticket asks is what the handbook is searched for. ' +
+            "`EXPECT_DOCS` and `TOP_K` come from the spec's metric, which is where the " +
+            'expectation was declared, and they reach the runtime as typed fields rather than ' +
+            'through the string-valued metadata a prediction case carries.',
+          INDENT,
+        ),
+        '',
+        `${INDENT}return tuple(`,
+        `${INDENT}${INDENT}RetrievalCase(id=case.id, query=case.input, expect_docs=EXPECT_DOCS, k=TOP_K)`,
+        `${INDENT}${INDENT}for case in dataset.cases`,
+        `${INDENT})`,
+      ].join('\n'),
+      runBuilderForRetrieval(evaluation.gate.samples),
+      [
+        'def gate(measured: EvalRun, baseline: EvalBaseline) -> GateResult:',
+        pythonDoc(
+          'Compare a measurement against the stored baseline. `RetrievalGate` samples the ' +
+            "retriever itself, and the verdict is the shipped gate's: this module holds no " +
+            'comparison of its own.',
+          INDENT,
+        ),
+        `${INDENT}return RetrievalGate(thresholds(), metrics=metrics()).evaluate(measured, baseline)`,
+      ].join('\n'),
+      ...gateEntrypoints(),
+    ]),
+  );
+}
+
+function runBuilderForRetrieval(samples: number): string {
+  return [
+    'async def run(deps: Deps | None = None) -> EvalRun:',
+    pythonDoc(
+      `Sample the dataset ${samples} times against the app's own retriever and return every ` +
+        "metric's mean per run.",
+      INDENT,
+    ),
+    `${INDENT}container = build_deps() if deps is None else deps`,
+    `${INDENT}dataset = load_dataset()`,
+    `${INDENT}return await RetrievalGate(thresholds(), metrics=metrics()).sample(`,
+    `${INDENT}${INDENT}cases(dataset),`,
+    `${INDENT}${INDENT}container.retriever(RETRIEVER),`,
+    `${INDENT}${INDENT}runs=SAMPLES,`,
+    `${INDENT}${INDENT}dataset=dataset.name,`,
+    `${INDENT}${INDENT}dataset_version=dataset.version,`,
+    `${INDENT})`,
+  ].join('\n');
 }
 
 export function emitEvalsInit(ir: IR): EmittedFile {
@@ -383,7 +600,7 @@ export function emitEvalsInit(ir: IR): EmittedFile {
     assemble([
       HEADER,
       pythonDoc("The app's evals, one module each, named after the id the spec declares."),
-      names.length === 0 ? undefined : names.map((name) => `from . import ${name}`).join('\n'),
+      names.length === 0 ? undefined : importFrom('.', names),
       names.length === 0 ? undefined : `__all__ = [${names.map(pythonString).join(', ')}]`,
     ]),
   );

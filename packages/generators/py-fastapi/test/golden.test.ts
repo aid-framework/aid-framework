@@ -55,9 +55,9 @@ describe('the committed example', () => {
 
   it('holds the whole of both managed tiers, and only those', () => {
     const shipped = shippedManagedTree();
-    expect(generated().length).toBe(19);
+    expect(generated().length).toBe(25);
     expect(planFilesByOwner('business').length).toBe(4);
-    expect(shipped.size).toBe(23);
+    expect(shipped.size).toBe(29);
   });
 
   it('records every generated file in aid.manifest.json at the hash of its bytes', () => {

@@ -8,6 +8,8 @@
  * fake provider instead.
  */
 
+import type { IR } from '@aid/ir';
+
 import { INDENT } from '../python.js';
 import { assemble, HEADER, importBlock, importFrom } from '../template.js';
 import type { EmittedFile } from './file.js';
@@ -19,21 +21,38 @@ export const DEPS_PATH = `${GENERATED_ROOT}/deps.py`;
 /** The context key the container travels under; reserved against user bindings. */
 export const DEPS_BINDING = 'deps';
 
-export function emitDeps(): EmittedFile {
+/**
+ * The container a pipeline step reads from its context.
+ *
+ * A spec that declares no retriever gets no retrieval field and no import of the
+ * retrieval package: an app with nothing to search should not carry a name for it.
+ */
+export function emitDeps(ir: IR): EmittedFile {
+  const retrieval = ir.retrievers.length > 0;
   return generated(
     DEPS_PATH,
     assemble([
       HEADER,
       pythonDoc(
         'The container a pipeline step reads from its context: the model gateway, the ' +
-          'prompt registry, and the tool executor.',
+          'prompt registry, and the tool executor.' +
+          (retrieval ? ' The retrievers the spec declares travel with it too.' : ''),
       ),
       importBlock([
         [importFrom('dataclasses', ['dataclass'])],
-        [importFrom('aid_runtime', ['ModelGateway', 'PromptRegistry', 'ToolExecutor'])],
+        [
+          importFrom('aid_runtime', [
+            ...(retrieval ? ['ConfigurationError'] : []),
+            'ModelGateway',
+            'PromptRegistry',
+            ...(retrieval ? ['Retriever'] : []),
+            'ToolExecutor',
+          ]),
+        ],
         [
           'from .gateway import build_gateway',
           'from .prompts import build_registry',
+          ...(retrieval ? ['from .retrieval.bindings import build_retrievers'] : []),
           'from .tools import build_executor',
         ],
       ]),
@@ -44,6 +63,24 @@ export function emitDeps(): EmittedFile {
         `${INDENT}gateway: ModelGateway`,
         `${INDENT}prompts: PromptRegistry`,
         `${INDENT}tools: ToolExecutor`,
+        ...(retrieval
+          ? [
+              `${INDENT}retrievers: dict[str, Retriever] | None = None`,
+              '',
+              `${INDENT}def retriever(self, retriever_id: str) -> Retriever:`,
+              pythonDoc(
+                'One declared retriever, or a configuration error naming what was asked for.',
+                `${INDENT}${INDENT}`,
+              ),
+              `${INDENT}${INDENT}declared = self.retrievers or {}`,
+              `${INDENT}${INDENT}try:`,
+              `${INDENT}${INDENT}${INDENT}return declared[retriever_id]`,
+              `${INDENT}${INDENT}except KeyError:`,
+              `${INDENT}${INDENT}${INDENT}raise ConfigurationError(`,
+              `${INDENT}${INDENT}${INDENT}${INDENT}f"retriever {retriever_id!r} is not declared in the spec"`,
+              `${INDENT}${INDENT}${INDENT}) from None`,
+            ]
+          : []),
       ].join('\n'),
       '_SINGLETON: Deps | None = None',
       [
@@ -52,6 +89,7 @@ export function emitDeps(): EmittedFile {
         `${INDENT}gateway: ModelGateway | None = None,`,
         `${INDENT}prompts: PromptRegistry | None = None,`,
         `${INDENT}tools: ToolExecutor | None = None,`,
+        ...(retrieval ? [`${INDENT}retrievers: dict[str, Retriever] | None = None,`] : []),
         ') -> Deps:',
         pythonDoc(
           "The app's dependencies, each defaulting to the wiring the spec generated.",
@@ -61,6 +99,11 @@ export function emitDeps(): EmittedFile {
         `${INDENT}${INDENT}gateway=build_gateway() if gateway is None else gateway,`,
         `${INDENT}${INDENT}prompts=build_registry() if prompts is None else prompts,`,
         `${INDENT}${INDENT}tools=build_executor() if tools is None else tools,`,
+        ...(retrieval
+          ? [
+              `${INDENT}${INDENT}retrievers=build_retrievers() if retrievers is None else retrievers,`,
+            ]
+          : []),
         `${INDENT})`,
       ].join('\n'),
       [

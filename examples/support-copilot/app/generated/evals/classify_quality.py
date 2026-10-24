@@ -39,6 +39,7 @@ MODEL = "fast"
 PROMPT = "classify_ticket"
 PROMPT_VERSION = "1"
 PROMPT_VARIABLE = "subject"
+CONTEXT_VARIABLE = "handbook"
 SAMPLES = 5
 MAX_REGRESSION = 0.05
 JSON_SCHEMA = json.dumps(Answer.model_json_schema())
@@ -101,12 +102,17 @@ def build_runner(deps: Deps) -> GatewayRunner:
     prompt and version the pipeline renders, with the case's input as the prompt's one variable, so
     the eval measures the prompt the app sends rather than a paraphrase of it. The fallback chain is
     the pipeline's too, so the measurement covers the app as wired rather than only its primary
-    model.
+    model. The dataset row is one string, so the variable the pipeline's retrieve step feeds
+    (handbook) is supplied empty: the prompt registry refuses a render that omits a variable the
+    template uses, and the retrieved items are measured by a retrieval metric rather than by the
+    model half of this eval.
     """
 
     def request_for(case: EvalCase) -> CompletionRequest:
         rendered = deps.prompts.render(
-            PROMPT, version=PROMPT_VERSION, values={PROMPT_VARIABLE: case.input}
+            PROMPT,
+            version=PROMPT_VERSION,
+            values={PROMPT_VARIABLE: case.input, CONTEXT_VARIABLE: ""},
         )
         return CompletionRequest.prompt(rendered.text)
 

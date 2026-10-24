@@ -23,7 +23,15 @@ describe('the Phase 0 generator set', () => {
 
   it('is the replacement for the IR package placeholder', () => {
     expect(phase0TargetCapabilities()).toEqual({
-      [PY_FASTAPI_TARGET]: ['http-trigger', 'json-schema', 'otel', 'streaming', 'tool-calling'],
+      [PY_FASTAPI_TARGET]: [
+        'embeddings',
+        'http-trigger',
+        'json-schema',
+        'otel',
+        'rerank',
+        'streaming',
+        'tool-calling',
+      ],
     });
   });
 
@@ -52,13 +60,20 @@ describe('the py-fastapi declaration', () => {
 
   it('declares streaming as a capability the emitted code has', () => {
     expect(PY_FASTAPI_MANIFEST.capabilities).toEqual([
+      'embeddings',
       'http-trigger',
       'json-schema',
       'otel',
+      'rerank',
       'streaming',
       'tool-calling',
     ]);
     expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).toContain('streaming');
+  });
+
+  it('declares the retrieval capabilities the emitted wiring satisfies', () => {
+    expect(PY_FASTAPI_MANIFEST.capabilities).toContain('embeddings');
+    expect(PY_FASTAPI_MANIFEST.capabilities).toContain('rerank');
   });
 
   it('lays out the app under a single root with two managed tiers', () => {

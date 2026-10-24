@@ -1,0 +1,26 @@
+{
+  "dataset": "handbook_quality",
+  "dataset_version": "1",
+  "model": "handbook",
+  "metrics": [
+    {
+      "metric": "recall@k",
+      "runs": 5,
+      "mean": 1.0,
+      "stdev": 0.0
+    },
+    {
+      "metric": "mrr",
+      "runs": 5,
+      "mean": 1.0,
+      "stdev": 0.0
+    },
+    {
+      "metric": "citation-grounding",
+      "runs": 5,
+      "mean": 1.0,
+      "stdev": 0.0
+    }
+  ],
+  "note": "Recorded from the deterministic fake embedder over the example's two-file corpus, so the retrieval gate runs in CI with no network, no key and no database."
+}

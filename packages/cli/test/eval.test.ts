@@ -36,8 +36,16 @@ describe('aid eval', () => {
 
     const run = aid(made, ['eval', '--json'], spawn);
     expect(run.code).toBe(0);
-    const dispatched = spawn.calls.at(-1);
-    expect(dispatched?.args.slice(-2)).toEqual(['-m', 'app.generated.evals.classify_quality']);
+    // Every declared eval gets its own module, in plan order: the example declares two,
+    // and asserting only the last dispatched module would pass while one of them was
+    // silently skipped.
+    const dispatched = spawn.calls
+      .filter((call) => call.args.includes('-m'))
+      .map((call) => call.args.at(-1));
+    expect(dispatched).toEqual([
+      'app.generated.evals.classify_quality',
+      'app.generated.evals.handbook_quality',
+    ]);
   });
 
   it('probes the interpreter by asking whether it can import the runtime', () => {
@@ -161,10 +169,11 @@ describe('aid eval', () => {
       interpreter: string;
       results: { suite: string; status: number }[];
     }>();
-    expect(report.suites).toEqual(['classify_quality']);
+    expect(report.suites).toEqual(['classify_quality', 'handbook_quality']);
     expect(report.interpreter).toBeTruthy();
     expect(report.results).toEqual([
       { suite: 'classify_quality', module: expect.any(String), status: 0 },
+      { suite: 'handbook_quality', module: expect.any(String), status: 0 },
     ]);
   });
 });

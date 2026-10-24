@@ -27,6 +27,7 @@ import {
   deterministicMetrics,
   evalModulePath,
   evalSubject,
+  isRetrievalEval,
   metricBindings,
   modelsUnderTest,
   pipelinePath,
@@ -51,12 +52,21 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-/** The example declares exactly one eval; a second would make these assertions partial. */
+/**
+ * The example's sampled-prompt eval.
+ *
+ * The example declares two evals: this one, and a retrieval eval that measures the corpus
+ * rather than the model. Every assertion in this file is about the sampled prompt eval --
+ * `SAMPLES`, `MAX_REGRESSION`, the threshold's metric, delegation to `BaselineGate` -- so
+ * the subject is selected as "the eval that is not a retrieval eval" and there must be
+ * exactly one, because two would make these assertions partial over their own subject.
+ */
 function exampleEval(): { ir: ReturnType<typeof example>['ir']; evaluation: EvalShape } {
   const { ir } = example();
-  const [evaluation] = ir.evals;
-  if (evaluation === undefined || ir.evals.length !== 1) {
-    throw new Error(`the example should declare one eval, found ${ir.evals.length}`);
+  const sampled = ir.evals.filter((candidate) => !isRetrievalEval(candidate));
+  const [evaluation] = sampled;
+  if (evaluation === undefined || sampled.length !== 1) {
+    throw new Error(`the example should declare one sampled eval, found ${sampled.length}`);
   }
   return { ir, evaluation };
 }
