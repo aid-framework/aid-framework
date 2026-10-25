@@ -1,7 +1,8 @@
 # Advanced CodeQL configuration, for the `main` ruleset's code_scanning rule
 # (tool CodeQL, security alerts high_or_higher, errors).
 # Code-scanning default setup must stay disabled, or these uploads are rejected.
-# Add a matrix language only in the PR that adds its first source file.
+# List a matrix language only once the repository contains that language's
+# source; historically that has coincided with the PR adding its first file.
 name: CodeQL
 
 on:
@@ -34,6 +35,8 @@ jobs:
       matrix:
         include:
           - language: javascript-typescript
+            build-mode: none
+          - language: python
             build-mode: none
     steps:
       - name: Checkout
