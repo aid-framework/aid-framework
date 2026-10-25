@@ -27,6 +27,7 @@ import { assemble, HEADER, importBlock, importFrom } from '../template.js';
 import { contractsPath } from './contracts.js';
 import type { EmittedFile } from './file.js';
 import { GENERATED_ROOT, generated } from './file.js';
+import { stageGuardrails, stageTable } from './guardrails.js';
 import { orderedRetrievers } from './order.js';
 import { require } from './require.js';
 import { retrievalIngestFiles } from './retrievalIngest.js';
@@ -178,7 +179,10 @@ function buildBinding(): string {
   ].join('\n');
 }
 
-function buildRetriever(): string {
+function buildRetriever(ir: IR): string {
+  // `guardrails` is a constructor seam the runtime already offers, so the retrieval stage
+  // is enforced by the retriever itself rather than by every caller remembering to check.
+  const guarded = stageGuardrails(ir, 'retrieval').length > 0;
   return [
     'def build_retriever(',
     `${INDENT}retriever_id: str,`,
@@ -195,7 +199,11 @@ function buildRetriever(): string {
         'process cost ledger. The store is constructed here, so a store whose driver is ' +
         'not installed raises its configuration error at this call rather than at the ' +
         'first search. The corpus resolves against the app directory, so exactly which ' +
-        'files are indexed does not depend on where the process was started.',
+        'files are indexed does not depend on where the process was started.' +
+        (guarded
+          ? ' Every passage that comes back is checked against the `retrieval` guardrails ' +
+            'before the caller sees it, so a redacted passage is redacted for the prompt too.'
+          : ''),
       INDENT,
     ),
     `${INDENT}return Retriever(`,
@@ -205,6 +213,7 @@ function buildRetriever(): string {
     `${INDENT}${INDENT}reranker=reranker,`,
     `${INDENT}${INDENT}ledger=ledger,`,
     `${INDENT}${INDENT}base_dir=APP_ROOT,`,
+    ...(guarded ? [`${INDENT}${INDENT}guardrails=${stageTable('retrieval')},`] : []),
     `${INDENT})`,
   ].join('\n');
 }
@@ -250,6 +259,9 @@ function emitRetrievalBindings(ir: IR): EmittedFile {
             'binding_from_spec',
           ]),
         ],
+        ...(stageGuardrails(ir, 'retrieval').length > 0
+          ? [[importFrom('..guardrails', [stageTable('retrieval')])]]
+          : []),
       ]),
       APP_ROOT_LINE,
       orderedRetrievers(ir)
@@ -257,7 +269,7 @@ function emitRetrievalBindings(ir: IR): EmittedFile {
         .join('\n\n'),
       specTable(ir),
       buildBinding(),
-      buildRetriever(),
+      buildRetriever(ir),
       buildRetrievers(),
     ]),
   );

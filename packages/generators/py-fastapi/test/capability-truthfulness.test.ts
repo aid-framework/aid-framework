@@ -5,11 +5,12 @@
  * promise this package broke: it was declared on the target, advertised by every
  * emitted provider adapter, and printed into the app's own `observability.py`, while
  * both runtimes raised `FeatureDeferredError` from `stream()`. Phase 2 layer L1
- * withdrew it, and this suite is what has to fail if it comes back without an
- * implementation. Phase 2 layer L5 implements streaming in the Python runtime and
- * adds the derivation that closes D-1b, but the target declaration stays withdrawn
- * until the generator emits a streaming route — so the `not.toContain('streaming')`
- * pins below remain the honest state.
+ * withdrew it, and this suite is what had to fail if it came back without an
+ * implementation. Phase 2 layer L5 implemented streaming in the Python runtime and
+ * added the derivation that closes D-1b; Phase 2 layer P7a is the generator half, so
+ * the target declares it again and the pins below assert its presence -- the emitted
+ * `Accept` branch, the adapters' advertised set, and the models' pinned set -- rather
+ * than its absence.
  *
  * A declaration is not one claim but three, so each one is checked three ways:
  *
@@ -54,7 +55,7 @@ import {
   modelCapabilities,
   type ProviderAdapter,
 } from '../src/names.js';
-import { example, REPO_ROOT } from './helpers.js';
+import { buildForSpecText, example, examplePlan, exampleSpecText, REPO_ROOT } from './helpers.js';
 
 /** A file and a string that has to be in it, at a repo-relative path. */
 interface Source {
@@ -69,8 +70,17 @@ interface Claim {
   readonly emitter: Source;
   /** The Python runtime module that implements it, and the symbol the emitted code calls. */
   readonly pyRuntime: Source;
-  /** The TypeScript runtime's counterpart. */
-  readonly tsRuntime: Source;
+  /**
+   * The TypeScript runtime's counterpart, or -- when the TypeScript runtime has none --
+   * {@link tsRuntimeGap} saying so instead.
+   */
+  readonly tsRuntime?: Source;
+  /**
+   * Why this capability has no TypeScript counterpart. Optional, and checked: a claim
+   * that names neither is reported rather than passed, so the audit cannot be satisfied
+   * by forgetting the column.
+   */
+  readonly tsRuntimeGap?: string;
   /** A test that exercises it end to end, offline, in a required CI job. */
   readonly behaviour: Source;
   /** A path the committed example's plan produces, so the claim is exercised as shipped. */
@@ -180,6 +190,48 @@ const CLAIMS: readonly Claim[] = [
     },
     planned: /^app\/generated\/retrieval\/bindings\.py$/,
   },
+  {
+    capability: 'guardrails',
+    emitter: {
+      path: 'packages/generators/py-fastapi/src/emit/guardrails.ts',
+      marker: 'export function emitGuardrails',
+    },
+    pyRuntime: {
+      path: 'runtimes/python/src/aid_runtime/agents/guardrails.py',
+      marker: 'class GuardrailEngine',
+    },
+    // Withdrawn rather than forgotten: the TypeScript runtime ships no guardrail engine,
+    // so there is no counterpart to point at. The emitted wiring calls Python, which does
+    // implement one, so the declaration is true where it is used; the gap is the TS
+    // mirror, and it is recorded here rather than left as a missing row.
+    tsRuntimeGap:
+      'the TypeScript runtime has no guardrail engine, so the emitted wiring has no TS counterpart',
+    behaviour: {
+      path: 'examples/support-copilot/tests/test_app.py',
+      marker: 'def test_an_input_guardrail_block_is_a_refusal_and_never_reaches_the_model',
+    },
+    planned: /^app\/generated\/guardrails\.py$/,
+  },
+  {
+    capability: 'streaming',
+    emitter: {
+      path: 'packages/generators/py-fastapi/src/emit/sse.ts',
+      marker: 'export function emitSse',
+    },
+    pyRuntime: { path: 'runtimes/python/src/aid_runtime/gateway.py', marker: 'async def stream' },
+    // The TS counterpart exists and defers: the marker is the raise, which is the honest
+    // description of that runtime's `stream()` today (ratified to L6). Pointing at it is
+    // what makes the deferral a pinned fact rather than a note in a comment.
+    tsRuntime: {
+      path: 'runtimes/typescript/src/gateway.ts',
+      marker: 'FeatureDeferredError',
+    },
+    behaviour: {
+      path: 'examples/support-copilot/tests/test_app.py',
+      marker: 'def test_the_route_streams_sse_when_the_request_accepts_it',
+    },
+    planned: /^app\/generated\/sse\.py$/,
+  },
 ];
 
 /** The two filesystem questions the capability audit asks, injectable so it can fail. */
@@ -217,14 +269,15 @@ function auditCapabilities(
       continue;
     }
 
-    const roles = [
+    const roles: (readonly [string, Source | undefined])[] = [
       ['emitter', claim.emitter],
       ['python runtime', claim.pyRuntime],
       ['typescript runtime', claim.tsRuntime],
       ['behavioural test', claim.behaviour],
-    ] as const;
+    ];
 
     for (const [role, source] of roles) {
+      if (source === undefined) continue;
       const text = io.read(source.path);
       if (text === undefined) {
         problems.push(`${capability}: its ${role} is missing at ${source.path}`);
@@ -233,6 +286,12 @@ function auditCapabilities(
           `${capability}: ${source.path} no longer contains ${JSON.stringify(source.marker)}, so the ${role} claim is stale`,
         );
       }
+    }
+
+    if (claim.tsRuntime === undefined && (claim.tsRuntimeGap ?? '') === '') {
+      problems.push(
+        `${capability}: the table names no typescript runtime counterpart and records no reason, so the audit cannot tell a gap from an omission`,
+      );
     }
 
     if (!io.plans(claim.planned)) {
@@ -334,18 +393,23 @@ describe('the capabilities this target declares', () => {
     expect(report.declared).toEqual([...PY_FASTAPI_MANIFEST.capabilities].sort());
     // Two vocabularies, so two lists: the runtime members the pinned models advertise,
     // and the capability names satisfied by generated wiring. `Capability.STREAMING`
-    // and `streaming` were one entry each until this layer withdrew them.
+    // and `streaming` are on both now: the emitted route answers `Accept:
+    // text/event-stream` with `ModelGateway.stream()` frames, and the pinned models
+    // advertise the member the gateway requires before it will stream at all.
     expect(report.modelWired).toEqual([
       'Capability.EMBEDDINGS',
+      'Capability.STREAMING',
       'Capability.STRUCTURED_OUTPUT',
       'Capability.TOOL_CALLING',
     ]);
     expect(report.targetWired).toEqual([
       'embeddings',
+      'guardrails',
       'http-trigger',
       'json-schema',
       'otel',
       'rerank',
+      'streaming',
     ]);
   });
 
@@ -360,31 +424,56 @@ describe('the capabilities this target declares', () => {
   });
 });
 
-describe('the partial closure of `streaming` (defects D-1 and D-1b)', () => {
-  it('is declared by no target capability list in this package', () => {
-    expect(PY_FASTAPI_MANIFEST.capabilities).not.toContain('streaming');
-    expect(capabilityReport(PY_FASTAPI_MANIFEST.capabilities).declared).not.toContain('streaming');
+describe('the closure of `streaming` (defects D-1 and D-1b)', () => {
+  it('is declared by this target, and reported as wired rather than merely promised', () => {
+    expect(PY_FASTAPI_MANIFEST.capabilities).toContain('streaming');
+    expect(capabilityReport(PY_FASTAPI_MANIFEST.capabilities).declared).toContain('streaming');
+    // A declaration is a promise; this is the emitted wiring it stands for.
+    expect(capabilityReport(PY_FASTAPI_MANIFEST.capabilities).targetWired).toContain('streaming');
+    const files = new Map(examplePlan().files.map((file) => [file.path, file.content]));
+    expect(files.get('app/generated/sse.py')).toBeDefined();
+    expect(files.get('app/generated/routes/answer_ticket.py')).toContain(
+      'StreamingResponse(deps.gateway.stream(',
+    );
+    expect(files.get('app/generated/routes/answer_ticket.py')).toContain('media_type=EVENT_STREAM');
   });
 
-  it('is advertised by no emitted provider adapter or model wiring', () => {
-    // The two places the old declaration surfaced in generated code: the adapter's
-    // supported set and the model's advertised set.
-    expect(Object.values(ADAPTER_CAPABILITIES).flat()).not.toContain('Capability.STREAMING');
+  it('is advertised by the emitted provider adapters and by the pinned models', () => {
+    // The two places the old withdrawal surfaced in generated code: the adapter's
+    // supported set and the model's advertised set. Both have to say it, because
+    // `ModelGateway.stream()` calls `require(alias, (Capability.STREAMING,))`; a model
+    // that advertised it against an adapter that did not would raise on the first frame.
+    expect(Object.values(ADAPTER_CAPABILITIES).flat()).toContain('Capability.STREAMING');
     const advertised = Object.keys(ADAPTER_CAPABILITIES).flatMap(
       (adapter) =>
         modelCapabilities(adapter as ProviderAdapter, PY_FASTAPI_MANIFEST.capabilities).advertised,
     );
-    expect(advertised).not.toContain('Capability.STREAMING');
-    expect(capabilityReport(PY_FASTAPI_MANIFEST.capabilities).modelWired).not.toContain(
+    expect(advertised).toContain('Capability.STREAMING');
+    expect(capabilityReport(PY_FASTAPI_MANIFEST.capabilities).modelWired).toContain(
       'Capability.STREAMING',
+    );
+
+    const models = new Map(examplePlan().files.map((file) => [file.path, file.content]));
+    // Wrapped across lines because the set is now too long for one; the members are what
+    // matter, so the assertion spans the wrapping rather than pinning one layout.
+    expect(models.get('app/generated/gateway/models.py')).toContain(
+      [
+        'capabilities=frozenset(',
+        '            {',
+        '                Capability.STREAMING,',
+        '                Capability.STRUCTURED_OUTPUT,',
+        '                Capability.TOOL_CALLING,',
+        '            }',
+        '        ),',
+      ].join('\n'),
     );
   });
 
   it('streams in the Python runtime, while the TypeScript runtime still raises', () => {
-    // D-1's runtime half is closed in L5: `ModelGateway.stream()` produces SSE bytes,
-    // so the Python gateway no longer raises `FeatureDeferredError`. The target
-    // declaration stays withdrawn because the generator still emits no streaming
-    // route, and the TypeScript runtime still defers streaming (ratified L6).
+    // The runtime half of D-1 closed in L5: `ModelGateway.stream()` produces SSE bytes,
+    // so the Python gateway no longer raises `FeatureDeferredError`. This layer is the
+    // generator half. The TypeScript runtime still defers streaming, ratified to L6, and
+    // that is why `ts-vercel` still rejects the capability this one declares.
     const python = realIO().read('runtimes/python/src/aid_runtime/gateway.py');
     expect(python).toBeDefined();
     expect(python).toContain('async def stream');
@@ -396,12 +485,19 @@ describe('the partial closure of `streaming` (defects D-1 and D-1b)', () => {
     expect(typescript).toContain('stream');
   });
 
-  it('derives streaming from a deployment that requests it, and is no longer deferred (D-1b)', () => {
+  it('still requires a deployment to ask for it, rather than streaming by default (D-1b)', () => {
     // D-1b was `streaming` sitting in the vocabulary with no derivation, so no spec
-    // could require it and nothing noticed. The derivation rule closes that; the
-    // deployment gate still fails closed until a target declares the capability.
+    // could require it and nothing noticed. The derivation closes that, and it is the
+    // deployment -- not the target -- that decides: a spec with no `streaming: true`
+    // deployment produces an app with no `Accept` branch.
     expect(CAPABILITY_DERIVATIONS.some((rule) => rule.capability === 'streaming')).toBe(true);
     expect(Object.keys(DEFERRED_CAPABILITIES)).not.toContain('streaming');
+    const unstreamed = buildForSpecText(
+      exampleSpecText().replace('streaming: true', 'streaming: false'),
+    );
+    const files = new Map(unstreamed.plan.files.map((file) => [file.path, file.content]));
+    expect(files.get('app/generated/sse.py')).toBeUndefined();
+    expect(deriveRequiredCapabilities(unstreamed.ir)).not.toContain('streaming');
   });
 });
 
@@ -510,6 +606,27 @@ describe('the capability audit can fail', () => {
       realIO(),
     );
     expect(problems.some((it) => it.includes('two claims'))).toBe(true);
+  });
+
+  it('reports a claim that neither names a TypeScript counterpart nor records why', () => {
+    // Without this branch the column could be dropped from a claim and the audit would
+    // read the omission as a pass, which is the same failure mode the table exists to
+    // catch: a gap recorded as nothing rather than as a gap.
+    const withoutColumn = CLAIMS.map((claim) =>
+      claim.capability === 'guardrails'
+        ? {
+            capability: claim.capability,
+            emitter: claim.emitter,
+            pyRuntime: claim.pyRuntime,
+            behaviour: claim.behaviour,
+            planned: claim.planned,
+          }
+        : claim,
+    );
+    const problems = auditCapabilities(PY_FASTAPI_MANIFEST.capabilities, withoutColumn, realIO());
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('guardrails');
+    expect(problems[0]).toContain('no typescript runtime counterpart');
   });
 
   it('reports an empty table instead of passing vacuously', () => {

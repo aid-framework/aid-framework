@@ -55,9 +55,11 @@ describe('the committed example', () => {
 
   it('holds the whole of both managed tiers, and only those', () => {
     const shipped = shippedManagedTree();
-    expect(generated().length).toBe(25);
+    // 27 rather than 25 since P7a: an input guardrail adds `generated/guardrails.py`,
+    // and a `streaming: true` deployment adds `generated/sse.py`.
+    expect(generated().length).toBe(27);
     expect(planFilesByOwner('business').length).toBe(4);
-    expect(shipped.size).toBe(29);
+    expect(shipped.size).toBe(31);
   });
 
   it('records every generated file in aid.manifest.json at the hash of its bytes', () => {

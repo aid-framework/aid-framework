@@ -17,6 +17,7 @@ from aid_runtime import (
 
 from ..deps import Deps
 from ..gateway.models import FALLBACKS
+from ..guardrails import ENGINE, INPUT_GUARDRAILS, enforce_guardrail
 from ..requests import AnswerTicketRequest
 from ..schemas import Answer, Customer
 
@@ -73,8 +74,32 @@ async def answer(ctx: PipelineContext) -> PipelineContext:
         version="1",
         values={"handbook": handbook.context, "subject": event.subject},
     )
-    answer = await run_structured(_call, Answer, _rendered.text)
+    _verdict = enforce_guardrail(ENGINE.check_input(INPUT_GUARDRAILS, _rendered.text))
+    answer = await run_structured(_call, Answer, _verdict.text)
     return ctx.with_values(answer=answer)
+
+
+async def _stream_request(
+    deps: Deps, event: AnswerTicketRequest
+) -> tuple[str, CompletionRequest]:
+    """Build the `fast` request for prompt `classify_ticket` without sending it, after running the
+    steps that come before it. A stream can only carry the model's own text, so everything the
+    pipeline does before the model call still has to happen first; the non-streaming route reaches
+    this point through the pipeline and this route reaches it directly.
+    """
+
+    ctx = PipelineContext(values={"deps": deps, "event": event})
+    ctx = await customer(ctx)
+    ctx = await handbook(ctx)
+
+    _rendered = deps.prompts.render(
+        "classify_ticket",
+        version="1",
+        values={"handbook": ctx.require("handbook").context, "subject": event.subject},
+    )
+    _verdict = enforce_guardrail(ENGINE.check_input(INPUT_GUARDRAILS, _rendered.text))
+    _request = CompletionRequest.prompt(_verdict.text)
+    return "fast", _request
 
 
 def answer_ticket_pipeline() -> Pipeline:

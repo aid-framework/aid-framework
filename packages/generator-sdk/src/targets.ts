@@ -7,12 +7,14 @@
  * makes every spec requiring streaming pass the capability gate, so the list is the
  * honest answer to "what does the code this generator emits actually do".
  *
- * Two absences are deliberate and recorded here rather than hidden in prose:
+ * Two facts are recorded here rather than hidden in prose:
  *
- * - `streaming` — the runtime is request/response only and both gateways raise
- *   `FeatureDeferredError`, so the capability is withdrawn until the layer that
- *   implements streaming (Phase 2 L5). `@aid/ir`'s `DEFERRED_CAPABILITIES` carries
- *   the reason and the phase.
+ * - `streaming` is declared since layer P7a. It was absent while both gateways raised
+ *   `FeatureDeferredError`; the Python runtime now streams and the generator emits a
+ *   route that negotiates `Accept: text/event-stream`, so the declaration is backed by
+ *   an emitter, a runtime and a committed example. The TypeScript runtime still defers
+ *   streaming (ratified to L6), which is why `@aid/ir`'s derivation and this list are
+ *   kept separate concerns.
  * - the absence of `emitsAgainst.orchestration` — Phase 0 control flow is plain async,
  *   and orchestration frameworks are deferred to Phase 2.
  */
@@ -40,7 +42,16 @@ export const PY_FASTAPI_MANIFEST_INPUT: GeneratorManifestInput = {
   target: PY_FASTAPI_TARGET,
   version: '0.1.0',
   irRange: `^${IR_VERSION}`,
-  capabilities: ['http-trigger', 'json-schema', 'tool-calling', 'otel', 'embeddings', 'rerank'],
+  capabilities: [
+    'http-trigger',
+    'json-schema',
+    'streaming',
+    'tool-calling',
+    'otel',
+    'embeddings',
+    'rerank',
+    'guardrails',
+  ],
   emitsAgainst: {
     structuredOutput: 'pydantic',
     tracing: 'otel-genai',

@@ -1,10 +1,11 @@
-specVersion: "0.1"
+specVersion: "0.2"
 
 # The example app: the smallest spec that still exercises every contract the
 # py-fastapi target emits -- a model gateway with a pinned model and a fallback, a
 # prompt the registry serves, a business tool behind a generated adapter, a structured
 # output, an HTTP route, a retriever over a local corpus with citations, an ingest
-# entry point, and an eval that gates on a statistical threshold.
+# entry point, an input guardrail, a streaming deployment, and an eval that gates on a
+# statistical threshold.
 
 project:
   name: support-copilot
@@ -67,7 +68,7 @@ models:
     provider: openai
     modelId: gpt-4o-mini
     apiKeyEnv: OPENAI_API_KEY
-    capabilities: [json-schema, tools]
+    capabilities: [json-schema, tools, streaming]
     params:
       temperature: 0.2
       maxTokens: 512
@@ -81,7 +82,7 @@ models:
   offline:
     provider: fake
     modelId: fake-deterministic-1
-    capabilities: [json-schema, tools]
+    capabilities: [json-schema, tools, streaming]
   # Retrieval is wired with the same discipline: a deterministic fake embedder, so the
   # whole path -- chunk, embed, index, search, cite -- runs in CI with no network and no
   # key. The `embeddings` capability is what makes this model an embedding model; the IR
@@ -186,6 +187,34 @@ tools:
     # so `hasScope("customers:read")` would be an unenforced claim. The validator
     # refuses to emit one rather than let the spec imply a check nothing performs.
 
+guardrails:
+  # Every `input`-stage guardrail declared in a document runs on every HTTP generate
+  # route of that document. That is a property of the IR, not of this file: a pipeline
+  # has no field naming a guardrail, and the security gate that demands one is
+  # document-global. The consequence worth knowing is that an agent-scoped guardrail
+  # declared beside a pipeline would inspect pipeline input too -- this document declares
+  # no agent, so here the two cannot disagree.
+  ticket_intake:
+    stages: [input]
+    policies: [prompt-injection]
+    action: block
+    onFail:
+      # `message` is the text the 400 carries, and the reason a client can tell a refusal
+      # from a failure: a block is a decision, not an outage, so it is a 4xx.
+      message: This ticket reads as an attempt to redirect the assistant, so it was refused.
+      log: true
+  ticket_pii:
+    stages: [input]
+    policies: [pii-detect]
+    action: redact
+    # The input stage's payload is exactly `{"text": <the rendered prompt>}`, so `text`
+    # is the only field name a redaction can mask there. The generator refuses any other
+    # name rather than emit a redaction that could never run.
+    redact: [text]
+    onFail:
+      message: Contact details in the ticket were masked before the model saw them.
+      log: false
+
 evals:
   classify_quality:
     description: Whether the classifier returns a well-formed answer for each ticket.
@@ -266,3 +295,15 @@ pipelines:
           as: answer
       - emit:
           event: Answer
+
+deployments:
+  # A deployment says where the app runs, not how it is generated. `streaming` is the only
+  # field here that reaches generated code: it makes the route answer a request that
+  # accepts `text/event-stream` with the model's deltas as SSE frames, and it is what
+  # makes the target declare the `streaming` capability. `secrets` names what the platform
+  # must supply -- the process reads them from its own environment, so there is nothing for
+  # the generator to emit for them.
+  api:
+    target: container
+    streaming: true
+    secrets: [OPENAI_API_KEY]

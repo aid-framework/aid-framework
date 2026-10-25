@@ -39,12 +39,14 @@ import {
   pythonTuple,
   pythonValue,
 } from '../python.js';
+import { streamedStepIndex, streams } from '../streaming.js';
 import { assemble, HEADER, importBlock, importFrom } from '../template.js';
 import type { ResponseSource, StepBinding } from '../validate.js';
 import { bindingOf, renderNames, requestPlan, responsePlan } from '../validate.js';
 import { DEPS_BINDING } from './deps.js';
 import type { EmittedFile } from './file.js';
 import { GENERATED_ROOT, generated } from './file.js';
+import { hasGuardrails, stageGuardrails, stageTable } from './guardrails.js';
 import { promptOf, scopesOf, structOf, toolOf, typeTable } from './ir.js';
 import { orderedPipelines } from './order.js';
 import { promptVersion } from './prompts.js';
@@ -136,10 +138,18 @@ function sortedPairs(pairs: readonly (readonly [string, string])[]): (readonly [
   return [...pairs].sort((left, right) => byName(left[0], right[0]));
 }
 
-/** A reference path as Python reads it: context keys at the root, fields below it. */
-export function renderReference(path: readonly string[]): string {
+/**
+ * A reference path as Python reads it: context keys at the root, fields below it.
+ *
+ * `root` decides how the first segment is spelled, which is what lets a caller read a
+ * binding straight out of the context (`ctx.require("x")`) instead of relying on a local.
+ */
+export function renderReference(
+  path: readonly string[],
+  root: (key: string) => string = contextKey,
+): string {
   return path
-    .map((segment, index) => (index === 0 ? contextKey(segment) : fieldName(segment)))
+    .map((segment, index) => (index === 0 ? root(contextKey(segment)) : fieldName(segment)))
     .join('.');
 }
 
@@ -242,6 +252,7 @@ interface StepImports {
   readonly typing: Set<string>;
   readonly json: Set<string>;
   readonly gateway: Set<string>;
+  readonly guardrails: Set<string>;
 }
 
 /**
@@ -256,6 +267,7 @@ function valueExpression(
   value: StepInputValue,
   context: ExpressionContext,
   asPromptValue: boolean,
+  root?: (key: string) => string,
 ): string {
   if (value.kind === 'literal') {
     if (!asPromptValue) return pythonValue(value.value);
@@ -264,13 +276,13 @@ function valueExpression(
       : `str(${pythonValue(value.value)})`;
   }
   if (value.kind === 'reference') {
-    const reference = renderReference(value.path);
+    const reference = renderReference(value.path, root);
     if (!asPromptValue) return reference;
     return isStringRef(typeOfPath(value.path, context)) ? reference : `str(${reference})`;
   }
   const body = interpolate(value.template, (name) => {
     const path = name.split('.');
-    const reference = renderReference(path);
+    const reference = renderReference(path, root);
     return isStringRef(typeOfPath(path, context)) ? reference : `str(${reference})`;
   });
   return `f${pythonString(body)}`;
@@ -280,6 +292,7 @@ function promptValues(
   prompt: PromptShape,
   step: StepShape,
   context: ExpressionContext,
+  root?: (key: string) => string,
 ): (readonly [string, string])[] {
   const inputs = stepInputs(step);
   // The retrieved context is not a step input. The runtime inlines the items a
@@ -290,11 +303,12 @@ function promptValues(
     renderNames(prompt).map((name) => [
       name,
       retrieved !== undefined && name === retrieved
-        ? `${renderReference([retrieved])}.context`
+        ? `${renderReference([retrieved], root)}.context`
         : valueExpression(
             require(inputs[name], `an input for variable '${name}' of prompt '${prompt.id}'`),
             context,
             true,
+            root,
           ),
     ]),
   );
@@ -353,11 +367,31 @@ function localLines(
   return lines;
 }
 
+/**
+ * The check one stage runs, or `undefined` when the spec declares no guardrail for it.
+ *
+ * Every declared `input` guardrail runs on every HTTP `generate` route: the IR attaches
+ * a guardrail to a prompt or an agent and gives a pipeline no field for one, so there is
+ * no per-pipeline subset to honour (see `emit/guardrails.ts`).
+ */
+function guardrailCheck(
+  ir: IR,
+  stage: 'input' | 'output',
+  imports: StepImports,
+  value: string,
+): string | undefined {
+  if (stageGuardrails(ir, stage).length === 0) return undefined;
+  const table = stageTable(stage);
+  for (const name of ['ENGINE', 'enforce_guardrail', table]) imports.guardrails.add(name);
+  return `enforce_guardrail(ENGINE.check_${stage}(${table}, ${value}))`;
+}
+
 /** The closure that makes one gateway call, so a retry re-sends rather than re-renders. */
 function callClosure(
   alias: string,
   params: readonly (readonly [string, string])[],
   hasFallbacks: boolean,
+  outputCheck: string | undefined,
 ): string[] {
   const inner = INDENT + INDENT;
   const lines = [`${INDENT}async def _call(text: str) -> str:`];
@@ -381,7 +415,14 @@ function callClosure(
   const arguments_ = [alias, '_request'];
   if (hasFallbacks) arguments_.push(`fallbacks=FALLBACKS.get(${alias}, ())`);
   lines.push(callStatement('_response = await ', 'deps.gateway.generate', arguments_, inner));
-  lines.push(`${inner}return _response.text`);
+  // Checking the reply here is what stops a caller parsing it unchecked: `_call` is the
+  // only place a completion is read.
+  if (outputCheck === undefined) {
+    lines.push(`${inner}return _response.text`);
+  } else {
+    lines.push(`${inner}_verdict = ${outputCheck}`);
+    lines.push(`${inner}return _verdict.text`);
+  }
   return lines;
 }
 
@@ -410,6 +451,7 @@ function emitGenerateStep(
   if (params.length > 0) imports.runtime.add('Message');
   const hasFallbacks = (ir.models.find((model) => model.id === alias)?.fallbacks ?? []).length > 0;
   if (hasFallbacks) imports.gateway.add('FALLBACKS');
+  const outputCheck = guardrailCheck(ir, 'output', imports, '_response.text');
   const lines = [`async def ${key}(ctx: PipelineContext) -> PipelineContext:`];
   lines.push(
     pythonDoc(
@@ -419,7 +461,7 @@ function emitGenerateStep(
   );
   lines.push(...localLines(step, context, imports, request).map((line) => `${INDENT}${line}`));
   lines.push('');
-  lines.push(...callClosure(pythonString(alias), params, hasFallbacks));
+  lines.push(...callClosure(pythonString(alias), params, hasFallbacks, outputCheck));
   lines.push('');
   lines.push(
     callStatement(
@@ -433,6 +475,12 @@ function emitGenerateStep(
       INDENT,
     ),
   );
+  // The `input` stage's payload is `{"text": text}`, so the check sees exactly what the
+  // model is about to be sent, and the model is sent `_verdict.text`: a `redact` action
+  // that only reported would leave the payload untouched.
+  const inputCheck = guardrailCheck(ir, 'input', imports, '_rendered.text');
+  const text = inputCheck === undefined ? '_rendered.text' : '_verdict.text';
+  if (inputCheck !== undefined) lines.push(`${INDENT}_verdict = ${inputCheck}`);
   if (schema !== undefined && schema.kind === 'named') {
     imports.runtime.add('run_structured');
     imports.schemas.add(className(schema.name));
@@ -440,12 +488,12 @@ function emitGenerateStep(
       callStatement(
         `${key} = await `,
         'run_structured',
-        ['_call', className(schema.name), '_rendered.text'],
+        ['_call', className(schema.name), text],
         INDENT,
       ),
     );
   } else {
-    lines.push(callStatement(`${key} = await `, '_call', ['_rendered.text'], INDENT));
+    lines.push(callStatement(`${key} = await `, '_call', [text], INDENT));
   }
   lines.push(`${INDENT}return ctx.with_values(${key}=${key})`);
   return lines.join('\n');
@@ -469,6 +517,11 @@ function emitToolStep(
       valueExpression(value, context, false),
     ]),
   );
+  // The `tool-call` stage's payload is the tool's own arguments, so the check sees the
+  // values about to be sent and the call is made with `_verdict.arguments`: a `redact`
+  // action on a tool argument has to change the argument, not just the log line.
+  const toolGuard = stageGuardrails(ir, 'tool-call').length > 0;
+  let callArguments = mapping(arguments_, inner);
 
   imports.runtime.add('PipelineContext');
   imports.runtime.add('Pipeline');
@@ -477,6 +530,19 @@ function emitToolStep(
   lines.push(pythonDoc(`Call tool \`${tool.id}\` and bind what it returns.`, INDENT));
   lines.push(...localLines(step, context, imports, request).map((line) => `${INDENT}${line}`));
   lines.push('');
+  if (toolGuard) {
+    const table = stageTable('tool-call');
+    for (const name of ['ENGINE', 'enforce_guardrail', table]) imports.guardrails.add(name);
+    lines.push(
+      callStatement(
+        '_verdict = ',
+        'enforce_guardrail',
+        [call('ENGINE.check_tool_call', [table, pythonString(tool.id), callArguments], inner)],
+        INDENT,
+      ),
+    );
+    callArguments = '_verdict.arguments';
+  }
   lines.push(
     callStatement(
       '_outcome = await ',
@@ -485,7 +551,7 @@ function emitToolStep(
         call(
           'ToolCall',
           [
-            `arguments=${mapping(arguments_, inner)}`,
+            `arguments=${callArguments}`,
             `id=${pythonString(key)}`,
             `name=${pythonString(tool.name)}`,
           ],
@@ -557,6 +623,106 @@ function emitRetrieveStep(
   return lines.join('\n');
 }
 
+/**
+ * The request an SSE route streams from.
+ *
+ * The route cannot reuse the pipeline: `Pipeline.run` collects one value per step, so it
+ * cannot return until the last step has, which is the wait a stream exists to remove. It
+ * cannot reuse the step's `_call` either, because that awaits `generate`. So this function
+ * *is* the pipeline without its generate step: it runs the same leading step functions,
+ * in the same order, then builds the request from the same rendered prompt. Calling the
+ * step functions rather than re-implementing them is what keeps the tool-call and
+ * retrieval guardrails enforced on the streaming path exactly as on the JSON path -- a
+ * re-implementation would be a second, unguarded copy of every leading step.
+ *
+ * The `input` guardrail runs *here*, before a byte is returned, so a refusal is a real
+ * 4xx rather than a stream that closes early.
+ */
+function emitStreamRequest(
+  ir: IR,
+  pipeline: PipelineShape,
+  index: number,
+  context: ExpressionContext,
+  imports: StepImports,
+  request: string,
+): string {
+  const entry = (pipeline.steps ?? [])[index];
+  const step = require(entry?.kind === 'generate' ? entry : undefined, 'a streamed generate step');
+  const prompt = require(promptOf(ir, step.prompt), 'a prompt for a streamed generate step');
+  const alias = step.model;
+  const params = requestArgs(prompt.params);
+  imports.runtime.add('PipelineContext');
+  imports.runtime.add('CompletionRequest');
+  if (params.length > 0) imports.runtime.add('Message');
+  const leading = (pipeline.steps ?? []).slice(0, index).filter((entry) => entry.kind !== 'emit');
+  const lines = [
+    'async def _stream_request(',
+    `${INDENT}${DEPS_BINDING}: Deps, ${EVENT_BINDING}: ${request}`,
+    ') -> tuple[str, CompletionRequest]:',
+  ];
+  lines.push(
+    pythonDoc(
+      `Build the \`${alias}\` request for prompt \`${prompt.id}\` without sending it, after ` +
+        "running the steps that come before it. A stream can only carry the model's own " +
+        'text, so everything the pipeline does before the model call still has to happen ' +
+        'first; the non-streaming route reaches this point through the pipeline and this ' +
+        'route reaches it directly.',
+      INDENT,
+    ),
+  );
+  lines.push(
+    `${INDENT}ctx = PipelineContext(values=${mapping(
+      [
+        [DEPS_BINDING, DEPS_BINDING],
+        [EVENT_BINDING, EVENT_BINDING],
+      ],
+      INDENT + INDENT,
+    )})`,
+  );
+  for (const entry of leading) {
+    lines.push(`${INDENT}ctx = await ${stepFunctionName(entry)}(ctx)`);
+  }
+  // No locals, and so no `localLines`. The step functions of this module are named
+  // after their bindings, so a local for binding `handbook` would shadow the function
+  // `handbook` this body calls above -- and because Python scopes a name for the whole
+  // function, the call would raise before the assignment. Reading each binding out of
+  // the context instead keeps the two name spaces apart.
+  const fromContext = (key: string): string =>
+    key === EVENT_BINDING || key === DEPS_BINDING ? key : `ctx.require(${pythonString(key)})`;
+  lines.push('');
+  lines.push(
+    callStatement(
+      '_rendered = ',
+      `${DEPS_BINDING}.prompts.render`,
+      [
+        pythonString(prompt.id),
+        `version=${pythonString(promptVersion(prompt.version))}`,
+        `values=${mapping(promptValues(prompt, step, context, fromContext), INDENT + INDENT)}`,
+      ],
+      INDENT,
+    ),
+  );
+  const inputCheck = guardrailCheck(ir, 'input', imports, '_rendered.text');
+  const text = inputCheck === undefined ? '_rendered.text' : '_verdict.text';
+  if (inputCheck !== undefined) lines.push(`${INDENT}_verdict = ${inputCheck}`);
+  if (params.length === 0) {
+    lines.push(`${INDENT}_request = CompletionRequest.prompt(${text})`);
+  } else {
+    lines.push(
+      callStatement(
+        '_request = ',
+        'CompletionRequest',
+        sortedPairs([['messages', `(Message.user(${text}),)`], ...params]).map(
+          ([name, value]) => `${name}=${value}`,
+        ),
+        INDENT,
+      ),
+    );
+  }
+  lines.push(`${INDENT}return ${pythonString(alias)}, _request`);
+  return lines.join('\n');
+}
+
 export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
   const types = typeTable(ir);
   const scopes = scopesOf(pipeline, ir);
@@ -568,6 +734,7 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
     typing: new Set<string>(),
     json: new Set<string>(),
     gateway: new Set<string>(),
+    guardrails: new Set<string>(),
   };
   const blocks: string[] = [];
   (pipeline.steps ?? []).forEach((step, index) => {
@@ -581,6 +748,11 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
           : emitToolStep(ir, step, context, imports, request),
     );
   });
+  const streamedIndex = streams(ir, pipeline) ? streamedStepIndex(pipeline) : undefined;
+  if (streamedIndex !== undefined) {
+    const context: ExpressionContext = { types, scope: scopes[streamedIndex] ?? [], eventFields };
+    blocks.push(emitStreamRequest(ir, pipeline, streamedIndex, context, imports, request));
+  }
 
   const steps = (pipeline.steps ?? []).filter((step) => step.kind !== 'emit');
   const factory = [
@@ -603,6 +775,9 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
         : []),
       ...(imports.gateway.size > 0
         ? [importFrom('..gateway.models', [...imports.gateway].sort(byName))]
+        : []),
+      ...(imports.guardrails.size > 0
+        ? [importFrom('..guardrails', [...imports.guardrails].sort(byName))]
         : []),
     ],
   ]);
@@ -719,21 +894,75 @@ export function emitRoute(ir: IR, pipeline: PipelineShape): EmittedFile {
     ],
     INDENT + INDENT,
   );
+  const servesStreams = streams(ir, pipeline);
+  const guarded = hasGuardrails(ir);
+
+  // A blocked step is not a downstream failure: the app asked the guardrail and the
+  // guardrail said no, so it is a 400. `Pipeline.run` wraps every step exception in a
+  // `PipelineError`, which is why the block is dug back out of the cause chain rather
+  // than caught directly -- the 502 below is the honest answer for everything else.
+  const failed = guarded
+    ? [
+        `${INDENT}except PipelineError as exc:`,
+        `${INDENT}${INDENT}_blocked = guardrail_block(exc)`,
+        `${INDENT}${INDENT}if _blocked is not None:`,
+        `${INDENT}${INDENT}${INDENT}raise HTTPException(` +
+          'status_code=400, detail=str(_blocked)) from exc',
+        `${INDENT}${INDENT}raise HTTPException(status_code=502, detail=str(exc)) from exc`,
+      ]
+    : [
+        `${INDENT}except PipelineError as exc:`,
+        `${INDENT}${INDENT}raise HTTPException(status_code=502, detail=str(exc)) from exc`,
+      ];
+
+  // `Accept: text/event-stream` on the same path, because a second route would be a
+  // second description of one endpoint's contract. `_stream_request` runs the steps
+  // before the generate step and then applies the input guardrail, all before the
+  // response object exists, so a refusal is a 4xx and not a truncated stream.
+  const streamed = servesStreams
+    ? [
+        `${INDENT}if wants_event_stream(request):`,
+        `${INDENT}${INDENT}try:`,
+        callStatement(
+          '_alias, _request = await ',
+          '_stream_request',
+          [DEPS_BINDING, EVENT_BINDING],
+          INDENT + INDENT + INDENT,
+        ),
+        `${INDENT}${INDENT}except GuardrailBlockedError as exc:`,
+        `${INDENT}${INDENT}${INDENT}raise HTTPException(` +
+          'status_code=400, detail=str(exc)) from exc',
+        callStatement(
+          'return ',
+          'StreamingResponse',
+          [`${DEPS_BINDING}.gateway.stream(_alias, _request)`, 'media_type=EVENT_STREAM'],
+          INDENT + INDENT,
+        ),
+      ]
+    : [];
 
   const handlerLines = [
     `async def ${handler}(`,
     `${INDENT}event: ${requestModelName(pipeline.id)},`,
+    ...(servesStreams ? [`${INDENT}request: Request,`] : []),
     `${INDENT}${DEPS_BINDING}: Annotated[Deps, Depends(get_deps)],`,
-    `) -> ${response}:`,
+    `) -> ${servesStreams ? `${response} | Response` : response}:`,
     pythonDoc(
       `Run pipeline \`${pipeline.id}\`. A failing step is a 502 rather than a 500, because ` +
-        'the failure is in a downstream model or tool, not in this request.',
+        'the failure is in a downstream model or tool, not in this request.' +
+        (guarded
+          ? ' A step a guardrail stopped is a 400 instead, because nothing downstream failed.'
+          : '') +
+        (servesStreams
+          ? " A request that accepts `text/event-stream` is answered with the model's " +
+            'deltas as SSE frames instead of waiting for the whole reply.'
+          : ''),
       INDENT,
     ),
+    ...streamed,
     `${INDENT}try:`,
     run,
-    `${INDENT}except PipelineError as exc:`,
-    `${INDENT}${INDENT}raise HTTPException(status_code=502, detail=str(exc)) from exc`,
+    ...failed,
     callStatement(
       'return ',
       response,
@@ -750,12 +979,27 @@ export function emitRoute(ir: IR, pipeline: PipelineShape): EmittedFile {
       importBlock([
         [importFrom('typing', ['Annotated'])],
         [
-          importFrom('fastapi', ['APIRouter', 'Depends', 'HTTPException']),
-          importFrom('aid_runtime', ['PipelineError']),
+          importFrom('fastapi', [
+            'APIRouter',
+            'Depends',
+            'HTTPException',
+            ...(servesStreams ? ['Request', 'Response'] : []),
+          ]),
+          ...(servesStreams ? [importFrom('fastapi.responses', ['StreamingResponse'])] : []),
+          importFrom('aid_runtime', [
+            'PipelineError',
+            ...(guarded || servesStreams ? ['PipelineContext'] : []),
+            ...(servesStreams ? ['GuardrailBlockedError'] : []),
+          ]),
         ],
         [
           importFrom('..deps', ['Deps', 'get_deps']),
-          importFrom(`..pipelines.${moduleName(pipeline.id)}`, [factoryName(pipeline.id)]),
+          ...(guarded ? [importFrom('..guardrails', ['guardrail_block'])] : []),
+          ...(servesStreams ? [importFrom('..sse', ['EVENT_STREAM', 'wants_event_stream'])] : []),
+          importFrom(`..pipelines.${moduleName(pipeline.id)}`, [
+            factoryName(pipeline.id),
+            ...(servesStreams ? ['_stream_request'] : []),
+          ]),
           importFrom('..requests', [requestModelName(pipeline.id)]),
           importFrom('..schemas', [response]),
         ],

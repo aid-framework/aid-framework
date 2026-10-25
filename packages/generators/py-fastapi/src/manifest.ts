@@ -12,11 +12,18 @@
  * orchestration swappable. Phase 0 has no orchestration key at all, which is the
  * declaration that the emitted code is plain async.
  *
- * `streaming` is deliberately absent. The runtime this generator targets raises
- * `FeatureDeferredError` on `stream()`, so declaring the capability would make every
- * spec that requires streaming pass the capability gate against a target that cannot
- * serve it. Phase 2 layer L1 withdrew the declaration; `DEFERRED_CAPABILITIES` in
- * `@aid/ir` records that layer L5 owns bringing it back.
+ * `streaming` and `guardrails` are declared since layer P7a, and the declaration is
+ * the same promise as every other row here: there is an emitter, both runtimes
+ * implement it, and the committed example exercises it. P7a is what changed the
+ * facts — `stream` negotiates `Accept: text/event-stream` on the existing pipeline
+ * route, and `guardrails` runs the runtime's `GuardrailEngine` on the stages a route
+ * can reach. Before P7a this line said the opposite, because `stream()` raised
+ * `FeatureDeferredError` and no guardrail was ever evaluated; a declaration is only
+ * worth the code behind it, so the prose moves with the code rather than ahead of it.
+ *
+ * `agents` and `memory` remain unsupported by this target, and `./validate.ts` is what
+ * turns a spec that requires either into a plan-time rejection instead of a partially
+ * generated application.
  */
 
 import {
@@ -36,7 +43,16 @@ export const PY_FASTAPI_MANIFEST_INPUT: GeneratorManifestInput = {
   target: PY_FASTAPI_TARGET,
   version: '0.1.0',
   irRange: `^${IR_VERSION}`,
-  capabilities: ['http-trigger', 'json-schema', 'tool-calling', 'otel', 'embeddings', 'rerank'],
+  capabilities: [
+    'http-trigger',
+    'json-schema',
+    'streaming',
+    'tool-calling',
+    'otel',
+    'embeddings',
+    'rerank',
+    'guardrails',
+  ],
   emitsAgainst: {
     structuredOutput: 'pydantic',
     tracing: 'otel-genai',

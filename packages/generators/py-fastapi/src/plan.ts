@@ -20,15 +20,18 @@ import { emitBusinessToolSeed, emitContractsInit, emitToolContract } from './emi
 import { emitDeps } from './emit/deps.js';
 import { emitEval, emitEvalsInit } from './emit/evals.js';
 import { emitGatewayInit, emitGatewayModels } from './emit/gateway.js';
+import { emitGuardrails, hasGuardrails } from './emit/guardrails.js';
 import { emitObservability } from './emit/observability.js';
-import { orderedEvals, orderedPrompts, orderedTools } from './emit/order.js';
+import { orderedEvals, orderedPipelines, orderedPrompts, orderedTools } from './emit/order.js';
 import { emitBusinessInit, emitGeneratedInit } from './emit/package.js';
 import { emitPipelines } from './emit/pipelines.js';
 import { emitBusinessPromptsInit, emitPromptModule, emitPromptsInit } from './emit/prompts.js';
 import { emitRetrieval } from './emit/retrieval.js';
 import { emitSchemas } from './emit/schemas.js';
+import { emitSse } from './emit/sse.js';
 import { emitBusinessToolsInit, emitToolAdapter, emitToolsInit } from './emit/tools.js';
 import { PyFastApiPlanError } from './errors.js';
+import { streams } from './streaming.js';
 import { checkPlan } from './validate.js';
 
 /** Code-unit order, so the plan does not depend on locale. */
@@ -51,6 +54,9 @@ function byPath(left: GeneratedFile, right: GeneratedFile): number {
 export function filesFor(ir: IR): GeneratedFile[] {
   const prompts = orderedPrompts(ir);
   const tools = orderedTools(ir);
+  /* The negotiation module exists when a route reads it, and a guardrail module when a
+   * declaration needs one -- a file nothing imports is a file a reader has to explain. */
+  const servesStreams = orderedPipelines(ir).some((pipeline) => streams(ir, pipeline));
   return [
     emitGeneratedInit(ir),
     emitSchemas(ir),
@@ -58,6 +64,8 @@ export function filesFor(ir: IR): GeneratedFile[] {
     emitDeps(ir),
     emitGatewayModels(ir),
     emitGatewayInit(),
+    ...(hasGuardrails(ir) ? [emitGuardrails(ir)] : []),
+    ...(servesStreams ? [emitSse()] : []),
     ...tools.map((tool) => emitToolAdapter(ir, tool)),
     emitToolsInit(ir),
     ...prompts.map((prompt) => emitPromptModule(prompt)),

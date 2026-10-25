@@ -208,6 +208,7 @@ const MODEL_CAPABILITY_MEMBERS: Readonly<Record<string, string>> = {
   'tool-calling': 'Capability.TOOL_CALLING',
   'long-context': 'Capability.LONG_CONTEXT',
   embeddings: 'Capability.EMBEDDINGS',
+  streaming: 'Capability.STREAMING',
 };
 
 /**
@@ -221,6 +222,15 @@ const MODEL_CAPABILITY_MEMBERS: Readonly<Record<string, string>> = {
  * `rerank` is target-side only: the runtime names `Capability.RERANK`, but no provider
  * serves reranking in Phase 1 -- the one reranker is the runtime's own `LexicalReranker`
  * -- so a model that declares it is recorded as unrepresentable rather than advertised.
+ *
+ * `streaming` and `guardrails` are here because both are promises about generated code
+ * rather than about a model: `streaming` is the `Accept: text/event-stream` branch the
+ * route emitter writes, and `guardrails` is the `GuardrailEngine` call the generate
+ * step and the tool adapter emit. `streaming` is *also* a model-side capability -- the
+ * runtime's `ModelGateway.stream` requires `Capability.STREAMING` on the pinned spec
+ * and on the adapter -- which is why it appears in both tables. The two are independent
+ * on purpose: a capability can be satisfied model-side, target-side, or (the D-1 shape)
+ * neither.
  */
 export const TARGET_WIRED_CAPABILITIES: Readonly<Record<string, string>> = {
   'http-trigger': 'the FastAPI route generated in app/generated/app.py',
@@ -228,6 +238,12 @@ export const TARGET_WIRED_CAPABILITIES: Readonly<Record<string, string>> = {
   otel: "the runtime's tracer, named by the generated entrypoint",
   embeddings: 'the retriever bindings generated in app/generated/retrieval/bindings.py',
   rerank: 'the reranker each generated binding resolves through the runtime',
+  streaming:
+    'the `Accept: text/event-stream` branch of each generated route, which returns ' +
+    'StreamingResponse over the runtime gateway',
+  guardrails:
+    'the generated guardrail module and the GuardrailEngine calls the generate step, ' +
+    'the tool adapter and the retriever bindings emit',
 };
 
 /** A target-capability declaration read three ways, so no promise goes unaccounted for. */
@@ -269,11 +285,13 @@ export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, readonly str
   FakeProvider: [
     'Capability.EMBEDDINGS',
     'Capability.LONG_CONTEXT',
+    'Capability.STREAMING',
     'Capability.STRUCTURED_OUTPUT',
     'Capability.TOOL_CALLING',
   ],
   OpenAICompatibleProvider: [
     'Capability.EMBEDDINGS',
+    'Capability.STREAMING',
     'Capability.STRUCTURED_OUTPUT',
     'Capability.TOOL_CALLING',
   ],

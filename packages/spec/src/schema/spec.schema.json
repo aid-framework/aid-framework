@@ -61,7 +61,7 @@
       "additionalProperties": { "$ref": "#/$defs/agent" }
     },
     "guardrails": {
-      "description": "Guardrails: the stages a check runs at, the policies it evaluates, and what happens when one fails. Declarable from spec v0.2; the engine ships in a later layer.",
+      "description": "Guardrails: the stages a check runs at, the policies it evaluates, and what happens when one fails. Declarable from spec v0.2. The runtime evaluates them, and `py-fastapi` emits the wiring; a guardrail declared here applies to every pipeline route of the document, not to the one that named it.",
       "type": "object",
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/name" },
@@ -75,7 +75,7 @@
       "additionalProperties": { "$ref": "#/$defs/memory" }
     },
     "deployments": {
-      "description": "Deployment intents: the target shape, the transport it assumes, and the secrets it needs. Declarable from spec v0.2. `streaming: true` derives a `streaming` requirement; the deploy gate still rejects it until a target actually declares the capability, because no target emits SSE wiring yet.",
+      "description": "Deployment intents: the target shape, the transport it assumes, and the secrets it needs. Declarable from spec v0.2. `streaming: true` derives a `streaming` requirement; `py-fastapi` declares that capability and answers an `Accept: text/event-stream` request with SSE frames, while `ts-vercel` declares nothing and the deploy gate still rejects it there.",
       "type": "object",
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/name" },
