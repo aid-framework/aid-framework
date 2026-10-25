@@ -14,6 +14,10 @@ Two families live here and the split is deliberate.
   generated code binds with literals. They carry the exact embedding model id
   rather than an alias, so a run is reproducible from the generated source alone
   and nothing is resolved at run time.
+* The **store records** (``StoreRecord``, ``SearchHit``) are the payloads the store
+  adapters read and write. They live here rather than in ``stores`` so the pgvector
+  adapter can build them without importing ``stores``, which imports ``pgvector``
+  back lazily; the module graph then has no cycle.
 """
 
 from __future__ import annotations
@@ -43,9 +47,11 @@ __all__ = [
     "RetrieverBinding",
     "RetrieverSpec",
     "ScoredChunk",
+    "SearchHit",
     "SourceKind",
     "SourceSpec",
     "StoreKind",
+    "StoreRecord",
     "VectorStoreSpec",
     "binding_from_spec",
     "chunk_id_for",
@@ -300,6 +306,24 @@ class Chunk(BaseModel):
     end: int = Field(ge=0)
     text: str
     metadata: dict[str, str] = Field(default_factory=dict)
+
+
+class StoreRecord(BaseModel):
+    """One chunk and its vector, exactly as it is written to a store."""
+
+    model_config = _RUNTIME_RECORD
+
+    chunk: Chunk
+    vector: tuple[float, ...]
+
+
+class SearchHit(BaseModel):
+    """A record and its similarity to the query, higher being better."""
+
+    model_config = _RUNTIME_RECORD
+
+    record: StoreRecord
+    score: float
 
 
 class ScoredChunk(BaseModel):

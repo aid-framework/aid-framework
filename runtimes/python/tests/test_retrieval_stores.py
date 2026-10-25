@@ -17,6 +17,7 @@ naming the extra rather than as an ``ImportError`` escaping a lazy import.
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import sys
 
@@ -253,11 +254,12 @@ def test_create_store_refuses_a_pgvector_uri_that_names_an_unset_variable(
 def test_importing_the_runtime_does_not_import_a_database_driver() -> None:
     # The whole reason the driver import lives inside `_load_driver`: the `python` CI
     # job installs only the dev extra, so importing the package must not need it.
-    import aid_runtime
-    import aid_runtime.retrieval
-    import aid_runtime.retrieval.pgvector
+    runtime = importlib.import_module("aid_runtime")
+    retrieval = importlib.import_module("aid_runtime.retrieval")
+    pgvector = importlib.import_module("aid_runtime.retrieval.pgvector")
 
-    assert aid_runtime.retrieval.pgvector.__name__ == "aid_runtime.retrieval.pgvector"
+    assert runtime.retrieval.pgvector.__name__ == "aid_runtime.retrieval.pgvector"
+    assert pgvector is retrieval.pgvector
     assert "psycopg" not in sys.modules
 
 

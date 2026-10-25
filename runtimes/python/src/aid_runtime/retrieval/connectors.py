@@ -97,7 +97,7 @@ class FileConnector:
             for path in self._root.glob(pattern)
             if path.is_file() and not path.name.startswith(".")
         ]
-        return tuple(sorted(found, key=lambda path: self._doc_id(path)))
+        return tuple(sorted(found, key=self._doc_id))
 
     def _doc_id(self, path: Path) -> str:
         return path.relative_to(self._root).as_posix()
