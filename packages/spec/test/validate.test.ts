@@ -6,6 +6,7 @@ import {
   DIAGNOSTIC_CODES,
   type Diagnostic,
   formatPath,
+  MODEL_CACHE_MIN_VERSION,
   type PathSegment,
   SECTION_MIN_VERSION,
   SPEC_VERSION,
@@ -132,6 +133,10 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
   'malformed-template.spec.yaml': {
     code: DIAGNOSTIC_CODES.malformedTemplate,
     path: ['prompts', 'classify', 'template'],
+  },
+  'model-cache-below-version.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['models', 'cached', 'cache'],
   },
   'retriever-filters.spec.yaml': {
     code: DIAGNOSTIC_CODES.notSupported,
@@ -269,6 +274,60 @@ describe('rule-level unit tests', () => {
     });
     expect(diagnostic?.message).toContain("'memory' requires specVersion 0.2");
     expect(diagnostic?.hint).toContain('set specVersion: "0.2"');
+  });
+
+  it('refuses a model cache below spec 0.3 and names the version it needs', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.2',
+      project: { name: 'p' },
+      models: {
+        cached: { provider: 'fake', modelId: 'fake-deterministic-1', cache: { prompt: true } },
+      },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['models.cached.cache']);
+    expect(diagnostics[0]?.message).toContain("'models.cached.cache' requires specVersion 0.3");
+    expect(diagnostics[0]?.hint).toContain(`set specVersion: "${MODEL_CACHE_MIN_VERSION}"`);
+  });
+
+  it('accepts a model cache from spec 0.3, with a semantic threshold and TTL', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.3',
+      project: { name: 'p' },
+      models: {
+        cached: {
+          provider: 'fake',
+          modelId: 'fake-deterministic-1',
+          cache: { prompt: true, semantic: { threshold: 0.9, ttlSeconds: 3600 } },
+        },
+      },
+    });
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('refuses a semantic cache that omits its explicit threshold or TTL', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.3',
+      project: { name: 'p' },
+      models: {
+        cached: {
+          provider: 'fake',
+          modelId: 'fake-deterministic-1',
+          cache: { semantic: { threshold: 0.9 } },
+        },
+      },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['models.cached.cache.semantic.ttlSeconds']);
+  });
+
+  it('leaves a v0.1 document that declares no cache byte-identical in its verdict', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.1',
+      project: { name: 'p' },
+      models: { m: { provider: 'fake', modelId: 'fake-deterministic-1' } },
+    });
+    expect(diagnostics).toEqual([]);
   });
 
   it('lists the supported vocabulary when the key is simply misspelled', () => {

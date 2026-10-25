@@ -17,7 +17,6 @@ from aid_runtime import (
     CostLedger,
     CostProfile,
     FakeProvider,
-    FeatureDeferredError,
     ModelGateway,
     ModelSpec,
     ProviderError,
@@ -301,10 +300,11 @@ async def test_generate_prices_the_response_at_the_pinned_rate(spec: ModelSpec) 
     assert result.cost_usd > 0.0
 
 
-async def test_streaming_is_deferred_not_served(gateway: ModelGateway) -> None:
-    with pytest.raises(FeatureDeferredError) as caught:
-        await gateway.stream("small", PROMPT)
-    assert "request/response only" in str(caught.value)
+async def test_stream_requires_the_streaming_capability(gateway: ModelGateway) -> None:
+    """A model that never declared ``streaming`` is refused, not silently buffered."""
+    with pytest.raises(CapabilityMismatchError):
+        async for _ in gateway.stream("small", PROMPT):
+            pass
 
 
 async def test_aclose_reaches_every_provider() -> None:

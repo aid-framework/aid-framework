@@ -100,10 +100,10 @@ class BudgetExceededError(AidRuntimeError):
 class FeatureDeferredError(AidRuntimeError):
     """A capability is declared for the IR contract but not implemented yet.
 
-    Streaming is the motivating case: the runtime is request/response only, no
-    target declares the ``streaming`` capability, and this error is what ``stream()``
-    raises instead of returning a silently non-streaming "stream". Phase 2 layer L5
-    implements streaming and restores the declaration.
+    Raised for constructs the schema admits but the runtime does not yet serve:
+    TTL expiry and redaction on memory, several retrieval strategies and sources,
+    and the like. A generated app that declares one of these fails loudly at the
+    point of use instead of returning an approximate answer.
     """
 
 

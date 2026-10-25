@@ -18,7 +18,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aid_runtime.errors import ConfigurationError
-from aid_runtime.types import Capability, CostProfile, ModelSpec
+from aid_runtime.types import (
+    Capability,
+    CostProfile,
+    ModelCacheConfig,
+    ModelSpec,
+    SemanticCacheConfig,
+)
 
 __all__ = [
     "AgentDefinition",
@@ -169,6 +175,10 @@ class RuntimeSpec:
     tools: Mapping[str, ToolSpec]
     agents: Mapping[str, AgentDefinition]
     guardrails: Mapping[str, GuardrailDefinition] = field(default_factory=dict)
+    #: The single concurrency cap, read from the IR's ``deployments[].concurrency``.
+    #: ``None`` means unbounded: the runtime only shares a limiter when a deployment
+    #: declares one, which keeps plain request/response usage free of surprises.
+    concurrency: int | None = None
 
     def agent(self, agent_id: str) -> AgentDefinition:
         try:
@@ -267,6 +277,7 @@ def from_ir(document: Mapping[str, Any]) -> RuntimeSpec:
         tools=tools,
         agents=agents,
         guardrails=guardrails,
+        concurrency=_concurrency(document.get("deployments")),
     )
 
 
@@ -493,7 +504,59 @@ def _model(model_id: str, entry: Mapping[str, Any]) -> ModelSpec:
         context_window=context_tokens,
         max_output_tokens=max_output,
         capabilities=capabilities,
+        cache=_cache(where, entry.get("cache")),
     )
+
+
+def _cache(where: str, raw: Any) -> ModelCacheConfig | None:
+    """Parse the IR ``cache`` shape into a :class:`ModelCacheConfig`, or ``None``.
+
+    The IR carries ``cache: {prompt?: boolean, semantic?: {threshold, ttlSeconds}}``.
+    Semantic reuse is opt-in and carries an explicit threshold and TTL; there is no
+    default threshold, so a semantic entry missing either is a configuration error
+    rather than a silently lenient cache.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise ConfigurationError(f"{where} cache must be an object")
+    semantic = None
+    semantic_raw = raw.get("semantic")
+    if semantic_raw is not None:
+        if not isinstance(semantic_raw, Mapping):
+            raise ConfigurationError(f"{where} cache.semantic must be an object")
+        threshold = semantic_raw.get("threshold")
+        if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+            raise ConfigurationError(f"{where} cache.semantic needs a threshold in [0, 1]")
+        threshold = float(threshold)
+        if not 0.0 <= threshold <= 1.0:
+            raise ConfigurationError(
+                f"{where} cache.semantic.threshold must be in [0, 1], got {threshold}"
+            )
+        ttl = semantic_raw.get("ttlSeconds")
+        if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl < 1:
+            raise ConfigurationError(f"{where} cache.semantic needs a positive ttlSeconds")
+        semantic = SemanticCacheConfig(threshold=threshold, ttl_seconds=ttl)
+    return ModelCacheConfig(prompt=raw.get("prompt") is True, semantic=semantic)
+
+
+def _concurrency(raw: Any) -> int | None:
+    """The single cap the IR's deployments declare, or ``None`` (unbounded).
+
+    ``deployments`` is an array; the runtime shares one limiter, so the cap is the
+    highest ``concurrency`` any deployment declares. A spec that declares none gets
+    ``None``, which means the gateway and executor stay unbounded by default.
+    """
+    if not isinstance(raw, Sequence) or isinstance(raw, str):
+        return None
+    declared: list[int] = []
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            continue
+        value = entry.get("concurrency")
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+            declared.append(value)
+    return max(declared) if declared else None
 
 
 def _memory(memory_id: str, entry: Mapping[str, Any]) -> MemoryDefinition:

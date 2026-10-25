@@ -36,6 +36,7 @@ export { SourceDocument } from './source-document.js';
 export {
   DEFERRED_SECTIONS,
   DEFERRED_STEP_KINDS,
+  MODEL_CACHE_MIN_VERSION,
   SECTION_MIN_VERSION,
   type SpecVersion,
   SUPPORTED_SECTIONS,
@@ -53,13 +54,13 @@ import { validateSpec } from './validate.js';
 
 /**
  * The version `aid init` writes and the version every v0.1 fixture stays on. This
- * build also reads 0.2 (`SUPPORTED_SPEC_VERSIONS`); 0.1 documents are byte-identical
- * under both.
+ * build also reads 0.2 and 0.3 (`SUPPORTED_SPEC_VERSIONS`); 0.1 documents are
+ * byte-identical under all three.
  */
 export const SPEC_VERSION = '0.1';
 
 /** The newest version this build reads. Sections above this are rejected, not ignored. */
-export const SPEC_VERSION_LATEST = '0.2';
+export const SPEC_VERSION_LATEST = '0.3';
 
 export interface SpecCheckResult {
   /** True when no diagnostic has `error` severity. Warnings do not fail a check. */

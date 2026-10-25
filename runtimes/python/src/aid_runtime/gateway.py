@@ -16,14 +16,18 @@ Three responsibilities, in this order:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+import json
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
+from contextlib import asynccontextmanager
+from typing import Any
 
+from aid_runtime.cache import CompletionCache, cache_key_for
+from aid_runtime.concurrency import ConcurrencyLimiter
 from aid_runtime.cost import Budget, CostLedger, LedgerEntry, estimate_prompt_cost_usd
 from aid_runtime.errors import (
     BudgetExceededError,
     CapabilityMismatchError,
     ConfigurationError,
-    FeatureDeferredError,
     ProviderError,
     UnknownModelAliasError,
 )
@@ -32,6 +36,8 @@ from aid_runtime.tracing import ATTRIBUTES, get_tracer, llm_span, record_cost, r
 from aid_runtime.types import (
     Capability,
     CompletionRequest,
+    CompletionResponse,
+    FinishReason,
     GenerationResult,
     ModelSpec,
     PinnedModel,
@@ -40,9 +46,18 @@ from aid_runtime.types import (
 
 __all__ = ["ModelGateway", "estimate_usage"]
 
-#: Called after every successfully charged call. Lets a generated app log or
+#: The fixed chunk size a cached stream is re-chunked into, so a cache hit still
+#: streams as several deltas rather than one blob.
+_CACHE_CHUNK = 16
+
+#: Callback after every successfully charged call. Lets a generated app log or
 #: forward spend without the gateway knowing anything about logging.
 CallHook = Callable[[LedgerEntry], None]
+
+
+def _sse(payload: dict[str, Any]) -> bytes:
+    """Encode one Server-Sent Event ``data`` frame as UTF-8 bytes."""
+    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n".encode()
 
 
 class ModelGateway:
@@ -57,6 +72,7 @@ class ModelGateway:
         budget: Budget | None = None,
         on_call: Iterable[CallHook] = (),
         tracer_name: str = "aid_runtime",
+        limiter: ConcurrencyLimiter | None = None,
     ) -> None:
         if not providers:
             raise ConfigurationError("the gateway needs at least one provider")
@@ -78,6 +94,8 @@ class ModelGateway:
         self._budget = budget
         self._hooks = tuple(on_call)
         self._tracer_name = tracer_name
+        self._cache = CompletionCache()
+        self._limiter = limiter
 
     @property
     def aliases(self) -> tuple[str, ...]:
@@ -124,6 +142,7 @@ class ModelGateway:
         *,
         fallbacks: Sequence[str] = (),
         budget: Budget | None = None,
+        use_cache: bool = True,
     ) -> GenerationResult:
         """Run one call, falling back through ``fallbacks`` in order.
 
@@ -131,6 +150,10 @@ class ModelGateway:
         survive: a provider error or a missing capability. A
         :class:`~aid_runtime.errors.BudgetExceededError` propagates immediately --
         retrying a different model cannot make an exhausted budget affordable.
+
+        ``use_cache`` opts out of the cache (default: on). It exists for callers
+        whose result must reflect a live call -- evals in particular, where a
+        cached answer would be a false pass.
         """
         chain = [alias, *fallbacks]
         errors: list[str] = []
@@ -139,7 +162,9 @@ class ModelGateway:
         for index, candidate in enumerate(chain):
             pinned = self.resolve(candidate)
             try:
-                return await self._attempt(pinned, request, active_budget, chain[: index + 1])
+                return await self._attempt(
+                    pinned, request, active_budget, chain[: index + 1], use_cache
+                )
             except (ProviderError, CapabilityMismatchError) as exc:
                 errors.append(f"{candidate}: {exc}")
                 if index == len(chain) - 1:
@@ -175,11 +200,108 @@ class ModelGateway:
             return False
         return self.projected_cost_usd(alias, request) <= budget.max_usd
 
-    async def stream(self, alias: str, request: CompletionRequest) -> None:
-        """Declared but not implemented; see the module docstring."""
-        raise FeatureDeferredError(
-            "streaming is a declared capability, not an implemented one; "
-            "Phase 0 serves request/response only"
+    async def stream(
+        self,
+        alias: str,
+        request: CompletionRequest,
+        *,
+        budget: Budget | None = None,
+        use_cache: bool = True,
+    ) -> AsyncIterator[bytes]:
+        """Stream one call as Server-Sent Event ``data`` frames, accounting exactly
+        like :meth:`generate`.
+
+        Each frame is ``data: <json>\\n\\n``: one frame per text delta (payload
+        ``{"delta": "..."}``) so the first frame reaches the wire before the call
+        completes, then a terminal frame carrying ``done``, the finish reason, the
+        served model/provider and the usage. A cache hit re-chunks the cached text
+        and charges nothing. Cancellation propagates from the consumer and closes
+        the stream, releasing the shared concurrency slot.
+
+        Only models *and* adapters advertising ``streaming`` are served; anything
+        else raises :class:`CapabilityMismatchError` rather than silently falling
+        back to a non-streaming response.
+        """
+        pinned = self.require(alias, (Capability.STREAMING,))
+        spec = pinned.spec
+        provider = self._providers[spec.provider]
+        active_budget = budget if budget is not None else self._budget
+
+        if active_budget is not None:
+            self._ledger.check(active_budget)
+            self._preflight(pinned, request, active_budget)
+
+        cached = self._cache_get(spec, request) if use_cache else None
+        if cached is not None:
+            async for frame in self._stream_cached(pinned, cached):
+                yield frame
+            return
+
+        text_parts: list[str] = []
+        usage = TokenUsage(input_tokens=0, output_tokens=0)
+        finish_reason: FinishReason = "stop"
+
+        async with self._limit():
+            with llm_span(
+                model=spec.name,
+                provider=spec.provider,
+                alias=pinned.alias,
+                temperature=request.temperature,
+                max_tokens=request.max_output_tokens,
+                tracer=get_tracer(self._tracer_name),
+            ) as span:
+                async for chunk in provider.stream(request, model=spec):
+                    if chunk.delta:
+                        text_parts.append(chunk.delta)
+                        yield _sse({"delta": chunk.delta})
+                    if chunk.usage is not None:
+                        usage = chunk.usage
+                    if chunk.finish_reason is not None:
+                        finish_reason = chunk.finish_reason
+
+                text = "".join(text_parts)
+                if usage.total_tokens == 0:
+                    usage = TokenUsage(
+                        input_tokens=sum(
+                            (len(message.content) + 3) // 4 for message in request.messages
+                        ),
+                        output_tokens=(len(text) + 3) // 4,
+                    )
+                cost = spec.cost.cost_usd(usage)
+                record_usage(span, usage)
+                record_cost(span, cost, alias=pinned.alias)
+
+                entry = LedgerEntry(
+                    alias=pinned.alias,
+                    model=spec.name,
+                    provider=spec.provider,
+                    usage=usage,
+                    cost_usd=cost,
+                )
+                self._ledger.charge(active_budget, entry)
+                for hook in self._hooks:
+                    hook(entry)
+
+                if use_cache:
+                    self._cache_put(
+                        spec,
+                        request,
+                        CompletionResponse(
+                            text=text,
+                            model=spec.name,
+                            provider=spec.provider,
+                            usage=usage,
+                            finish_reason=finish_reason,
+                        ),
+                    )
+
+        yield _sse(
+            {
+                "done": True,
+                "finish_reason": finish_reason,
+                "model": spec.name,
+                "provider": spec.provider,
+            }
         )
 
     async def aclose(self) -> None:
@@ -192,6 +314,7 @@ class ModelGateway:
         request: CompletionRequest,
         budget: Budget | None,
         attempted: Sequence[str],
+        use_cache: bool,
     ) -> GenerationResult:
         if budget is not None:
             self._ledger.check(budget)
@@ -200,20 +323,26 @@ class ModelGateway:
         spec = pinned.spec
         provider = self._providers[spec.provider]
 
-        with llm_span(
-            model=spec.name,
-            provider=spec.provider,
-            alias=pinned.alias,
-            temperature=request.temperature,
-            max_tokens=request.max_output_tokens,
-            tracer=get_tracer(self._tracer_name),
-        ) as span:
-            response = await provider.complete(request, model=spec)
-            cost = spec.cost.cost_usd(response.usage)
-            record_usage(span, response.usage)
-            record_cost(span, cost, alias=pinned.alias)
-            if len(attempted) > 1:
-                span.set_attribute(ATTRIBUTES["attempts"], list(attempted))
+        if use_cache:
+            cached = self._cache_get(spec, request)
+            if cached is not None:
+                return self._cache_result(pinned, cached, attempted)
+
+        async with self._limit():
+            with llm_span(
+                model=spec.name,
+                provider=spec.provider,
+                alias=pinned.alias,
+                temperature=request.temperature,
+                max_tokens=request.max_output_tokens,
+                tracer=get_tracer(self._tracer_name),
+            ) as span:
+                response = await provider.complete(request, model=spec)
+                cost = spec.cost.cost_usd(response.usage)
+                record_usage(span, response.usage)
+                record_cost(span, cost, alias=pinned.alias)
+                if len(attempted) > 1:
+                    span.set_attribute(ATTRIBUTES["attempts"], list(attempted))
 
         entry = LedgerEntry(
             alias=pinned.alias,
@@ -226,12 +355,104 @@ class ModelGateway:
         for hook in self._hooks:
             hook(entry)
 
+        if use_cache:
+            self._cache_put(spec, request, response)
+
         return GenerationResult(
             response=response,
             alias=pinned.alias,
             cost_usd=cost,
             attempts=tuple(attempted),
         )
+
+    @asynccontextmanager
+    async def _limit(self) -> AsyncIterator[None]:
+        """Acquire the shared concurrency slot, releasing it on cancel or error.
+
+        A gateway constructed without a limiter is unbounded (no-op), which keeps
+        plain request/response usage free of concurrency surprises.
+        """
+        if self._limiter is None:
+            yield
+            return
+        async with self._limiter.run():
+            yield
+
+    def _cache_get(self, spec: ModelSpec, request: CompletionRequest) -> CompletionResponse | None:
+        cfg = spec.cache
+        if cfg is None:
+            return None
+        if cfg.prompt:
+            exact = self._cache.get(cache_key_for(spec.name, request))
+            if exact is not None:
+                return exact
+        if cfg.semantic is not None:
+            return self._cache.semantic_get(
+                spec,
+                request,
+                threshold=cfg.semantic.threshold,
+                ttl_seconds=cfg.semantic.ttl_seconds,
+            )
+        return None
+
+    def _cache_put(
+        self, spec: ModelSpec, request: CompletionRequest, response: CompletionResponse
+    ) -> None:
+        cfg = spec.cache
+        if cfg is None or (not cfg.prompt and cfg.semantic is None):
+            return
+        self._cache.put(cache_key_for(spec.name, request), response, request)
+
+    def _cache_result(
+        self, pinned: PinnedModel, response: CompletionResponse, attempted: Sequence[str]
+    ) -> GenerationResult:
+        """Build a cache-hit result: trace-visible, zero cost, no budget charge."""
+        with llm_span(
+            model=response.model,
+            provider=response.provider,
+            alias=pinned.alias,
+            tracer=get_tracer(self._tracer_name),
+        ) as span:
+            span.set_attribute("aid.cache.hit", True)
+            if len(attempted) > 1:
+                span.set_attribute(ATTRIBUTES["attempts"], list(attempted))
+        return GenerationResult(
+            response=response,
+            alias=pinned.alias,
+            cost_usd=0.0,
+            attempts=tuple(attempted),
+            cache_hit=True,
+        )
+
+    async def _stream_cached(
+        self, pinned: PinnedModel, response: CompletionResponse
+    ) -> AsyncIterator[bytes]:
+        with llm_span(
+            model=response.model,
+            provider=response.provider,
+            alias=pinned.alias,
+            tracer=get_tracer(self._tracer_name),
+        ) as span:
+            span.set_attribute("aid.cache.hit", True)
+        text = response.text
+        for start in range(0, len(text), _CACHE_CHUNK):
+            yield _sse({"delta": text[start : start + _CACHE_CHUNK]})
+        yield _sse(
+            {
+                "done": True,
+                "finish_reason": response.finish_reason,
+                "model": response.model,
+                "provider": response.provider,
+            }
+        )
+
+    def clear_cache(self) -> None:
+        """Empty the prompt and semantic caches.
+
+        Exposed for callers -- tests and evals in particular -- that need a known
+        cold cache rather than an accidental hit from an earlier call.
+        """
+        self._cache.clear()
 
     def _preflight(self, pinned: PinnedModel, request: CompletionRequest, budget: Budget) -> None:
         """Refuse a call whose *prompt* alone already breaches the budget.

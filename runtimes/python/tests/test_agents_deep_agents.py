@@ -646,7 +646,7 @@ async def test_the_engine_does_not_expose_streaming() -> None:
     harness = build(_deep(), script=[ScriptedTurn.answer("two days")])
     model = GatewayChatModel(gateway=harness.gateway, alias="cheap")
 
-    with pytest.raises(Exception, match="streaming is not supported"):
+    with pytest.raises(Exception, match="streaming is not exposed"):
         model._astream([])
 
 

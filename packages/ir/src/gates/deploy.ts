@@ -2,11 +2,14 @@
  * Deployment — one gate, `deploy/streaming`.
  *
  * A deployment that asks for streaming asks for something a target can only honour if
- * it declares the capability, and in Phase 2 L1 no target does: both gateways raise
- * `FeatureDeferredError`, so declaring it would be the false declaration this layer
- * exists to remove (defect D-1). The gate therefore fails closed today and starts
- * passing on the day a target declares `streaming` — it is never a no-op, because the
- * decision is read from the injected declarations rather than hard-coded here.
+ * it declares the capability. No target does yet: the Python `ModelGateway.stream()`
+ * now produces SSE bytes (Phase 2 L5), but the py-fastapi generator still emits no
+ * streaming route and the TypeScript gateway still raises `FeatureDeferredError`
+ * (ratified L6), so declaring the capability on a target would remain the false
+ * declaration this layer exists to remove (defect D-1, now only partially closed).
+ * The gate therefore fails closed today and starts passing on the day a target
+ * declares `streaming` — it is never a no-op, because the decision is read from the
+ * injected declarations rather than hard-coded here.
  *
  * The check covers every configured target: a project that generates for two targets
  * and asks for streaming must not ship a deployment one of them silently cannot serve.

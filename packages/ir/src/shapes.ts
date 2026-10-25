@@ -127,6 +127,17 @@ export interface CostProfile {
   outputPerMTok: number;
 }
 
+/**
+ * The opt-in semantic cache: an explicit threshold and TTL, so no spec can enable
+ * semantic caching and inherit a silent default for either.
+ */
+export interface SemanticCacheShape {
+  /** Minimum cosine similarity (0..1) a new prompt must reach against a cached one. */
+  threshold: number;
+  /** How long (seconds) a cached response may be reused before it is invalidated. */
+  ttlSeconds: number;
+}
+
 export interface ModelShape {
   id: string;
   /** Stable identity `model:<id>`; derived from the id, never from content. */
@@ -140,7 +151,7 @@ export interface ModelShape {
   /** Catalog key the cost came from, when one resolved. */
   costProfileId?: string;
   fallbacks: string[];
-  cache?: { prompt?: boolean; semantic?: boolean };
+  cache?: { prompt?: boolean; semantic?: SemanticCacheShape };
   baseUrl?: string;
   apiKeyEnv?: string;
   description?: string;

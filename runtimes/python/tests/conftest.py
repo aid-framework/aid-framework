@@ -23,9 +23,10 @@ FAKE_PROVIDER = "fake"
 SMALL_ALIAS = "small"
 LARGE_ALIAS = "large"
 
-#: Capabilities both fixtures advertise. Streaming is deliberately absent from
-#: the http adapter but present here so capability negotiation can be tested in
-#: both directions.
+#: Capabilities both model fixtures advertise. Streaming is deliberately left off
+#: the *model* spec (the adapters re-declare it) so capability negotiation can be
+#: tested in both directions: a streaming-capable adapter serving a model that
+#: never declared the capability must still be refused.
 CAPABILITIES = frozenset({Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT})
 
 

@@ -133,7 +133,13 @@ class GatewayRunner:
 
     async def __call__(self, case: EvalCase) -> str:
         request = self._request_for(case)
-        result = await self._gateway.generate(self._alias, request, fallbacks=self._fallbacks)
+        # Evals are cache-off by default: a cached prediction is a false pass, not
+        # a measurement of the model. The ``use_cache`` opt-out exists precisely so
+        # a runner can insist on a live call without the caller knowing the cache
+        # is there at all.
+        result = await self._gateway.generate(
+            self._alias, request, fallbacks=self._fallbacks, use_cache=False
+        )
         return result.text
 
     def _default_request(self, case: EvalCase) -> CompletionRequest:
@@ -162,7 +168,7 @@ async def gateway_judge(
 
     async def call(prompt: str) -> str:
         request = CompletionRequest.prompt(prompt, system=system)
-        result = await gateway.generate(alias, request)
+        result = await gateway.generate(alias, request, use_cache=False)
         return result.text
 
     return call
