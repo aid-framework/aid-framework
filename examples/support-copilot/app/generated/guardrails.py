@@ -18,6 +18,8 @@ import logging
 from aid_runtime import GuardrailBlockedError
 from aid_runtime.agents import GuardrailDefinition, GuardrailEngine, GuardrailVerdict
 
+__all__ = ["ENGINE", "GUARDRAILS", "INPUT_GUARDRAILS", "enforce_guardrail", "guardrail_block"]
+
 _LOGGER = logging.getLogger(__name__)
 
 _STOPPING = frozenset({"block", "escalate"})

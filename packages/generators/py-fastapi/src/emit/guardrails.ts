@@ -26,7 +26,7 @@
 
 import type { GuardrailShape, IR } from '@aid/ir';
 
-import { INDENT, pythonString, pythonTuple } from '../python.js';
+import { INDENT, MAX_LINE, pythonString, pythonTuple } from '../python.js';
 import { assemble, HEADER, importBlock, importFrom } from '../template.js';
 import type { EmittedFile } from './file.js';
 import { GENERATED_ROOT, generated } from './file.js';
@@ -89,6 +89,27 @@ function tables(ir: IR): string[] {
       ')',
     ].join('\n'),
   );
+}
+
+/**
+ * The module's public surface, declared.
+ *
+ * A route imports `ENGINE`, the stage tables and the two functions, so the stage table is
+ * read only from another module. `__all__` says so in the file itself, which is both the
+ * documentation a reader wants and the statement a static analyzer needs before it can
+ * tell an exported name from a dead one.
+ */
+function exports(ir: IR): string {
+  const names = [
+    'ENGINE',
+    'GUARDRAILS',
+    ...STAGES.filter((stage) => stageGuardrails(ir, stage).length > 0).map(stageTable),
+    'enforce_guardrail',
+    'guardrail_block',
+  ].map(pythonString);
+  const oneLine = `__all__ = [${names.join(', ')}]`;
+  if (oneLine.length <= MAX_LINE) return oneLine;
+  return ['__all__ = [', ...names.map((name) => `${INDENT}${name},`), ']'].join('\n');
 }
 
 const ENFORCE = [
@@ -163,6 +184,7 @@ export function emitGuardrails(ir: IR): EmittedFile {
           ]),
         ],
       ]),
+      exports(ir),
       '_LOGGER = logging.getLogger(__name__)',
       '_STOPPING = frozenset({"block", "escalate"})',
       'ENGINE = GuardrailEngine()',

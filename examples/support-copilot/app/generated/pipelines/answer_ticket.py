@@ -79,9 +79,7 @@ async def answer(ctx: PipelineContext) -> PipelineContext:
     return ctx.with_values(answer=answer)
 
 
-async def _stream_request(
-    deps: Deps, event: AnswerTicketRequest
-) -> tuple[str, CompletionRequest]:
+async def _stream_request(deps: Deps, event: AnswerTicketRequest) -> tuple[str, CompletionRequest]:
     """Build the `fast` request for prompt `classify_ticket` without sending it, after running the
     steps that come before it. A stream can only carry the model's own text, so everything the
     pipeline does before the model call still has to happen first; the non-streaming route reaches

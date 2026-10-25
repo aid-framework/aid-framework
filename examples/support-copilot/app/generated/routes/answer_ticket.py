@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from aid_runtime import GuardrailBlockedError, PipelineContext, PipelineError
+from aid_runtime import GuardrailBlockedError, PipelineError
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 

@@ -139,6 +139,13 @@ function codes(ir: IR): string[] {
   return checkPlan(ir).map((problem) => problem.code);
 }
 
+/** The single pipeline a minimal surface spec builds, without an unchecked index. */
+function onlyPipeline(ir: IR): IR['pipelines'][number] {
+  const [pipeline] = ir.pipelines;
+  if (pipeline === undefined) throw new Error('the spec built no pipeline');
+  return pipeline;
+}
+
 /** A copy of an IR with one pipeline's steps replaced, leaving the shared fixture intact. */
 function withSteps(
   ir: IR,
@@ -171,6 +178,10 @@ describe('a 0.2 spec with guardrails and a streaming deployment', () => {
     expect(guardrails).toContain('GuardrailDefinition(');
     expect(guardrails).toContain('id="intake"');
     expect(guardrails).toContain('INPUT_GUARDRAILS: tuple[GuardrailDefinition, ...]');
+    // The stage table is read only from the route module, so the file has to say it is
+    // part of the surface: a generated module that leaves it implicit reads as dead code.
+    expect(guardrails).toContain('__all__ = [');
+    expect(guardrails).toContain('"INPUT_GUARDRAILS"');
 
     const pipeline = planned(plan, 'app/generated/pipelines/handle.py') ?? '';
     expect(pipeline).toContain(
@@ -251,6 +262,9 @@ describe('streaming is negotiated on the request, same route', () => {
     // One route, not two: the JSON return is still the end of the same function.
     expect(route.match(/@handle_router\.post/g)?.length).toBe(1);
     expect(route).toContain('return Reply(');
+    // The route imports only what it names: `PipelineContext` is the pipeline module's
+    // annotation, and an import the route never reads is a lint failure in the example.
+    expect(route).not.toContain('PipelineContext');
   });
 
   it('emits no `Accept` branch when no deployment asks to stream', () => {
@@ -282,7 +296,7 @@ describe('streaming is negotiated on the request, same route', () => {
 describe('a pipeline that cannot be streamed is refused at plan time', () => {
   it('refuses a second `generate`, rather than dropping it from the stream', () => {
     const { ir } = buildForSpecText(specText(BLOCKING_GUARDRAIL, STREAMING_DEPLOYMENT));
-    const generate = ir.pipelines[0].steps.find((step) => step.kind === 'generate');
+    const generate = onlyPipeline(ir).steps.find((step) => step.kind === 'generate');
     expect(generate).toBeDefined();
     const twoGenerate = withSteps(ir, 'handle', (steps) => [
       ...steps,
@@ -308,7 +322,7 @@ describe('a pipeline that cannot be streamed is refused at plan time', () => {
 
   it('says why, and does not silently downgrade to JSON', () => {
     const { ir } = buildForSpecText(specText(BLOCKING_GUARDRAIL, STREAMING_DEPLOYMENT));
-    const generate = ir.pipelines[0].steps.find((step) => step.kind === 'generate');
+    const generate = onlyPipeline(ir).steps.find((step) => step.kind === 'generate');
     const broken = withSteps(ir, 'handle', (steps) => [
       ...steps,
       ...(generate === undefined ? [] : [{ ...generate, as: 'second' } as typeof generate]),
@@ -349,12 +363,16 @@ describe('the collections P7b owns are still refused', () => {
         {
           id: 'assistant',
           name: 'assistant',
-          prompt: 'classify_ticket',
+          instructions: 'classify_ticket',
           model: 'fast',
           tools: [],
+          retrievers: [],
           memory: [],
           guardrails: [],
           maxSteps: 4,
+          handoffs: [],
+          delegates: [],
+          engine: 'native',
           traits: [],
         },
       ],
@@ -372,6 +390,7 @@ describe('the collections P7b owns are still refused', () => {
           id: 'conversation',
           kind: 'buffer',
           scope: 'thread',
+          tokenBudget: 2048,
           redact: [],
           traits: [],
         },

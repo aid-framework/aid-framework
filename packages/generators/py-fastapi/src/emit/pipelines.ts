@@ -655,10 +655,20 @@ function emitStreamRequest(
   imports.runtime.add('CompletionRequest');
   if (params.length > 0) imports.runtime.add('Message');
   const leading = (pipeline.steps ?? []).slice(0, index).filter((entry) => entry.kind !== 'emit');
+  // Inline when it fits: ruff format leaves a signature under the line limit on one line,
+  // and a generated file that the example's own `ruff format --check` would rewrite is a
+  // drift failure rather than a style preference.
+  const signature =
+    `async def _stream_request(${DEPS_BINDING}: Deps, ${EVENT_BINDING}: ${request})` +
+    ' -> tuple[str, CompletionRequest]:';
   const lines = [
-    'async def _stream_request(',
-    `${INDENT}${DEPS_BINDING}: Deps, ${EVENT_BINDING}: ${request}`,
-    ') -> tuple[str, CompletionRequest]:',
+    ...(signature.length <= MAX_LINE
+      ? [signature]
+      : [
+          'async def _stream_request(',
+          `${INDENT}${DEPS_BINDING}: Deps, ${EVENT_BINDING}: ${request},`,
+          ') -> tuple[str, CompletionRequest]:',
+        ]),
   ];
   lines.push(
     pythonDoc(
@@ -988,7 +998,6 @@ export function emitRoute(ir: IR, pipeline: PipelineShape): EmittedFile {
           ...(servesStreams ? [importFrom('fastapi.responses', ['StreamingResponse'])] : []),
           importFrom('aid_runtime', [
             'PipelineError',
-            ...(guarded || servesStreams ? ['PipelineContext'] : []),
             ...(servesStreams ? ['GuardrailBlockedError'] : []),
           ]),
         ],
