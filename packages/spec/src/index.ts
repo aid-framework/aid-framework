@@ -36,9 +36,13 @@ export { SourceDocument } from './source-document.js';
 export {
   DEFERRED_SECTIONS,
   DEFERRED_STEP_KINDS,
+  SECTION_MIN_VERSION,
+  type SpecVersion,
   SUPPORTED_SECTIONS,
+  SUPPORTED_SPEC_VERSIONS,
   SUPPORTED_STEP_KINDS,
   specJsonSchema,
+  specVersionAtLeast,
   type ValidateOptions,
   validateSpec,
 } from './validate.js';
@@ -47,8 +51,15 @@ import { type Diagnostic, hasErrors, sortDiagnostics } from './diagnostics.js';
 import { type ParseOptions, parseSpecDocument } from './parse.js';
 import { validateSpec } from './validate.js';
 
-/** The spec language version this package implements. */
+/**
+ * The version `aid init` writes and the version every v0.1 fixture stays on. This
+ * build also reads 0.2 (`SUPPORTED_SPEC_VERSIONS`); 0.1 documents are byte-identical
+ * under both.
+ */
 export const SPEC_VERSION = '0.1';
+
+/** The newest version this build reads. Sections above this are rejected, not ignored. */
+export const SPEC_VERSION_LATEST = '0.2';
 
 export interface SpecCheckResult {
   /** True when no diagnostic has `error` severity. Warnings do not fail a check. */

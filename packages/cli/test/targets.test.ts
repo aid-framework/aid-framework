@@ -15,6 +15,8 @@ import {
   TS_VERCEL_MANIFEST,
   tsVercelGenerator,
 } from '@aid/generator-ts-vercel';
+import { buildIR, REQUIRED_CAPABILITIES, runGates } from '@aid/ir';
+import { checkSpecText } from '@aid/spec';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -84,10 +86,147 @@ describe('the ts-vercel entry', () => {
     expect(declared['py-fastapi']).toEqual([...PY_FASTAPI_MANIFEST.capabilities].sort());
   });
 
-  it('drops `streaming`, which the TypeScript runtime defers', () => {
-    // `py-fastapi` declares it and honours it; this target does not, because the emitted
-    // code calls `ModelGateway.stream`, which raises `FeatureDeferredError`. Declaring it
-    // would be exactly the fail-open the capability discipline forbids.
+  it('drops `streaming`, which both runtimes defer', () => {
+    // Neither target may declare it: the emitted code calls `ModelGateway.stream`, which
+    // raises `FeatureDeferredError` in `runtimes/python` and `runtimes/typescript` alike.
+    // `py-fastapi` used to declare it and this test used to say so, which made a claim
+    // about honoured behaviour that no runtime kept. L1 withdrew it from both sides, so
+    // the assertion is on both targets and cannot pass by one of them being unexamined.
     expect(targetCapabilities()['ts-vercel']).not.toContain('streaming');
+    expect(targetCapabilities()['py-fastapi']).not.toContain('streaming');
+    expect(PY_FASTAPI_MANIFEST.capabilities).not.toContain('streaming');
+    expect([...TS_VERCEL_CAPABILITIES]).not.toContain('streaming');
+  });
+});
+
+/**
+ * The staging claim, made executable.
+ *
+ * L1 promoted `agents` and `guardrails` to supported spec sections and derived both as
+ * required capabilities, but deliberately taught neither target to declare them: the
+ * agent runtime is L2 (`py-fastapi`) and L6 (`ts-vercel`). The gap between "the spec
+ * accepts it" and "a target can build it" has to be a rejection, not a hope, so this is
+ * the whole journey in one test file -- spec validation, IR build, capability gate --
+ * with the positive control that proves the gate is what refused.
+ *
+ * This lives in `packages/cli` because it is the only package that can see both
+ * generators at once; inside `py-fastapi` the claim about `ts-vercel` would be untestable
+ * and the test would quietly cover one target instead of every target.
+ */
+const AGENT_SPEC = `specVersion: "0.2"
+project:
+  name: agent-desk
+  namespace: acme.agents
+  targets: [py-fastapi, ts-vercel]
+types:
+  Reply:
+    kind: struct
+    fields:
+      body:
+        type: string
+        required: true
+models:
+  triage:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema, tools]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  support_instructions:
+    version: 1
+    model: triage
+    template: "You are a support agent."
+    output:
+      kind: text
+guardrails:
+  inbound:
+    stages: [input]
+    policies: [prompt-injection]
+    action: block
+    onFail:
+      message: Blocked.
+      log: true
+agents:
+  support:
+    instructions: support_instructions
+    model: triage
+    maxSteps: 2
+    maxTokensBudget: 1024
+    guardrails: [inbound]
+    engine: native
+`;
+
+/** The spec-plus-IR half of the journey: everything before target negotiation. */
+function lowerAgentSpec() {
+  const checked = checkSpecText(AGENT_SPEC, { file: 'agent-desk/app.spec.yaml' });
+  expect(checked.diagnostics.filter((entry) => entry.severity === 'error')).toEqual([]);
+  expect(checked.ok).toBe(true);
+  if (checked.value === undefined) throw new Error('the spec did not lower');
+
+  const built = buildIR(checked.value, { file: 'agent-desk/app.spec.yaml' });
+  expect(built.diagnostics.filter((entry) => entry.severity === 'error')).toEqual([]);
+  return built.ir;
+}
+
+describe('the agent sections, before any target sees them', () => {
+  it('derives `agents` and `guardrails` as required capabilities', () => {
+    const ir = lowerAgentSpec();
+    expect(ir.agents).toHaveLength(1);
+    expect(ir.guardrails).toHaveLength(1);
+    expect(ir.requiredCapabilities).toContain('agents');
+    expect(ir.requiredCapabilities).toContain('guardrails');
+  });
+
+  it('needs them to be real vocabulary members, or the gate below could not name them', () => {
+    // Without this the rejection test could pass by the capability being ignored.
+    expect([...REQUIRED_CAPABILITIES]).toContain('agents');
+    expect([...REQUIRED_CAPABILITIES]).toContain('guardrails');
+  });
+});
+
+describe('the agent sections, when a target is asked to build them', () => {
+  it('rejects every target, naming the capability it lacks', () => {
+    const ir = lowerAgentSpec();
+    const gated = runGates(ir, { targetCapabilities: targetCapabilities() });
+
+    expect(gated.ok).toBe(false);
+    const rejections = gated.diagnostics.filter((entry) => entry.code === 'ir/capability-missing');
+    expect(rejections).toHaveLength(4);
+    expect(rejections.map((entry) => entry.message)).toEqual([
+      'the capability gate rejected target "py-fastapi": the IR requires "agents", which this target does not declare',
+      'the capability gate rejected target "py-fastapi": the IR requires "guardrails", which this target does not declare',
+      'the capability gate rejected target "ts-vercel": the IR requires "agents", which this target does not declare',
+      'the capability gate rejected target "ts-vercel": the IR requires "guardrails", which this target does not declare',
+    ]);
+    // Every rejection is a hard error at the target boundary, so `aid gen` cannot emit.
+    expect(rejections.every((entry) => entry.severity === 'error')).toBe(true);
+  });
+
+  it('rejects them because neither target declares them, not for some other reason', () => {
+    const declared = targetCapabilities();
+    for (const target of targetNames()) {
+      expect(declared[target]).not.toContain('agents');
+      expect(declared[target]).not.toContain('guardrails');
+    }
+  });
+
+  it('accepts the spec once a target does declare them, and still holds the other back', () => {
+    // The positive control. If the gate refused for any reason other than the missing
+    // declaration, granting the declaration would not flip the result -- and if the gate
+    // were quietly a no-op, this control would be indistinguishable from the rejection.
+    const ir = lowerAgentSpec();
+    const granted = targetCapabilities();
+    const gated = runGates(ir, {
+      targetCapabilities: {
+        ...granted,
+        'py-fastapi': [...(granted['py-fastapi'] ?? []), 'agents', 'guardrails'],
+      },
+    });
+
+    expect(gated.ok).toBe(false);
+    expect(gated.diagnostics.map((entry) => entry.message)).toEqual([
+      'the capability gate rejected target "ts-vercel": the IR requires "agents", which this target does not declare',
+      'the capability gate rejected target "ts-vercel": the IR requires "guardrails", which this target does not declare',
+    ]);
   });
 });

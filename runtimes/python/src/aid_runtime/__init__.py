@@ -11,10 +11,11 @@ Design boundaries worth stating up front, because they are deliberate:
   engine here. A generated app is ordinary code that is easy to read and to test.
 * **Pydantic AI is used only for structured output.** No other responsibility is
   delegated to it.
-* **Streaming is declared, not implemented.** ``Capability.STREAMING`` exists so a
-  spec can require it and a gate can check it; calling
+* **Streaming is deferred, and undeclared.** No provider advertises
+  ``Capability.STREAMING`` and no generated target declares the capability; calling
   :meth:`~aid_runtime.gateway.ModelGateway.stream` raises
-  :class:`~aid_runtime.errors.FeatureDeferredError`.
+  :class:`~aid_runtime.errors.FeatureDeferredError` rather than pretending. Phase 2
+  layer L5 implements it and restores the declaration.
 * **One HTTP provider adapter and one fake.** Breadth of vendor coverage is a
   Phase 2 concern; a narrow, correct seam is worth more now than a wide shallow one.
 """

@@ -86,7 +86,7 @@ export class FakeProvider implements Provider {
   }
 
   get capabilities(): ReadonlySet<Capability> {
-    return new Set<Capability>(['tool-calling', 'structured-output', 'streaming', 'long-context']);
+    return new Set<Capability>(['tool-calling', 'structured-output', 'long-context']);
   }
 
   async complete(request: CompletionRequest, model: ModelSpec): Promise<CompletionResponse> {

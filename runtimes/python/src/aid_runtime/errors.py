@@ -92,10 +92,10 @@ class BudgetExceededError(AidRuntimeError):
 class FeatureDeferredError(AidRuntimeError):
     """A capability is declared for the IR contract but not implemented yet.
 
-    Streaming is the motivating case: the ``py-fastapi`` target advertises the
-    ``streaming`` capability so the spec validator accepts specs that request it,
-    but this runtime only does request/response today. Failing loudly here is the
-    point -- a silently non-streaming "stream" would be worse than no stream.
+    Streaming is the motivating case: the runtime is request/response only, no
+    target declares the ``streaming`` capability, and this error is what ``stream()``
+    raises instead of returning a silently non-streaming "stream". Phase 2 layer L5
+    implements streaming and restores the declaration.
     """
 
 

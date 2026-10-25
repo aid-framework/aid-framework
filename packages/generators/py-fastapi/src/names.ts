@@ -206,7 +206,6 @@ export function annotationFor(ref: TypeRef, optional: boolean): string {
 const MODEL_CAPABILITY_MEMBERS: Readonly<Record<string, string>> = {
   'json-schema': 'Capability.STRUCTURED_OUTPUT',
   'tool-calling': 'Capability.TOOL_CALLING',
-  streaming: 'Capability.STREAMING',
   'long-context': 'Capability.LONG_CONTEXT',
   embeddings: 'Capability.EMBEDDINGS',
 };
@@ -270,7 +269,6 @@ export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, readonly str
   FakeProvider: [
     'Capability.EMBEDDINGS',
     'Capability.LONG_CONTEXT',
-    'Capability.STREAMING',
     'Capability.STRUCTURED_OUTPUT',
     'Capability.TOOL_CALLING',
   ],

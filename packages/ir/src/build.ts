@@ -17,20 +17,27 @@ import { catalogCostProfile, catalogModel } from './catalog/index.js';
 import type { IrDiagnostic } from './diagnostics.js';
 import { parsePolicyExpr } from './policy/index.js';
 import {
+  AGENT_ENGINES,
+  type AgentEngine,
+  type AgentShape,
   DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_OBSERVABILITY,
   DEFAULT_RUNTIME,
+  type DeploymentShape,
   type EmbeddingShape,
   type ErrorPolicy,
   type EvalShape,
   type EvalTarget,
   type GenerateStep,
+  type GuardrailShape,
   type Idempotency,
   type IR,
   IR_VERSION,
+  isGuardrailPolicyKind,
   isIndexMetric,
   isProvider,
   isVectorStoreKind,
+  type MemoryShape,
   type MetricShape,
   type ModelLimits,
   type ModelParams,
@@ -82,6 +89,8 @@ export const DEFAULT_CHUNK_OVERLAP = 0;
 export const DEFAULT_INDEX_METRIC = 'cosine';
 export const DEFAULT_RETRIEVER_TOP_K = 5;
 export const DEFAULT_REFRESH_MODE = 'full';
+/** Same posture as the retrieval defaults: reached only by a value that skipped validation. */
+export const DEFAULT_MEMORY_TOKEN_BUDGET = 4096;
 
 const BINDING_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
 const TYPE_NAME_PATTERN = /^([A-Za-z][A-Za-z0-9]*)(\[\])?$/;
@@ -120,6 +129,10 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
   const tools = buildTools(root.tools, context);
   const stores = buildStores(root.stores);
   const retrievers = buildRetrievers(root.retrievers);
+  const memory = buildMemory(root.memory);
+  const guardrails = buildGuardrails(root.guardrails);
+  const agents = buildAgents(root.agents, context);
+  const deployments = buildDeployments(root.deployments);
   const embeddings = buildEmbeddings(models);
   const sensitive = sensitiveNames({ types, prompts });
   const observability = buildObservability(root.observability, sensitive);
@@ -138,12 +151,12 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
     retrievers,
     embeddings,
     stores,
-    memory: [],
-    agents: [],
+    memory,
+    agents,
     pipelines,
     evals,
-    guardrails: [],
-    deployments: [],
+    guardrails,
+    deployments,
     observability,
     runtime: { ...DEFAULT_RUNTIME },
     requiredCapabilities: [],
@@ -662,6 +675,184 @@ function buildStepInputValue(raw: unknown): StepInputValue {
   if (sole !== null) return { kind: 'reference', path: (sole[1] as string).split('.') };
   if (raw.includes('{{')) return { kind: 'template', template: raw };
   return { kind: 'literal', value: raw };
+}
+
+const MEMORY_KINDS = ['buffer', 'window', 'summary', 'semantic', 'episodic', 'vector'] as const;
+const MEMORY_SCOPES = ['thread', 'user', 'global'] as const;
+const GUARDRAIL_STAGES = ['input', 'output', 'retrieval', 'tool-call'] as const;
+const GUARDRAIL_ACTIONS = ['block', 'redact', 'flag', 'escalate'] as const;
+const DEPLOY_TARGETS = ['serverless', 'container', 'batch', 'edge'] as const;
+
+function buildMemory(raw: unknown): MemoryShape[] {
+  const record = asRecord(raw) ?? {};
+  return sortedKeys(record).map((id) => {
+    const entry = asRecord(record[id]) ?? {};
+    const memory: MemoryShape = {
+      id,
+      kind: asMemoryKind(entry.kind),
+      scope: asMemoryScope(entry.scope),
+      tokenBudget: asNumber(entry.tokenBudget) ?? DEFAULT_MEMORY_TOKEN_BUDGET,
+      redact: asStringArray(entry.redact),
+      traits: [],
+    };
+    const summarizeModel = asString(entry.summarizeModel);
+    const store = asString(entry.store);
+    const backend = asString(entry.backend);
+    const ttl = asString(entry.ttl);
+    if (summarizeModel !== undefined) memory.summarizeModel = summarizeModel;
+    if (store !== undefined) memory.store = store;
+    if (backend !== undefined) memory.backend = backend;
+    if (ttl !== undefined) memory.ttl = ttl;
+    return memory;
+  });
+}
+
+/** Unknown kinds collapse to the cheapest tier rather than passing through. */
+function asMemoryKind(raw: unknown): MemoryShape['kind'] {
+  const value = asString(raw);
+  return (MEMORY_KINDS as readonly string[]).includes(value ?? '')
+    ? (value as MemoryShape['kind'])
+    : 'buffer';
+}
+
+function asMemoryScope(raw: unknown): MemoryShape['scope'] {
+  const value = asString(raw);
+  return (MEMORY_SCOPES as readonly string[]).includes(value ?? '')
+    ? (value as MemoryShape['scope'])
+    : 'thread';
+}
+
+function buildGuardrails(raw: unknown): GuardrailShape[] {
+  const record = asRecord(raw) ?? {};
+  return sortedKeys(record).map((id) => {
+    const entry = asRecord(record[id]) ?? {};
+    const onFailRecord = asRecord(entry.onFail) ?? {};
+    const onFail: GuardrailShape['onFail'] = {
+      message: asString(onFailRecord.message) ?? '',
+      log: asBoolean(onFailRecord.log) ?? false,
+    };
+    const fallbackPrompt = asString(onFailRecord.fallbackPrompt);
+    if (fallbackPrompt !== undefined) onFail.fallbackPrompt = fallbackPrompt;
+
+    const stages = asStringArray(entry.stages).filter(
+      (stage): stage is GuardrailShape['stages'][number] =>
+        (GUARDRAIL_STAGES as readonly string[]).includes(stage),
+    );
+    const action = asString(entry.action);
+    return {
+      id,
+      stages,
+      policies: asStringArray(entry.policies).filter(isGuardrailPolicyKind),
+      action: (GUARDRAIL_ACTIONS as readonly string[]).includes(action ?? '')
+        ? (action as GuardrailShape['action'])
+        : 'block',
+      redact: asStringArray(entry.redact),
+      tools: asStringArray(entry.tools),
+      onFail,
+      traits: [],
+    };
+  });
+}
+
+function buildAgents(raw: unknown, context: BuildContext): AgentShape[] {
+  const record = asRecord(raw) ?? {};
+  return sortedKeys(record).map((id) => {
+    const entry = asRecord(record[id]) ?? {};
+    const agent: AgentShape = {
+      id,
+      name: asString(entry.name) ?? id,
+      instructions: asString(entry.instructions) ?? '',
+      model: asString(entry.model) ?? '',
+      tools: asStringArray(entry.tools),
+      retrievers: asStringArray(entry.retrievers),
+      memory: asStringArray(entry.memory),
+      guardrails: asStringArray(entry.guardrails),
+      maxSteps: asNumber(entry.maxSteps) ?? 1,
+      handoffs: asStringArray(entry.handoffs),
+      delegates: asStringArray(entry.delegates),
+      engine: asAgentEngine(entry.engine),
+      traits: [],
+    };
+
+    const structuredOutput = asString(entry.structuredOutput);
+    if (structuredOutput !== undefined) {
+      agent.structuredOutput = buildTypeRef(structuredOutput, context);
+    }
+    const maxTokensBudget = asNumber(entry.maxTokensBudget);
+    if (maxTokensBudget !== undefined) agent.maxTokensBudget = maxTokensBudget;
+    const maxCostBudget = asNumber(entry.maxCostBudget);
+    if (maxCostBudget !== undefined) agent.maxCostBudget = maxCostBudget;
+    const engineVersion = asString(entry.engineVersion);
+    if (engineVersion !== undefined) agent.engineVersion = engineVersion;
+
+    const humanInTheLoop = asRecord(entry.humanInTheLoop);
+    if (humanInTheLoop !== undefined) {
+      const parsed = parsePolicyExpr(asString(humanInTheLoop.when) ?? '', {
+        path: ['agents', id, 'humanInTheLoop', 'when'],
+        file: context.file,
+      });
+      context.diagnostics.push(...parsed.diagnostics);
+      if (parsed.ast !== undefined) {
+        agent.humanInTheLoop = {
+          when: parsed.ast,
+          channel: asString(humanInTheLoop.channel) ?? '',
+        };
+      }
+    }
+    return agent;
+  });
+}
+
+function asAgentEngine(raw: unknown): AgentEngine {
+  const value = asString(raw);
+  return (AGENT_ENGINES as readonly string[]).includes(value ?? '')
+    ? (value as AgentEngine)
+    : 'native';
+}
+
+function buildDeployments(raw: unknown): DeploymentShape[] {
+  const record = asRecord(raw) ?? {};
+  return sortedKeys(record).map((id) => {
+    const entry = asRecord(record[id]) ?? {};
+    const target = asString(entry.target);
+    const deployment: DeploymentShape = {
+      id,
+      target: (DEPLOY_TARGETS as readonly string[]).includes(target ?? '')
+        ? (target as DeploymentShape['target'])
+        : 'serverless',
+      streaming: asBoolean(entry.streaming) ?? false,
+      secrets: asStringArray(entry.secrets),
+      env: buildDeploymentEnv(entry.env),
+      traits: [],
+    };
+    const concurrency = asNumber(entry.concurrency);
+    if (concurrency !== undefined) deployment.concurrency = concurrency;
+    const autoscale = asRecord(entry.autoscale);
+    if (autoscale !== undefined) {
+      deployment.autoscale = {
+        min: asNumber(autoscale.min) ?? 0,
+        max: asNumber(autoscale.max) ?? 1,
+        metric: asString(autoscale.metric) ?? '',
+      };
+    }
+    return deployment;
+  });
+}
+
+function buildDeploymentEnv(raw: unknown): DeploymentShape['env'] {
+  const env: DeploymentShape['env'] = [];
+  for (const item of asArray(raw)) {
+    const record = asRecord(item);
+    const name = asString(record?.name);
+    if (record === undefined || name === undefined) continue;
+    const entry: DeploymentShape['env'][number] = { name };
+    const value = asString(record.value);
+    const secret = asBoolean(record.secret);
+    if (value !== undefined) entry.value = value;
+    if (secret !== undefined) entry.secret = secret;
+    env.push(entry);
+  }
+  return env;
 }
 
 function buildEvals(raw: unknown, context: BuildContext): EvalShape[] {

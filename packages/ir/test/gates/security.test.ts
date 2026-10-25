@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  type IR,
   IR_DIAGNOSTIC_CODES,
   type PolicyNode,
   parsePolicyExpr,
@@ -10,6 +11,22 @@ import {
 import { first, gateFixture, mutateIR, onlyDiagnosticWith } from '../helpers.js';
 
 const UNAUTH_PATH = 'security-unauthenticated-path.yaml';
+const GUARDRAILS_NO_INPUT = 'guardrails-no-input-stage.yaml';
+
+/**
+ * That fixture with its guardrails removed, at the spec version asked for. Isolates the
+ * version discriminator: identical pipeline, identical empty guardrail list, so a
+ * difference in outcome can only come from `specVersion`.
+ */
+function guardrailsAbsentAt(version: string): IR {
+  const ir = mutateIR(GUARDRAILS_NO_INPUT);
+  ir.specVersion = version;
+  ir.guardrails = [];
+  // Agent refs are cleared too, so the scenario reads as "declared none" rather than
+  // as a dangling reference that a different gate would report.
+  for (const agent of ir.agents) agent.guardrails = [];
+  return ir;
+}
 
 function astOf(source: string): PolicyNode {
   const parsed = parsePolicyExpr(source);
@@ -25,10 +42,58 @@ describe('security gate', () => {
     expect(byGate.security.diagnostics).toEqual([]);
   });
 
-  it('suppresses the guardrail rule Phase 0 cannot enforce, with a reason', () => {
+  it('no longer suppresses the guardrail rule Phase 2 L1 can enforce', () => {
     const { suppressed } = gateFixture('full.yaml').byGate.security;
-    expect(suppressed.map((entry) => entry.check)).toEqual(['security/input-output-guardrails']);
-    expect(first(suppressed).reason).toContain('no guardrail runtime');
+    expect(suppressed).toEqual([]);
+    // `security/input-output-guardrails` used to sit in this gate's suppression list.
+    // Its absence is the assertion that it was not quietly re-deferred when the four
+    // sections were promoted.
+    expect(suppressed.map((entry) => entry.check)).not.toContain(
+      'security/input-output-guardrails',
+    );
+  });
+
+  it('rejects caller text that reaches a prompt with no input-stage guardrail', () => {
+    const { diagnostics } = gateFixture(GUARDRAILS_NO_INPUT).byGate.security;
+    const flagged = onlyDiagnosticWith(diagnostics, IR_DIAGNOSTIC_CODES.securityInputGuardrail);
+    expect(flagged.severity).toBe('error');
+    expect(flagged.path).toEqual(['pipelines', 'handle_ticket', 'steps', 0]);
+    expect(flagged.message).toContain('POST /tickets');
+    expect(flagged.message).toContain('no guardrail with an "input" stage');
+  });
+
+  it('accepts the same pipeline once an input-stage guardrail is declared', () => {
+    const { diagnostics } = gateFixture('agents.yaml').byGate.security;
+    expect(
+      diagnostics.filter((entry) => entry.code === IR_DIAGNOSTIC_CODES.securityInputGuardrail),
+    ).toEqual([]);
+  });
+
+  it('exempts a 0.1 spec, which cannot declare a guardrail at all', () => {
+    // Additive-only, and non-vacuous: this is the same HTTP -> generate pipeline that
+    // the 0.2 test below rejects, carrying the same empty guardrails list. The only
+    // difference is the declared spec version, so the exemption is provably the
+    // version and not the absence of a pipeline to inspect.
+    const ir = guardrailsAbsentAt('0.1');
+    const flagged = runGates(ir).byGate.security.diagnostics.filter(
+      (entry) => entry.code === IR_DIAGNOSTIC_CODES.securityInputGuardrail,
+    );
+    expect(flagged).toEqual([]);
+  });
+
+  it('flags the same pipeline at 0.2, where declaring no guardrail is a choice', () => {
+    // The discriminator regression: keying the exemption on `guardrails.length === 0`
+    // let a 0.2 spec buy silence by omitting the section. The version says it can
+    // declare one, so it must, and the endpoint that reaches a model is rejected.
+    const ir = guardrailsAbsentAt('0.2');
+    expect(ir.guardrails).toEqual([]);
+    const flagged = runGates(ir).byGate.security.diagnostics.filter(
+      (entry) => entry.code === IR_DIAGNOSTIC_CODES.securityInputGuardrail,
+    );
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0]?.severity).toBe('error');
+    expect(flagged[0]?.message).toContain('POST /tickets');
+    expect(flagged[0]?.path).toEqual(['pipelines', 'handle_ticket', 'steps', 0]);
   });
 
   it('fails closed: a write tool with no auth is an error, not a warning', () => {

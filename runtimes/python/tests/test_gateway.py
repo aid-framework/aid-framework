@@ -301,7 +301,7 @@ async def test_generate_prices_the_response_at_the_pinned_rate(spec: ModelSpec) 
     assert result.cost_usd > 0.0
 
 
-async def test_streaming_is_declared_not_implemented(gateway: ModelGateway) -> None:
+async def test_streaming_is_deferred_not_served(gateway: ModelGateway) -> None:
     with pytest.raises(FeatureDeferredError) as caught:
         await gateway.stream("small", PROMPT)
     assert "request/response only" in str(caught.value)

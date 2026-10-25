@@ -191,9 +191,10 @@ sample of it still varies, which is exactly the property the gate has to tolerat
 **Non-responsibility:** no app-specific prompts, tools, or rubrics. Those belong to the generated app's
 `business/` tier ([`docs/design.md` §8.4](../../docs/design.md), the seam).
 
-**Status:** Phase 0 scope implemented, plus the Phase 1 retrieval runtime. One thing declared but not
-implemented, on purpose: `ModelGateway.stream` and the `streaming` capability name a request/response-only
-transport and raise `FeatureDeferredError` rather than pretending. Retrieval likewise fails loudly rather than
+**Status:** Phase 0 scope implemented, plus the Phase 1 retrieval runtime. One thing deferred and
+undeclared, on purpose: `ModelGateway.stream` raises `FeatureDeferredError`, and no provider advertises
+`Capability.STREAMING` or target declares the capability, because the transport is request/response-only.
+Retrieval likewise fails loudly rather than
 approximating: non-file sources, `semantic` chunking, `incremental` refresh, retriever `filters`, a hosted
 reranker, and the `qdrant` / `pinecone` / `weaviate` / `custom` store kinds all raise `FeatureDeferredError`.
 Also deferred (§14): escalation routing, memory, guardrails, prompt/semantic caching, rate limiting, token

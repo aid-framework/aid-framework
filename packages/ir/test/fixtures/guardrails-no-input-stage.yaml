@@ -1,0 +1,147 @@
+specVersion: "0.2"
+project:
+  name: agent-desk
+  namespace: acme.agents
+  description: An agent with declared guardrails, memory, budgets, and deployment intent.
+  targets: [py-fastapi]
+types:
+  RefundRequest:
+    kind: struct
+    fields:
+      order_id:
+        type: string
+        required: true
+      amount_usd:
+        type: number
+        required: true
+  RefundResult:
+    kind: struct
+    fields:
+      refund_id:
+        type: string
+        required: true
+  TicketClassification:
+    kind: struct
+    fields:
+      category:
+        type: string
+        required: true
+      summary:
+        type: string
+        required: true
+models:
+  triage:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema, tools]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  support_instructions:
+    version: 1
+    model: triage
+    template: "You are a support agent. Never invent an order id."
+    output:
+      kind: text
+  escalation_instructions:
+    version: 1
+    model: triage
+    template: "You are an escalation agent. Ask for missing details before acting."
+    output:
+      kind: text
+  classify_ticket:
+    version: 1
+    model: triage
+    template: |
+      Classify the support ticket below.
+      Subject: {{subject}}
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: TicketClassification
+tools:
+  fetch_order:
+    description: Read an order record.
+    input: RefundRequest
+    output: RefundResult
+    sideEffects: read
+    auth: isAuthenticated()
+    handler:
+      kind: business
+      symbol: fetch_order
+    idempotency: natural
+  issue_refund:
+    description: Issue a refund against an order.
+    input: RefundRequest
+    output: RefundResult
+    sideEffects: write
+    auth: hasRole("support_agent")
+    handler:
+      kind: business
+      symbol: issue_refund
+    idempotency: key
+guardrails:
+  inbound:
+    stages: [output]
+    policies: [prompt-injection]
+    action: block
+    onFail:
+      message: The request was rejected by the input guardrail.
+      log: true
+  refund_writes:
+    stages: [tool-call]
+    policies: [pii-detect]
+    action: flag
+    tools: [issue_refund]
+    onFail:
+      message: The refund call was flagged for review.
+      log: true
+memory:
+  conversation:
+    kind: window
+    scope: thread
+    tokenBudget: 2048
+    ttl: PT2H
+deployments:
+  prod:
+    target: container
+    streaming: false
+    concurrency: 4
+    secrets: [OPENAI_API_KEY]
+agents:
+  support:
+    name: Support Agent
+    instructions: support_instructions
+    model: triage
+    tools: [fetch_order, issue_refund]
+    memory: [conversation]
+    guardrails: [inbound, refund_writes]
+    structuredOutput: TicketClassification
+    maxSteps: 4
+    maxTokensBudget: 4096
+    handoffs: [escalation]
+    engine: native
+    humanInTheLoop:
+      when: hasRole("support_agent")
+      channel: slack
+  escalation:
+    name: Escalation Agent
+    instructions: escalation_instructions
+    model: triage
+    maxSteps: 1
+    engine: native
+pipelines:
+  handle_ticket:
+    description: Classify an inbound ticket.
+    trigger:
+      http:
+        method: post
+        path: /tickets
+    steps:
+      - generate:
+          prompt: classify_ticket
+          input:
+            subject: "{{event.subject}}"
+          as: classification

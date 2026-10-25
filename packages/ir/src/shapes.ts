@@ -422,14 +422,21 @@ export interface VectorStoreShape {
 export interface MemoryShape {
   id: string;
   kind: 'buffer' | 'window' | 'summary' | 'semantic' | 'episodic' | 'vector';
-  scope: 'session' | 'user' | 'tenant' | 'global';
+  scope: 'thread' | 'user' | 'global';
   tokenBudget: number;
   summarizeModel?: string;
   store?: string;
+  /** A declared store id or `in-process`; resolved by the `memory/refs` gate. */
+  backend?: string;
   ttl?: string;
   redact: string[];
   traits: Trait[];
 }
+
+/** Who owns the agent loop. `deepagents` requires a pinned `engineVersion`. */
+export const AGENT_ENGINES = ['native', 'deepagents'] as const;
+
+export type AgentEngine = (typeof AGENT_ENGINES)[number];
 
 export interface AgentShape {
   id: string;
@@ -446,8 +453,13 @@ export interface AgentShape {
   maxTokensBudget?: number;
   /** USD. */
   maxCostBudget?: number;
-  /** Other agent ids. */
+  /** Other agent ids this agent may transfer the conversation to. */
   handoffs: string[];
+  /** Other agent ids this agent may delegate a sub-task to. */
+  delegates: string[];
+  engine: AgentEngine;
+  /** Pinned framework version; required when `engine` is `deepagents`. */
+  engineVersion?: string;
   humanInTheLoop?: { when: PolicyExpr; channel: string };
   traits: Trait[];
 }
@@ -455,10 +467,36 @@ export interface AgentShape {
 export interface GuardrailShape {
   id: string;
   stages: ('input' | 'output' | 'retrieval' | 'tool-call')[];
-  policies: string[];
+  policies: GuardrailPolicyKind[];
   action: 'block' | 'redact' | 'flag' | 'escalate';
+  /** Field names the `redact` action removes; required for that action. */
+  redact: string[];
+  /** Tools this guardrail covers; empty means every tool reaching the stage. */
+  tools: string[];
   onFail: { message: string; fallbackPrompt?: string; log: boolean };
   traits: Trait[];
+}
+
+/**
+ * The closed vocabulary of policy checks a guardrail may name. This is the L1 answer
+ * to "no passthrough of unknown keys": a spec names one of these, the engine that
+ * evaluates them ships in the guardrails layer, and nothing in between accepts a name
+ * it does not know. Extending it is a deliberate edit here, not a spec-side string.
+ */
+export const GUARDRAIL_POLICY_KINDS = [
+  'pii-detect',
+  'pii-redact',
+  'prompt-injection',
+  'jailbreak',
+  'moderation',
+  'toxicity',
+  'secret-scan',
+] as const;
+
+export type GuardrailPolicyKind = (typeof GUARDRAIL_POLICY_KINDS)[number];
+
+export function isGuardrailPolicyKind(value: string): value is GuardrailPolicyKind {
+  return (GUARDRAIL_POLICY_KINDS as readonly string[]).includes(value);
 }
 
 export interface DeploymentShape {
@@ -515,7 +553,7 @@ export const IR_COLLECTIONS = [
 
 export type IrCollection = (typeof IR_COLLECTIONS)[number];
 
-/** Spec section -> IR collection, for the sections spec v0.1 populates. */
+/** Spec section -> IR collection, for every section that populates one. */
 export const POPULATED_COLLECTION_BY_SECTION = {
   types: 'types',
   models: 'models',
@@ -523,6 +561,10 @@ export const POPULATED_COLLECTION_BY_SECTION = {
   tools: 'tools',
   stores: 'stores',
   retrievers: 'retrievers',
+  memory: 'memory',
+  agents: 'agents',
+  guardrails: 'guardrails',
+  deployments: 'deployments',
   evals: 'evals',
   pipelines: 'pipelines',
 } as const;

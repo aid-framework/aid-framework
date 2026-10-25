@@ -6,6 +6,7 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
 
 import type { IR } from '../src/index.js';
+import { REQUIRED_CAPABILITIES } from '../src/index.js';
 import { buildFixture, FIXTURE_DIR } from './helpers.js';
 
 const SCHEMA_PATH = join(
@@ -110,6 +111,15 @@ describe('ir.schema.json', () => {
     const malformed = structuredClone(base);
     (malformed.requiredCapabilities as string[]).push('teleportation');
     expect(validate(malformed)).toBe(false);
+  });
+
+  it('keeps its capability vocabulary equal to the one the IR carries', () => {
+    // The schema is the only place the vocabulary is written down twice. A member added
+    // to `REQUIRED_CAPABILITIES` but not here rejects a well-formed IR that requires it,
+    // and a member here that the IR does not know lets a typo validate. This is how
+    // `agents` and `guardrails` were caught once a fixture actually required them.
+    const defs = SCHEMA.$defs as Record<string, { enum?: readonly string[] }>;
+    expect(defs.requiredCapability?.enum).toEqual([...REQUIRED_CAPABILITIES]);
   });
 
   it('rejects a step of an unknown kind', () => {

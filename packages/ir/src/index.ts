@@ -31,8 +31,10 @@ export {
   sortedKeys,
   templatePlaceholders,
 } from './build.js';
-export type { ModelCapability, RequiredCapability } from './capabilities.js';
+export type { DeferredCapability, ModelCapability, RequiredCapability } from './capabilities.js';
 export {
+  CAPABILITY_DERIVATIONS,
+  DEFERRED_CAPABILITIES,
   deriveRequiredCapabilities,
   isModelCapability,
   isRequiredCapability,
@@ -116,6 +118,7 @@ export {
 } from './policy/index.js';
 export { CANONICAL_INDENT, canonicalJson, serializeIR } from './serialize.js';
 export type {
+  AgentEngine,
   AgentShape,
   CostProfile,
   DeploymentShape,
@@ -162,6 +165,7 @@ export type {
   VectorStoreShape,
 } from './shapes.js';
 export {
+  AGENT_ENGINES,
   DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_OBSERVABILITY,
   DEFAULT_RUNTIME,
