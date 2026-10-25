@@ -10,6 +10,12 @@ Run it directly to print the resolved corpus path and the pass count, optionally
 writing the verdicts for the other runtime to diff:
 
     python tests/conformance/test_conformance.py [verdicts.json]
+
+Because that second invocation is how CI runs it, this module may import only the
+standard library and the runtime's own dependencies: CI installs the runtime with
+``pip install -e runtimes/python`` and no dev extras, so a ``pytest`` import here
+passes locally and fails in CI. ``test_the_runner_runs_without_the_dev_extras``
+holds that line.
 """
 
 from __future__ import annotations
@@ -17,13 +23,12 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-import re
+import runpy
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-import pytest
 from pydantic import BaseModel
 
 from aid_runtime import (
@@ -846,8 +851,13 @@ def test_scope_narrows_only_with_a_reason_and_a_known_runtime() -> None:
         ({"runtimes": "python"}, "must be a non-empty array"),
     )
     for case, fragment in malformed:
-        with pytest.raises(ValueError, match=re.escape(fragment)):
+        refusal = ""
+        try:
             case_scope("x", case)
+        except ValueError as exc:
+            refusal = str(exc)
+        assert refusal, f"case_scope accepted {case!r}"
+        assert fragment in refusal, f"expected {fragment!r} in {refusal}"
 
 
 def test_a_scoped_case_is_reported_rather_than_dropped() -> None:
@@ -865,6 +875,27 @@ def test_a_scoped_case_is_reported_rather_than_dropped() -> None:
                 "status": "scoped-out",
                 "reason": case["_scope"],
             }
+
+
+def test_the_runner_runs_without_the_dev_extras(monkeypatch: Any) -> None:
+    """CI executes this file as a script, with the runtime installed but not pytest.
+
+    The venv has pytest, so the absence is simulated by halting its import: the same
+    failure the ``conformance`` job reported for this runner, which a local run cannot
+    otherwise reproduce.
+    """
+    monkeypatch.setitem(sys.modules, "pytest", None)
+    monkeypatch.setattr(sys, "argv", [Path(__file__).name])
+    status: object = "did not terminate"
+    failure = ""
+    try:
+        runpy.run_path(str(Path(__file__).resolve()), run_name="__main__")
+    except SystemExit as exc:
+        status = exc.code
+    except ImportError as exc:
+        failure = str(exc)
+    assert not failure, f"the runner must import without the dev extras: {failure}"
+    assert status == 0, f"the runner exited with {status!r}"
 
 
 def _write(path: str, corpus: Mapping[str, Any], verdicts: Sequence[Any]) -> None:
