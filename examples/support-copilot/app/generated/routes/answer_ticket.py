@@ -7,13 +7,16 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from aid_runtime import PipelineError
-from fastapi import APIRouter, Depends, HTTPException
+from aid_runtime import GuardrailBlockedError, PipelineError
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 
 from ..deps import Deps, get_deps
-from ..pipelines.answer_ticket import answer_ticket_pipeline
+from ..guardrails import guardrail_block
+from ..pipelines.answer_ticket import _stream_request, answer_ticket_pipeline
 from ..requests import AnswerTicketRequest
 from ..schemas import Answer
+from ..sse import EVENT_STREAM, wants_event_stream
 
 answer_ticket_router = APIRouter()
 
@@ -21,15 +24,27 @@ answer_ticket_router = APIRouter()
 @answer_ticket_router.post("/tickets/answer", response_model=Answer)
 async def answer_ticket_endpoint(
     event: AnswerTicketRequest,
+    request: Request,
     deps: Annotated[Deps, Depends(get_deps)],
-) -> Answer:
+) -> Answer | Response:
     """Run pipeline `answer_ticket`. A failing step is a 502 rather than a 500, because the failure
-    is in a downstream model or tool, not in this request.
+    is in a downstream model or tool, not in this request. A step a guardrail stopped is a 400
+    instead, because nothing downstream failed. A request that accepts `text/event-stream` is
+    answered with the model's deltas as SSE frames instead of waiting for the whole reply.
     """
 
+    if wants_event_stream(request):
+        try:
+            _alias, _request = await _stream_request(deps, event)
+        except GuardrailBlockedError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return StreamingResponse(deps.gateway.stream(_alias, _request), media_type=EVENT_STREAM)
     try:
         context = await answer_ticket_pipeline().run({"deps": deps, "event": event})
     except PipelineError as exc:
+        _blocked = guardrail_block(exc)
+        if _blocked is not None:
+            raise HTTPException(status_code=400, detail=str(_blocked)) from exc
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return Answer(
         category=context.require("answer").category,

@@ -17,18 +17,29 @@ def generated_capabilities() -> dict[str, Any]:
         "capabilities": {
             "declared": [
                 "embeddings",
+                "guardrails",
                 "http-trigger",
                 "json-schema",
                 "otel",
                 "rerank",
+                "streaming",
                 "tool-calling",
             ],
             "modelWired": [
                 "Capability.EMBEDDINGS",
+                "Capability.STREAMING",
                 "Capability.STRUCTURED_OUTPUT",
                 "Capability.TOOL_CALLING",
             ],
-            "targetWired": ["embeddings", "http-trigger", "json-schema", "otel", "rerank"],
+            "targetWired": [
+                "embeddings",
+                "guardrails",
+                "http-trigger",
+                "json-schema",
+                "otel",
+                "rerank",
+                "streaming",
+            ],
             "unwired": [],
         },
         "emitsAgainst": {"structuredOutput": "pydantic", "tracing": "otel-genai"},
@@ -37,9 +48,17 @@ def generated_capabilities() -> dict[str, Any]:
         "models": {
             "advertised": {
                 "embed": ["Capability.EMBEDDINGS"],
-                "fast": ["Capability.STRUCTURED_OUTPUT", "Capability.TOOL_CALLING"],
+                "fast": [
+                    "Capability.STREAMING",
+                    "Capability.STRUCTURED_OUTPUT",
+                    "Capability.TOOL_CALLING",
+                ],
                 "lexical": [],
-                "offline": ["Capability.STRUCTURED_OUTPUT", "Capability.TOOL_CALLING"],
+                "offline": [
+                    "Capability.STREAMING",
+                    "Capability.STRUCTURED_OUTPUT",
+                    "Capability.TOOL_CALLING",
+                ],
             },
             "unrepresentable": {"embed": [], "fast": [], "lexical": [], "offline": []},
         },

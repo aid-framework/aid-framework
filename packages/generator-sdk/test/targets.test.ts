@@ -25,10 +25,12 @@ describe('the Phase 0 generator set', () => {
     expect(phase0TargetCapabilities()).toEqual({
       [PY_FASTAPI_TARGET]: [
         'embeddings',
+        'guardrails',
         'http-trigger',
         'json-schema',
         'otel',
         'rerank',
+        'streaming',
         'tool-calling',
       ],
     });
@@ -57,30 +59,34 @@ describe('the py-fastapi declaration', () => {
     expect(PY_FASTAPI_MANIFEST.capabilities).not.toContain('orchestration');
   });
 
-  it('declares no streaming capability, because neither runtime streams', () => {
+  it('declares streaming, because the emitted route serves SSE and the Python runtime streams', () => {
     expect(PY_FASTAPI_MANIFEST.capabilities).toEqual([
       'embeddings',
+      'guardrails',
       'http-trigger',
       'json-schema',
       'otel',
       'rerank',
+      'streaming',
       'tool-calling',
     ]);
     expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).toContain('tool-calling');
-    // Defect D-1: the gateway raises FeatureDeferredError, so a declaration here would
-    // be a capability claim no generated app can honour.
-    expect(PY_FASTAPI_MANIFEST.capabilities).not.toContain('streaming');
-    expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).not.toContain('streaming');
+    // Defect D-1 was this declaration against a runtime that raised
+    // `FeatureDeferredError`. It is declared again because the runtime implements
+    // `ModelGateway.stream()` and the generator emits the `Accept: text/event-stream`
+    // branch that calls it; the TypeScript target still omits it, which is L6's work.
+    expect(PY_FASTAPI_MANIFEST.capabilities).toContain('streaming');
+    expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).toContain('streaming');
   });
 
-  it('declares neither agents nor guardrails, because neither runtime can execute them', () => {
-    // Phase 2 L1 stages the two capabilities so a spec that declares agents is
-    // rejected by name. Declaring them here would move the failure from build time to
-    // the first request that reaches the missing runtime.
+  it('declares guardrails, because the Python runtime executes them', () => {
+    // `guardrails` is the P7a half of the same question `streaming` answers: the
+    // runtime ships `GuardrailEngine` and the generator emits the wiring that calls it.
+    // `agents` stays out; that is P7b.
+    expect(PY_FASTAPI_MANIFEST.capabilities).toContain('guardrails');
+    expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).toContain('guardrails');
     expect(PY_FASTAPI_MANIFEST.capabilities).not.toContain('agents');
-    expect(PY_FASTAPI_MANIFEST.capabilities).not.toContain('guardrails');
     expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).not.toContain('agents');
-    expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).not.toContain('guardrails');
   });
 
   it('declares the retrieval capabilities the emitted wiring satisfies', () => {

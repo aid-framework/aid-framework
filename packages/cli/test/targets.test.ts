@@ -86,15 +86,15 @@ describe('the ts-vercel entry', () => {
     expect(declared['py-fastapi']).toEqual([...PY_FASTAPI_MANIFEST.capabilities].sort());
   });
 
-  it('drops `streaming`, which both runtimes defer', () => {
-    // Neither target may declare it: the emitted code calls `ModelGateway.stream`, which
-    // raises `FeatureDeferredError` in `runtimes/python` and `runtimes/typescript` alike.
-    // `py-fastapi` used to declare it and this test used to say so, which made a claim
-    // about honoured behaviour that no runtime kept. L1 withdrew it from both sides, so
-    // the assertion is on both targets and cannot pass by one of them being unexamined.
+  it('drops `streaming` from ts-vercel and keeps it on py-fastapi, whose runtime streams', () => {
+    // The claim is now asymmetric, and that asymmetry is the point: the Python runtime
+    // implements `ModelGateway.stream()` and the py-fastapi generator emits the
+    // `Accept: text/event-stream` branch, while `runtimes/typescript` still raises
+    // `FeatureDeferredError`. So one target may declare it and the other may not --
+    // asserted on both, so neither side can pass by being unexamined.
     expect(targetCapabilities()['ts-vercel']).not.toContain('streaming');
-    expect(targetCapabilities()['py-fastapi']).not.toContain('streaming');
-    expect(PY_FASTAPI_MANIFEST.capabilities).not.toContain('streaming');
+    expect(targetCapabilities()['py-fastapi']).toContain('streaming');
+    expect(PY_FASTAPI_MANIFEST.capabilities).toContain('streaming');
     expect([...TS_VERCEL_CAPABILITIES]).not.toContain('streaming');
   });
 });
@@ -104,7 +104,9 @@ describe('the ts-vercel entry', () => {
  *
  * L1 promoted `agents` and `guardrails` to supported spec sections and derived both as
  * required capabilities, but deliberately taught neither target to declare them: the
- * agent runtime is L2 (`py-fastapi`) and L6 (`ts-vercel`). The gap between "the spec
+ * agent runtime is L2 (`py-fastapi`) and L6 (`ts-vercel`). P7a has since taught
+ * `py-fastapi` to declare and honour `guardrails`, so the remaining gap this file pins is
+ * `agents` on both targets plus `guardrails` on `ts-vercel`. The gap between "the spec
  * accepts it" and "a target can build it" has to be a rejection, not a hope, so this is
  * the whole journey in one test file -- spec validation, IR build, capability gate --
  * with the positive control that proves the gate is what refused.
@@ -185,16 +187,19 @@ describe('the agent sections, before any target sees them', () => {
 });
 
 describe('the agent sections, when a target is asked to build them', () => {
-  it('rejects every target, naming the capability it lacks', () => {
+  it('rejects every target for `agents`, and ts-vercel for `guardrails` too', () => {
     const ir = lowerAgentSpec();
     const gated = runGates(ir, { targetCapabilities: targetCapabilities() });
 
     expect(gated.ok).toBe(false);
     const rejections = gated.diagnostics.filter((entry) => entry.code === 'ir/capability-missing');
-    expect(rejections).toHaveLength(4);
+    // Three, not four: `guardrails` moved from undeclared to declared on `py-fastapi`
+    // in P7a, so that half of the spec is now buildable there. `agents` is still
+    // undeclared everywhere (P7b) and `guardrails` is still undeclared on `ts-vercel`
+    // (L6), and both of those remain hard rejections.
+    expect(rejections).toHaveLength(3);
     expect(rejections.map((entry) => entry.message)).toEqual([
       'the capability gate rejected target "py-fastapi": the IR requires "agents", which this target does not declare',
-      'the capability gate rejected target "py-fastapi": the IR requires "guardrails", which this target does not declare',
       'the capability gate rejected target "ts-vercel": the IR requires "agents", which this target does not declare',
       'the capability gate rejected target "ts-vercel": the IR requires "guardrails", which this target does not declare',
     ]);
@@ -202,12 +207,15 @@ describe('the agent sections, when a target is asked to build them', () => {
     expect(rejections.every((entry) => entry.severity === 'error')).toBe(true);
   });
 
-  it('rejects them because neither target declares them, not for some other reason', () => {
+  it('rejects them because of the declaration and not for some other reason', () => {
     const declared = targetCapabilities();
     for (const target of targetNames()) {
       expect(declared[target]).not.toContain('agents');
-      expect(declared[target]).not.toContain('guardrails');
     }
+    // The claim is per target now, not symmetric: asserting only "nobody declares it"
+    // would have silently stopped covering ts-vercel if py-fastapi's grant were reverted.
+    expect(declared['py-fastapi']).toContain('guardrails');
+    expect(declared['ts-vercel']).not.toContain('guardrails');
   });
 
   it('accepts the spec once a target does declare them, and still holds the other back', () => {
@@ -219,7 +227,10 @@ describe('the agent sections, when a target is asked to build them', () => {
     const gated = runGates(ir, {
       targetCapabilities: {
         ...granted,
-        'py-fastapi': [...(granted['py-fastapi'] ?? []), 'agents', 'guardrails'],
+        // Only `agents` has to be added: P7a already made `py-fastapi` declare
+        // `guardrails`, so this control now proves the remaining gap is exactly the
+        // one capability, not a blanket grant that would mask a second rejection.
+        'py-fastapi': [...(granted['py-fastapi'] ?? []), 'agents'],
       },
     });
 

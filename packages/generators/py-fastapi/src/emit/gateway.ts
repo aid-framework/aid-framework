@@ -18,7 +18,7 @@
 import type { IR, ModelShape } from '@aid/ir';
 
 import { modelCapabilities, providerAdapter } from '../names.js';
-import { INDENT, pythonNumber, pythonString } from '../python.js';
+import { INDENT, MAX_LINE, pythonNumber, pythonString } from '../python.js';
 import { assemble, HEADER, importFrom, tupleLiteral } from '../template.js';
 import type { EmittedFile } from './file.js';
 import { GENERATED_ROOT, generated } from './file.js';
@@ -86,6 +86,24 @@ function providerEntry(ir: IR, provider: string): string {
   return [head, ...arguments_, `${INDENT}${INDENT}),`].join('\n');
 }
 
+/**
+ * The `capabilities=` argument, wrapped when the member list would overrun the line.
+ *
+ * A model that gains a capability grows this line, so the long form has to exist
+ * rather than be discovered as a lint failure in generated output.
+ */
+function capabilitiesArgument(members: readonly string[]): string[] {
+  const oneLine = `${INDENT}${INDENT}capabilities=frozenset({${members.join(', ')}}),`;
+  if (oneLine.length <= MAX_LINE) return [oneLine];
+  return [
+    `${INDENT}${INDENT}capabilities=frozenset(`,
+    `${INDENT}${INDENT}${INDENT}{`,
+    ...members.map((member) => `${INDENT}${INDENT}${INDENT}${INDENT}${member},`),
+    `${INDENT}${INDENT}${INDENT}}`,
+    `${INDENT}${INDENT}),`,
+  ];
+}
+
 export function emitGatewayModels(ir: IR): EmittedFile {
   const models = orderedModels(ir);
   const providers = providerKeys(ir);
@@ -99,7 +117,7 @@ export function emitGatewayModels(ir: IR): EmittedFile {
       model.costProfile === undefined
         ? 'CostProfile(input_per_1k_usd=0.0, output_per_1k_usd=0.0)'
         : `CostProfile(input_per_1k_usd=${pythonNumber(perThousand(model.costProfile.inputPerMTok))}, output_per_1k_usd=${pythonNumber(perThousand(model.costProfile.outputPerMTok))})`;
-    const members = advertised.join(', ');
+    const members = advertised;
     aliases.push(
       [
         `${INDENT}${pythonString(model.id)}: ModelSpec(`,
@@ -108,7 +126,7 @@ export function emitGatewayModels(ir: IR): EmittedFile {
         `${INDENT}${INDENT}cost=${cost},`,
         `${INDENT}${INDENT}context_window=${model.limits.contextTokens},`,
         `${INDENT}${INDENT}max_output_tokens=${outputCap(model)},`,
-        `${INDENT}${INDENT}capabilities=frozenset({${members}}),`,
+        ...capabilitiesArgument(members),
         `${INDENT}),`,
       ].join('\n'),
     );

@@ -25,6 +25,7 @@ import {
   type RetrieverShape,
   type StepInput,
   type StepShape,
+  type ToolShape,
   type TypeRef,
   type TypeShape,
 } from '@aid/ir';
@@ -33,6 +34,14 @@ import { PY_FASTAPI_MANIFEST, supportsIrVersion } from './manifest.js';
 import { isRetrievalEval, judgeAlias, mapMetric } from './metrics.js';
 import { isUsableIdentifier, moduleName, providerAdapter } from './names.js';
 import { templatePlaceholders } from './placeholders.js';
+import { streamablePipeline } from './streaming.js';
+
+/**
+ * The policies a `redact` action can mask, mirroring `_REDACTABLE` in
+ * `aid_runtime.agents.guardrails`. The rest detect intent -- a jailbreak attempt has no
+ * value to mask -- so the runtime raises rather than returning a cleaned payload.
+ */
+const REDACTABLE_POLICIES = ['pii-detect', 'pii-redact', 'secret-scan'] as const;
 
 export type PlanProblemCode =
   | 'ambiguous-emit'
@@ -51,6 +60,7 @@ export type PlanProblemCode =
   | 'unsupported-eval-input'
   | 'unsupported-eval-target'
   | 'unsupported-examples'
+  | 'unsupported-guardrail'
   | 'unsupported-handler'
   | 'unsupported-ir-version'
   | 'unsupported-metric'
@@ -61,6 +71,7 @@ export type PlanProblemCode =
   | 'unsupported-redact'
   | 'unsupported-retriever'
   | 'unsupported-step'
+  | 'unsupported-streaming'
   | 'unsupported-target'
   | 'unsupported-tool-auth'
   | 'unsupported-tool-confirmation'
@@ -82,9 +93,12 @@ export interface PlanProblem {
  * `embeddings`, `retrievers` and `stores` left this list when the target learned to emit
  * retrieval wiring: `embeddings` is IR-only (derived from the models that declare the
  * capability, so a spec never names one), and the retriever and store declarations are
- * walked through `emit/retrieval.ts`.
+ * walked through `emit/retrieval.ts`. `deployments` and `guardrails` left it in P7a, when
+ * the target learned to emit the `Accept` branch and the four guardrail stages -- see
+ * `./emit/sse.ts` and `./emit/guardrails.ts`. `agents` and `memory` stay, because a
+ * pipeline route has no agent loop and no conversation to keep; that is P7b.
  */
-export const UNSUPPORTED_COLLECTIONS = ['agents', 'deployments', 'guardrails', 'memory'] as const;
+export const UNSUPPORTED_COLLECTIONS = ['agents', 'memory'] as const;
 
 /** The binding names the generated entrypoint owns, so a step may not claim them. */
 export const RESERVED_BINDINGS = ['context', 'deps', 'event', 'response', 'steps'] as const;
@@ -396,15 +410,6 @@ export function checkPrompts(ir: IR): PlanProblem[] {
           'unsupported-examples',
           `${path}.examples`,
           'Phase 0 emits no examples; dropping them would change the prompt the model sees',
-        ),
-      );
-    }
-    if ((prompt.guardrails ?? []).length > 0) {
-      problems.push(
-        problem(
-          'unsupported-collection',
-          `${path}.guardrails`,
-          'Phase 0 emits no guardrail middleware',
         ),
       );
     }
@@ -1691,12 +1696,159 @@ export function checkEvals(ir: IR): PlanProblem[] {
   return problems;
 }
 
+/**
+ * The guardrail declarations this target cannot honour.
+ *
+ * The IR layer has already refused an unknown policy, an empty stage list and a `tools`
+ * entry that names nothing, so what is left is the part only a *target* knows: which
+ * actions it can carry out and which fields its stages actually see.
+ */
+function checkGuardrails(ir: IR): PlanProblem[] {
+  const problems: PlanProblem[] = [];
+  const types = sortedTypes(ir);
+  for (const guardrail of ir.guardrails) {
+    const path = `guardrails.${guardrail.id}`;
+    if (guardrail.action === 'escalate') {
+      // Escalation is a question put to a human and resumed from a checkpoint. The agent
+      // loop owns that checkpoint; a pipeline route has none, so an escalated pipeline
+      // run would stop with nobody to answer -- which is a block wearing a different name.
+      problems.push(
+        problem(
+          'unsupported-guardrail',
+          `${path}.action`,
+          `'${guardrail.id}' escalates, but escalation needs the agent loop's checkpoint and ` +
+            'resume, and a pipeline route has neither. Use action: block to refuse the ' +
+            'request, or action: flag to record it and continue',
+        ),
+      );
+    }
+    if (guardrail.action !== 'redact') continue;
+    for (const policy of guardrail.policies) {
+      if (REDACTABLE_POLICIES.some((entry) => entry === policy)) continue;
+      problems.push(
+        problem(
+          'unsupported-redact',
+          `${path}.policies`,
+          `'${guardrail.id}' redacts, but policy '${policy}' detects intent rather than a ` +
+            `maskable value, so the runtime raises instead of returning a cleaned payload. ` +
+            `Redact with ${REDACTABLE_POLICIES.join(', ')}, or use action: block`,
+        ),
+      );
+    }
+    for (const name of guardrail.redact) {
+      for (const stage of guardrail.stages) {
+        if (stage !== 'tool-call') {
+          // The runtime builds the input, output and retrieval payloads itself, always as
+          // `{"text": ...}`. A name that is not `text` is a redaction that can never run,
+          // and the runtime's own fail-closed re-check would then block every firing.
+          if (stage === 'input' || stage === 'output' || stage === 'retrieval') {
+            if (name === 'text') continue;
+            problems.push(
+              problem(
+                'unsupported-redact',
+                `${path}.redact`,
+                `'${guardrail.id}' redacts field '${name}' at the '${stage}' stage, but that ` +
+                  "stage's payload is exactly {'text': ...}; name 'text' or the redaction " +
+                  'has nothing to mask',
+              ),
+            );
+          }
+          continue;
+        }
+        for (const tool of coveredTools(ir, guardrail.tools)) {
+          if (toolArgumentNames(tool, types).includes(name)) continue;
+          problems.push(
+            problem(
+              'unsupported-redact',
+              `${path}.redact`,
+              `'${guardrail.id}' redacts '${name}' from tool '${tool.id}', but that tool takes ` +
+                `(${toolArgumentNames(tool, types).join(', ') || '<no arguments>'}); a ` +
+                'redaction naming another field cannot mask what reaches the tool',
+            ),
+          );
+        }
+      }
+    }
+  }
+  return problems;
+}
+
+/** The tools a `tool-call` guardrail applies to; an empty list means every tool. */
+function coveredTools(ir: IR, tools: readonly string[]): ToolShape[] {
+  return tools.length === 0
+    ? ir.tools
+    : ir.tools.filter((tool) => tools.some((id) => id === tool.id));
+}
+
+/** The argument names a tool's declaration gives it. */
+function toolArgumentNames(tool: ToolShape, types: Map<string, TypeShape>): string[] {
+  const shape = tool.input.kind === 'named' ? types.get(tool.input.name) : undefined;
+  return (shape?.fields ?? []).map((field) => field.name);
+}
+
+/**
+ * The deployments this target cannot serve.
+ *
+ * `streaming` is the only deployment field that reaches generated code -- everything else
+ * describes the platform the app is put on, which the app neither reads nor implements. So
+ * a deployment that asks to stream is checked against what the routes can actually do.
+ */
+function checkDeployments(ir: IR): PlanProblem[] {
+  const problems: PlanProblem[] = [];
+  for (const deployment of ir.deployments) {
+    if (!deployment.streaming) continue;
+    const path = `deployments.${deployment.id}`;
+    if (deployment.target === 'batch') {
+      problems.push(
+        problem(
+          'unsupported-streaming',
+          `${path}.target`,
+          `'${deployment.id}' streams, but a batch deployment runs to completion and returns ` +
+            'no response to stream. Use a serverless, container or edge target',
+        ),
+      );
+    }
+    const guarded = ir.guardrails.filter((guardrail) => guardrail.stages.includes('output'));
+    for (const guardrail of guarded) {
+      // A stream is the reply leaving before the reply exists, so there is nothing to
+      // inspect: buffering it to satisfy the guardrail is the behaviour streaming removes.
+      problems.push(
+        problem(
+          'unsupported-streaming',
+          `${path}.streaming`,
+          `'${deployment.id}' streams, but '${guardrail.id}' inspects the 'output' stage. ` +
+            'A guardrail cannot see a reply that has already been sent, and buffering the ' +
+            'stream to check it first would not be a stream',
+        ),
+      );
+    }
+    for (const pipeline of ir.pipelines) {
+      if (pipeline.trigger?.kind !== 'http') continue;
+      if (streamablePipeline(pipeline)) continue;
+      problems.push(
+        problem(
+          'unsupported-streaming',
+          `pipelines.${pipeline.id}.steps`,
+          `'${deployment.id}' streams, but pipeline '${pipeline.id}' cannot: a stream carries ` +
+            "the model's text as it arrives, so exactly one step may generate and every " +
+            'step after it may only project the response -- an emit step. A second `generate` ' +
+            'step, or a later step that performs an effect, would be skipped on the ' +
+            'streaming path while the JSON path still performed it',
+        ),
+      );
+    }
+  }
+  return problems;
+}
+
 /** Every problem that stops the py-fastapi target, sorted for stable output. */
 export function checkPlan(ir: IR): PlanProblem[] {
   const problems = [
     ...checkIrVersion(ir),
     ...checkTarget(ir),
     ...checkCollections(ir),
+    ...checkGuardrails(ir),
+    ...checkDeployments(ir),
     ...checkObservability(ir),
     ...checkTypes(ir),
     ...checkModels(ir),

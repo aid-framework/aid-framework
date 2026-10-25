@@ -11,6 +11,7 @@ import { compareIds, sortById } from '@aid/generator-sdk';
 import type {
   EmbeddingShape,
   EvalShape,
+  GuardrailShape,
   IR,
   ModelShape,
   PipelineShape,
@@ -22,6 +23,11 @@ import type {
 
 export function orderedModels(ir: IR): ModelShape[] {
   return sortById(ir.models);
+}
+
+/** Guardrails in declared-id order, which is the order their tables are emitted in. */
+export function orderedGuardrails(ir: IR): GuardrailShape[] {
+  return sortById(ir.guardrails);
 }
 
 export function orderedTools(ir: IR): ToolShape[] {

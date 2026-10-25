@@ -33,7 +33,13 @@ ALIASES: dict[str, ModelSpec] = {
         cost=CostProfile(input_per_1k_usd=0.00015, output_per_1k_usd=0.0006),
         context_window=8192,
         max_output_tokens=512,
-        capabilities=frozenset({Capability.STRUCTURED_OUTPUT, Capability.TOOL_CALLING}),
+        capabilities=frozenset(
+            {
+                Capability.STREAMING,
+                Capability.STRUCTURED_OUTPUT,
+                Capability.TOOL_CALLING,
+            }
+        ),
     ),
     "lexical": ModelSpec(
         name="fake-lexical-rerank",
@@ -49,7 +55,13 @@ ALIASES: dict[str, ModelSpec] = {
         cost=CostProfile(input_per_1k_usd=0.0, output_per_1k_usd=0.0),
         context_window=128000,
         max_output_tokens=1024,
-        capabilities=frozenset({Capability.STRUCTURED_OUTPUT, Capability.TOOL_CALLING}),
+        capabilities=frozenset(
+            {
+                Capability.STREAMING,
+                Capability.STRUCTURED_OUTPUT,
+                Capability.TOOL_CALLING,
+            }
+        ),
     ),
 }
 
