@@ -291,6 +291,38 @@ describe('streaming is negotiated on the request, same route', () => {
     // step function of the same name and rebind it as an unbound local.
     expect(preflight).toContain('ctx.require("handbook")');
   });
+
+  it('keeps the signature inline when it fits and one parameter per line when it does not', () => {
+    // The example's signature is 99 characters against a 100-column budget, so it stays on
+    // one line. That is the only branch the committed fixture exercises, so the fallback
+    // has to be proved separately -- and proved against ruff's canonical exploded form,
+    // which puts *one* parameter per line. Two parameters on one line is itself a shape
+    // `ruff format --check` rewrites, which would make the generated tree drift from a
+    // fresh generation the moment anyone formatted it.
+    const inline = planned(examplePlan(), 'app/generated/pipelines/answer_ticket.py') ?? '';
+    expect(inline).toContain(
+      'async def _stream_request(deps: Deps, event: AnswerTicketRequest)' +
+        ' -> tuple[str, CompletionRequest]:',
+    );
+
+    // `HandleEscalationRequest` pushes the signature to 103 characters, past the budget,
+    // so this spec lands in the fallback rather than the inline branch.
+    const long = buildForSpecText(
+      specText(BLOCKING_GUARDRAIL, STREAMING_DEPLOYMENT).replaceAll('handle', 'handle_escalation'),
+    );
+    const exploded = planned(long.plan, 'app/generated/pipelines/handle_escalation.py') ?? '';
+
+    expect(exploded).toContain(
+      [
+        'async def _stream_request(',
+        '    deps: Deps,',
+        '    event: HandleEscalationRequest,',
+        ') -> tuple[str, CompletionRequest]:',
+      ].join('\n'),
+    );
+    // The pre-fix fallback wrote both parameters on one line, which ruff reformats.
+    expect(exploded).not.toContain('deps: Deps, event: HandleEscalationRequest');
+  });
 });
 
 describe('a pipeline that cannot be streamed is refused at plan time', () => {

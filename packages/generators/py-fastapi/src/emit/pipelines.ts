@@ -657,7 +657,9 @@ function emitStreamRequest(
   const leading = (pipeline.steps ?? []).slice(0, index).filter((entry) => entry.kind !== 'emit');
   // Inline when it fits: ruff format leaves a signature under the line limit on one line,
   // and a generated file that the example's own `ruff format --check` would rewrite is a
-  // drift failure rather than a style preference.
+  // drift failure rather than a style preference. When it does not fit, the trailing comma
+  // selects ruff's exploded form, which puts *one parameter per line* -- two parameters on
+  // one line is itself a shape ruff rewrites, so the fallback has to match it exactly.
   const signature =
     `async def _stream_request(${DEPS_BINDING}: Deps, ${EVENT_BINDING}: ${request})` +
     ' -> tuple[str, CompletionRequest]:';
@@ -666,7 +668,8 @@ function emitStreamRequest(
       ? [signature]
       : [
           'async def _stream_request(',
-          `${INDENT}${DEPS_BINDING}: Deps, ${EVENT_BINDING}: ${request},`,
+          `${INDENT}${DEPS_BINDING}: Deps,`,
+          `${INDENT}${EVENT_BINDING}: ${request},`,
           ') -> tuple[str, CompletionRequest]:',
         ]),
   ];
