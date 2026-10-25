@@ -14,8 +14,9 @@ import specSchema from './schema/spec.schema.json' with { type: 'json' };
 import type { SourceDocument } from './source-document.js';
 
 /**
- * Top-level sections spec v0.1 accepts; anything else is reported as
- * `spec/not-supported` (deferred) or `spec/unknown-key` (never defined).
+ * Top-level sections the spec DSL accepts; anything else is reported as
+ * `spec/unknown-key`. A section whose minimum version is above the one the document
+ * declares is reported as `spec/not-supported` with the version it needs.
  */
 export const SUPPORTED_SECTIONS = [
   'specVersion',
@@ -26,15 +27,40 @@ export const SUPPORTED_SECTIONS = [
   'tools',
   'stores',
   'retrievers',
+  'agents',
+  'guardrails',
+  'memory',
+  'deployments',
   'evals',
   'pipelines',
 ] as const;
 
 /**
- * Sections the design doc defines but spec v0.1 does not implement, so the error can
- * say "not yet" instead of "unknown key".
+ * Sections the design doc defines but no version of the DSL accepts. The Phase 2 L1
+ * promotion moved every previous entry into `SUPPORTED_SECTIONS` behind
+ * `SECTION_MIN_VERSION`, so this list is empty rather than deleted: the next section
+ * that must answer "not yet" instead of "unknown key" belongs here.
  */
-export const DEFERRED_SECTIONS = ['agents', 'guardrails', 'memory', 'deployments'] as const;
+export const DEFERRED_SECTIONS = [] as const;
+
+/** The spec language versions this build reads. A document declares one of them. */
+export const SUPPORTED_SPEC_VERSIONS = ['0.1', '0.2'] as const;
+
+export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
+
+/**
+ * Sections added after 0.1 and the first version that accepts them. A 0.1 document
+ * that uses one is told which version it needs, and its content is not silently
+ * ignored: the scope diagnostic suppresses the schema errors underneath it.
+ */
+export const SECTION_MIN_VERSION: Partial<
+  Record<(typeof SUPPORTED_SECTIONS)[number], SpecVersion>
+> = {
+  agents: '0.2',
+  guardrails: '0.2',
+  memory: '0.2',
+  deployments: '0.2',
+};
 
 /** Pipeline step kinds implemented in spec v0.1. */
 export const SUPPORTED_STEP_KINDS = ['generate', 'retrieve', 'tool', 'emit'] as const;
@@ -226,19 +252,24 @@ function scopeDiagnostics(
 ): void {
   const deferred = new Set<string>(DEFERRED_SECTIONS);
   const supported = new Set<string>(SUPPORTED_SECTIONS);
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
 
   for (const key of Object.keys(spec)) {
     if (deferred.has(key)) {
       diagnostics.push(
         errorDiagnostic({
           code: DIAGNOSTIC_CODES.notSupported,
-          message: `'${key}' is defined by the AID design but is not implemented in spec v0.1`,
+          message: `'${key}' is defined by the AID design but is not implemented by any supported spec version`,
           path: [key],
-          hint: `spec v0.1 covers ${SUPPORTED_SECTIONS.join(', ')}. See docs/design.md section 14 and section 18.`,
+          hint: `this build reads spec ${SUPPORTED_SPEC_VERSIONS.join(' and ')}. See docs/design.md section 14 and section 18.`,
         }),
       );
       reported.add(JSON.stringify([key]));
-    } else if (!supported.has(key)) {
+      continue;
+    }
+    if (!supported.has(key)) {
       diagnostics.push(
         errorDiagnostic({
           code: DIAGNOSTIC_CODES.unknownKey,
@@ -248,10 +279,48 @@ function scopeDiagnostics(
         }),
       );
       reported.add(JSON.stringify([key]));
+      continue;
     }
+
+    // An unrecognised version is already a schema error at `specVersion`; reporting
+    // every section against it would bury that root cause.
+    const required = SECTION_MIN_VERSION[key as (typeof SUPPORTED_SECTIONS)[number]];
+    if (required === undefined || declared === undefined || !known || declared === required) {
+      continue;
+    }
+    if (specVersionAtLeast(declared, required)) continue;
+
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.notSupported,
+        message: `'${key}' requires specVersion ${required}, but this specification declares ${declared === undefined ? 'no version' : `version ${declared}`}`,
+        path: [key],
+        hint: `set specVersion: "${required}"; spec 0.1 documents are unchanged`,
+      }),
+    );
+    reported.add(JSON.stringify([key]));
   }
 
   stepDiagnostics(spec, diagnostics, reported);
+}
+
+/** Compares the two-part versions this DSL uses; unknown input is never "at least". */
+export function specVersionAtLeast(declared: string | undefined, required: SpecVersion): boolean {
+  if (declared === undefined) return false;
+  const parse = (value: string): number[] | undefined => {
+    if (!/^\d+(\.\d+)*$/.test(value)) return undefined;
+    return value.split('.').map(Number);
+  };
+  const left = parse(declared);
+  const right = parse(required);
+  if (left === undefined || right === undefined) return false;
+  const width = Math.max(left.length, right.length);
+  for (let index = 0; index < width; index += 1) {
+    const a = left[index] ?? 0;
+    const b = right[index] ?? 0;
+    if (a !== b) return a > b;
+  }
+  return true;
 }
 
 function stepDiagnostics(

@@ -29,7 +29,6 @@ describe('the Phase 0 generator set', () => {
         'json-schema',
         'otel',
         'rerank',
-        'streaming',
         'tool-calling',
       ],
     });
@@ -58,17 +57,30 @@ describe('the py-fastapi declaration', () => {
     expect(PY_FASTAPI_MANIFEST.capabilities).not.toContain('orchestration');
   });
 
-  it('declares streaming as a capability the emitted code has', () => {
+  it('declares no streaming capability, because neither runtime streams', () => {
     expect(PY_FASTAPI_MANIFEST.capabilities).toEqual([
       'embeddings',
       'http-trigger',
       'json-schema',
       'otel',
       'rerank',
-      'streaming',
       'tool-calling',
     ]);
-    expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).toContain('streaming');
+    expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).toContain('tool-calling');
+    // Defect D-1: the gateway raises FeatureDeferredError, so a declaration here would
+    // be a capability claim no generated app can honour.
+    expect(PY_FASTAPI_MANIFEST.capabilities).not.toContain('streaming');
+    expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).not.toContain('streaming');
+  });
+
+  it('declares neither agents nor guardrails, because neither runtime can execute them', () => {
+    // Phase 2 L1 stages the two capabilities so a spec that declares agents is
+    // rejected by name. Declaring them here would move the failure from build time to
+    // the first request that reaches the missing runtime.
+    expect(PY_FASTAPI_MANIFEST.capabilities).not.toContain('agents');
+    expect(PY_FASTAPI_MANIFEST.capabilities).not.toContain('guardrails');
+    expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).not.toContain('agents');
+    expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).not.toContain('guardrails');
   });
 
   it('declares the retrieval capabilities the emitted wiring satisfies', () => {

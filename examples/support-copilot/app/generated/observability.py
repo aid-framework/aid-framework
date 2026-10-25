@@ -21,12 +21,10 @@ def generated_capabilities() -> dict[str, Any]:
                 "json-schema",
                 "otel",
                 "rerank",
-                "streaming",
                 "tool-calling",
             ],
             "modelWired": [
                 "Capability.EMBEDDINGS",
-                "Capability.STREAMING",
                 "Capability.STRUCTURED_OUTPUT",
                 "Capability.TOOL_CALLING",
             ],

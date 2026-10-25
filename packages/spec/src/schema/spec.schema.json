@@ -9,8 +9,8 @@
   "additionalProperties": false,
   "properties": {
     "specVersion": {
-      "description": "Spec language version. Only 0.1 exists; a different value is a hard error rather than a best-effort parse.",
-      "const": "0.1"
+      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections. A section that needs 0.2 is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
+      "enum": ["0.1", "0.2"]
     },
     "project": { "$ref": "#/$defs/project" },
     "types": {
@@ -52,6 +52,34 @@
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/name" },
       "additionalProperties": { "$ref": "#/$defs/retriever" }
+    },
+    "agents": {
+      "description": "Agents: a model, instructions, the tools and retrievers it may use, and the budget it may spend. Declarable from spec v0.2; no Phase 2 L1 target can execute one, so a spec that declares an agent is rejected by the capability gate rather than silently generated.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/agent" }
+    },
+    "guardrails": {
+      "description": "Guardrails: the stages a check runs at, the policies it evaluates, and what happens when one fails. Declarable from spec v0.2; the engine ships in a later layer.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/guardrail" }
+    },
+    "memory": {
+      "description": "Memory tiers: what is remembered, for how long, within what token budget, and where it lives. Declarable from spec v0.2; the backends ship in a later layer.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/memory" }
+    },
+    "deployments": {
+      "description": "Deployment intents: the target shape, the transport it assumes, and the secrets it needs. Declarable from spec v0.2. `streaming: true` is rejected by the deploy gate until a target declares the capability, because no runtime streams yet.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/deployment" }
     },
     "evals": {
       "type": "object",
@@ -753,6 +781,176 @@
       "type": "object",
       "propertyNames": { "$ref": "#/$defs/name" },
       "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
+    },
+    "agent": {
+      "type": "object",
+      "required": ["instructions", "model", "maxSteps"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "instructions": {
+          "description": "Prompt alias supplying the agent's instructions.",
+          "$ref": "#/$defs/name"
+        },
+        "model": { "$ref": "#/$defs/name" },
+        "tools": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/name" } },
+        "retrievers": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/name" } },
+        "memory": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/name" } },
+        "guardrails": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/name" } },
+        "structuredOutput": { "$ref": "#/$defs/typeName" },
+        "maxSteps": { "type": "integer", "minimum": 1 },
+        "maxTokensBudget": { "type": "integer", "minimum": 1 },
+        "maxCostBudget": { "type": "number", "exclusiveMinimum": 0 },
+        "handoffs": {
+          "description": "Agents this one may transfer the conversation to; the receiving agent owns the rest of the turn.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" }
+        },
+        "delegates": {
+          "description": "Agents this one may delegate a sub-task to; control returns to this agent when the sub-task finishes.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" }
+        },
+        "engine": {
+          "description": "Who owns the loop. `native` is the AID agent runtime; `deepagents` delegates to the pinned framework, which requires an engineVersion.",
+          "enum": ["native", "deepagents"]
+        },
+        "engineVersion": { "type": "string", "minLength": 1 },
+        "humanInTheLoop": {
+          "type": "object",
+          "required": ["when", "channel"],
+          "additionalProperties": false,
+          "properties": {
+            "when": {
+              "description": "Closed policy expression deciding when a human must approve.",
+              "type": "string",
+              "minLength": 1
+            },
+            "channel": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "guardrail": {
+      "type": "object",
+      "required": ["stages", "policies", "action", "onFail"],
+      "additionalProperties": false,
+      "properties": {
+        "stages": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["input", "output", "retrieval", "tool-call"] }
+        },
+        "policies": {
+          "description": "Closed policy vocabulary; a name the guardrails engine does not implement is rejected at the spec layer, never passed through.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "pii-detect",
+              "pii-redact",
+              "prompt-injection",
+              "jailbreak",
+              "moderation",
+              "toxicity",
+              "secret-scan"
+            ]
+          }
+        },
+        "action": { "enum": ["block", "redact", "flag", "escalate"] },
+        "redact": {
+          "description": "Field names the `redact` action removes. Required when `action: redact`, which the guardrails gate enforces.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "tools": {
+          "description": "Tools this guardrail covers. Absent or empty means every tool that reaches the stage.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" }
+        },
+        "onFail": {
+          "type": "object",
+          "required": ["message", "log"],
+          "additionalProperties": false,
+          "properties": {
+            "message": { "type": "string", "minLength": 1 },
+            "fallbackPrompt": { "$ref": "#/$defs/name" },
+            "log": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "required": ["kind", "scope", "tokenBudget"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["buffer", "window", "summary", "semantic", "episodic", "vector"]
+        },
+        "scope": {
+          "description": "`thread` is one conversation, `user` spans a user's threads, `global` is shared by every caller.",
+          "enum": ["thread", "user", "global"]
+        },
+        "tokenBudget": { "type": "integer", "minimum": 1 },
+        "summarizeModel": { "$ref": "#/$defs/name" },
+        "store": { "$ref": "#/$defs/name" },
+        "backend": {
+          "description": "A declared store id or `in-process`. The memory gate resolves it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "ttl": { "type": "string", "minLength": 1 },
+        "redact": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "required": ["target", "secrets"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "enum": ["serverless", "container", "batch", "edge"] },
+        "streaming": { "type": "boolean" },
+        "concurrency": { "type": "integer", "minimum": 1 },
+        "autoscale": {
+          "type": "object",
+          "required": ["min", "max", "metric"],
+          "additionalProperties": false,
+          "properties": {
+            "min": { "type": "integer", "minimum": 0 },
+            "max": { "type": "integer", "minimum": 1 },
+            "metric": { "type": "string", "minLength": 1 }
+          }
+        },
+        "secrets": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "value": { "type": "string" },
+              "secret": { "type": "boolean" }
+            }
+          }
+        }
+      }
     }
   }
 }

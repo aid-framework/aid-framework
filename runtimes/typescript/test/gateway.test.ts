@@ -264,7 +264,7 @@ describe('ModelGateway.generate', () => {
     expect(provider.calls).toHaveLength(0);
   });
 
-  it('declares streaming without implementing it', async () => {
+  it('refuses to stream rather than returning a non-streaming stream', async () => {
     await expect(gateway().stream(SMALL_ALIAS, ask())).rejects.toThrow(FeatureDeferredError);
     await expect(gateway().stream(SMALL_ALIAS, ask())).rejects.toThrow(/not an implemented one/);
   });

@@ -74,7 +74,9 @@
         "rerank",
         "long-context",
         "reasoning",
-        "prompt-cache"
+        "prompt-cache",
+        "agents",
+        "guardrails"
       ]
     },
     "modelCapability": {
@@ -780,10 +782,11 @@
         "kind": {
           "enum": ["buffer", "window", "summary", "semantic", "episodic", "vector"]
         },
-        "scope": { "enum": ["session", "user", "tenant", "global"] },
+        "scope": { "enum": ["thread", "user", "global"] },
         "tokenBudget": { "type": "integer", "minimum": 1 },
         "summarizeModel": { "type": "string" },
         "store": { "type": "string" },
+        "backend": { "type": "string" },
         "ttl": { "type": "string" },
         "redact": { "type": "array", "items": { "type": "string" } },
         "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
@@ -803,6 +806,8 @@
         "guardrails",
         "maxSteps",
         "handoffs",
+        "delegates",
+        "engine",
         "traits"
       ],
       "properties": {
@@ -819,6 +824,9 @@
         "maxTokensBudget": { "type": "integer", "minimum": 1 },
         "maxCostBudget": { "type": "number", "minimum": 0 },
         "handoffs": { "type": "array", "items": { "type": "string" } },
+        "delegates": { "type": "array", "items": { "type": "string" } },
+        "engine": { "enum": ["native", "deepagents"] },
+        "engineVersion": { "type": "string" },
         "humanInTheLoop": {
           "type": "object",
           "additionalProperties": false,
@@ -834,15 +842,30 @@
     "guardrail": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "stages", "policies", "action", "onFail", "traits"],
+      "required": ["id", "stages", "policies", "action", "redact", "tools", "onFail", "traits"],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
         "stages": {
           "type": "array",
           "items": { "enum": ["input", "output", "retrieval", "tool-call"] }
         },
-        "policies": { "type": "array", "items": { "type": "string" } },
+        "policies": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "pii-detect",
+              "pii-redact",
+              "prompt-injection",
+              "jailbreak",
+              "moderation",
+              "toxicity",
+              "secret-scan"
+            ]
+          }
+        },
         "action": { "enum": ["block", "redact", "flag", "escalate"] },
+        "redact": { "type": "array", "items": { "type": "string" } },
+        "tools": { "type": "array", "items": { "type": "string" } },
         "onFail": {
           "type": "object",
           "additionalProperties": false,

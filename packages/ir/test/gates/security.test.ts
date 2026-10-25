@@ -25,10 +25,42 @@ describe('security gate', () => {
     expect(byGate.security.diagnostics).toEqual([]);
   });
 
-  it('suppresses the guardrail rule Phase 0 cannot enforce, with a reason', () => {
+  it('no longer suppresses the guardrail rule Phase 2 L1 can enforce', () => {
     const { suppressed } = gateFixture('full.yaml').byGate.security;
-    expect(suppressed.map((entry) => entry.check)).toEqual(['security/input-output-guardrails']);
-    expect(first(suppressed).reason).toContain('no guardrail runtime');
+    expect(suppressed).toEqual([]);
+    // `security/input-output-guardrails` used to sit in this gate's suppression list.
+    // Its absence is the assertion that it was not quietly re-deferred when the four
+    // sections were promoted.
+    expect(suppressed.map((entry) => entry.check)).not.toContain(
+      'security/input-output-guardrails',
+    );
+  });
+
+  it('rejects caller text that reaches a prompt with no input-stage guardrail', () => {
+    const { diagnostics } = gateFixture('guardrails-no-input-stage.yaml').byGate.security;
+    const flagged = onlyDiagnosticWith(diagnostics, IR_DIAGNOSTIC_CODES.securityInputGuardrail);
+    expect(flagged.severity).toBe('error');
+    expect(flagged.path).toEqual(['pipelines', 'handle_ticket', 'steps', 0]);
+    expect(flagged.message).toContain('POST /tickets');
+    expect(flagged.message).toContain('no guardrail with an "input" stage');
+  });
+
+  it('accepts the same pipeline once an input-stage guardrail is declared', () => {
+    const { diagnostics } = gateFixture('agents.yaml').byGate.security;
+    expect(
+      diagnostics.filter((entry) => entry.code === IR_DIAGNOSTIC_CODES.securityInputGuardrail),
+    ).toEqual([]);
+  });
+
+  it('does not impose the guardrail rule on a spec that cannot declare one', () => {
+    // Additive-only: `full.yaml` is a 0.1 spec with no `guardrails` section, so the
+    // rule has nothing to inspect and must stay silent rather than fail retroactively.
+    const { ir, byGate } = gateFixture('full.yaml');
+    expect(ir.guardrails).toEqual([]);
+    const flagged = byGate.security.diagnostics.filter(
+      (entry) => entry.code === IR_DIAGNOSTIC_CODES.securityInputGuardrail,
+    );
+    expect(flagged).toEqual([]);
   });
 
   it('fails closed: a write tool with no auth is an error, not a warning', () => {

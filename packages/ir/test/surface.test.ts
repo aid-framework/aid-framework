@@ -50,7 +50,7 @@ const ir = buildFixture('full.yaml').ir;
 describe('ir/* diagnostics', () => {
   it('names every code ir/<slug>, distinct from the spec namespace', () => {
     const codes = Object.values(IR_DIAGNOSTIC_CODES);
-    expect(codes.length).toBe(40);
+    expect(codes.length).toBe(50);
     expect(new Set(codes).size).toBe(codes.length);
     for (const code of codes) {
       expect(code).toMatch(/^ir\/[a-z0-9-]+$/);
@@ -219,7 +219,7 @@ describe('the gate contract', () => {
     );
   });
 
-  it('runs exactly the six Phase 0 gates and merges their reports', () => {
+  it('runs every registered gate and merges their reports', () => {
     expect(Object.keys(GATES)).toEqual([
       'referential',
       'normalize',
@@ -227,9 +227,19 @@ describe('the gate contract', () => {
       'cost',
       'security',
       'eval-coverage',
+      'agents/refs-resolve',
+      'agents/handoff-cycles',
+      'agents/budgets',
+      'guardrails/coverage',
+      'guardrails/policies',
+      'hitl/side-effects',
+      'memory/refs',
+      'deploy/streaming',
+      'orchestration/deepagents',
     ]);
     const result = gateFixture('eval-uncovered.yaml');
     expect(Object.keys(result.byGate)).toEqual(Object.keys(GATES));
+    expect(result.byGate['agents/refs-resolve']).toBeDefined();
     expect(codesOf(result.diagnostics)).toEqual([IR_DIAGNOSTIC_CODES.evalUncovered]);
   });
 
@@ -242,8 +252,13 @@ describe('the gate contract', () => {
     const result = runGates(ir);
     expect(result.suppressed.map((entry) => entry.check)).toEqual([
       'referential/request-input-fields',
-      'security/input-output-guardrails',
+      'guardrails/coverage-without-declaration',
     ]);
+    // `security/input-output-guardrails` used to be listed here. It is live as of
+    // Phase 2 L1, so its absence is the assertion that it was not quietly re-deferred.
+    expect(result.suppressed.map((entry) => entry.check)).not.toContain(
+      'security/input-output-guardrails',
+    );
     for (const entry of result.suppressed) {
       expect(entry.reason.length).toBeGreaterThan(20);
     }

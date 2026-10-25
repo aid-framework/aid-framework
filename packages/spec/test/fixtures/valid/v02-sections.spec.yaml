@@ -1,0 +1,240 @@
+specVersion: "0.2"
+
+project:
+  name: agent-desk
+  namespace: acme.agents
+  description: Exercises every closed key of the four spec v0.2 sections.
+  targets:
+    - py-fastapi
+    - ts-vercel
+
+types:
+  Answer:
+    kind: struct
+    fields:
+      summary:
+        type: string
+        required: true
+      category:
+        type: string
+        required: true
+        enum: [billing, bug, howto, other]
+
+models:
+  triage:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [json-schema, tools]
+  embed:
+    provider: fake
+    modelId: text-embedding-3-small
+    capabilities: [embeddings]
+
+prompts:
+  support_instructions:
+    version: 1
+    model: triage
+    template: "You are a support agent. Never invent an order id."
+    output:
+      kind: text
+  escalation_instructions:
+    version: 1
+    model: triage
+    template: "You are an escalation agent. Ask for what is missing."
+    output:
+      kind: text
+  refusal:
+    version: 1
+    model: triage
+    template: "I cannot help with that request."
+    output:
+      kind: text
+  classify_ticket:
+    version: 1
+    model: triage
+    template: |
+      Classify the ticket below.
+      Subject: {{subject}}
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: Answer
+
+tools:
+  fetch_order:
+    description: Read an order record.
+    input: Answer
+    output: Answer
+    sideEffects: read
+    handler:
+      kind: business
+      symbol: fetch_order
+  issue_refund:
+    description: Issue a refund against an order.
+    input: Answer
+    output: Answer
+    sideEffects: write
+    handler:
+      kind: business
+      symbol: issue_refund
+
+stores:
+  docs:
+    kind: memory
+    dimensions: 1536
+
+retrievers:
+  handbook:
+    source:
+      kind: file
+      uri: ./docs
+      glob: "**/*.md"
+    chunking:
+      strategy: recursive
+      size: 800
+      overlap: 100
+    embedModel: embed
+    store: docs
+    index:
+      metric: cosine
+    topK: 5
+    refresh:
+      mode: full
+
+guardrails:
+  inbound:
+    stages: [input]
+    policies: [prompt-injection, jailbreak]
+    action: block
+    onFail:
+      message: The request was rejected by the input guardrail.
+      fallbackPrompt: refusal
+      log: true
+  outbound:
+    stages: [output]
+    policies: [pii-detect, moderation]
+    action: redact
+    redact: [email, phone]
+    onFail:
+      message: The answer was redacted before it left the process.
+      log: true
+  writes:
+    stages: [tool-call]
+    policies: [secret-scan, toxicity]
+    action: escalate
+    tools: [issue_refund]
+    onFail:
+      message: The refund call needs a human.
+      log: true
+  retrieved_text:
+    stages: [retrieval]
+    policies: [pii-redact]
+    action: flag
+    onFail:
+      message: Retrieved text carried something that looked personal.
+      log: false
+
+memory:
+  conversation:
+    kind: window
+    scope: thread
+    tokenBudget: 2048
+    ttl: PT2H
+  profile:
+    kind: summary
+    scope: user
+    tokenBudget: 512
+    summarizeModel: triage
+  shared:
+    kind: semantic
+    scope: global
+    tokenBudget: 4096
+    store: docs
+    backend: in-process
+    redact: [email]
+
+deployments:
+  prod:
+    target: container
+    streaming: false
+    concurrency: 4
+    secrets: [OPENAI_API_KEY]
+    env:
+      - name: LOG_LEVEL
+        value: info
+      - name: API_TOKEN
+        secret: true
+  edge:
+    target: edge
+    streaming: false
+    autoscale:
+      min: 0
+      max: 3
+      metric: rps
+    secrets: []
+
+agents:
+  support:
+    name: Support Agent
+    instructions: support_instructions
+    model: triage
+    tools: [fetch_order, issue_refund]
+    retrievers: [handbook]
+    memory: [conversation, profile]
+    guardrails: [inbound, outbound, writes, retrieved_text]
+    structuredOutput: Answer
+    maxSteps: 4
+    maxTokensBudget: 4096
+    maxCostBudget: 0.25
+    handoffs: [escalation]
+    delegates: [researcher]
+    engine: native
+    humanInTheLoop:
+      when: hasRole("support_agent")
+      channel: slack
+  escalation:
+    instructions: escalation_instructions
+    model: triage
+    maxSteps: 1
+    engine: native
+  researcher:
+    instructions: support_instructions
+    model: triage
+    maxSteps: 2
+    maxTokensBudget: 1024
+    engine: native
+
+evals:
+  classify_quality:
+    description: Structured-output quality for the classification pipeline.
+    target: pipeline:classify
+    dataset:
+      source: file
+      uri: evals/classify_quality.jsonl
+    metrics:
+      - kind: json-schema
+        schema: Answer
+    gate:
+      ci: true
+      maxRegression: 0.05
+      samples: 5
+
+pipelines:
+  classify:
+    description: Classify an inbound ticket into a structured answer.
+    trigger:
+      http:
+        method: post
+        path: /tickets/classify
+    steps:
+      - generate:
+          prompt: classify_ticket
+          input:
+            subject: "{{event.subject}}"
+          as: answer
+      - emit:
+          event: Answer

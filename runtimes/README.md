@@ -24,8 +24,8 @@ the target shape stays visible.
   against a stored baseline** rather than by equality.
 - **Observability & cost** — OTel GenAI spans per model call, with cost recorded on the span.
 
-**Deferred, per [`§14`](../docs/design.md):** streaming (the capability is declared, the transport is
-request/response only), escalation routing, retrieval (connectors, chunkers, embedders, vector stores,
+**Deferred, per [`§14`](../docs/design.md):** streaming (the transport is request/response only and the
+capability is withdrawn from target declarations until layer L5 implements it), escalation routing, retrieval (connectors, chunkers, embedders, vector stores,
 reranking, citation assembly), a memory tier, a guardrails engine, prompt/semantic caching, rate limiting and
 token buckets, and a latency p95 budget. Multi-provider breadth is one HTTP provider plus one fake; Anthropic,
 Azure and Bedrock adapters are not Phase 0.

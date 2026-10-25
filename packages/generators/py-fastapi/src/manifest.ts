@@ -11,6 +11,12 @@
  * `emitsAgainst` is part of the shape for the same reason: it is what keeps
  * orchestration swappable. Phase 0 has no orchestration key at all, which is the
  * declaration that the emitted code is plain async.
+ *
+ * `streaming` is deliberately absent. The runtime this generator targets raises
+ * `FeatureDeferredError` on `stream()`, so declaring the capability would make every
+ * spec that requires streaming pass the capability gate against a target that cannot
+ * serve it. Phase 2 layer L1 withdrew the declaration; `DEFERRED_CAPABILITIES` in
+ * `@aid/ir` records that layer L5 owns bringing it back.
  */
 
 import {
@@ -30,15 +36,7 @@ export const PY_FASTAPI_MANIFEST_INPUT: GeneratorManifestInput = {
   target: PY_FASTAPI_TARGET,
   version: '0.1.0',
   irRange: `^${IR_VERSION}`,
-  capabilities: [
-    'http-trigger',
-    'json-schema',
-    'streaming',
-    'tool-calling',
-    'otel',
-    'embeddings',
-    'rerank',
-  ],
+  capabilities: ['http-trigger', 'json-schema', 'tool-calling', 'otel', 'embeddings', 'rerank'],
   emitsAgainst: {
     structuredOutput: 'pydantic',
     tracing: 'otel-genai',

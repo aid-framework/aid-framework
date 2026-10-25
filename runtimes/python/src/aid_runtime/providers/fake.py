@@ -71,7 +71,6 @@ class FakeProvider:
             {
                 Capability.TOOL_CALLING,
                 Capability.STRUCTURED_OUTPUT,
-                Capability.STREAMING,
                 Capability.LONG_CONTEXT,
             }
         )

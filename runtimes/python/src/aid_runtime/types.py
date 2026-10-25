@@ -41,9 +41,9 @@ class Capability(StrEnum):
     These are the model-side vocabulary. The IR's capability set
     (``http-trigger``, ``json-schema``, ``otel``, ``streaming``, ``tool-calling``,
     ``cursor-memory``) is a target-side vocabulary; the generator maps one to the
-    other. ``STREAMING`` is declared so specs can request it and the IR gate
-    accepts them, but no adapter implements it yet -- see
-    :class:`~aid_runtime.errors.FeatureDeferredError`. ``EMBEDDINGS`` and
+    other. ``STREAMING`` names the deferral rather than a served capability: no
+    adapter advertises it, no target declares it, and
+    :class:`~aid_runtime.errors.FeatureDeferredError` is raised instead. ``EMBEDDINGS`` and
     ``RERANK`` are likewise model-side: the IR's ``MODEL_CAPABILITIES`` already
     admits both for embedding and rerank models, so declaring them here is what
     lets a model be negotiated against a retrieval binding at all.

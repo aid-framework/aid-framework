@@ -32,7 +32,7 @@ import {
   templatePlaceholders,
   toolIdentity,
 } from '../src/index.js';
-import { buildFixture } from './helpers.js';
+import { buildFixture, byId } from './helpers.js';
 
 /** The full §7.2 top level, in the order the builder emits it. */
 const TOP_LEVEL_KEYS = [
@@ -82,10 +82,44 @@ describe('buildIR', () => {
     expect(ir.evals.map((evaluation) => evaluation.id)).toEqual(['refund_regression']);
   });
 
-  it('marks every deferred collection present and empty, never undefined', () => {
-    for (const section of DEFERRED_SECTIONS) {
-      expect(ir[section], section).toEqual([]);
+  it('builds a spec that predates the promoted sections with all four present and empty', () => {
+    // The additive-only guarantee at the collection level: a 0.1 spec gains these as
+    // present-and-empty, never as `undefined`, and never as a build failure.
+    for (const collection of ['agents', 'guardrails', 'memory', 'deployments'] as const) {
+      expect(ir[collection], collection).toEqual([]);
     }
+    // Phase 2 L1 promoted every remaining section, so the deferral list is empty. It
+    // is kept as a list rather than deleted so the next deferral has a home.
+    expect(DEFERRED_SECTIONS).toEqual([]);
+    expect(new Set(Object.keys(POPULATED_COLLECTION_BY_SECTION))).toEqual(
+      new Set(
+        SUPPORTED_SECTIONS.filter(
+          (section) => !(NON_COLLECTION_SECTIONS as readonly string[]).includes(section),
+        ),
+      ),
+    );
+  });
+
+  it('populates the promoted collections from a 0.2 spec', () => {
+    const promoted = buildFixture('agents.yaml').ir;
+    // Collections are id-sorted so the build is byte-stable regardless of spec order.
+    expect(promoted.agents.map((agent) => agent.id)).toEqual(['escalation', 'support']);
+    expect(promoted.guardrails.map((guardrail) => guardrail.id)).toEqual([
+      'inbound',
+      'refund_writes',
+    ]);
+    expect(promoted.memory.map((memory) => memory.id)).toEqual(['conversation']);
+    expect(promoted.deployments.map((deployment) => deployment.id)).toEqual(['prod']);
+
+    // The declared shape survives the build; a default that quietly replaced it would
+    // make the four sections look populated while carrying nothing.
+    const support = byId(promoted.agents, 'support');
+    expect(support.engine).toBe('native');
+    expect(support.maxTokensBudget).toBe(4096);
+    expect(support.humanInTheLoop).toBeDefined();
+    expect(byId(promoted.guardrails, 'inbound').action).toBe('block');
+    expect(byId(promoted.memory, 'conversation').scope).toBe('thread');
+    expect(byId(promoted.deployments, 'prod').secrets).toEqual(['OPENAI_API_KEY']);
   });
 
   it('leaves the IR-only collection empty until retrieval content declares it', () => {

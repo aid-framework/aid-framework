@@ -132,15 +132,17 @@ describe('FakeProvider', () => {
 
   it('declares the capabilities the gateway negotiates on', () => {
     const provider = new FakeProvider();
-    // The simulation can claim anything: there is no wire protocol to contradict it.
+    // The simulation advertises exactly what it can serve: `streaming` is withheld
+    // because `stream()` is not implemented, which is what keeps the declaration
+    // honest rather than aspirational.
     expect([...provider.capabilities].sort()).toEqual([
       'long-context',
-      'streaming',
       'structured-output',
       'tool-calling',
     ]);
     expect(supports(provider, 'tool-calling')).toBe(true);
     expect(supports(provider, 'long-context')).toBe(true);
+    expect(supports(provider, 'streaming')).toBe(false);
   });
 
   it('names itself, and can be renamed', () => {
