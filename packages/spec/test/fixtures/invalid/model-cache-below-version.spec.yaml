@@ -1,0 +1,11 @@
+specVersion: "0.2"
+
+project:
+  name: cached
+
+models:
+  cached:
+    provider: fake
+    modelId: fake-deterministic-1
+    cache:
+      prompt: true

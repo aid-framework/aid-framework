@@ -18,6 +18,7 @@ import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
 
+from aid_runtime.concurrency import ConcurrencyLimiter
 from aid_runtime.errors import ToolArgumentError, ToolExecutionError, ToolNotFoundError
 from aid_runtime.types import ToolCall, ToolDefinition, ToolResult
 
@@ -82,11 +83,23 @@ class Tool:
 
 
 class ToolExecutor:
-    """Validates and dispatches tool calls."""
+    """Validates and dispatches tool calls.
 
-    def __init__(self, tools: Iterable[Tool] = (), *, strict: bool = False) -> None:
+    An executor may share a :class:`~aid_runtime.concurrency.ConcurrencyLimiter`
+    with the gateway; when one is supplied, every tool call acquires a slot so tool
+    calls and model calls draw from the same budget of concurrent work.
+    """
+
+    def __init__(
+        self,
+        tools: Iterable[Tool] = (),
+        *,
+        strict: bool = False,
+        limiter: ConcurrencyLimiter | None = None,
+    ) -> None:
         self._tools: dict[str, Tool] = {}
         self._strict = strict
+        self._limiter = limiter
         for tool in tools:
             self.register(tool)
 
@@ -115,7 +128,16 @@ class ToolExecutor:
         what you actually want: it raises
         :class:`~aid_runtime.errors.ToolExecutionError` instead of returning an
         error the model would silently try to talk its way around.
+
+        When a limiter is shared, the call holds one slot for its whole duration,
+        released on success, handler error, or cancellation.
         """
+        if self._limiter is None:
+            return await self._execute(call)
+        async with self._limiter.run():
+            return await self._execute(call)
+
+    async def _execute(self, call: ToolCall) -> ToolResult:
         tool = self._get(call.name)
         problems = validate_arguments(tool.definition.parameters, call.arguments)
         if problems:

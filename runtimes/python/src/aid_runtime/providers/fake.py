@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import random
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,11 +28,16 @@ from aid_runtime.types import (
     CompletionResponse,
     FinishReason,
     ModelSpec,
+    StreamChunk,
     TokenUsage,
     ToolCall,
 )
 
 __all__ = ["FakeProvider", "ScriptedTurn"]
+
+#: The fixed chunk size :meth:`FakeProvider.stream` splits text into, so a test can
+#: assert that a long answer streams as several deltas rather than one blob.
+_STREAM_CHUNK = 4
 
 # A responder sees the request and returns the model's text. Receiving the index
 # of the call lets a responder model "the third call fails" without mutable state.
@@ -123,6 +128,7 @@ class FakeProvider:
                 Capability.TOOL_CALLING,
                 Capability.STRUCTURED_OUTPUT,
                 Capability.LONG_CONTEXT,
+                Capability.STREAMING,
             }
         )
 
@@ -160,6 +166,39 @@ class FakeProvider:
             ),
             finish_reason="stop",
         )
+
+    async def stream(
+        self, request: CompletionRequest, *, model: ModelSpec
+    ) -> AsyncIterator[StreamChunk]:
+        """Stream the same answer :meth:`complete` would return, in fixed chunks.
+
+        The script and failure queue are consumed identically to ``complete``, so a
+        streaming call and a request/response call observe the same deterministic
+        sequence.
+        """
+        self.calls.append(request)
+        index = len(self.calls) - 1
+
+        if self._failures:
+            raise ProviderError(str(self._failures.pop(0)))
+
+        input_tokens = self._count_tokens(_prompt_text(request))
+        if self._served < len(self._script):
+            turn = self._script[self._served]
+            self._served += 1
+            text = turn.text
+            finish_reason = turn.finish_reason
+        else:
+            text = self._respond_to(request, index)
+            finish_reason = "stop"
+
+        usage = TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=self._count_tokens(text),
+        )
+        for start in range(0, len(text), _STREAM_CHUNK):
+            yield StreamChunk(delta=text[start : start + _STREAM_CHUNK])
+        yield StreamChunk(finish_reason=finish_reason, usage=usage)
 
     async def aclose(self) -> None:
         return None

@@ -44,7 +44,7 @@ export const SUPPORTED_SECTIONS = [
 export const DEFERRED_SECTIONS = [] as const;
 
 /** The spec language versions this build reads. A document declares one of them. */
-export const SUPPORTED_SPEC_VERSIONS = ['0.1', '0.2'] as const;
+export const SUPPORTED_SPEC_VERSIONS = ['0.1', '0.2', '0.3'] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
 
@@ -61,6 +61,14 @@ export const SECTION_MIN_VERSION: Partial<
   memory: '0.2',
   deployments: '0.2',
 };
+
+/**
+ * The first spec version that accepts the `models[].cache` construct. Unlike the
+ * top-level sections above, this is a *nested* construct: `SECTION_MIN_VERSION`
+ * only gates top-level keys, so a model cache needs its own rule below or a 0.2
+ * document would silently drop it.
+ */
+export const MODEL_CACHE_MIN_VERSION: SpecVersion = '0.3';
 
 /** Pipeline step kinds implemented in spec v0.1. */
 export const SUPPORTED_STEP_KINDS = ['generate', 'retrieve', 'tool', 'emit'] as const;
@@ -301,7 +309,41 @@ function scopeDiagnostics(
     reported.add(JSON.stringify([key]));
   }
 
+  modelCacheDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
+}
+
+/**
+ * Nested version gating for `models[].cache`. `SECTION_MIN_VERSION` only gates
+ * top-level keys, so this is where a 0.1/0.2 document that declares a model cache
+ * is refused with the version it needs -- the same `spec/not-supported` shape the
+ * top-level rule uses, but at the nested path.
+ */
+function modelCacheDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known || specVersionAtLeast(declared, MODEL_CACHE_MIN_VERSION)) {
+    return;
+  }
+
+  const models = asRecord(spec.models);
+  for (const [name, model] of Object.entries(models)) {
+    if (asRecord(model).cache === undefined) continue;
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.notSupported,
+        message: `'models.${name}.cache' requires specVersion ${MODEL_CACHE_MIN_VERSION}, but this specification declares version ${declared}`,
+        path: ['models', name, 'cache'],
+        hint: `set specVersion: "${MODEL_CACHE_MIN_VERSION}"; spec 0.1 documents are unchanged`,
+      }),
+    );
+    reported.add(JSON.stringify(['models', name, 'cache']));
+  }
 }
 
 /** Compares the two-part versions this DSL uses; unknown input is never "at least". */

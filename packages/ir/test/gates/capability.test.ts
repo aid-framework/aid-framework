@@ -167,3 +167,27 @@ describe('capability gate', () => {
     expect(byGate.capability.diagnostics).toEqual([]);
   });
 });
+
+describe('L5 capability derivations (closes D-1b)', () => {
+  it('derives streaming from a deployment that requests it', () => {
+    const { ir } = gateFixture('deploy-streaming.yaml');
+    expect(deriveRequiredCapabilities(ir)).toContain('streaming');
+  });
+
+  it('does not derive streaming when no deployment requests it', () => {
+    const ir = mutateIR('deploy-streaming.yaml');
+    first(ir.deployments).streaming = false;
+    expect(deriveRequiredCapabilities(ir)).not.toContain('streaming');
+  });
+
+  it('derives prompt-cache from a model that declares a prompt cache', () => {
+    const ir = mutateIR('full.yaml');
+    byId(ir.models, 'triage').cache = { prompt: true };
+    expect(deriveRequiredCapabilities(ir)).toContain('prompt-cache');
+  });
+
+  it('does not derive prompt-cache when no model declares a prompt cache', () => {
+    const { ir } = gateFixture('full.yaml');
+    expect(deriveRequiredCapabilities(ir)).not.toContain('prompt-cache');
+  });
+});

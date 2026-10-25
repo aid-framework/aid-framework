@@ -488,13 +488,12 @@ async def test_a_response_model_overrides_the_pinned_name() -> None:
     assert result.model == "http-test-model-2026-01-01"
 
 
-async def test_the_adapter_declares_tool_and_structured_output_but_not_streaming() -> None:
+async def test_the_adapter_declares_tool_calling_structured_output_and_streaming() -> None:
     provider = OpenAICompatibleProvider(base_url=BASE_URL)
 
     assert provider.capabilities == frozenset(
-        {Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT}
+        {Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT, Capability.STREAMING}
     )
-    assert Capability.STREAMING not in provider.capabilities
 
 
 def test_the_base_url_must_be_an_absolute_http_url() -> None:

@@ -1,0 +1,16 @@
+specVersion: "0.3"
+
+project:
+  name: cached
+  targets:
+    - py-fastapi
+
+models:
+  cached:
+    provider: fake
+    modelId: fake-deterministic-1
+    cache:
+      prompt: true
+      semantic:
+        threshold: 0.9
+        ttlSeconds: 3600

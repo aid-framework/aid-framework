@@ -13,7 +13,9 @@ from collections.abc import Mapping
 import pytest
 
 from aid_runtime import (
+    Capability,
     CompletionRequest,
+    CostProfile,
     Dataset,
     DatasetRun,
     EvalCase,
@@ -24,6 +26,7 @@ from aid_runtime import (
     JsonSchemaValid,
     LlmJudge,
     ModelGateway,
+    ModelSpec,
     NormalizedContains,
     Runner,
     UnknownModelAliasError,
@@ -426,6 +429,32 @@ async def test_gateway_runner_reports_the_ledger_cost(
 
     await runner(dataset.case("capital-fr"))
     assert runner.cost_usd > 0.0
+
+
+async def test_gateway_runner_is_cache_off_by_default(
+    dataset: Dataset, provider: FakeProvider
+) -> None:
+    """A cached eval is a false pass: the runner must insist on a live call."""
+    from aid_runtime import ModelCacheConfig
+
+    spec = ModelSpec(
+        name="fake-small-1",
+        provider="fake",
+        cost=CostProfile(input_per_1k_usd=0.15, output_per_1k_usd=0.60),
+        context_window=128_000,
+        max_output_tokens=4_096,
+        capabilities=frozenset({Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT}),
+        cache=ModelCacheConfig(prompt=True),
+    )
+    gateway = ModelGateway({"fake": provider}, {"small": spec})
+    runner = GatewayRunner(gateway, SMALL_ALIAS)
+
+    first = await runner(dataset.case("capital-fr"))
+    second = await runner(dataset.case("capital-fr"))
+
+    assert first == second
+    # Two live calls, not one call plus a cache hit: evals never trust the cache.
+    assert len(provider.calls) == 2
 
 
 def test_gateway_runner_refuses_an_unknown_alias_when_it_is_built(

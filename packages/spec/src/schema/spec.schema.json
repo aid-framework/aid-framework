@@ -1,16 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://aid-framework.dev/schemas/spec/0.1/spec.schema.json",
+  "$id": "https://aid-framework.dev/schemas/spec/0.3/spec.schema.json",
   "$comment": "Conditional branches (`then`, and a `not` inside one) that require a property also declare it as `\"properties\": { \"<name>\": true }`. That is deliberately not a constraint - a boolean `true` schema permits anything. It exists because the validator runs Ajv with `strict: true`, and Ajv's `strictRequired` rule rejects a `required` entry whose property is not declared in that same subschema object. Keeping the branch self-contained satisfies the rule without changing its meaning; the valid and invalid fixtures in packages/spec/test cover both directions.",
-  "title": "AID Framework spec v0.1",
+  "title": "AID Framework spec v0.3",
   "description": "The declarative source of truth for an AID application. Hand-authored against design doc §6, narrowed to the implemented surface (§14): the Phase 0 sections (models, prompts, tools, evals, pipelines) plus Phase 1 retrieval (stores, retrievers, the retrieve step and the retrieval metric). Top-level keys outside this set are rejected rather than ignored, so a feature that has not been implemented cannot be silently dropped. Within an implemented section, a sub-feature Phase 1 does not serve is rejected by a spec-local rule (`spec/not-supported`) rather than by the schema, so the enum stays the design doc's and the message can name the phase. See packages/spec/README.md for the scope boundary and the deferred keys.",
   "type": "object",
   "required": ["specVersion", "project"],
   "additionalProperties": false,
   "properties": {
     "specVersion": {
-      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections. A section that needs 0.2 is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
-      "enum": ["0.1", "0.2"]
+      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
+      "enum": ["0.1", "0.2", "0.3"]
     },
     "project": { "$ref": "#/$defs/project" },
     "types": {
@@ -75,7 +75,7 @@
       "additionalProperties": { "$ref": "#/$defs/memory" }
     },
     "deployments": {
-      "description": "Deployment intents: the target shape, the transport it assumes, and the secrets it needs. Declarable from spec v0.2. `streaming: true` is rejected by the deploy gate until a target declares the capability, because no runtime streams yet.",
+      "description": "Deployment intents: the target shape, the transport it assumes, and the secrets it needs. Declarable from spec v0.2. `streaming: true` derives a `streaming` requirement; the deploy gate still rejects it until a target actually declares the capability, because no target emits SSE wiring yet.",
       "type": "object",
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/name" },
@@ -104,6 +104,16 @@
       "description": "UpperCamelCase name of a declared type.",
       "type": "string",
       "pattern": "^[A-Z][A-Za-z0-9]{0,63}$"
+    },
+    "semanticCache": {
+      "description": "Semantic cache settings. `threshold` is the minimum cosine similarity (0..1) a new prompt must reach against a cached one before the cached response is reused; `ttlSeconds` bounds how long a cached response may be reused. Both are required together so a spec cannot opt in with a silent default threshold or TTL.",
+      "type": "object",
+      "required": ["threshold", "ttlSeconds"],
+      "additionalProperties": false,
+      "properties": {
+        "threshold": { "type": "number", "minimum": 0, "maximum": 1, "exclusiveMinimum": 0 },
+        "ttlSeconds": { "type": "integer", "minimum": 1 }
+      }
     },
     "fieldType": {
       "description": "A primitive (string, number, integer, boolean) or a declared type name, optionally suffixed with [] for a list.",
@@ -232,6 +242,15 @@
           "$comment": "The *name* of an environment variable, never a key. The pattern cannot express a literal secret, so a committed credential is out of scope by construction.",
           "type": "string",
           "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+        },
+        "cache": {
+          "description": "Model caching, declarable from spec v0.3. `prompt` is the exact-match layer (model, prompt, tool schema and temperature); `semantic` is the opt-in fuzzy layer and carries its own threshold and TTL so there is no silent default.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "prompt": { "type": "boolean" },
+            "semantic": { "$ref": "#/$defs/semanticCache" }
+          }
         },
         "description": { "type": "string" }
       },

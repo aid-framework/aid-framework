@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -23,6 +24,7 @@ from aid_runtime.types import (
     FinishReason,
     Message,
     ModelSpec,
+    StreamChunk,
     TokenUsage,
     ToolCall,
 )
@@ -72,14 +74,60 @@ class OpenAICompatibleProvider:
 
     @property
     def capabilities(self) -> frozenset[Capability]:
-        # Streaming is intentionally absent: the capability is part of the IR
-        # contract but no adapter implements it yet.
-        return frozenset({Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT})
+        return frozenset(
+            {
+                Capability.TOOL_CALLING,
+                Capability.STRUCTURED_OUTPUT,
+                Capability.STREAMING,
+            }
+        )
 
     async def complete(self, request: CompletionRequest, *, model: ModelSpec) -> CompletionResponse:
         payload = self._build_payload(request, model)
         body = await self._post("/chat/completions", payload)
         return self._parse(body, model)
+
+    async def stream(
+        self, request: CompletionRequest, *, model: ModelSpec
+    ) -> AsyncIterator[StreamChunk]:
+        """Stream one call as OpenAI-style SSE, yielding one chunk per delta.
+
+        Streaming is a single attempt, not the retry loop ``complete`` uses: a
+        stream that has already emitted a token cannot be safely replayed, so a
+        transport or status error is raised once rather than retried mid-stream.
+        """
+        payload = self._build_payload(request, model)
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
+        url = f"{self._base_url}/chat/completions"
+        try:
+            async with self._client.stream(
+                "POST", url, json=payload, headers=self._headers()
+            ) as response:
+                if response.status_code >= 400:
+                    await response.aread()
+                    raise ProviderError(
+                        f"{self._name} returned {response.status_code}: {response.text[:500]}"
+                    )
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[len("data:") :].strip()
+                    if data == "[DONE]":
+                        continue
+                    try:
+                        decoded = json.loads(data)
+                    except json.JSONDecodeError as exc:
+                        raise ProviderResponseError(
+                            f"{self._name} streamed non-JSON", data
+                        ) from exc
+                    if not isinstance(decoded, dict):
+                        raise ProviderResponseError(
+                            f"{self._name} streamed a non-object body", data
+                        )
+                    yield self._parse_chunk(decoded, model)
+        except httpx.TransportError as exc:
+            raise ProviderError(f"{self._name} stream failed: {exc}") from exc
 
     async def aclose(self) -> None:
         if self._closed:
@@ -188,6 +236,32 @@ class OpenAICompatibleProvider:
             tool_calls=tool_calls,
             finish_reason=_finish_reason(first.get("finish_reason")),
         )
+
+    def _parse_chunk(self, body: dict[str, Any], model: ModelSpec) -> StreamChunk:
+        """Map one streamed SSE ``data`` payload to a :class:`StreamChunk`."""
+        choices = body.get("choices")
+        delta = ""
+        finish_reason: FinishReason | None = None
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            if isinstance(first, dict):
+                delta_obj = first.get("delta")
+                if isinstance(delta_obj, dict):
+                    content = delta_obj.get("content")
+                    if isinstance(content, str):
+                        delta = content
+                raw_reason = first.get("finish_reason")
+                if isinstance(raw_reason, str) and raw_reason:
+                    finish_reason = _finish_reason(raw_reason)
+
+        usage: TokenUsage | None = None
+        raw_usage = body.get("usage")
+        if isinstance(raw_usage, dict):
+            usage = TokenUsage(
+                input_tokens=int(raw_usage.get("prompt_tokens") or 0),
+                output_tokens=int(raw_usage.get("completion_tokens") or 0),
+            )
+        return StreamChunk(delta=delta, finish_reason=finish_reason, usage=usage)
 
     def _parse_tool_calls(self, raw: Any) -> tuple[ToolCall, ...]:
         if not isinstance(raw, list):

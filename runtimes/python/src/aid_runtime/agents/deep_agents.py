@@ -24,8 +24,10 @@ up in an eval baseline.
 
 What this module deliberately does not do, and does not claim: filesystem, shell or
 skill tools (the adapter's allow-list makes them unreachable, and they are not
-enabled here), streaming (the adapter raises, because a streaming path needs its own
-span and ledger accounting rather than an improvised one), and LangSmith (our OTel
+enabled here), streaming (the gateway serves SSE for the HTTP layer, but the
+deepagents engine consumes request/response through ``agenerate``/``ainvoke`` and
+never an SSE byte stream, so the adapter's ``_astream`` keeps raising rather than
+buffering into a non-stream), and LangSmith (our OTel
 spans are the required trace; LangSmith is absent and off).
 """
 

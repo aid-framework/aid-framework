@@ -11,11 +11,12 @@ Design boundaries worth stating up front, because they are deliberate:
   engine here. A generated app is ordinary code that is easy to read and to test.
 * **Pydantic AI is used only for structured output.** No other responsibility is
   delegated to it.
-* **Streaming is deferred, and undeclared.** No provider advertises
-  ``Capability.STREAMING`` and no generated target declares the capability; calling
-  :meth:`~aid_runtime.gateway.ModelGateway.stream` raises
-  :class:`~aid_runtime.errors.FeatureDeferredError` rather than pretending. Phase 2
-  layer L5 implements it and restores the declaration.
+* **Streaming is SSE, and served end to end.** A model and its adapter that
+  advertise ``Capability.STREAMING`` are served by
+  :meth:`~aid_runtime.gateway.ModelGateway.stream`, which yields Server-Sent Event
+  ``data`` frames with the first delta before completion. Anything not advertising
+  the capability raises :class:`~aid_runtime.errors.CapabilityMismatchError`
+  instead of pretending to stream.
 * **One HTTP provider adapter and one fake.** Breadth of vendor coverage is a
   Phase 2 concern; a narrow, correct seam is worth more now than a wide shallow one.
 """
@@ -42,6 +43,8 @@ from aid_runtime.agents import (
     ThreadMemory,
     ToolSpec,
 )
+from aid_runtime.cache import CompletionCache, cache_key_for
+from aid_runtime.concurrency import ConcurrencyLimiter
 from aid_runtime.cost import (
     Budget,
     CostLedger,
@@ -229,9 +232,12 @@ from aid_runtime.types import (
     FinishReason,
     GenerationResult,
     Message,
+    ModelCacheConfig,
     ModelSpec,
     PinnedModel,
     Role,
+    SemanticCacheConfig,
+    StreamChunk,
     TokenUsage,
     ToolCall,
     ToolDefinition,
@@ -267,8 +273,10 @@ __all__ = [
     "Citation",
     "CitationGrounding",
     "CodeChunker",
+    "CompletionCache",
     "CompletionRequest",
     "CompletionResponse",
+    "ConcurrencyLimiter",
     "ConfigurationError",
     "Connector",
     "CostLedger",
@@ -322,6 +330,7 @@ __all__ = [
     "MetricGateResult",
     "MetricResult",
     "MetricRun",
+    "ModelCacheConfig",
     "ModelGateway",
     "ModelSpec",
     "NormalizedContains",
@@ -368,6 +377,7 @@ __all__ = [
     "ScoredChunk",
     "ScriptedTurn",
     "SearchHit",
+    "SemanticCacheConfig",
     "SourceDocument",
     "SourceKind",
     "SourceSpec",
@@ -379,6 +389,7 @@ __all__ = [
     "StopPipeline",
     "StoreKind",
     "StoreRecord",
+    "StreamChunk",
     "StructuredOutputError",
     "ThreadMemory",
     "Threshold",
@@ -403,6 +414,7 @@ __all__ = [
     "binding_from_spec",
     "bm25_scores",
     "build_agent",
+    "cache_key_for",
     "chunk_document",
     "chunk_id_for",
     "chunker_for",

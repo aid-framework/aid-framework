@@ -99,16 +99,8 @@ export interface DeferredCapability {
 }
 
 export const DEFERRED_CAPABILITIES: Readonly<
-  Record<
-    'streaming' | 'vision' | 'audio' | 'long-context' | 'reasoning' | 'prompt-cache',
-    DeferredCapability
-  >
+  Record<'vision' | 'audio' | 'long-context' | 'reasoning', DeferredCapability>
 > = {
-  streaming: {
-    reason:
-      'Neither runtime streams: both gateways raise FeatureDeferredError, so no target declares the capability and nothing may derive a requirement for it.',
-    phase: 'L5',
-  },
   vision: {
     reason:
       'Spec v0.2 has no image input, so there is no IR content that could derive this requirement and no generator emits vision wiring.',
@@ -128,11 +120,6 @@ export const DEFERRED_CAPABILITIES: Readonly<
     reason:
       'No spec construct selects a reasoning mode; the model catalog records which models reason but the IR cannot require it.',
     phase: 'not scheduled',
-  },
-  'prompt-cache': {
-    reason:
-      'No spec construct requests prompt caching, and enabling it belongs with the caching layer rather than with code generation.',
-    phase: 'L5',
   },
 };
 
@@ -198,6 +185,16 @@ export const CAPABILITY_DERIVATIONS: ReadonlyArray<{
     capability: 'guardrails',
     derivedBy: 'a declared guardrail',
     applies: (ir) => ir.guardrails.length > 0,
+  },
+  {
+    capability: 'streaming',
+    derivedBy: 'a deployment that requests streaming',
+    applies: (ir) => ir.deployments.some((deployment) => deployment.streaming),
+  },
+  {
+    capability: 'prompt-cache',
+    derivedBy: 'a model that declares a prompt cache',
+    applies: (ir) => ir.models.some((model) => model.cache?.prompt),
   },
 ];
 

@@ -59,6 +59,7 @@ import {
   RETRIEVAL_TRAITS,
   type RetrieverShape,
   type RetrieveStep,
+  type SemanticCacheShape,
   type SideEffects,
   type StepInput,
   type StepInputValue,
@@ -281,8 +282,17 @@ function buildCache(raw: unknown): ModelShape['cache'] | undefined {
   const record = asRecord(raw);
   if (record === undefined) return undefined;
   const prompt = asBoolean(record.prompt);
-  const semantic = asBoolean(record.semantic);
+  const semantic = buildSemanticCache(record.semantic);
   return prompt === undefined && semantic === undefined ? undefined : { prompt, semantic };
+}
+
+function buildSemanticCache(raw: unknown): SemanticCacheShape | undefined {
+  const record = asRecord(raw);
+  if (record === undefined) return undefined;
+  const threshold = asNumber(record.threshold);
+  const ttlSeconds = asNumber(record.ttlSeconds);
+  if (threshold === undefined || ttlSeconds === undefined) return undefined;
+  return { threshold, ttlSeconds };
 }
 
 function mapSpecCapability(value: string): string {

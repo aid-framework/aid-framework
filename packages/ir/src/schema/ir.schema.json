@@ -109,6 +109,15 @@
     },
     "identifier": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
     "typeName": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]{0,63}$" },
+    "semanticCache": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["threshold", "ttlSeconds"],
+      "properties": {
+        "threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+        "ttlSeconds": { "type": "integer", "minimum": 1 }
+      }
+    },
     "trait": {
       "type": "object",
       "additionalProperties": false,
@@ -240,7 +249,7 @@
           "additionalProperties": false,
           "properties": {
             "prompt": { "type": "boolean" },
-            "semantic": { "type": "boolean" }
+            "semantic": { "$ref": "#/$defs/semanticCache" }
           }
         },
         "baseUrl": { "type": "string", "minLength": 1 },

@@ -6,7 +6,10 @@
  * emitted provider adapter, and printed into the app's own `observability.py`, while
  * both runtimes raised `FeatureDeferredError` from `stream()`. Phase 2 layer L1
  * withdrew it, and this suite is what has to fail if it comes back without an
- * implementation.
+ * implementation. Phase 2 layer L5 implements streaming in the Python runtime and
+ * adds the derivation that closes D-1b, but the target declaration stays withdrawn
+ * until the generator emits a streaming route — so the `not.toContain('streaming')`
+ * pins below remain the honest state.
  *
  * A declaration is not one claim but three, so each one is checked three ways:
  *
@@ -357,7 +360,7 @@ describe('the capabilities this target declares', () => {
   });
 });
 
-describe('the withdrawal of `streaming` (defect D-1)', () => {
+describe('the partial closure of `streaming` (defects D-1 and D-1b)', () => {
   it('is declared by no target capability list in this package', () => {
     expect(PY_FASTAPI_MANIFEST.capabilities).not.toContain('streaming');
     expect(capabilityReport(PY_FASTAPI_MANIFEST.capabilities).declared).not.toContain('streaming');
@@ -377,21 +380,28 @@ describe('the withdrawal of `streaming` (defect D-1)', () => {
     );
   });
 
-  it('is still refused by both runtimes, which is why it is withdrawn and not implemented', () => {
-    for (const gateway of [
-      'runtimes/python/src/aid_runtime/gateway.py',
-      'runtimes/typescript/src/gateway.ts',
-    ]) {
-      const text = realIO().read(gateway);
-      expect(text, gateway).toBeDefined();
-      expect(text, gateway).toContain('FeatureDeferredError');
-      expect(text, gateway).toContain('stream');
-    }
+  it('streams in the Python runtime, while the TypeScript runtime still raises', () => {
+    // D-1's runtime half is closed in L5: `ModelGateway.stream()` produces SSE bytes,
+    // so the Python gateway no longer raises `FeatureDeferredError`. The target
+    // declaration stays withdrawn because the generator still emits no streaming
+    // route, and the TypeScript runtime still defers streaming (ratified L6).
+    const python = realIO().read('runtimes/python/src/aid_runtime/gateway.py');
+    expect(python).toBeDefined();
+    expect(python).toContain('async def stream');
+    expect(python).not.toContain('FeatureDeferredError');
+
+    const typescript = realIO().read('runtimes/typescript/src/gateway.ts');
+    expect(typescript).toBeDefined();
+    expect(typescript).toContain('FeatureDeferredError');
+    expect(typescript).toContain('stream');
   });
 
-  it('names the layer that will bring it back', () => {
-    expect(DEFERRED_CAPABILITIES.streaming.phase).toBe('L5');
-    expect(DEFERRED_CAPABILITIES.streaming.reason).toContain('FeatureDeferredError');
+  it('derives streaming from a deployment that requests it, and is no longer deferred (D-1b)', () => {
+    // D-1b was `streaming` sitting in the vocabulary with no derivation, so no spec
+    // could require it and nothing noticed. The derivation rule closes that; the
+    // deployment gate still fails closed until a target declares the capability.
+    expect(CAPABILITY_DERIVATIONS.some((rule) => rule.capability === 'streaming')).toBe(true);
+    expect(Object.keys(DEFERRED_CAPABILITIES)).not.toContain('streaming');
   });
 });
 
@@ -431,9 +441,11 @@ describe('the capability vocabulary', () => {
     const deferred = new Set(Object.keys(DEFERRED_CAPABILITIES));
     const derived = CAPABILITY_DERIVATIONS.map((rule) => rule.capability);
     expect(derived.filter((capability) => deferred.has(capability))).toEqual([]);
-    // D-1b's exact failure: `streaming` was in the vocabulary with no derivation, so
-    // no spec could require it and no test noticed that nothing could.
-    expect(derived).not.toContain('streaming');
+    // D-1b is closed: `streaming` and `prompt-cache` now each have a derivation, so a
+    // spec can require them and the audit above would catch a regression to "present
+    // in the vocabulary but nothing can derive it".
+    expect(derived).toContain('streaming');
+    expect(derived).toContain('prompt-cache');
   });
 });
 
@@ -521,10 +533,10 @@ describe('the vocabulary audit can fail', () => {
   it('reports a deferral with no phase, which is a capability nobody owns', () => {
     const problems = auditVocabulary(REQUIRED_CAPABILITIES, CAPABILITY_DERIVATIONS, {
       ...DEFERRED_CAPABILITIES,
-      streaming: { reason: 'still deferred', phase: ' ' },
+      reasoning: { reason: 'still deferred', phase: ' ' },
     });
     expect(problems).toContain(
-      'streaming is deferred without a phase, so nobody owns bringing it back',
+      'reasoning is deferred without a phase, so nobody owns bringing it back',
     );
   });
 

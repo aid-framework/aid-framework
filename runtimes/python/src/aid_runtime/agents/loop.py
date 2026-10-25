@@ -76,6 +76,7 @@ from aid_runtime.agents.state import (
     StepKind,
     StepRecord,
 )
+from aid_runtime.concurrency import ConcurrencyLimiter
 from aid_runtime.cost import Budget, CostLedger, LedgerEntry
 from aid_runtime.errors import (
     AgentBudgetDegradedError,
@@ -190,10 +191,11 @@ class AgentRuntime:
         stores: Mapping[str, MemoryStore] | None = None,
         memory_store: MemoryStore | None = None,
         tracer: Tracer | None = None,
+        limiter: ConcurrencyLimiter | None = None,
     ) -> None:
         self._spec = spec
         self._gateway = gateway
-        self._executor = ToolExecutor(tools)
+        self._executor = ToolExecutor(tools, limiter=limiter)
         self._stores = dict(stores or {})
         self._default_store: MemoryStore = (
             memory_store if memory_store is not None else InProcessMemoryStore()
@@ -218,9 +220,17 @@ class AgentRuntime:
         budget: Budget | None = None,
         tracer: Tracer | None = None,
     ) -> AgentRuntime:
-        """Build a runtime from an emitted IR document."""
+        """Build a runtime from an emitted IR document.
+
+        The IR's ``deployments[].concurrency`` becomes one limiter shared by the
+        gateway and the tool executor, so model calls, tool calls, and delegation
+        all draw from the same budget rather than running two independent pools.
+        """
         spec = from_ir(document)
-        gateway = ModelGateway(providers, spec.models, ledger=ledger, budget=budget)
+        limiter = ConcurrencyLimiter(spec.concurrency) if spec.concurrency is not None else None
+        gateway = ModelGateway(
+            providers, spec.models, ledger=ledger, budget=budget, limiter=limiter
+        )
         return cls(
             spec,
             gateway,
@@ -228,6 +238,7 @@ class AgentRuntime:
             stores=stores,
             memory_store=memory_store,
             tracer=tracer,
+            limiter=limiter,
         )
 
     @property

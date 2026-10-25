@@ -193,9 +193,12 @@ class GatewayChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
         raise DeepAgentsEngineError(
-            "streaming is not supported through the deepagents engine in this layer; "
-            "ModelGateway.stream is not implemented either, and a streaming path would "
-            "need its own span and ledger accounting rather than an ad-hoc one here"
+            "streaming is not exposed through the deepagents engine: "
+            "ModelGateway.stream serves Server-Sent Event bytes for the HTTP layer, "
+            "but the engine consumes request/response via agenerate/ainvoke and never "
+            "an SSE byte stream. A structured LangChain chunk stream would be a second "
+            "streaming contract and a second accounting path, so it is refused here "
+            "rather than buffered into a non-stream."
         )
 
 

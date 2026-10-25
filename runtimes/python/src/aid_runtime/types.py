@@ -23,9 +23,12 @@ __all__ = [
     "FinishReason",
     "GenerationResult",
     "Message",
+    "ModelCacheConfig",
     "ModelSpec",
     "PinnedModel",
     "Role",
+    "SemanticCacheConfig",
+    "StreamChunk",
     "TokenUsage",
     "ToolCall",
     "ToolDefinition",
@@ -42,9 +45,8 @@ class Capability(StrEnum):
     These are the model-side vocabulary. The IR's capability set
     (``http-trigger``, ``json-schema``, ``otel``, ``streaming``, ``tool-calling``,
     ``cursor-memory``) is a target-side vocabulary; the generator maps one to the
-    other. ``STREAMING`` names the deferral rather than a served capability: no
-    adapter advertises it, no target declares it, and
-    :class:`~aid_runtime.errors.FeatureDeferredError` is raised instead. ``EMBEDDINGS`` and
+    other. ``STREAMING`` is served: an adapter that advertises it also implements
+    :meth:`~aid_runtime.providers.Provider.stream`. ``EMBEDDINGS`` and
     ``RERANK`` are likewise model-side: the IR's ``MODEL_CAPABILITIES`` already
     admits both for embedding and rerank models, so declaring them here is what
     lets a model be negotiated against a retrieval binding at all.
@@ -121,6 +123,24 @@ class CostProfile(BaseModel):
         return round(raw, 6)
 
 
+class SemanticCacheConfig(BaseModel):
+    """Opt-in semantic reuse: an explicit threshold and TTL, with no defaults."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    threshold: float = Field(ge=0.0, le=1.0)
+    ttl_seconds: int = Field(gt=0)
+
+
+class ModelCacheConfig(BaseModel):
+    """Per-model cache policy carried by ``models[].cache`` (spec v0.3)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    prompt: bool = False
+    semantic: SemanticCacheConfig | None = None
+
+
 class ModelSpec(BaseModel):
     """A *pinned* model: an exact provider model id, never a floating alias.
 
@@ -138,6 +158,7 @@ class ModelSpec(BaseModel):
     context_window: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
     capabilities: frozenset[Capability] = frozenset()
+    cache: ModelCacheConfig | None = None
 
     @field_validator("capabilities", mode="before")
     @classmethod
@@ -229,7 +250,11 @@ class ToolResult(BaseModel):
 
 
 class CompletionRequest(BaseModel):
-    """A single request/response model call. Streaming is not implemented."""
+    """A single model call.
+
+    It may be served request/response (:meth:`ModelGateway.generate`) or as an SSE
+    byte stream (:meth:`ModelGateway.stream`). The same request shape feeds both.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -268,6 +293,21 @@ class CompletionResponse(BaseModel):
     finish_reason: FinishReason = "stop"
 
 
+class StreamChunk(BaseModel):
+    """One increment of a streamed completion.
+
+    ``delta`` is the new text since the previous chunk. The terminal chunk carries
+    ``finish_reason`` and ``usage`` so the gateway can account for the call exactly
+    as :meth:`ModelGateway.generate` does.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    delta: str = ""
+    finish_reason: FinishReason | None = None
+    usage: TokenUsage | None = None
+
+
 class GenerationResult(BaseModel):
     """What the gateway returns: the response, what it cost, and how it got there."""
 
@@ -277,6 +317,7 @@ class GenerationResult(BaseModel):
     alias: str
     cost_usd: float = Field(ge=0.0)
     attempts: tuple[str, ...] = ()
+    cache_hit: bool = False
 
     @property
     def text(self) -> str:
