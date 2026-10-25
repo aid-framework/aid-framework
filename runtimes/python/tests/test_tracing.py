@@ -79,6 +79,10 @@ def test_framework_specific_attributes_stay_out_of_the_genai_namespace() -> None
         "aid.memory.scope",
         "aid.memory.entries",
         "aid.memory.tokens",
+        "aid.guardrail.id",
+        "aid.guardrail.stage",
+        "aid.guardrail.action",
+        "aid.guardrail.policies",
     }
 
 

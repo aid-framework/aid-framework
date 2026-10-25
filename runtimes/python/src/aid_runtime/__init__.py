@@ -60,6 +60,7 @@ from aid_runtime.errors import (
     EvalError,
     FeatureDeferredError,
     GateConfigurationError,
+    GuardrailBlockedError,
     PipelineError,
     PolicyEvaluationError,
     PromptNotFoundError,
@@ -70,6 +71,7 @@ from aid_runtime.errors import (
     ToolArgumentError,
     ToolExecutionError,
     ToolNotFoundError,
+    ToolPermissionError,
     UnknownModelAliasError,
 )
 from aid_runtime.evals import (
@@ -289,6 +291,7 @@ __all__ = [
     "GateResult",
     "GatewayRunner",
     "GenerationResult",
+    "GuardrailBlockedError",
     "HumanApproval",
     "HumanDecision",
     "InMemoryVectorStore",
@@ -377,6 +380,7 @@ __all__ = [
     "ToolExecutionError",
     "ToolExecutor",
     "ToolNotFoundError",
+    "ToolPermissionError",
     "ToolResult",
     "ToolSpec",
     "UnknownModelAliasError",

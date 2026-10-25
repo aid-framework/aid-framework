@@ -18,6 +18,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aid_runtime.agents.guardrails import GuardrailRecord
 from aid_runtime.retrieval.types import Chunk
 
 __all__ = [
@@ -74,6 +75,9 @@ class RetrievalResult(BaseModel):
     retriever: str = Field(min_length=1)
     query: str
     items: tuple[RetrievedItem, ...] = ()
+    #: What the ``retrieval``-stage guardrails recorded. A ``flag`` reaches a caller
+    #: here; a ``block`` never returns a result at all.
+    guardrails: tuple[GuardrailRecord, ...] = ()
 
     def __len__(self) -> int:
         return len(self.items)

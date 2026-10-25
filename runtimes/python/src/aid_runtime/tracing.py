@@ -15,12 +15,15 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry import trace
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 
 from aid_runtime.types import TokenUsage
+
+if TYPE_CHECKING:
+    from aid_runtime.agents.guardrails import GuardrailRecord
 
 __all__ = [
     "ATTRIBUTES",
@@ -32,6 +35,7 @@ __all__ = [
     "record_attributes",
     "record_cost",
     "record_exception",
+    "record_guardrail",
     "record_usage",
 ]
 
@@ -75,6 +79,13 @@ ATTRIBUTES: dict[str, str] = {
     "memory_scope": "aid.memory.scope",
     "memory_entries": "aid.memory.entries",
     "memory_tokens": "aid.memory.tokens",
+    # Guardrails. An event per hit rather than one attribute, for the same reason
+    # HITL uses events: several guardrails can fire at one stage, and a single
+    # attribute would keep only the last one while still looking complete.
+    "guardrail_id": "aid.guardrail.id",
+    "guardrail_stage": "aid.guardrail.stage",
+    "guardrail_action": "aid.guardrail.action",
+    "guardrail_policies": "aid.guardrail.policies",
 }
 
 _TRACER_NAME = "aid_runtime"
@@ -195,6 +206,19 @@ def record_hitl(
     if step is not None:
         attributes[ATTRIBUTES["hitl_step"]] = step
     span.add_event("aid.hitl", attributes)
+
+
+def record_guardrail(span: Span, record: GuardrailRecord) -> None:
+    """Record one guardrail hit as an ``aid.guardrail`` span event."""
+    span.add_event(
+        "aid.guardrail",
+        {
+            ATTRIBUTES["guardrail_id"]: record.guardrail,
+            ATTRIBUTES["guardrail_stage"]: record.stage,
+            ATTRIBUTES["guardrail_action"]: record.action,
+            ATTRIBUTES["guardrail_policies"]: ",".join(record.policies),
+        },
+    )
 
 
 def record_cost(span: Span, cost_usd: float, *, alias: str | None = None) -> None:

@@ -176,6 +176,37 @@ class PolicyEvaluationError(AidRuntimeError):
     """
 
 
+class GuardrailBlockedError(AidRuntimeError):
+    """A guardrail stopped the run before (or after) the guarded effect.
+
+    Raised by the ``block`` action, and by any guardrail the engine cannot
+    evaluate. An undecidable policy is a block, never an allow: the failure mode
+    this class exists to prevent is a check that quietly returns "no violation"
+    because its input did not match what it expected.
+    """
+
+    def __init__(self, guardrail: str, stage: str, message: str) -> None:
+        super().__init__(f"guardrail {guardrail!r} blocked the {stage} stage: {message}")
+        self.guardrail = guardrail
+        self.stage = stage
+        self.message = message
+
+
+class ToolPermissionError(AidRuntimeError):
+    """An agent asked for a tool it was not granted, or one its auth policy denies.
+
+    Raised before the handler body runs. The check is deliberately not a tool
+    result: a model can repair a bad argument, but it cannot repair a missing
+    grant, so the caller is the party that has to fix this.
+    """
+
+    def __init__(self, agent: str, tool: str, reason: str) -> None:
+        super().__init__(f"agent {agent!r} may not call tool {tool!r}: {reason}")
+        self.agent = agent
+        self.tool = tool
+        self.reason = reason
+
+
 class AgentTransferCycleError(AidRuntimeError):
     """A transfer chain revisited an agent that already held control.
 
