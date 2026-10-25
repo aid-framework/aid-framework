@@ -136,6 +136,10 @@ class AgentDefinition:
     handoffs: tuple[str, ...]
     delegates: tuple[str, ...]
     engine: str
+    # The pinned Deep Agents release, when the engine is ``deepagents``. Empty for
+    # ``native``; the IR gate refuses ``deepagents`` without a pin, so an empty
+    # value here means the document skipped the gate.
+    engine_version: str
     approval: HumanApproval | None
     guardrails: tuple[GuardrailDefinition, ...] = ()
 
@@ -295,6 +299,7 @@ def _agent(
         raise ConfigurationError(f"{where} names undeclared guardrails: {missing_guardrails}")
 
     engine = _str(entry.get("engine")) or "native"
+    engine_version = _str(entry.get("engineVersion")) or ""
     on_budget = _str(entry.get("onBudgetExhausted")) or "fail"
     if on_budget not in _ON_BUDGET_EXHAUSTED:
         raise ConfigurationError(
@@ -319,6 +324,7 @@ def _agent(
         handoffs=tuple(_str_list(entry.get("handoffs"), f"{where} handoffs")),
         delegates=tuple(_str_list(entry.get("delegates"), f"{where} delegates")),
         engine=engine,
+        engine_version=engine_version,
         approval=_approval(where, entry.get("humanInTheLoop")),
         guardrails=tuple(guardrails[guardrail_id] for guardrail_id in guardrail_ids),
     )

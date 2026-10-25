@@ -1552,6 +1552,201 @@
         "guardrail": "g-secret",
         "stage": "tool-call"
       }
+    },
+    {
+      "id": "agent-engine-native-explicit",
+      "op": "agent.engine",
+      "runtimes": ["python"],
+      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L4 chooses the agent backend inside the Python runtime only, so this case has no TypeScript handler to run against yet.",
+      "description": "Naming the native engine explicitly changes nothing: it is the default, the loop runs, and the run reports the same shape an agent that named no engine reports.",
+      "input": {
+        "models": [
+          {
+            "id": "cheap",
+            "inputPer1kUsd": 0.00015,
+            "outputPer1kUsd": 0.0006
+          }
+        ],
+        "prompts": [
+          {
+            "id": "solo",
+            "template": "You answer one question and stop."
+          }
+        ],
+        "agents": [
+          {
+            "id": "solo",
+            "instructions": "solo",
+            "model": "cheap",
+            "maxSteps": 2,
+            "engine": "native"
+          }
+        ],
+        "script": [
+          {
+            "text": "answered"
+          }
+        ],
+        "agent": "solo",
+        "question": "go"
+      },
+      "expect": {
+        "status": "completed",
+        "finalAgent": "solo",
+        "answer": "answered",
+        "path": ["solo"],
+        "steps": [
+          {
+            "agent": "solo",
+            "kind": "answer",
+            "alias": "cheap",
+            "tools": [],
+            "target": null,
+            "degradedFrom": null
+          }
+        ],
+        "degraded": []
+      }
+    },
+    {
+      "id": "agent-engine-unknown-refused",
+      "op": "agent.engine",
+      "runtimes": ["python"],
+      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L4 chooses the agent backend inside the Python runtime only, so this case has no TypeScript handler to run against yet.",
+      "description": "engine selects the backend, so an unrecognised value is a configuration error rather than a run: an ignored field would make the IR claim a backend the runtime is not executing.",
+      "input": {
+        "models": [
+          {
+            "id": "cheap",
+            "inputPer1kUsd": 0.00015,
+            "outputPer1kUsd": 0.0006
+          }
+        ],
+        "prompts": [
+          {
+            "id": "solo",
+            "template": "You answer one question and stop."
+          }
+        ],
+        "agents": [
+          {
+            "id": "solo",
+            "instructions": "solo",
+            "model": "cheap",
+            "maxSteps": 2,
+            "engine": "langgraph"
+          }
+        ],
+        "script": [
+          {
+            "text": "never reached"
+          }
+        ],
+        "agent": "solo",
+        "question": "go"
+      },
+      "expect": {
+        "error": "unknown-engine",
+        "agent": "solo"
+      }
+    },
+    {
+      "id": "agent-engine-transfer-refused",
+      "op": "agent.engine",
+      "runtimes": ["python"],
+      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L4 chooses the agent backend inside the Python runtime only, so this case has no TypeScript handler to run against yet.",
+      "description": "handoffs is transfer, and Deep Agents has only subagents, which delegate and return. The engine refuses by name instead of degrading the transfer into a delegate that would change who authors the final answer.",
+      "input": {
+        "models": [
+          {
+            "id": "cheap",
+            "inputPer1kUsd": 0.00015,
+            "outputPer1kUsd": 0.0006
+          }
+        ],
+        "prompts": [
+          {
+            "id": "front",
+            "template": "You triage requests."
+          },
+          {
+            "id": "worker",
+            "template": "You answer one question."
+          }
+        ],
+        "agents": [
+          {
+            "id": "front",
+            "instructions": "front",
+            "model": "cheap",
+            "maxSteps": 2,
+            "handoffs": ["worker"],
+            "engine": "deepagents"
+          },
+          {
+            "id": "worker",
+            "instructions": "worker",
+            "model": "cheap",
+            "maxSteps": 2
+          }
+        ],
+        "script": [
+          {
+            "text": "never reached"
+          }
+        ],
+        "agent": "front",
+        "question": "Who handles this?"
+      },
+      "expect": {
+        "error": "handoff-unsupported",
+        "agent": "front",
+        "engine": "deepagents"
+      }
+    },
+    {
+      "id": "agent-engine-version-mismatch-refused",
+      "op": "agent.engine",
+      "runtimes": ["python"],
+      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L4 chooses the agent backend inside the Python runtime only, so this case has no TypeScript handler to run against yet.",
+      "description": "A deepagents agent must name the release this runtime was built against. A declared version the runtime is not pinned to fails closed, which is the comparison the IR gate's demand for a pinned engineVersion exists to make possible.",
+      "input": {
+        "models": [
+          {
+            "id": "cheap",
+            "inputPer1kUsd": 0.00015,
+            "outputPer1kUsd": 0.0006
+          }
+        ],
+        "prompts": [
+          {
+            "id": "solo",
+            "template": "You answer one question and stop."
+          }
+        ],
+        "agents": [
+          {
+            "id": "solo",
+            "instructions": "solo",
+            "model": "cheap",
+            "maxSteps": 2,
+            "engine": "deepagents",
+            "engineVersion": "0.0.0"
+          }
+        ],
+        "script": [
+          {
+            "text": "never reached"
+          }
+        ],
+        "agent": "solo",
+        "question": "go"
+      },
+      "expect": {
+        "error": "version-mismatch",
+        "agent": "solo",
+        "declared": "0.0.0"
+      }
     }
   ]
 }

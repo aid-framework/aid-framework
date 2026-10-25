@@ -39,6 +39,7 @@ from typing import Any
 
 from opentelemetry.trace import Span, Tracer
 
+from aid_runtime.agents.engine import DEEPAGENTS, check_engine
 from aid_runtime.agents.guardrails import (
     ACTION_BLOCK,
     ACTION_ESCALATE,
@@ -82,7 +83,6 @@ from aid_runtime.errors import (
     BudgetExceededError,
     CapabilityMismatchError,
     ConfigurationError,
-    FeatureDeferredError,
     GuardrailBlockedError,
     PolicyEvaluationError,
     ToolPermissionError,
@@ -393,9 +393,36 @@ class AgentRuntime:
                     decision=frame.resumed_decision.value,
                     step=frame.step,
                 )
-            return await self._run_loop(
+            return await self._run(
                 frame, budget=budget, principal=principal, memory_key=memory_key, span=span
             )
+
+    async def _run(
+        self,
+        frame: _Frame,
+        *,
+        budget: Budget | None,
+        principal: Principal,
+        memory_key: str,
+        span: Span,
+    ) -> _Outcome:
+        """Drive the frame on the engine its agent declared.
+
+        The native loop is the default and is unchanged. ``deepagents`` is a backend
+        selected per agent: the frame, checkpoint, budget and guardrail engine are
+        shared, so only the drive function differs. The import is deferred because the
+        harness is an optional extra -- an IR that never declares the engine must not
+        require it to be installed.
+        """
+        if frame.agent.engine == DEEPAGENTS:
+            from aid_runtime.agents.deep_agents import DeepAgentsEngine
+
+            return await DeepAgentsEngine(self).drive(
+                frame, budget=budget, principal=principal, memory_key=memory_key, span=span
+            )
+        return await self._run_loop(
+            frame, budget=budget, principal=principal, memory_key=memory_key, span=span
+        )
 
     async def _run_loop(
         self,
@@ -1174,11 +1201,14 @@ class AgentRuntime:
 
     @staticmethod
     def _require_engine(agent: AgentDefinition) -> None:
-        if agent.engine != _NATIVE:
-            raise FeatureDeferredError(
-                f"agent {agent.id!r} declares engine {agent.engine!r}; L2 implements the "
-                "native engine only, and the deepagents backend is L4"
-            )
+        """Refuse an engine this runtime cannot run, before any work is done.
+
+        The validation itself lives in :func:`aid_runtime.agents.engine.check_engine`
+        so there is one place to read to know whether an engine is supported. A
+        runtime that quietly ran a ``deepagents`` agent on the native loop would leave
+        ``engine`` in the IR meaning nothing at all.
+        """
+        check_engine(agent)
 
     @staticmethod
     def _record_status(span: Span, status: str, frame: _Frame) -> None:

@@ -28,11 +28,12 @@ from aid_runtime import (
     AgentTransferCycleError,
     CapabilityMismatchError,
     ConfigurationError,
+    DeepAgentsUnavailableError,
     FakeProvider,
-    FeatureDeferredError,
     ScriptedTurn,
 )
 from aid_runtime.agents import IMPLEMENTED_MEMORY_KINDS, Principal, RunStatus, StepKind
+from aid_runtime.agents.engine import DEEPAGENTS_PIN, installed_deepagents_version
 
 SOLO_PROMPT = "You are a helpful assistant."
 FRONT_PROMPT = "You triage requests and move them to the right agent."
@@ -328,13 +329,26 @@ async def test_a_declared_fallback_that_cannot_tool_call_is_refused() -> None:
         await harness.runtime.run("solo", "go")
 
 
-async def test_the_deepagents_engine_is_deferred_rather_than_silently_native() -> None:
+async def test_the_deepagents_engine_never_falls_back_to_the_native_loop() -> None:
+    """Absent the pinned extra the engine fails closed; it is never quietly native.
+
+    Which backend actually runs is asserted in ``test_agents_deep_agents``, where the
+    harness can be observed from the inside. What this test pins is the seam's
+    contract for every caller: a ``deepagents`` agent either runs under Deep Agents or
+    raises, and the native loop never absorbs the request.
+    """
     harness = build(
-        solo(prompt=SOLO_PROMPT, engine="deepagents"), script=[ScriptedTurn.answer("x")]
+        solo(prompt=SOLO_PROMPT, engine="deepagents", engine_version=DEEPAGENTS_PIN),
+        script=[ScriptedTurn.answer("x")],
     )
 
-    with pytest.raises(FeatureDeferredError, match="deepagents"):
-        await harness.runtime.run("solo", "go")
+    if installed_deepagents_version() is None:
+        with pytest.raises(DeepAgentsUnavailableError, match="deepagents"):
+            await harness.runtime.run("solo", "go")
+    else:
+        result = await harness.runtime.run("solo", "go")
+        assert result.completed
+        assert harness.gateway.ledger.cost_usd > 0
 
 
 async def test_a_hitl_policy_is_evaluated_against_the_principal() -> None:
