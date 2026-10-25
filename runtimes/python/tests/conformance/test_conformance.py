@@ -46,6 +46,7 @@ from aid_runtime import (
     EvalRun,
     FakeProvider,
     GateResult,
+    GuardrailBlockedError,
     InProcessMemoryStore,
     LedgerEntry,
     MetricBaseline,
@@ -61,6 +62,7 @@ from aid_runtime import (
     Threshold,
     TokenUsage,
     Tool,
+    ToolPermissionError,
     UnknownModelAliasError,
     bm25_scores,
     estimate_cost_usd,
@@ -548,6 +550,7 @@ def _agent_document(data: Mapping[str, Any]) -> dict[str, Any]:
             "handoffs": list(entry.get("handoffs", [])),
             "delegates": list(entry.get("delegates", [])),
             "memory": list(entry.get("memory", [])),
+            "guardrails": list(entry.get("guardrails", [])),
             "engine": entry.get("engine", "native"),
         }
         for field_name in _AGENT_FIELDS:
@@ -560,6 +563,7 @@ def _agent_document(data: Mapping[str, Any]) -> dict[str, Any]:
         "prompts": prompts,
         "tools": tools,
         "memory": [dict(entry) for entry in data.get("memory", [])],
+        "guardrails": [dict(entry) for entry in data.get("guardrails", [])],
         "agents": agents,
     }
 
@@ -644,6 +648,34 @@ def _agent_loop(data: Mapping[str, Any]) -> dict[str, Any]:
     return asyncio.run(run())
 
 
+def _agent_guardrail(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One guarded run, reduced to what the guardrails did to it.
+
+    A ``block`` is an exception by design, so it is reported as an ``error`` like a
+    breached budget is; a ``flag`` and a ``redact`` are ordinary runs whose verdict
+    has to show up in the answer or in ``guardrails`` or they are not observable.
+    """
+
+    async def run() -> dict[str, Any]:
+        runtime, _ = _agent_runtime(data)
+        try:
+            result = await runtime.run(str(data.get("agent", "solo")), str(data["question"]))
+        except GuardrailBlockedError as exc:
+            return {"error": "guardrail-blocked", "guardrail": exc.guardrail, "stage": exc.stage}
+        except ToolPermissionError as exc:
+            return {"error": "tool-permission", "tool": exc.tool}
+        return {
+            "status": str(result.status),
+            "answer": result.answer,
+            "guardrails": [
+                {"guardrail": record.guardrail, "stage": record.stage, "action": record.action}
+                for record in result.guardrails
+            ],
+        }
+
+    return asyncio.run(run())
+
+
 def _agent_memory(data: Mapping[str, Any]) -> dict[str, Any]:
     """Repeated runs against named memory keys, observed by what the model saw."""
 
@@ -686,6 +718,7 @@ _OPS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     "agent.transfer": _agent_loop,
     "agent.delegate": _agent_loop,
     "agent.memory": _agent_memory,
+    "agent.guardrail": _agent_guardrail,
 }
 
 

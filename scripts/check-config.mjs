@@ -18,6 +18,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const SKIP_DIRECTORIES = new Set([
   '.git',
   '.venv',
+  '.mypy_cache',
   '.ruff_cache',
   '.pytest_cache',
   'node_modules',

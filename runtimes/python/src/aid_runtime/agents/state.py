@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aid_runtime.agents.guardrails import GuardrailEscalation, GuardrailRecord
 from aid_runtime.types import Message, ToolCall
 
 __all__ = [
@@ -36,11 +37,17 @@ __all__ = [
 
 
 class RunStatus(StrEnum):
-    """How a run ended. ``PAUSED`` is an outcome, not an error."""
+    """How a run ended.
+
+    ``PAUSED`` is an outcome, not an error. So is ``BLOCKED``: a human rejected an
+    escalation the guardrails raised, which is a decision the run respected rather
+    than a failure it suffered.
+    """
 
     COMPLETED = "completed"
     PAUSED = "paused"
     MAX_STEPS = "max-steps"
+    BLOCKED = "blocked"
 
 
 class StepKind(StrEnum):
@@ -108,6 +115,11 @@ class AgentCheckpoint(BaseModel):
     path: tuple[str, ...] = ()
     memory_key: str = ""
     caller: AgentCheckpoint | None = None
+    # Set when a guardrail escalated. Its `stage` tells the resume path what to do:
+    # an `input` escalation has already been checked, an `output` one holds the
+    # answer to release on approval, a `tool-call` one holds `calls` to execute.
+    escalation: GuardrailEscalation | None = None
+    guardrails: tuple[GuardrailRecord, ...] = ()
 
 
 class PendingApproval(BaseModel):
@@ -121,6 +133,7 @@ class PendingApproval(BaseModel):
     calls: tuple[ToolCall, ...]
     when: dict[str, Any] = Field(default_factory=dict)
     path: tuple[str, ...] = ()
+    escalation: GuardrailEscalation | None = None
 
     @classmethod
     def from_checkpoint(cls, checkpoint: AgentCheckpoint) -> PendingApproval:
@@ -131,6 +144,7 @@ class PendingApproval(BaseModel):
             calls=checkpoint.calls,
             when=checkpoint.when,
             path=checkpoint.path,
+            escalation=checkpoint.escalation,
         )
 
 
@@ -147,6 +161,7 @@ class RunResult(BaseModel):
     cost_usd: float = Field(default=0.0, ge=0.0)
     total_tokens: int = Field(default=0, ge=0)
     checkpoint: AgentCheckpoint | None = None
+    guardrails: tuple[GuardrailRecord, ...] = ()
 
     @property
     def completed(self) -> bool:

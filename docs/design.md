@@ -671,6 +671,116 @@ The pause returns a checkpoint carrying the completed steps, the pending tool ca
 an attribute, because a run may pause and resume more than once and an attribute would keep only the last
 decision.
 
+### 7.6 Guardrails and tool permissioning (Phase 2 L3)
+
+The IR has carried the guardrails *declaration* since Phase 2 L1: stages, policy kinds, an action, the
+fields a redaction may touch. L3 adds the half that decides: `runtimes/python/src/aid_runtime/agents/
+guardrails.py`. Every detector in it is a regular expression, so a verdict is deterministic and
+reproducible offline — no model, no network, no seed — and a spec that passes today passes tomorrow.
+
+#### Four stages, in the order a run meets them
+
+| Stage | When it runs | Payload the detectors see |
+| --- | --- | --- |
+| `input` | before the model sees the user's turn | the turn's text |
+| `retrieval` | around the chunks a retriever would splice into the prompt | the results joined by newlines — *not* the query, whose own check is `input` |
+| `tool-call` | before a tool's handler body runs | the call's argument values, keyed by argument name |
+| `output` | after the model answers | the answer text |
+
+The input stage runs once per frame. A paused run that resumes does **not** re-run it, which matters
+because a second pass could block text the human already approved; the loop-level tests count the
+`input` records across a pause and a resume to keep that true.
+
+`retrieval` is the stage with the least human in it: a run may have no channel to ask. A `block`
+verdict raises, an `escalate` verdict *also* raises — with a message saying there is no human channel —
+rather than silently treating "I wanted to ask someone" as "carry on". A `redact` verdict rewrites the
+retrieved item in place.
+
+#### Four actions
+
+| Action | Effect | Observable |
+| --- | --- | --- |
+| `block` | the run stops with `GuardrailBlockedError` naming the guardrail, the stage and the message | raised at the stage's seam |
+| `redact` | the fields named in `redact` are masked in the payload; the run continues on the masked text | the masked payload is what the next stage and the tool body receive |
+| `flag` | the run continues unchanged; the match is recorded but decides nothing | `RunResult.guardrails`, `aid.guardrail` spans |
+| `escalate` | the run pauses for a human (`PendingApproval.escalation`); a rejected escalation ends `BLOCKED` with the guardrail's message and never the held text | the pause, the decision, the record |
+
+A redaction is replaced with `[REDACTED:<policy>]`, not `***`, so a log line says *why* the text
+vanished. Only `pii-detect`, `pii-redact` and `secret-scan` are redactable: the other policies match
+*intent*, and masking an intent phrase does not make the request safe. Asking for a redaction over an
+intent policy is refused rather than quietly misapplied.
+
+#### Fail closed, in three places
+
+1. **A policy with no evaluator is a block.** A guardrail naming a policy this runtime cannot evaluate
+   raises `GuardrailBlockedError` naming the policy. There is no path from "the check could not run" to
+   "no violation found".
+2. **A redaction that does not clean the payload is a block.** After masking, the engine re-runs the
+   detectors over the result. A spec that declares `redact: [answer]` for a payload whose violation is
+   in another field would otherwise "redact" successfully while shipping the violation, so a surviving
+   match raises instead of returning text it could not clean.
+3. **An unknown action is refused.** `GuardrailDefinition.action` is a string read out of JSON, and the
+   deciding step finds a `block` by equality — so an unrecognised action could not decide a block and
+   would fall through to "not block", an allow nobody declared. The engine validates membership against
+   the closed vocabulary and raises `ConfigurationError`.
+
+#### Evaluation order, and what `flag` is for
+
+When several guardrails apply at one stage the engine walks them in **declaration order** and collects
+every one that fired; the first that fired decides. There is exactly one exception, and it is deliberate:
+**any `block` outranks declaration order** — the first `block` decides regardless of where it was
+declared. Ordering is about which of two *comparable* actions wins, and "stop the run" is not comparable
+to "let it continue with a note". Without the exception an author could neuter a strict guardrail by
+declaring a permissive one first, which is the kind of ordering dependency nobody audits.
+
+This records the decision the Phase 2 plan listed as an open question (evaluation order, and whether
+`flag` may be ignored), so it is written down here rather than inferred from the code:
+
+- **A `flag` cannot be ignored — and it does not stop anything.** A flag means a detector matched. The
+  run continues because the spec said it may, and the record lands on `RunResult.guardrails` and on the
+  `aid.guardrail` span event. Its consumers are the reader of a run result: an eval, a log shipper, a
+  reviewer. It is not an allow, and nothing downstream may treat its presence as permission.
+- Every firing guardrail is recorded, not only the deciding one, so a `flag` next to a `block` still
+  reaches the audit trail.
+
+Both halves are pinned: a test swaps the declaration order of two guardrails and asserts the deciding
+record changes, while another asserts a `block` keeps winning wherever it is declared.
+
+#### Tool permissioning
+
+`ToolShape` already carried `sideEffects`, `requiresConfirmation` and `auth`. L3 makes them binding at
+call time. Every tool call is authorized before any handler body runs, deny by default:
+
+1. **The agent's `tools` list is the grant.** A tool the runtime has registered but the agent did not
+   declare is refused — there is no implicit wildcard.
+2. **A tool absent from the IR is refused,** because its side effects and auth policy are unknown.
+3. **`auth` is evaluated now, against the principal on this call,** not at build time: `auth` is a
+   question about the caller, and the caller is only known now. An undecidable policy is a denial —
+   `PolicyEvaluationError` means the evaluator could not answer, and "could not answer" must never
+   render as "allowed".
+4. **A `write`/`destructive` tool with no `auth` policy is denied,** so a side effect cannot be called
+   with no authorization at all.
+
+The proof is behavioural, not textual: the tests register handlers that increment a counter and assert
+the counter is still zero after a refused call, so "the handler body never ran" is measured rather than
+inferred from an exception type.
+
+#### The red-team corpus
+
+`runtimes/python/tests/redteam/` holds the safety suite as *data*: fixtures with recorded `provenance`,
+categorised prompt-injection / jailbreak / PII / tool-abuse, plus a seeded variant generator. It runs
+inside the existing `python` CI job because it is a pytest module — no extra job.
+
+The generator is content-seeded (`{seed}:{policy}:{payload}`), so adding a fixture cannot renumber the
+others, and it never touches the network, the clock or the environment. Case folding is applied only to
+the policies whose patterns are compiled `IGNORECASE`; folding the credential patterns would test a
+claim the detector never made.
+
+Two honest limits are part of the suite, not omitted from it. Recall here is a **regression check on
+documented patterns**, not an independent estimate of coverage against unseen attacks — the module
+docstring says so. And one test pins a paraphrase that the patterns *do* miss, so the blind spot is
+visible, and says what to do if it ever starts passing.
+
 ---
 
 ## 8. Generator Plugin Model
@@ -849,6 +959,11 @@ The part most generator projects under-invest in — and the part AI makes manda
 6. **Cross-target conformance evals** — one shared dataset + metrics that *every* runtime must pass. This is what keeps N targets honest.
 7. **Cost & latency gates** — a prompt/model change that blows the budget or the p95 fails CI.
 8. **Safety suite** — a red-team corpus of prompt-injection/jailbreak/PII cases the guardrails must block.
+   Implemented in Phase 2 L3 as `runtimes/python/tests/redteam/` (§7.6): fixtures with recorded
+   provenance, a seeded variant generator, a recall/false-positive threshold, and a meta-test that empties
+   every detector and asserts the corpus then reports *zero* recall — so the suite cannot pass vacuously.
+   It is a regression check on the detectors, not evidence about unseen attacks; a second test pins a
+   paraphrase the patterns legitimately miss rather than leaving that limit implied.
 9. **Record/replay cassettes** — capture real LLM calls; replay deterministically in unit tests (VCR-style); live evals run nightly against pinned models.
 10. **Generated-app E2E** — `aid init` a sample app, build it, run its eval suite, per target. If generated code doesn't run, CI is red.
 
@@ -944,7 +1059,9 @@ the layers that follow.)*
 ### Phase 2 — Production concerns
 
 - Agents: full loop, handoffs, memory, HITL, budgets (token/cost/step) enforced in runtime.
-- Guardrails engine + red-team safety suite; tool permissioning + least privilege.
+- Guardrails engine + red-team safety suite; tool permissioning + least privilege. *(Landed in Python as
+  L3 — §7.6: four stages, four actions, deny-by-default tool calls, offline corpus in CI. TypeScript
+  parity is L6, so the TS runtime does not have this engine yet.)*
 - Cost/latency dashboards; semantic + prompt caching; streaming + concurrency.
 
 ### Phase 3 — Business-logic focus (the payoff)
@@ -1016,8 +1133,10 @@ the layers that follow.)*
 7. ~~**Budget enforcement** — hard fail vs. graceful degrade (route to a cheaper alias) when a cost/latency budget is hit?~~ **Closed in Phase 2 L2 (§7.5).** Hard failure is the default, because a run that silently answers on a different model is worse than one that stops. An agent may opt into `onBudgetExhausted: 'degrade'`, which steps exactly one rung down the declared alias ladder with no retry loop, must name a strictly cheaper fallback (enforced at build time, so the escape hatch cannot have nowhere to go), and is recorded in the trace as `degraded_from` so the degrade is observable rather than inferred.
 8. **Fine-tuning scope** — in-scope at Phase 4, or leave entirely to the ecosystem?
 9. **Prompt rollout** — canary/A-B routing of prompt versions tied to live evals?
-10. **Safety corpus** — build our own red-team suite or adopt an existing one?
+10. ~~**Safety corpus** — build our own red-team suite or adopt an existing one?~~ **Closed in Phase 2 L3 (§7.6).** Own fixtures, with provenance recorded against public taxonomies (OWASP LLM Top 10, MITRE ATLAS) rather than a vendored third-party corpus: the suite has to hold *these* offline regex detectors to a standard and run with no network in CI, and an adopted corpus written against a classifier would have measured something this runtime does not claim. The categories are borrowed; the fixtures are ours, each with a checkable provenance field.
 11. **Plugin execution model** — in-process (TS/Python) vs. WASM/gRPC plugins? Determines the third-party generator ecosystem.
+
+Two decisions the Phase 2 plan listed as an open question are recorded in §7.6 rather than renumbered into this list: the **evaluation order** when several guardrails apply at one stage (declaration order, except that `block` outranks it, so a permissive guardrail cannot be declared first to neuter a strict one), and whether a **`flag` may be ignored** downstream (it may not be ignored, but it stops nothing — it is recorded on `RunResult.guardrails` and the `aid.guardrail` span for an eval, a log or a reviewer to consume).
 
 ---
 

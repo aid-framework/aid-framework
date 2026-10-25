@@ -45,6 +45,14 @@ ADMIN_ONLY: dict[str, Any] = {
     "args": [{"kind": "string", "value": "admin"}],
 }
 
+#: ``isAuthenticated()``. The security gate rejects a ``write``/``destructive`` tool
+#: with no ``auth``, so this is the policy a mutating fixture tool has to carry for
+#: the document to be one the compiler could actually have emitted.
+AUTHENTICATED: dict[str, Any] = {"kind": "call", "name": "isAuthenticated", "args": []}
+
+#: Side effects the runtime treats as mutations. Mirrors ``loop._SIDE_EFFECTING``.
+MUTATING = frozenset({"write", "destructive"})
+
 
 def model_def(
     model_id: str,
@@ -68,13 +76,63 @@ def prompt_def(prompt_id: str, template: str) -> dict[str, Any]:
     return {"id": prompt_id, "version": 1, "template": template, "variables": {}}
 
 
-def tool_def(tool_id: str, name: str, *, requires_confirmation: bool = False) -> dict[str, Any]:
-    return {
+def tool_def(
+    tool_id: str,
+    name: str,
+    *,
+    requires_confirmation: bool = False,
+    side_effects: str | None = None,
+    auth: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One tool entry.
+
+    ``side_effects`` defaults to ``write`` exactly when the tool needs confirmation,
+    which is the pairing every earlier agent test assumed. A mutating entry gets
+    ``isAuthenticated()`` unless the caller names another policy, because the
+    security gate rejects a mutating tool with no ``auth``: producing such a
+    document here would let a test drive a spec the compiler cannot emit.
+    """
+    effects = side_effects
+    if effects is None:
+        effects = "write" if requires_confirmation else "read"
+    entry: dict[str, Any] = {
         "id": tool_id,
         "name": name,
         "description": f"{name} tool",
         "requiresConfirmation": requires_confirmation,
-        "sideEffects": "write" if requires_confirmation else "read",
+        "sideEffects": effects,
+    }
+    policy = auth if auth is not None else (AUTHENTICATED if effects in MUTATING else None)
+    if policy is not None:
+        entry["auth"] = dict(policy)
+    return entry
+
+
+def guardrail_def(
+    guardrail_id: str,
+    *,
+    stages: Sequence[str] = ("input",),
+    policies: Sequence[str] = ("prompt-injection",),
+    action: str = "block",
+    redact: Sequence[str] = (),
+    tools: Sequence[str] = (),
+    message: str = "blocked by a guardrail",
+    fallback_prompt: str | None = None,
+    log: bool = True,
+) -> dict[str, Any]:
+    """One guardrail entry, in the IR's ``guardrails`` collection shape."""
+    on_fail: dict[str, Any] = {"message": message, "log": log}
+    if fallback_prompt is not None:
+        on_fail["fallbackPrompt"] = fallback_prompt
+    return {
+        "id": guardrail_id,
+        "stages": list(stages),
+        "policies": list(policies),
+        "action": action,
+        "redact": list(redact),
+        "tools": list(tools),
+        "onFail": on_fail,
+        "traits": [],
     }
 
 
@@ -120,6 +178,7 @@ def agent_def(
     on_budget_exhausted: str | None = None,
     engine: str = "native",
     hitl: Mapping[str, Any] | None = None,
+    guardrails: Sequence[str] = (),
 ) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "id": agent_id,
@@ -131,6 +190,7 @@ def agent_def(
         "handoffs": list(handoffs),
         "delegates": list(delegates),
         "memory": list(memory),
+        "guardrails": list(guardrails),
         "engine": engine,
     }
     if max_cost_budget is not None:
@@ -151,6 +211,7 @@ def document(
     agents: Sequence[Mapping[str, Any]],
     tools: Sequence[Mapping[str, Any]] = (),
     memory: Sequence[Mapping[str, Any]] = (),
+    guardrails: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     return {
         "version": "0.2.0",
@@ -158,6 +219,7 @@ def document(
         "prompts": [dict(entry) for entry in prompts],
         "tools": [dict(entry) for entry in tools],
         "memory": [dict(entry) for entry in memory],
+        "guardrails": [dict(entry) for entry in guardrails],
         "agents": [dict(entry) for entry in agents],
     }
 
@@ -168,24 +230,28 @@ def solo(
     alias: str = "cheap",
     tool_specs: Sequence[Mapping[str, Any]] = (),
     memory: Sequence[Mapping[str, Any]] = (),
+    guardrail_specs: Sequence[Mapping[str, Any]] = (),
     models: Sequence[Mapping[str, Any]] | None = None,
     **agent_fields: Any,
 ) -> dict[str, Any]:
     """A one-agent document: prompt ``main``, agent ``solo``.
 
-    ``memory`` is the document's collection; the agent references every entry in
-    it, because a one-agent document has nothing else to reference them.
+    ``memory`` and ``guardrail_specs`` are the document's collections; the agent
+    references every entry in each, because a one-agent document has nothing else
+    to reference them.
     """
     return document(
         models=list(models) if models is not None else [model_def(alias)],
         prompts=[prompt_def("main", prompt)],
         tools=tool_specs,
         memory=memory,
+        guardrails=guardrail_specs,
         agents=[
             agent_def(
                 "solo",
                 model=alias,
                 memory=[str(entry["id"]) for entry in memory],
+                guardrails=[str(entry["id"]) for entry in guardrail_specs],
                 **agent_fields,
             )
         ],

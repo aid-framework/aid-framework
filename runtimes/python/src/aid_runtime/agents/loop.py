@@ -39,6 +39,15 @@ from typing import Any
 
 from opentelemetry.trace import Span, Tracer
 
+from aid_runtime.agents.guardrails import (
+    ACTION_BLOCK,
+    ACTION_ESCALATE,
+    ACTION_REDACT,
+    GuardrailEngine,
+    GuardrailEscalation,
+    GuardrailRecord,
+    GuardrailVerdict,
+)
 from aid_runtime.agents.ir import (
     AgentDefinition,
     MemoryDefinition,
@@ -53,7 +62,11 @@ from aid_runtime.agents.memory import (
     check_memory_supported,
     render_context,
 )
-from aid_runtime.agents.policy import Principal, evaluate_policy, policy_source
+from aid_runtime.agents.policy import (
+    Principal,
+    evaluate_policy,
+    policy_source,
+)
 from aid_runtime.agents.state import (
     AgentCheckpoint,
     HumanDecision,
@@ -70,11 +83,14 @@ from aid_runtime.errors import (
     CapabilityMismatchError,
     ConfigurationError,
     FeatureDeferredError,
+    GuardrailBlockedError,
+    PolicyEvaluationError,
+    ToolPermissionError,
 )
 from aid_runtime.gateway import ModelGateway
 from aid_runtime.providers.base import Provider
 from aid_runtime.tools import Tool, ToolExecutor
-from aid_runtime.tracing import agent_span, record_attributes, record_hitl
+from aid_runtime.tracing import agent_span, record_attributes, record_guardrail, record_hitl
 from aid_runtime.types import (
     Capability,
     CompletionRequest,
@@ -103,6 +119,14 @@ _GLOBAL = "global"
 _IN_PROCESS = "in-process"
 _RESTORED_ALIAS = "restored"
 _TOOL_CONFIRMATION = "tool-confirmation"
+_GUARDRAIL_CHANNEL = "guardrail"
+_GUARDRAIL_INPUT = "input"
+_GUARDRAIL_OUTPUT = "output"
+_GUARDRAIL_TOOL = "tool-call"
+#: Side effects that must be explicitly granted. ``read`` and ``none`` are not in
+#: here on purpose: permissioning exists to gate effects, and gating reads would
+#: make every hostile tool the interesting one.
+_SIDE_EFFECTING = frozenset({"write", "destructive"})
 _REJECTED = "rejected by the human approver"
 
 
@@ -134,6 +158,12 @@ class _Frame:
     steps: list[StepRecord] = field(default_factory=list)
     resumed_decision: HumanDecision | None = None
     resumed_channel: str = ""
+    # `input` runs once per frame, on the message the frame started from. A
+    # transferred target re-checks the conversation it inherited (its guardrails are
+    # its own), while a resumed frame does not: the checkpoint only exists because
+    # the input stage already ran.
+    input_checked: bool = False
+    guardrails: list[GuardrailRecord] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -146,6 +176,7 @@ class _Outcome:
     steps: list[StepRecord] = field(default_factory=list)
     path: tuple[str, ...] = ()
     checkpoint: AgentCheckpoint | None = None
+    guardrails: tuple[GuardrailRecord, ...] = ()
 
 
 class AgentRuntime:
@@ -169,6 +200,7 @@ class AgentRuntime:
             memory_store if memory_store is not None else InProcessMemoryStore()
         )
         self._tracer = tracer
+        self._guardrails = GuardrailEngine(spec.guardrails)
         self._tools_by_name: dict[str, ToolSpec] = {
             definition.name: definition for definition in spec.tools.values()
         }
@@ -274,8 +306,29 @@ class AgentRuntime:
         frame = await self._frame_from(checkpoint)
         frame.resumed_decision = decision
         frame.resumed_channel = checkpoint.channel
+        escalation = checkpoint.escalation
         if decision is HumanDecision.APPROVE:
-            frame.messages.extend(await self._observe(checkpoint.calls))
+            if escalation is not None and escalation.stage == _GUARDRAIL_OUTPUT:
+                # The model already produced this answer and a person released it;
+                # re-generating would spend tokens to answer the same question and
+                # could produce a different answer than the one that was approved.
+                answer = escalation.text
+                frame.messages.append(Message.assistant(answer))
+                await self._remember(agent, answer, checkpoint.memory_key)
+                return self._guardrail_completed(frame, answer)
+            frame.messages.extend(await self._observe(agent, checkpoint.calls, principal))
+        elif escalation is not None:
+            # A person declined to release what the guardrail flagged. That is a
+            # decision, not an error, and the run stops here with the guardrail's
+            # own message as the answer rather than inventing one.
+            return _Outcome(
+                status=RunStatus.BLOCKED,
+                agent_id=agent.id,
+                answer=escalation.message,
+                steps=frame.steps,
+                path=frame.path,
+                guardrails=tuple(frame.guardrails),
+            )
         else:
             frame.messages.extend(
                 Message.tool(call.id, _REJECTED, name=call.name) for call in checkpoint.calls
@@ -301,7 +354,19 @@ class AgentRuntime:
         call = caller.calls[0]
         frame.messages.append(Message.tool(call.id, inner.answer, name=call.name))
         frame.steps.extend(inner.steps)
+        frame.guardrails.extend(inner.guardrails)
         return await self._drive(frame, principal=principal, memory_key=caller.memory_key)
+
+    def _guardrail_completed(self, frame: _Frame, answer: str) -> _Outcome:
+        """Complete a frame after an approved escalation released its answer."""
+        return _Outcome(
+            status=RunStatus.COMPLETED,
+            agent_id=frame.agent.id,
+            answer=answer,
+            steps=frame.steps,
+            path=frame.path,
+            guardrails=tuple(frame.guardrails),
+        )
 
     async def _drive(
         self,
@@ -347,6 +412,14 @@ class AgentRuntime:
                 self._record_status(span, "max-steps", frame)
                 return self._outcome(RunStatus.MAX_STEPS, frame)
 
+            if not frame.input_checked:
+                frame.input_checked = True
+                paused = self._guardrail_text(
+                    _GUARDRAIL_INPUT, frame, memory_key, span=span, rewrite=True
+                )
+                if paused is not None:
+                    return paused
+
             request = self._request(frame)
             alias, degraded_from = self._route(frame, request, budget, span)
             generation = await self._generate(agent, alias, request, budget=budget)
@@ -365,10 +438,13 @@ class AgentRuntime:
             response = generation.response
 
             if not response.tool_calls:
-                frame.messages.append(Message.assistant(response.text))
-                await self._remember(agent, response.text, memory_key)
+                answer = self._guardrail_answer(frame, response.text, memory_key, span=span)
+                if isinstance(answer, _Outcome):
+                    return answer
+                frame.messages.append(Message.assistant(answer))
+                await self._remember(agent, answer, memory_key)
                 self._record_status(span, "completed", frame)
-                return self._outcome(RunStatus.COMPLETED, frame, answer=response.text)
+                return self._outcome(RunStatus.COMPLETED, frame, answer=answer)
 
             control = self._control_call(response.tool_calls)
             if control is not None:
@@ -388,9 +464,14 @@ class AgentRuntime:
 
             record.kind = StepKind.TOOLS
             record.tool_names = tuple(call.name for call in response.tool_calls)
-            frame.messages.append(Message.assistant_tool_calls(response.text, response.tool_calls))
-            if self._needs_approval(agent, response.tool_calls, principal):
-                checkpoint = self._checkpoint(frame, response.tool_calls, memory_key)
+            guarded, paused = self._guardrail_tool_calls(
+                frame, response.tool_calls, memory_key, span=span
+            )
+            if paused is not None:
+                return paused
+            frame.messages.append(Message.assistant_tool_calls(response.text, guarded))
+            if self._needs_approval(agent, guarded, principal):
+                checkpoint = self._checkpoint(frame, guarded, memory_key)
                 record_hitl(
                     span,
                     phase="pause",
@@ -405,9 +486,148 @@ class AgentRuntime:
                     steps=frame.steps,
                     path=frame.path,
                     checkpoint=checkpoint,
+                    guardrails=tuple(frame.guardrails),
                 )
 
-            frame.messages.extend(await self._observe(response.tool_calls))
+            frame.messages.extend(await self._observe(agent, guarded, principal))
+
+    def _guardrail_text(
+        self,
+        stage: str,
+        frame: _Frame,
+        memory_key: str,
+        *,
+        span: Span,
+        rewrite: bool,
+    ) -> _Outcome | None:
+        """Run a whole-transcript stage (``input``) and apply its action.
+
+        ``rewrite`` is what ``redact`` does here: the last user message is replaced
+        with the masked text *in place*, so the model is called on the redacted turn
+        rather than on the original with a note attached.
+        """
+        index = _last_user_index(frame.messages)
+        text = "" if index is None else frame.messages[index].content
+        verdict = self._guardrails.check_input(frame.agent.stage_guardrails(stage), text)
+        self._record_guardrails(frame, verdict, span)
+        deciding = verdict.deciding
+        if verdict.action == ACTION_BLOCK and deciding is not None:
+            raise GuardrailBlockedError(deciding.guardrail, stage, deciding.message)
+        if verdict.action == ACTION_ESCALATE:
+            return self._guardrail_pause(frame, verdict, memory_key, (), span=span)
+        if rewrite and verdict.action == ACTION_REDACT and index is not None:
+            frame.messages[index] = Message.user(verdict.text)
+        return None
+
+    def _guardrail_answer(
+        self,
+        frame: _Frame,
+        text: str,
+        memory_key: str,
+        *,
+        span: Span,
+    ) -> str | _Outcome:
+        """Run the ``output`` stage over an answer, returning the text to ship.
+
+        An ``_Outcome`` means the answer is held: an escalation paused the run and
+        the checkpoint carries the text, so approving it releases this exact answer
+        without paying for a second generation.
+        """
+        verdict = self._guardrails.check_output(
+            frame.agent.stage_guardrails(_GUARDRAIL_OUTPUT), text
+        )
+        self._record_guardrails(frame, verdict, span)
+        deciding = verdict.deciding
+        if verdict.action == ACTION_BLOCK and deciding is not None:
+            raise GuardrailBlockedError(deciding.guardrail, _GUARDRAIL_OUTPUT, deciding.message)
+        if verdict.action == ACTION_ESCALATE:
+            return self._guardrail_pause(frame, verdict, memory_key, (), span=span, text=text)
+        return verdict.text if verdict.action == ACTION_REDACT else text
+
+    def _guardrail_tool_calls(
+        self,
+        frame: _Frame,
+        calls: Sequence[ToolCall],
+        memory_key: str,
+        *,
+        span: Span,
+    ) -> tuple[list[ToolCall], _Outcome | None]:
+        """Run the ``tool-call`` stage over every call in one step.
+
+        The guardrail scopes on tool *ids*, so each model name is resolved through
+        the IR before the engine sees it. A name the IR does not declare keeps its
+        own spelling as the scope key -- it will be refused later for a different
+        reason, and mapping it to some other tool's id would let a guardrail scoped
+        to one tool decide about another.
+        """
+        guarded: list[ToolCall] = []
+        escalation: GuardrailVerdict | None = None
+        for call in calls:
+            definition = self._tools_by_name.get(call.name)
+            tool_id = definition.id if definition is not None else call.name
+            verdict = self._guardrails.check_tool_call(
+                frame.agent.stage_guardrails(_GUARDRAIL_TOOL), tool_id, call.arguments
+            )
+            self._record_guardrails(frame, verdict, span)
+            deciding = verdict.deciding
+            if verdict.action == ACTION_BLOCK and deciding is not None:
+                raise GuardrailBlockedError(deciding.guardrail, _GUARDRAIL_TOOL, deciding.message)
+            if verdict.action == ACTION_ESCALATE and escalation is None:
+                escalation = verdict
+            if verdict.action == ACTION_REDACT:
+                call = call.model_copy(update={"arguments": dict(verdict.arguments)})
+            guarded.append(call)
+        if escalation is not None:
+            return guarded, self._guardrail_pause(frame, escalation, memory_key, guarded, span=span)
+        return guarded, None
+
+    def _record_guardrails(self, frame: _Frame, verdict: GuardrailVerdict, span: Span) -> None:
+        """Record what fired. Every record reaches the result, not only the deciding one."""
+        for record in verdict.records:
+            frame.guardrails.append(record)
+            record_guardrail(span, record)
+
+    def _guardrail_pause(
+        self,
+        frame: _Frame,
+        verdict: GuardrailVerdict,
+        memory_key: str,
+        calls: Sequence[ToolCall],
+        *,
+        span: Span,
+        text: str = "",
+    ) -> _Outcome:
+        """Enter HITL for an ``escalate``. A pause, never a failure."""
+        deciding = verdict.deciding
+        if deciding is None:
+            raise ConfigurationError(
+                "a guardrail verdict with no deciding record cannot be escalated"
+            )
+        approval = frame.agent.approval
+        escalation = GuardrailEscalation(
+            guardrail=deciding.guardrail,
+            stage=verdict.stage,
+            message=deciding.message,
+            channel=approval.channel if approval is not None else _GUARDRAIL_CHANNEL,
+            text=text,
+        )
+        checkpoint = self._checkpoint(frame, calls, memory_key, escalation=escalation)
+        record_hitl(
+            span,
+            phase="pause",
+            channel=escalation.channel,
+            when=f"guardrail:{deciding.guardrail}",
+            step=frame.step,
+        )
+        self._record_status(span, "paused", frame)
+        return _Outcome(
+            status=RunStatus.PAUSED,
+            agent_id=frame.agent.id,
+            steps=frame.steps,
+            path=frame.path,
+            checkpoint=checkpoint,
+            guardrails=tuple(frame.guardrails),
+        )
 
     async def _control(
         self,
@@ -482,6 +702,7 @@ class AgentRuntime:
         )
         outcome = await self._drive(target_frame, principal=principal, memory_key=memory_key)
         outcome.steps = [*frame.steps, *outcome.steps]
+        outcome.guardrails = (*frame.guardrails, *outcome.guardrails)
         outcome.path = (*frame.path, target.id)
         return outcome
 
@@ -515,6 +736,7 @@ class AgentRuntime:
         inner = await self._drive(delegate_frame, principal=principal, memory_key=memory_key)
         if inner.status is RunStatus.PAUSED:
             inner.steps = [*frame.steps, *inner.steps]
+            inner.guardrails = (*frame.guardrails, *inner.guardrails)
             if inner.checkpoint is not None:
                 caller = self._checkpoint(frame, (call,), memory_key).model_copy(
                     update={"resume_kind": "delegate", "channel": ""}
@@ -525,14 +747,18 @@ class AgentRuntime:
             # The delegate ran out of steps or budget, so it has no result to hand
             # back; the caller cannot borrow an answer that was never produced.
             inner.steps = [*frame.steps, *inner.steps]
+            inner.guardrails = (*frame.guardrails, *inner.guardrails)
             return inner
         frame.steps.extend(inner.steps)
+        frame.guardrails.extend(inner.guardrails)
         frame.messages.append(Message.tool(call.id, inner.answer, name=call.name))
         return await self._run_loop(
             frame, budget=budget, principal=principal, memory_key=memory_key, span=span
         )
 
-    async def _observe(self, calls: Sequence[ToolCall]) -> list[Message]:
+    async def _observe(
+        self, agent: AgentDefinition, calls: Sequence[ToolCall], principal: Principal
+    ) -> list[Message]:
         """Turn calls into observations, in the order the model asked for them.
 
         A name this agent cannot call comes back as a tool error instead of
@@ -540,8 +766,15 @@ class AgentRuntime:
         correct it, exactly as for bad arguments. A missing *registration* is a
         different failure and is refused when the runtime is built, where the
         application can fix it.
+
+        Permission is the third case and it does raise, before any handler runs.
+        The grant is the agent's declared tool list, and a side-effecting tool
+        additionally needs an ``auth`` policy that holds for this principal. A
+        model cannot repair either: the spec is what is wrong.
         """
         known = [call for call in calls if call.name in self._executor.names]
+        for call in known:
+            self._authorize(agent, call, principal)
         executed = {result.call_id: result for result in await self._executor.execute_all(known)}
         observations: list[Message] = []
         for call in calls:
@@ -557,6 +790,64 @@ class AgentRuntime:
                 continue
             observations.append(Message.tool(result.call_id, result.content, name=result.name))
         return observations
+
+    def _authorize(self, agent: AgentDefinition, call: ToolCall, principal: Principal) -> None:
+        """Refuse a call this agent may not make, before the handler body runs.
+
+        Deny by default, in three steps:
+
+        1. the agent must declare the tool -- the IR's ``tools`` is the grant, and
+           an undeclared tool is refused even when the runtime has it registered;
+        2. a ``write``/``destructive`` tool must declare an ``auth`` policy, because
+           a side effect with no authorization is an accident waiting to be called;
+        3. that policy is evaluated here, against *this* principal, not at build
+           time -- ``auth`` is a question about the caller, and the caller is only
+           known now.
+
+        An undecidable policy is a denial. :class:`PolicyEvaluationError` means the
+        evaluator could not answer, and "could not answer" must never render as
+        "allowed".
+        """
+        granted = {self._spec.tools[tool_id].name for tool_id in agent.tools}
+        if call.name not in granted:
+            raise ToolPermissionError(
+                agent.id,
+                call.name,
+                "the agent does not declare it; the tool list is the grant, and there is "
+                "no implicit wildcard",
+            )
+        definition = self._tools_by_name.get(call.name)
+        if definition is None:
+            raise ToolPermissionError(
+                agent.id,
+                call.name,
+                "it is registered on this runtime but not declared in the IR, so its side "
+                "effects and auth policy are unknown",
+            )
+        if definition.auth is not None:
+            try:
+                allowed = evaluate_policy(definition.auth, principal)
+            except PolicyEvaluationError as exc:
+                raise ToolPermissionError(
+                    agent.id,
+                    call.name,
+                    f"its auth policy {policy_source(definition.auth)} could not be decided "
+                    f"({exc})",
+                ) from exc
+            if not allowed:
+                raise ToolPermissionError(
+                    agent.id,
+                    call.name,
+                    f"its auth policy {policy_source(definition.auth)} denies this principal",
+                )
+            return
+        if definition.side_effects in _SIDE_EFFECTING:
+            raise ToolPermissionError(
+                agent.id,
+                call.name,
+                f"it has sideEffects {definition.side_effects!r} and declares no auth "
+                "policy; a side effect with no authorization is denied by default",
+            )
 
     def _request(self, frame: _Frame) -> CompletionRequest:
         messages = tuple(frame.messages)
@@ -701,16 +992,27 @@ class AgentRuntime:
         return agent.approval is not None and evaluate_policy(agent.approval.when, principal)
 
     def _checkpoint(
-        self, frame: _Frame, calls: Sequence[ToolCall], memory_key: str
+        self,
+        frame: _Frame,
+        calls: Sequence[ToolCall],
+        memory_key: str,
+        *,
+        escalation: GuardrailEscalation | None = None,
     ) -> AgentCheckpoint:
         approval = frame.agent.approval
+        if escalation is not None:
+            channel = escalation.channel
+        elif approval is not None:
+            channel = approval.channel
+        else:
+            channel = _TOOL_CONFIRMATION
         return AgentCheckpoint(
             agent_id=frame.agent.id,
             step=frame.step,
             messages=tuple(frame.messages),
             steps=tuple(frame.steps),
             calls=tuple(calls),
-            channel=approval.channel if approval is not None else _TOOL_CONFIRMATION,
+            channel=channel,
             when=dict(approval.when) if approval is not None else {},
             cost_anchor_usd=frame.cost_anchor,
             token_anchor=frame.token_anchor,
@@ -720,6 +1022,8 @@ class AgentRuntime:
             alias=frame.alias,
             path=frame.path,
             memory_key=memory_key,
+            escalation=escalation,
+            guardrails=tuple(frame.guardrails),
         )
 
     def _restore_ledger(self, checkpoint: AgentCheckpoint) -> None:
@@ -783,6 +1087,11 @@ class AgentRuntime:
             cost_anchor=checkpoint.cost_anchor_usd,
             token_anchor=checkpoint.token_anchor,
             steps=list(checkpoint.steps),
+            # A checkpoint exists only after the input stage ran, so a resumed frame
+            # must not re-check the message it already passed -- and must not re-apply
+            # a redaction to text that is already masked.
+            input_checked=True,
+            guardrails=list(checkpoint.guardrails),
         )
 
     async def _memory_state(self, agent: AgentDefinition, memory_key: str) -> _MemoryState:
@@ -883,6 +1192,7 @@ class AgentRuntime:
             answer=answer,
             steps=frame.steps,
             path=frame.path,
+            guardrails=tuple(frame.guardrails),
         )
 
     def _wrap(self, outcome: _Outcome, start_cost: float, start_tokens: int) -> RunResult:
@@ -896,11 +1206,20 @@ class AgentRuntime:
             cost_usd=round(max(ledger.cost_usd - start_cost, 0.0), 6),
             total_tokens=max(ledger.total_tokens - start_tokens, 0),
             checkpoint=outcome.checkpoint,
+            guardrails=outcome.guardrails,
         )
 
 
 def _budget_of(thread: ThreadMemory) -> int:
     return thread.token_budget if thread.token_budget is not None else 0
+
+
+def _last_user_index(messages: Sequence[Message]) -> int | None:
+    """The turn the input stage guards: the most recent user message."""
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].role == "user":
+            return index
+    return None
 
 
 def _storage_key(definition: MemoryDefinition, memory_key: str) -> str:

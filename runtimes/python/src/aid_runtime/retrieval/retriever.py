@@ -27,8 +27,16 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aid_runtime.agents.guardrails import (
+    ACTION_BLOCK,
+    ACTION_ESCALATE,
+    ACTION_REDACT,
+    GuardrailEngine,
+    GuardrailRecord,
+)
+from aid_runtime.agents.ir import GuardrailDefinition
 from aid_runtime.cost import Budget, CostLedger, LedgerEntry
-from aid_runtime.errors import ConfigurationError, FeatureDeferredError
+from aid_runtime.errors import ConfigurationError, FeatureDeferredError, GuardrailBlockedError
 from aid_runtime.retrieval.chunking import chunker_for
 from aid_runtime.retrieval.citations import RetrievalResult, RetrievedItem, cite
 from aid_runtime.retrieval.connectors import Connector, SourceDocument, open_connector
@@ -99,6 +107,7 @@ class Retriever:
         budget: Budget | None = None,
         base_dir: str | None = None,
         candidate_factor: int = DEFAULT_CANDIDATE_FACTOR,
+        guardrails: Sequence[GuardrailDefinition] = (),
     ) -> None:
         if binding.refresh_mode is not RefreshMode.FULL:
             raise FeatureDeferredError(
@@ -121,6 +130,8 @@ class Retriever:
         self._ledger = ledger
         self._budget = budget
         self._candidate_factor = candidate_factor
+        self._guardrails = tuple(guardrails)
+        self._guardrail_engine = GuardrailEngine()
         self._closed = False
 
     @property
@@ -181,11 +192,54 @@ class Retriever:
         if self._reranker is not None:
             top_n = self._binding.rerank.top_n if self._binding.rerank is not None else wanted
             items = await self._reranker.rerank(query, items, top_n=top_n)
+        guarded, records = self._guard_retrieval(items[:wanted])
         return RetrievalResult(
             retriever=self._binding.retriever_id,
             query=query,
-            items=items[:wanted],
+            items=guarded,
+            guardrails=records,
         )
+
+    def _guard_retrieval(
+        self, items: Sequence[RetrievedItem]
+    ) -> tuple[tuple[RetrievedItem, ...], tuple[GuardrailRecord, ...]]:
+        """Run the ``retrieval`` stage over each returned passage.
+
+        Per item, not over the concatenation: a redaction has to rewrite the one
+        passage it matched, and a joined string cannot be split back into passages
+        without guessing where each ended.
+
+        A retriever has no channel to ask a person on, so ``escalate`` blocks here
+        instead of pausing. Turning it into a silent pass would be the exact failure
+        mode the stage exists to prevent, and the agent loop -- which does have a
+        channel -- is where an escalation can pause a run.
+        """
+        if not self._guardrails:
+            return tuple(items), ()
+        guarded: list[RetrievedItem] = []
+        records: list[GuardrailRecord] = []
+        for item in items:
+            verdict = self._guardrail_engine.check_retrieval(self._guardrails, (item.chunk.text,))
+            records.extend(verdict.records)
+            deciding = verdict.deciding
+            if deciding is None:
+                guarded.append(item)
+                continue
+            if deciding.action == ACTION_BLOCK:
+                raise GuardrailBlockedError(deciding.guardrail, "retrieval", deciding.message)
+            if deciding.action == ACTION_ESCALATE:
+                raise GuardrailBlockedError(
+                    deciding.guardrail,
+                    "retrieval",
+                    f"{deciding.message} (a retriever has no human channel, so an "
+                    "escalation here blocks rather than passing unchecked)",
+                )
+            if deciding.action == ACTION_REDACT:
+                item = item.model_copy(
+                    update={"chunk": item.chunk.model_copy(update={"text": verdict.text})}
+                )
+            guarded.append(item)
+        return tuple(guarded), tuple(records)
 
     async def aclose(self) -> None:
         if self._closed:

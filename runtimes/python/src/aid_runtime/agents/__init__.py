@@ -15,8 +15,20 @@ Naming, because the IR's two control edges are easy to conflate:
 
 from __future__ import annotations
 
+from aid_runtime.agents.guardrails import (
+    DETECTORS,
+    GUARDRAIL_ACTIONS,
+    GUARDRAIL_STAGES,
+    Detection,
+    GuardrailEngine,
+    GuardrailEscalation,
+    GuardrailRecord,
+    GuardrailVerdict,
+    detect,
+)
 from aid_runtime.agents.ir import (
     AgentDefinition,
+    GuardrailDefinition,
     HumanApproval,
     MemoryDefinition,
     RuntimeSpec,
@@ -45,12 +57,21 @@ from aid_runtime.agents.state import (
 )
 
 __all__ = [
+    "DETECTORS",
+    "GUARDRAIL_ACTIONS",
+    "GUARDRAIL_STAGES",
     "IMPLEMENTED_MEMORY_KINDS",
     "MEMORY_SCOPES",
     "AgentCheckpoint",
     "AgentDefinition",
     "AgentRuntime",
+    "Detection",
     "FileMemoryStore",
+    "GuardrailDefinition",
+    "GuardrailEngine",
+    "GuardrailEscalation",
+    "GuardrailRecord",
+    "GuardrailVerdict",
     "HumanApproval",
     "HumanDecision",
     "InProcessMemoryStore",
@@ -66,6 +87,7 @@ __all__ = [
     "ThreadMemory",
     "ToolSpec",
     "check_memory_supported",
+    "detect",
     "evaluate_policy",
     "policy_source",
     "render_context",
