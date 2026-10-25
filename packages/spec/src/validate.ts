@@ -293,7 +293,7 @@ function scopeDiagnostics(
     diagnostics.push(
       errorDiagnostic({
         code: DIAGNOSTIC_CODES.notSupported,
-        message: `'${key}' requires specVersion ${required}, but this specification declares ${declared === undefined ? 'no version' : `version ${declared}`}`,
+        message: `'${key}' requires specVersion ${required}, but this specification declares version ${declared}`,
         path: [key],
         hint: `set specVersion: "${required}"; spec 0.1 documents are unchanged`,
       }),
