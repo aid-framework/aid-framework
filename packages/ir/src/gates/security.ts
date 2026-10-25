@@ -40,9 +40,11 @@ const URI_USERINFO = /^[a-z][a-z0-9+.-]*:\/\/[^/@\s]*@/i;
  * It is no longer suppressed. Spec v0.2 makes `guardrails` declarable, so the question
  * "does an endpoint that hands untrusted text to a model route it through an input
  * guardrail?" can be answered from the declarations, and `checkInputGuardrails`
- * answers it. What still has no runtime is *evaluating* the policy; that is the
- * guardrails engine's layer, and a declared policy is the most this layer can honestly
- * require.
+ * answers it for every spec that can declare one. A 0.1 document predates the section
+ * and stays exempt — that is the version check, not a suppression entry, and the check
+ * says so in its own comment. What still has no runtime is *evaluating* the policy; that
+ * is the guardrails engine's layer, and a declared policy is the most this layer can
+ * honestly require.
  */
 const SUPPRESSED: SuppressedCheck[] = [];
 
@@ -213,16 +215,21 @@ function checkUnauthenticatedPath(
  * only that trigger — a scheduled job and a manual run carry no caller-supplied text,
  * and demanding a guardrail for them would be a declaration with nothing to inspect.
  *
- * The rule is scoped to specifications that declare the `guardrails` section, for the
- * same reason `guardrails/coverage` is: a spec written against v0.1 predates the
- * section and cannot opt into it, and retroactively failing every such project is a
- * breaking change rather than a safety improvement. A spec that names a guardrail has
- * opted in, and from then on the endpoint that reaches a model must be covered. The
- * demand to make it unconditional belongs to the layer that ships the engine able to
- * satisfy it.
+ * The discriminator is the declared spec version, not the number of declared guardrails.
+ * A spec written against v0.1 predates the section and cannot opt into it, and
+ * retroactively failing every such project is a breaking change rather than a safety
+ * improvement. A spec written against v0.2 *can* declare guardrails, so declaring none
+ * is a decision rather than an inability, and it is not a reason to stay silent: an
+ * endpoint that hands caller text to a model with no input-stage guardrail fails the
+ * gate either way. Keying this on the declaration count instead would let a v0.2 spec
+ * buy an exemption by simply omitting the section.
+ *
+ * What this layer still does not do is *evaluate* the policy; that is the guardrails
+ * engine's layer (L3). A declared policy is the most this layer can honestly require,
+ * and making the declaration itself unconditional is the engine layer's call.
  */
 function checkInputGuardrails(ir: IR, diagnostics: IrDiagnostic[], report: Reporter): void {
-  if (ir.guardrails.length === 0) return;
+  if (ir.specVersion === '0.1') return;
   if (!ir.guardrails.some((guardrail) => guardrail.stages.includes('input'))) {
     for (const pipeline of ir.pipelines) {
       const trigger = pipeline.trigger;

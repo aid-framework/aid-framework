@@ -215,7 +215,7 @@ agents:
     model: fast
     tools: [lookup_order, issue_refund]
     retrievers: [kb]
-    memory: [session]
+    memory: [conversation]
     guardrails: [pii, injection]
     maxSteps: 8
     maxCostBudget: 0.25             # USD per run — enforced by the runtime
@@ -476,6 +476,9 @@ type AgentShape = {
   maxTokensBudget?: number;
   maxCostBudget?: number;          // USD
   handoffs: string[];              // other agent ids
+  delegates: string[];             // other agent ids this one may delegate a sub-task to
+  engine: AgentEngine;             // who owns the loop; `deepagents` needs a pinned version
+  engineVersion?: string;
   humanInTheLoop?: { when: PolicyExpr; channel: string };
   traits: Trait[];
 };
@@ -532,8 +535,14 @@ type Metric =
 type GuardrailShape = {
   id: string;
   stages: ('input'|'output'|'retrieval'|'tool-call')[];
-  policies: PolicyRef[];           // pii-detect, pii-redact, moderation, prompt-injection, jailbreak, allowlist, schema, custom
+  // The closed vocabulary accepted today: pii-detect, pii-redact, prompt-injection,
+  // jailbreak, moderation, toxicity, secret-scan. `allowlist`, `schema` and `custom`
+  // are design intent, not yet accepted - naming one is a spec error until the layer
+  // that can evaluate it lands.
+  policies: GuardrailPolicyKind[];
   action: 'block'|'redact'|'flag'|'escalate';
+  redact: string[];               // field names the `redact` action removes
+  tools: string[];                // tools covered; empty means every tool on the stage
   onFail: { message: string; fallbackPrompt?: string; log: boolean };
   traits: Trait[];
 };
@@ -541,10 +550,14 @@ type GuardrailShape = {
 type MemoryShape = {
   id: string;
   kind: 'buffer'|'window'|'summary'|'semantic'|'episodic'|'vector';
-  scope: 'session'|'user'|'tenant'|'global';
+  // `session` was renamed `thread` (the unit a run resumes, as in the agent runtimes'
+  // checkpointer); `tenant` is deferred with the multi-tenant control plane (Phase 3).
+  scope: 'thread'|'user'|'global';
   tokenBudget: number;
   summarizeModel?: string;
   store?: string;
+  // A declared store id or `in-process`; the `memory/refs` gate resolves it.
+  backend?: string;
   ttl?: string;
   redact: string[];
   traits: Trait[];
@@ -598,6 +611,9 @@ interface Generator {
   version: string;
   irRange: string;                    // semver range, e.g. '^1.0'
   capabilities: TargetCapability[];   // streaming, tool-calling, cursor-memory, otel, ...
+                                      // streaming is withheld from every target until L5, where
+                                      // the runtimes stop raising FeatureDeferredError; a target
+                                      // declares only what it can actually emit.
   emitsAgainst: {                     // the ecosystem libs it generates against
     orchestration?: 'langgraph' | 'llamaindex' | 'dspy' | 'vercel-ai' | 'semantic-kernel';
     structuredOutput?: 'pydantic' | 'instructor' | 'zod';

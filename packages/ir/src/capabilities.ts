@@ -132,7 +132,7 @@ export const DEFERRED_CAPABILITIES: Readonly<
   'prompt-cache': {
     reason:
       'No spec construct requests prompt caching, and enabling it belongs with the caching layer rather than with code generation.',
-    phase: 'L7',
+    phase: 'L5',
   },
 };
 
