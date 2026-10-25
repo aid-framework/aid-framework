@@ -24,10 +24,8 @@ import math
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict
-
 from aid_runtime.errors import ConfigurationError, FeatureDeferredError
-from aid_runtime.retrieval.types import Chunk, DistanceMetric, StoreKind
+from aid_runtime.retrieval.types import DistanceMetric, SearchHit, StoreKind, StoreRecord
 
 __all__ = [
     "InMemoryVectorStore",
@@ -37,24 +35,6 @@ __all__ = [
     "create_store",
     "similarity",
 ]
-
-
-class StoreRecord(BaseModel):
-    """One chunk and its vector, exactly as it is written to a store."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    chunk: Chunk
-    vector: tuple[float, ...]
-
-
-class SearchHit(BaseModel):
-    """A record and its similarity to the query, higher being better."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    record: StoreRecord
-    score: float
 
 
 def similarity(

@@ -30,8 +30,13 @@ from collections.abc import Sequence
 from typing import Any
 
 from aid_runtime.errors import ConfigurationError, ProviderError
-from aid_runtime.retrieval.stores import SearchHit, StoreRecord
-from aid_runtime.retrieval.types import Chunk, DistanceMetric, StoreKind
+from aid_runtime.retrieval.types import (
+    Chunk,
+    DistanceMetric,
+    SearchHit,
+    StoreKind,
+    StoreRecord,
+)
 
 __all__ = ["PgVectorStore", "resolve_uri"]
 

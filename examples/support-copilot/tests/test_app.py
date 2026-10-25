@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.business.tools.lookup_customer import LookupCustomer
 from app.generated.contracts import ToolContext
-from app.generated.deps import get_deps
+from app.generated.deps import Deps, get_deps
 from app.generated.gateway.models import ALIASES, FALLBACKS
 from app.generated.schemas import Customer, Ticket
 from app.generated.tools import build_executor
@@ -22,6 +22,17 @@ REQUEST: dict[str, str] = {
     "subject": "Acme: I was charged twice this month",
     "body": "Please refund the duplicate charge.",
 }
+
+
+def fake_deps_override() -> Deps:
+    """The offline dependency override, with a zero-argument signature.
+
+    `fake_deps` itself cannot be the override: FastAPI inspects the override's
+    signature and would read its keyword-only seams (`tools`, `retrievers`, ...)
+    as query parameters, which are not valid field types.
+    """
+
+    return fake_deps()
 
 
 def test_the_model_alias_is_the_one_the_spec_pinned() -> None:
@@ -61,7 +72,7 @@ def test_the_route_answers_a_ticket_offline() -> None:
     both of its steps and the business tool returned a valid `Customer`.
     """
 
-    app.dependency_overrides[get_deps] = lambda: fake_deps()
+    app.dependency_overrides[get_deps] = fake_deps_override
     try:
         response = TestClient(app).post("/tickets/answer", json=REQUEST)
     finally:
