@@ -62,6 +62,23 @@ def test_framework_specific_attributes_stay_out_of_the_genai_namespace() -> None
         "aid.cost.usd",
         "aid.gateway.attempts",
         "aid.tool.names",
+        "aid.agent.id",
+        "aid.agent.engine",
+        "aid.agent.steps",
+        "aid.agent.status",
+        "aid.agent.transfer.to",
+        "aid.agent.delegate.to",
+        "aid.agent.budget.degraded",
+        "aid.agent.budget.from",
+        "aid.agent.budget.to",
+        "aid.hitl.channel",
+        "aid.hitl.when",
+        "aid.hitl.decision",
+        "aid.hitl.step",
+        "aid.hitl.phase",
+        "aid.memory.scope",
+        "aid.memory.entries",
+        "aid.memory.tokens",
     }
 
 

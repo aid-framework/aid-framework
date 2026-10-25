@@ -18,7 +18,9 @@ import type { IrDiagnostic } from './diagnostics.js';
 import { parsePolicyExpr } from './policy/index.js';
 import {
   AGENT_ENGINES,
+  AGENT_ON_BUDGET_EXHAUSTED,
   type AgentEngine,
+  type AgentOnBudgetExhausted,
   type AgentShape,
   DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_OBSERVABILITY,
@@ -782,6 +784,8 @@ function buildAgents(raw: unknown, context: BuildContext): AgentShape[] {
     if (maxTokensBudget !== undefined) agent.maxTokensBudget = maxTokensBudget;
     const maxCostBudget = asNumber(entry.maxCostBudget);
     if (maxCostBudget !== undefined) agent.maxCostBudget = maxCostBudget;
+    const onBudgetExhausted = asAgentOnBudgetExhausted(entry.onBudgetExhausted);
+    if (onBudgetExhausted !== undefined) agent.onBudgetExhausted = onBudgetExhausted;
     const engineVersion = asString(entry.engineVersion);
     if (engineVersion !== undefined) agent.engineVersion = engineVersion;
 
@@ -808,6 +812,13 @@ function asAgentEngine(raw: unknown): AgentEngine {
   return (AGENT_ENGINES as readonly string[]).includes(value ?? '')
     ? (value as AgentEngine)
     : 'native';
+}
+
+function asAgentOnBudgetExhausted(raw: unknown): AgentOnBudgetExhausted | undefined {
+  const value = asString(raw);
+  return (AGENT_ON_BUDGET_EXHAUSTED as readonly string[]).includes(value ?? '')
+    ? (value as AgentOnBudgetExhausted)
+    : undefined;
 }
 
 function buildDeployments(raw: unknown): DeploymentShape[] {

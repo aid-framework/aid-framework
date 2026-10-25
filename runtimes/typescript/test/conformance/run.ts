@@ -95,6 +95,10 @@ interface Case {
   readonly op: string;
   readonly input: Json;
   readonly expect: unknown;
+  /** The runtimes this case applies to; empty means all of them. */
+  readonly runtimes: readonly string[];
+  /** Why the case is narrowed to a subset, empty when it applies to every runtime. */
+  readonly reason: string;
 }
 
 interface Corpus {
@@ -103,7 +107,9 @@ interface Corpus {
 
 interface Entry {
   readonly id: string;
-  readonly verdict: unknown;
+  readonly status: 'evaluated' | 'scoped-out';
+  readonly verdict?: unknown;
+  readonly reason?: string;
 }
 
 interface Artefact {
@@ -649,6 +655,81 @@ function clean(value: unknown): unknown {
   return value;
 }
 
+/**
+ * Every runtime the corpus is written for. A case may name which of them it applies
+ * to; naming none means all of them.
+ */
+const RUNTIMES = ['python', 'typescript'] as const;
+
+/** This runner's name, as a case spells it. */
+const SELF = 'typescript';
+
+/**
+ * Why this case is out of scope for `runtime`, or null when it is in scope.
+ *
+ * A case that says nothing about runtimes is in scope everywhere. A case that narrows
+ * the field must leave a reason behind, because "not implemented yet" and "not
+ * applicable" are indistinguishable from the outside -- and the difference decides
+ * whether the work is finished or merely deferred.
+ *
+ * The mechanism is deliberately strict in both directions: an unknown runtime name is
+ * an error rather than a typo that quietly narrows a case to nothing, a case that
+ * scopes itself away from every runtime is an error rather than a no-op, and a case
+ * that names a runtime still has to have its op implemented *there* -- `loadCorpus`
+ * enforces that, which is what stops scope becoming a way to skip a case a runtime
+ * claims to check.
+ *
+ * The scope is a property of the case and the runtime together, never of the case
+ * alone: the comparator asks this question about *another* runtime's artefact, so a
+ * scope resolved once for the local runtime would be the wrong answer there.
+ */
+function scopeFor(entry: Case, runtime: string): string | null {
+  if (entry.runtimes.length === 0 || entry.runtimes.includes(runtime)) return null;
+  return entry.reason;
+}
+
+/** Validates a case's `runtimes`/`reason` fields and returns them normalised. */
+function readScope(id: string, item: Json): { runtimes: readonly string[]; reason: string } {
+  const declared = item.runtimes;
+  if (declared === undefined) return { runtimes: [], reason: '' };
+  if (!Array.isArray(declared) || declared.length === 0) {
+    throw new Error(`${id}: 'runtimes' must be a non-empty array of runtime names`);
+  }
+  const bad = declared.filter(
+    (name) => typeof name !== 'string' || !(RUNTIMES as readonly string[]).includes(name),
+  );
+  if (bad.length > 0) {
+    throw new Error(
+      `${id}: 'runtimes' names ${show(bad)}; expected a subset of ${show([...RUNTIMES])}`,
+    );
+  }
+  const runtimes = declared as string[];
+  if (new Set(runtimes).size !== runtimes.length) {
+    throw new Error(`${id}: 'runtimes' names a runtime twice: ${show(runtimes)}`);
+  }
+  if (item.reason !== undefined && typeof item.reason !== 'string') {
+    throw new Error(`${id}: 'reason' must be a string`);
+  }
+  const reason = typeof item.reason === 'string' ? item.reason.trim() : '';
+  const leftOut = RUNTIMES.filter((name) => !runtimes.includes(name));
+  if (leftOut.length > 0 && reason === '') {
+    throw new Error(
+      `${id}: scoped away from ${show(leftOut)} without a 'reason'; a case some runtime ` +
+        'does not check must say why, or the gap is invisible',
+    );
+  }
+  return { runtimes, reason };
+}
+
+/**
+ * The corpus this runner resolves.
+ *
+ * The op check applies to the cases *this* runtime claims. A case scoped to another
+ * runtime names an op this runtime may not implement yet, and refusing the whole
+ * corpus over it would make adding a case for one runtime impossible without first
+ * writing the other -- but a case that names this runtime still has to be runnable
+ * here, so scope can never be used to skip a case that was claimed.
+ */
 function loadCorpus(): Corpus {
   const raw: unknown = JSON.parse(readFileSync(CORPUS_PATH, 'utf8'));
   const record = asRecord(raw, 'corpus');
@@ -661,15 +742,19 @@ function loadCorpus(): Corpus {
       throw new Error(`duplicate case id in the corpus: ${id}`);
     }
     seen.add(id);
-    if (!(op in OPS)) {
-      throw new Error(`${id}: the corpus names an unknown op ${JSON.stringify(op)}`);
-    }
-    return {
+    const { runtimes, reason } = readScope(id, item);
+    const scoped: Case = {
       id,
       op,
       input: asRecord(item.input, 'case.input'),
       expect: item.expect,
+      runtimes,
+      reason,
     };
+    if (scopeFor(scoped, SELF) === null && !(op in OPS)) {
+      throw new Error(`${id}: the corpus names an unknown op ${JSON.stringify(op)}`);
+    }
+    return scoped;
   });
   return { cases };
 }
@@ -677,9 +762,21 @@ function loadCorpus(): Corpus {
 async function buildVerdicts(corpus: Corpus): Promise<Entry[]> {
   const verdicts: Entry[] = [];
   for (const entry of corpus.cases) {
+    // A case that is out of scope is reported as such rather than omitted, so both
+    // runtimes' artefacts list the same ids and a population mismatch still means what
+    // it says.
+    const scopedOut = scopeFor(entry, SELF);
+    if (scopedOut !== null) {
+      verdicts.push({ id: entry.id, status: 'scoped-out', reason: scopedOut });
+      continue;
+    }
     const handler = OPS[entry.op];
     if (handler === undefined) throw new TypeError(`the corpus names no op ${entry.op}`);
-    verdicts.push({ id: entry.id, verdict: clean(await handler(entry.input)) });
+    verdicts.push({
+      id: entry.id,
+      status: 'evaluated',
+      verdict: clean(await handler(entry.input)),
+    });
   }
   return verdicts;
 }
@@ -734,11 +831,12 @@ function isRecord(value: unknown): value is Json {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Every case whose observed verdict disagrees with the corpus. */
+/** Every in-scope case whose observed verdict disagrees with the corpus. */
 function report(corpus: Corpus, verdicts: readonly Entry[]): string[] {
   const expected = new Map(corpus.cases.map((entry) => [entry.id, entry.expect]));
   const failures: string[] = [];
   for (const entry of verdicts) {
+    if (entry.status !== 'evaluated') continue;
     const found = drift(expected.get(entry.id), entry.verdict);
     if (found !== null) failures.push(`${entry.id}: ${found}`);
   }
@@ -753,7 +851,15 @@ function readArtefact(path: string, what: string): Artefact {
     corpusPath: asString(record.corpusPath, `${what}.corpusPath`),
     cases: asArray(record.cases, `${what}.cases`).map((entry) => {
       const item = asRecord(entry, `${what} case`);
-      return { id: asString(item.id, `${what} case id`), verdict: item.verdict };
+      const id = asString(item.id, `${what} case id`);
+      const status = asString(item.status, `${what} case ${id} status`);
+      if (status === 'scoped-out') {
+        return { id, status, reason: asString(item.reason, `${what} case ${id} reason`) };
+      }
+      if (status !== 'evaluated') {
+        throw new Error(`${what}: case ${id} has status ${JSON.stringify(status)}`);
+      }
+      return { id, status, verdict: item.verdict };
     }),
   };
 }
@@ -771,6 +877,11 @@ function firstById(cases: readonly Entry[]): Map<string, Entry> {
  * no independent notion of the expected population: a case the corpus expects but the
  * runner never emitted, an id it invented, or the same id twice all look like a normal
  * run from the inside.
+ *
+ * A runtime's artefact must also agree with the corpus about what that runtime was
+ * asked to evaluate. A runner that skipped a case it was in scope for would otherwise
+ * look like a smaller corpus; naming the disagreement keeps "scoped-out" a claim the
+ * comparator checks rather than one it takes on trust.
  */
 function population(corpus: Corpus, artefact: Artefact): string[] {
   const problems: string[] = [];
@@ -788,6 +899,20 @@ function population(corpus: Corpus, artefact: Artefact): string[] {
   for (const id of [...unknown].sort()) problems.push(`unknown case id ${id}`);
   for (const id of expected.filter((entry) => !seen.has(entry)))
     problems.push(`missing case ${id}`);
+  for (const entry of corpus.cases) {
+    const emitted = artefact.cases.find((item) => item.id === entry.id);
+    if (emitted === undefined) continue;
+    // The scope is resolved against the artefact's own runtime. Resolving it once for
+    // the local runtime is the obvious mistake here, and it has a distinctive symptom:
+    // the other runtime is accused of evaluating cases nobody scoped away from it.
+    const scopedOut = scopeFor(entry, artefact.runtime);
+    if (scopedOut === null && emitted.status !== 'evaluated') {
+      problems.push(`${entry.id}: scoped out by ${artefact.runtime} but in scope for it`);
+    }
+    if (scopedOut !== null && emitted.status !== 'scoped-out') {
+      problems.push(`${entry.id}: ${artefact.runtime} evaluated a case scoped away from it`);
+    }
+  }
   if (artefact.cases.length !== expected.length) {
     problems.push(`${artefact.cases.length} cases but the corpus has ${expected.length}`);
   }
@@ -797,7 +922,13 @@ function population(corpus: Corpus, artefact: Artefact): string[] {
   return problems.map((problem) => `${artefact.runtime}: ${problem}`);
 }
 
-/** The cross-language diff: the claim the conformance suite exists to make. */
+/**
+ * The cross-language diff: the claim the conformance suite exists to make.
+ *
+ * Only cases both runtimes evaluated are compared. A case scoped to one runtime is
+ * checked by that runtime alone; comparing it against a runtime that never ran it would
+ * be an equality over nothing, which is the failure mode the scoping exists to avoid.
+ */
 function comparison(corpus: Corpus, python: Artefact, typescript: Artefact): string[] {
   const pythonById = firstById(python.cases);
   const typescriptById = firstById(typescript.cases);
@@ -807,6 +938,12 @@ function comparison(corpus: Corpus, python: Artefact, typescript: Artefact): str
     const right = typescriptById.get(entry.id);
     if (left === undefined || right === undefined) {
       problems.push(`${entry.id}: emitted by only one runtime`);
+      continue;
+    }
+    if (left.status !== 'evaluated' || right.status !== 'evaluated') {
+      // Legitimately not comparable. Whether that is *legal* was already decided by
+      // `population`, which checks each artefact against its own runtime's scope; this
+      // function only says what can be compared.
       continue;
     }
     const cross = drift(left.verdict, right.verdict);
@@ -839,12 +976,25 @@ async function runMode(corpus: Corpus, output: string | undefined): Promise<numb
   const verdicts = await buildVerdicts(corpus);
   const failures = report(corpus, verdicts);
   const total = corpus.cases.length;
+  const scoped = verdicts.filter((entry) => entry.status === 'scoped-out');
+  const evaluated = total - scoped.length;
   line(`corpus: ${CORPUS_PATH}`);
-  line(`typescript: ${total - failures.length}/${total}`);
+  // The denominator is what this runtime was asked to evaluate, and the scoped count is
+  // printed beside it rather than folded in. A run that silently checked five fewer
+  // cases would otherwise report a full pass over a corpus it had shrunk.
+  line(
+    `typescript: ${evaluated - failures.length}/${evaluated} evaluated (${failures.length} failed), ` +
+      `${scoped.length}/${total} scoped to other runtimes`,
+  );
+  for (const entry of scoped) line(`  out of scope: ${entry.id} -- ${entry.reason ?? ''}`);
   for (const failure of failures) line(`  ${failure}`);
   if (output !== undefined) write(output, corpus, verdicts);
   if (total === 0) {
     line('  the corpus is empty; a run that checks nothing is a failure');
+    return 1;
+  }
+  if (evaluated === 0) {
+    line('  every case was scoped away from this runtime; a run that checks nothing is a failure');
     return 1;
   }
   return failures.length === 0 ? 0 : 1;
@@ -859,31 +1009,49 @@ function compareMode(corpus: Corpus, pythonPath: string, typescriptPath: string)
     ...comparison(corpus, python, typescript),
   ];
   const total = corpus.cases.length;
-  // The counts are compared, not decorated: printing `==` when the counts disagree would
-  // have the first line of a red job assert the very equality that just failed, and a
-  // single relation for both joints would assert a false one in the other direction when
-  // the two runtimes agree with each other but not with the corpus.
-  const runtimesAgree = python.cases.length === typescript.cases.length;
-  const corpusAgrees = typescript.cases.length === total;
+  const pythonById = firstById(python.cases);
+  const typescriptById = firstById(typescript.cases);
+  const evaluatedBy = (artefact: Artefact): number =>
+    artefact.cases.filter((entry) => entry.status === 'evaluated').length;
+  const pythonEvaluated = evaluatedBy(python);
+  const typescriptEvaluated = evaluatedBy(typescript);
+  // What `comparison` actually compared, counted from the same artefacts it read: a case
+  // is compared only when both runtimes evaluated it. Deriving the number rather than
+  // asserting one keeps this summary honest when the scope says one runtime alone owns a
+  // case -- on those the two runtimes are not comparable, and printing `python ==
+  // typescript` over the whole corpus would claim an equality nobody computed.
+  const bothExpected = corpus.cases.filter(
+    (entry) => scopeFor(entry, 'python') === null && scopeFor(entry, 'typescript') === null,
+  ).length;
+  const compared = corpus.cases.filter(
+    (entry) =>
+      pythonById.get(entry.id)?.status === 'evaluated' &&
+      typescriptById.get(entry.id)?.status === 'evaluated',
+  ).length;
   line(`corpus: ${CORPUS_PATH}`);
+  // The relation is printed, not decorated: `==` between counts that differ would have
+  // the first line of a red job assert the very equality that just failed.
+  const relation = pythonEvaluated === typescriptEvaluated ? '==' : '!=';
   line(
-    `population: python ${python.cases.length} ${runtimesAgree ? '==' : '!='} typescript ${typescript.cases.length} ${corpusAgrees ? '==' : '!='} corpus ${total}`,
+    `evaluated: python ${pythonEvaluated}/${total} ${relation} typescript ${typescriptEvaluated}/${total}`,
   );
+  line(`compared: ${compared}/${bothExpected} cases in scope for both runtimes`);
   if (total === 0) {
     line('  the corpus is empty; a comparison of nothing is a failure');
+    return 1;
+  }
+  if (bothExpected === 0) {
+    line('  no case is in scope for both runtimes; a comparison of nothing is a failure');
     return 1;
   }
   // Every problem is printed before the decision, so a run that fails always names
   // the case that failed. An early exit on the first symptom would report "the sizes
   // differ" and leave the missing id to be guessed at.
   for (const problem of problems) line(`  ${problem}`);
-  const sizesDiffer = python.cases.length !== typescript.cases.length;
-  if (sizesDiffer) {
-    line(
-      `  population mismatch: python ${python.cases.length} != typescript ${typescript.cases.length}`,
-    );
+  if (compared !== bothExpected) {
+    line(`  compared ${compared} cases but ${bothExpected} are in scope for both runtimes`);
   }
-  return problems.length === 0 && !sizesDiffer ? 0 : 1;
+  return problems.length === 0 && compared === bothExpected ? 0 : 1;
 }
 
 async function main(argv: readonly string[]): Promise<number> {

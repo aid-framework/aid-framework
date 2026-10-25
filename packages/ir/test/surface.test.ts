@@ -50,7 +50,7 @@ const ir = buildFixture('full.yaml').ir;
 describe('ir/* diagnostics', () => {
   it('names every code ir/<slug>, distinct from the spec namespace', () => {
     const codes = Object.values(IR_DIAGNOSTIC_CODES);
-    expect(codes.length).toBe(50);
+    expect(codes.length).toBe(51);
     expect(new Set(codes).size).toBe(codes.length);
     for (const code of codes) {
       expect(code).toMatch(/^ir\/[a-z0-9-]+$/);
@@ -230,6 +230,7 @@ describe('the gate contract', () => {
       'agents/refs-resolve',
       'agents/handoff-cycles',
       'agents/budgets',
+      'agents/budget-degrade',
       'guardrails/coverage',
       'guardrails/policies',
       'hitl/side-effects',

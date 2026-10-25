@@ -1,0 +1,34 @@
+specVersion: "0.2"
+project:
+  name: degrade-desk
+  namespace: acme.degrade
+  description: An agent whose budget breach is allowed one step down the alias ladder.
+  targets: [py-fastapi]
+models:
+  strong:
+    provider: openai
+    modelId: gpt-4o
+    capabilities: [tools]
+    apiKeyEnv: OPENAI_API_KEY
+    fallbacks: [cheap]
+  cheap:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [tools]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  support_instructions:
+    version: 1
+    model: strong
+    template: "You are a support agent. Never invent an order id."
+    output:
+      kind: text
+agents:
+  support:
+    name: Support Agent
+    instructions: support_instructions
+    model: strong
+    maxSteps: 4
+    maxCostBudget: 0.05
+    onBudgetExhausted: degrade
+    engine: native

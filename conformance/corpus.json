@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Language-neutral conformance corpus for the AID runtimes. One case per behaviour: `id` names it, `op` selects the operation, `input` is the language-neutral fixture and `expect` is the observable outcome. A runner maps `input` onto its own runtime's types, computes `observed` and compares. Floating-point results are rounded to 6 decimal places so that a case pins a behaviour rather than the last bit of one implementation's summation order; non-finite values are the strings \"inf\", \"-inf\" and \"nan\" because JSON has no representation for them. Nothing here is language-specific: no case names a module, a function or a type from either runtime.",
+  "description": "Language-neutral conformance corpus for the AID runtimes. One case per behaviour: `id` names it, `op` selects the operation, `input` is the language-neutral fixture and `expect` is the observable outcome. A runner maps `input` onto its own runtime's types, computes `observed` and compares. Floating-point results are rounded to 6 decimal places so that a case pins a behaviour rather than the last bit of one implementation's summation order; non-finite values are the strings \"inf\", \"-inf\" and \"nan\" because JSON has no representation for them. Nothing here is language-specific: no case names a module, a function or a type from either runtime. A case may carry `runtimes`, the list of runtimes it applies to (absent means all of them), and must then carry a non-empty `reason` unless it applies to every runtime. A runtime that is named must implement the case's `op` -- a scope narrows who is checked, never what is. Each runner reports a case it does not apply as `scoped-out` with that reason rather than omitting it, so both runtimes' verdict artefacts list the same ids and a comparison never claims agreement on a case it did not evaluate.",
   "cases": [
     {
       "id": "alias-pinned-resolution",
@@ -1130,6 +1130,225 @@
         "passed": false,
         "summary": "eval gate FAILED (support-replies@1.0, 3 runs, run-to-run variation: yes)\n  [FAIL] accuracy: mean 0.6100 is below the absolute floor 0.7500 (baseline 0.8000)\n  [ok  ] groundedness: mean 0.8967 vs baseline 0.9000 -- delta +0.0033 is within max_regression 0.0500"
       }
+    },
+    {
+      "id": "agent-step-exhaustion",
+      "op": "agent.steps",
+      "runtimes": ["python"],
+      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L2 ships the native Python engine only, so this case has no TypeScript handler to run against yet.",
+      "description": "An agent that keeps calling tools stops at maxSteps and produces no answer; the step ceiling is a stop condition, not an error and not a retry.",
+      "input": {
+        "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
+        "prompts": [{ "id": "solo", "template": "You are solo." }],
+        "tools": [{ "id": "search", "name": "search" }],
+        "agents": [
+          {
+            "id": "solo",
+            "instructions": "solo",
+            "model": "cheap",
+            "maxSteps": 2,
+            "tools": ["search"]
+          }
+        ],
+        "script": [
+          { "tool": "search", "arguments": { "query": "one" } },
+          { "tool": "search", "arguments": { "query": "two" } },
+          { "text": "never requested, because the ceiling was reached" }
+        ],
+        "question": "Find it."
+      },
+      "expect": {
+        "status": "max-steps",
+        "finalAgent": "solo",
+        "answer": "",
+        "path": ["solo"],
+        "steps": [
+          {
+            "agent": "solo",
+            "kind": "tools",
+            "alias": "cheap",
+            "tools": ["search"],
+            "target": null,
+            "degradedFrom": null
+          },
+          {
+            "agent": "solo",
+            "kind": "tools",
+            "alias": "cheap",
+            "tools": ["search"],
+            "target": null,
+            "degradedFrom": null
+          }
+        ],
+        "degraded": []
+      }
+    },
+    {
+      "id": "agent-budget-hard-fail",
+      "op": "agent.budget",
+      "runtimes": ["python"],
+      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L2 ships the native Python engine only, so this case has no TypeScript handler to run against yet.",
+      "description": "Decision D1: a breached cost ceiling is a hard failure, not a truncated run. With no onBudgetExhausted declaration the agent does not degrade, so the run raises rather than answering from a cheaper model.",
+      "input": {
+        "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
+        "prompts": [{ "id": "solo", "template": "You are solo." }],
+        "agents": [
+          {
+            "id": "solo",
+            "instructions": "solo",
+            "model": "cheap",
+            "maxSteps": 2,
+            "maxCostBudget": 0.000000001
+          }
+        ],
+        "script": [{ "text": "an answer that is never bought" }],
+        "question": "Find it."
+      },
+      "expect": { "error": "budget-exceeded" }
+    },
+    {
+      "id": "agent-transfer-moves-control",
+      "op": "agent.transfer",
+      "runtimes": ["python"],
+      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L2 ships the native Python engine only, so this case has no TypeScript handler to run against yet.",
+      "description": "handoffs is transfer of control. The control tool is named transfer_to_<agent>; calling it means the caller never answers again and the target inherits the conversation, produces the final answer and extends the path.",
+      "input": {
+        "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
+        "prompts": [
+          { "id": "front", "template": "You are the front desk." },
+          { "id": "worker", "template": "You are the specialist." }
+        ],
+        "agents": [
+          {
+            "id": "front",
+            "instructions": "front",
+            "model": "cheap",
+            "maxSteps": 2,
+            "handoffs": ["worker"]
+          },
+          { "id": "worker", "instructions": "worker", "model": "cheap", "maxSteps": 2 }
+        ],
+        "script": [
+          { "tool": "transfer_to_worker", "arguments": { "message": "please finish this" } },
+          { "text": "answered by the specialist" }
+        ],
+        "agent": "front",
+        "question": "Who handles this?"
+      },
+      "expect": {
+        "status": "completed",
+        "finalAgent": "worker",
+        "answer": "answered by the specialist",
+        "path": ["front", "worker"],
+        "steps": [
+          {
+            "agent": "front",
+            "kind": "transfer",
+            "alias": "cheap",
+            "tools": [],
+            "target": "worker",
+            "degradedFrom": null
+          },
+          {
+            "agent": "worker",
+            "kind": "answer",
+            "alias": "cheap",
+            "tools": [],
+            "target": null,
+            "degradedFrom": null
+          }
+        ],
+        "degraded": []
+      }
+    },
+    {
+      "id": "agent-delegate-returns-control",
+      "op": "agent.delegate",
+      "runtimes": ["python"],
+      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L2 ships the native Python engine only, so this case has no TypeScript handler to run against yet.",
+      "description": "delegates is delegation, not transfer. The control tool is named delegate_to_<agent>; the delegate gets an isolated context and its answer arrives back as one observation, so the caller still produces the final answer and the path does not grow.",
+      "input": {
+        "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
+        "prompts": [
+          { "id": "front", "template": "You are the front desk." },
+          { "id": "worker", "template": "You are the specialist." }
+        ],
+        "agents": [
+          {
+            "id": "front",
+            "instructions": "front",
+            "model": "cheap",
+            "maxSteps": 2,
+            "delegates": ["worker"]
+          },
+          { "id": "worker", "instructions": "worker", "model": "cheap", "maxSteps": 2 }
+        ],
+        "script": [
+          { "tool": "delegate_to_worker", "arguments": { "message": "look this up" } },
+          { "text": "the date is 42" },
+          { "text": "answered by the front desk" }
+        ],
+        "agent": "front",
+        "question": "Who handles this?"
+      },
+      "expect": {
+        "status": "completed",
+        "finalAgent": "front",
+        "answer": "answered by the front desk",
+        "path": ["front"],
+        "steps": [
+          {
+            "agent": "front",
+            "kind": "delegate",
+            "alias": "cheap",
+            "tools": [],
+            "target": "worker",
+            "degradedFrom": null
+          },
+          {
+            "agent": "worker",
+            "kind": "answer",
+            "alias": "cheap",
+            "tools": [],
+            "target": null,
+            "degradedFrom": null
+          },
+          {
+            "agent": "front",
+            "kind": "answer",
+            "alias": "cheap",
+            "tools": [],
+            "target": null,
+            "degradedFrom": null
+          }
+        ],
+        "degraded": []
+      }
+    },
+    {
+      "id": "agent-memory-scope",
+      "op": "agent.memory",
+      "runtimes": ["python"],
+      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L2 ships the native Python engine only, so this case has no TypeScript handler to run against yet.",
+      "description": "A user-scoped memory is visible to the next run in the same thread and invisible to another thread, and the model's own prompt is where that difference is observable. The keys are thread ids, not sessions.",
+      "input": {
+        "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
+        "prompts": [{ "id": "solo", "template": "You are solo." }],
+        "memory": [{ "id": "notes", "kind": "buffer", "scope": "user", "tokenBudget": 200 }],
+        "agents": [
+          {
+            "id": "solo",
+            "instructions": "solo",
+            "model": "cheap",
+            "maxSteps": 2,
+            "memory": ["notes"]
+          }
+        ],
+        "script": [{ "text": "alpha" }, { "text": "beta" }, { "text": "gamma" }],
+        "memoryKeys": ["thread-a", "thread-a", "thread-b"],
+        "question": "What did we say?"
+      },
+      "expect": { "answers": ["alpha", "beta", "gamma"], "messagesPerRun": [2, 3, 2] }
     }
   ]
 }

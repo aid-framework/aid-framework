@@ -438,6 +438,11 @@ export const AGENT_ENGINES = ['native', 'deepagents'] as const;
 
 export type AgentEngine = (typeof AGENT_ENGINES)[number];
 
+/** What happens when an agent's budget is exhausted. `fail` is the default. */
+export const AGENT_ON_BUDGET_EXHAUSTED = ['fail', 'degrade'] as const;
+
+export type AgentOnBudgetExhausted = (typeof AGENT_ON_BUDGET_EXHAUSTED)[number];
+
 export interface AgentShape {
   id: string;
   name: string;
@@ -453,6 +458,12 @@ export interface AgentShape {
   maxTokensBudget?: number;
   /** USD. */
   maxCostBudget?: number;
+  /**
+   * `fail` (the default) makes a budget breach a hard failure. `degrade` steps
+   * once to the first cheaper fallback alias; the `agents/budget-degrade` gate
+   * rejects it without a cost ceiling and a strictly cheaper alias.
+   */
+  onBudgetExhausted?: AgentOnBudgetExhausted;
   /** Other agent ids this agent may transfer the conversation to. */
   handoffs: string[];
   /** Other agent ids this agent may delegate a sub-task to. */

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -57,13 +58,31 @@ class Capability(StrEnum):
     RERANK = "rerank"
 
 
+class ToolCall(BaseModel):
+    """A model's request to invoke a tool."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
 class Message(BaseModel):
-    """One turn of a chat transcript."""
+    """One turn of a chat transcript.
+
+    ``tool_calls`` on an assistant turn and ``tool_call_id`` on a tool turn are what
+    make a multi-step tool loop replayable: without them the next request would carry
+    an observation the provider cannot attribute to the call that produced it.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     role: Role
     content: str
+    tool_calls: tuple[ToolCall, ...] = ()
+    tool_call_id: str | None = None
+    name: str | None = None
 
     @classmethod
     def system(cls, content: str) -> Message:
@@ -76,6 +95,14 @@ class Message(BaseModel):
     @classmethod
     def assistant(cls, content: str) -> Message:
         return cls(role="assistant", content=content)
+
+    @classmethod
+    def assistant_tool_calls(cls, content: str, tool_calls: Sequence[ToolCall]) -> Message:
+        return cls(role="assistant", content=content, tool_calls=tuple(tool_calls))
+
+    @classmethod
+    def tool(cls, call_id: str, content: str, *, name: str | None = None) -> Message:
+        return cls(role="tool", content=content, tool_call_id=call_id, name=name)
 
 
 class CostProfile(BaseModel):
@@ -177,16 +204,6 @@ class ToolDefinition(BaseModel):
                 "parameters": self.parameters or {"type": "object", "properties": {}},
             },
         }
-
-
-class ToolCall(BaseModel):
-    """A model's request to invoke a tool."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    id: str = Field(min_length=1)
-    name: str = Field(min_length=1)
-    arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolResult(BaseModel):

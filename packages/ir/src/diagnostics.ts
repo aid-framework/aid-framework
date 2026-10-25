@@ -44,6 +44,7 @@ export const IR_DIAGNOSTIC_CODES = {
   agentsRefUnresolved: 'ir/agents-ref-unresolved',
   agentsHandoffCycle: 'ir/agents-handoff-cycle',
   agentsBudget: 'ir/agents-budget',
+  agentsBudgetDegrade: 'ir/agents-budget-degrade',
   guardrailCoverage: 'ir/guardrail-coverage',
   guardrailPolicy: 'ir/guardrail-policy',
   hitlSideEffect: 'ir/hitl-side-effect',
