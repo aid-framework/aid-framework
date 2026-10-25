@@ -112,7 +112,6 @@ DELEGATE_PREFIX = "delegate_to_"
 #: The one argument a control tool takes: what the other agent needs to know.
 CONTROL_ARGUMENT = "message"
 
-_NATIVE = "native"
 _DEGRADE = "degrade"
 _THREAD = "thread"
 _GLOBAL = "global"

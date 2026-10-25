@@ -22,6 +22,7 @@ extra, so the gates always execute this file.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -139,7 +140,12 @@ async def test_a_declared_handoff_fails_closed_instead_of_degrading() -> None:
 
 
 async def test_a_declared_delegate_is_not_mistaken_for_a_handoff() -> None:
-    """Delegation *is* supported, so the refusal above must be specific to transfer."""
+    """Delegation *is* supported, so the refusal above must be specific to transfer.
+
+    The ``task`` call names both arguments the harness's schema requires: an
+    incomplete call is rejected by validation, the caller simply continues, and the
+    test would then be asserting that an *ordinary* run completes.
+    """
     doc = document(
         models=[model_def("cheap")],
         prompts=[prompt_def("main", PROMPT)],
@@ -150,12 +156,17 @@ async def test_a_declared_delegate_is_not_mistaken_for_a_handoff() -> None:
     )
     harness = build(
         doc,
-        script=[ScriptedTurn.tool("task", {"description": "summarise the order"})],
+        script=[
+            ScriptedTurn.tool(
+                "task", {"description": "summarise the order", "subagent_type": "helper"}
+            )
+        ],
     )
 
     result = await harness.runtime.run("caller", QUESTION)
 
     assert result.completed
+    assert "helper" in {step.agent_id for step in result.steps}
 
 
 # --- the pinning rule, in both directions ---------------------------------------------
@@ -377,6 +388,166 @@ async def test_a_tool_call_guardrail_block_stops_the_harness() -> None:
 
     # The credential never reached the tool body.
     assert recorder.calls == 0
+
+
+# --- guardrails across a delegation boundary ------------------------------------------
+
+CREDENTIAL = "AKIAIOSFODNN7EXAMPLE"
+
+
+def _delegating(
+    *,
+    guardrail: Mapping[str, Any],
+    helper_guardrails: Sequence[str] = (),
+    caller_guardrails: Sequence[str] = (),
+) -> dict[str, Any]:
+    """A deepagents caller with one delegate, and the delegate alone holding ``search``."""
+    return document(
+        models=[model_def("cheap")],
+        prompts=[prompt_def("main", PROMPT)],
+        tools=[tool_def("t1", "search")],
+        guardrails=[guardrail],
+        agents=[
+            agent_def(
+                "caller",
+                engine=DEEPAGENTS,
+                engine_version=PIN,
+                delegates=["helper"],
+                guardrails=list(caller_guardrails),
+            ),
+            agent_def("helper", tools=["t1"], guardrails=list(helper_guardrails)),
+        ],
+    )
+
+
+def _task() -> ScriptedTurn:
+    """The harness's ``task`` call, with both required arguments and no others."""
+    return ScriptedTurn.tool("task", {"description": "look this up", "subagent_type": "helper"})
+
+
+async def test_a_delegates_own_tool_call_guardrail_runs_inside_the_delegation() -> None:
+    """A subagent's middleware comes from its spec, so it has to be in the spec.
+
+    ``_subagents`` used to build ``{name, description, system_prompt, model, tools}``
+    and nothing else, and the harness derives a subagent's middleware list from that
+    same dict. The delegate's graph therefore had no tool-call guardrail at all: this
+    credential reached the tool body with a ``secret-scan`` guardrail declared on the
+    delegate. Authorization was never the gap -- the body's own ``_observe`` still
+    enforced the delegate's grant -- so this is blocking and redaction being lost, and
+    the trace is where the loss is silent.
+    """
+    tracer, exporter = _tracer()
+    tool, recorder = recording_tool()
+    harness = build(
+        _delegating(
+            guardrail=guardrail_def(
+                "g-tool", stages=["tool-call"], policies=["secret-scan"], tools=["t1"]
+            ),
+            helper_guardrails=["g-tool"],
+        ),
+        tools=[tool],
+        script=[_task(), ScriptedTurn.tool("search", {"query": f"the key is {CREDENTIAL}"})],
+        tracer=tracer,
+    )
+
+    with pytest.raises(GuardrailBlockedError, match="g-tool"):
+        await harness.runtime.run("caller", QUESTION)
+
+    # The credential never reached the tool body.
+    assert recorder.calls == 0
+
+    # Delegation really happened, and the block is recorded once, against the
+    # delegate: the harness runs a subagent inline, so the delegate's span has to be
+    # opened around that dispatch or its decision is attributed to the caller.
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    helper = spans["invoke_agent helper"]
+    assert dict(helper.attributes or {})[ATTRIBUTES["agent_engine"]] == DEEPAGENTS
+    events = [event for event in helper.events if event.name == "aid.guardrail"]
+    assert [dict(event.attributes or {})[ATTRIBUTES["guardrail_action"]] for event in events] == [
+        "block"
+    ]
+    caller = spans["invoke_agent caller"]
+    assert not [event for event in caller.events if event.name == "aid.guardrail"]
+
+
+async def test_a_delegates_guardrail_redaction_rewrites_the_arguments_the_tool_receives() -> None:
+    """A redaction that stops at the middleware has not redacted anything."""
+    tool, recorder = recording_tool()
+    harness = build(
+        _delegating(
+            guardrail=guardrail_def(
+                "g-tool",
+                stages=["tool-call"],
+                policies=["secret-scan"],
+                action="redact",
+                redact=["query"],
+                tools=["t1"],
+            ),
+            helper_guardrails=["g-tool"],
+        ),
+        tools=[tool],
+        script=[_task(), ScriptedTurn.tool("search", {"query": f"the key is {CREDENTIAL}"})],
+    )
+
+    result = await harness.runtime.run("caller", QUESTION)
+
+    assert result.completed
+    assert recorder.queries == ["the key is [REDACTED:secret-scan]"]
+    # The delegate's record reaches the run's result, as it does on the native loop.
+    assert [(record.guardrail, record.action) for record in result.guardrails] == [
+        ("g-tool", "redact")
+    ]
+
+
+async def test_a_delegate_keeps_the_grant_its_caller_does_not_have() -> None:
+    """The caller cannot call ``search``; the delegate can, and must still be able to.
+
+    A guardrail bound to the caller's frame would refuse this call on the caller's
+    grant, which would be a false denial: the document grants the tool to the
+    delegate, and the body's ``_observe`` authorizes against the delegate's own frame.
+    """
+    tool, recorder = recording_tool()
+    harness = build(
+        _delegating(
+            guardrail=guardrail_def(
+                "g-tool", stages=["tool-call"], policies=["secret-scan"], tools=["t1"]
+            ),
+            helper_guardrails=["g-tool"],
+        ),
+        tools=[tool],
+        script=[_task(), ScriptedTurn.tool("search", {"query": "delivery"})],
+    )
+
+    result = await harness.runtime.run("caller", QUESTION)
+
+    assert result.completed
+    assert recorder.queries == ["delivery"]
+    assert {step.agent_id for step in result.steps} == {"caller", "helper"}
+
+
+async def test_a_callers_guardrail_does_not_reach_past_the_delegation_boundary() -> None:
+    """The semantic the native loop already has, pinned so the two cannot drift.
+
+    ``_delegate`` opens a frame for the target and drives it, so the target's own
+    ``stage_guardrails("tool-call")`` decides the target's calls and the caller's
+    guardrails do not apply to them. Carrying the caller's guardrails in as well
+    would give one document two meanings depending on its engine, so this asserts
+    the behaviour rather than leaving it to be rediscovered.
+    """
+    tool, recorder = recording_tool()
+    harness = build(
+        _delegating(
+            guardrail=guardrail_def("g-tool", stages=["tool-call"], policies=["secret-scan"]),
+            caller_guardrails=["g-tool"],
+        ),
+        tools=[tool],
+        script=[_task(), ScriptedTurn.tool("search", {"query": f"the key is {CREDENTIAL}"})],
+    )
+
+    result = await harness.runtime.run("caller", QUESTION)
+
+    assert result.completed
+    assert recorder.queries == [f"the key is {CREDENTIAL}"]
 
 
 async def test_maxsteps_exhaustion_reports_the_same_outcome_as_the_native_loop() -> None:

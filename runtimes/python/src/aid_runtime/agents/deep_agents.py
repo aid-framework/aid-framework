@@ -39,21 +39,20 @@ from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
+from opentelemetry.trace import Span, get_current_span
 
 from aid_runtime.agents.chat_model import GatewayChatModel, to_langchain_messages
-from aid_runtime.agents.engine import check_engine
+from aid_runtime.agents.engine import DEEPAGENTS, check_engine
 from aid_runtime.agents.ir import AgentDefinition
 from aid_runtime.agents.loop import _GUARDRAIL_INPUT, _Frame, _Outcome
 from aid_runtime.agents.policy import Principal
 from aid_runtime.agents.state import RunStatus, StepKind, StepRecord
 from aid_runtime.cost import Budget
 from aid_runtime.errors import DeepAgentsEngineError, DeepAgentsMaxStepsError
-from aid_runtime.tracing import record_hitl
+from aid_runtime.tracing import agent_span, record_hitl
 from aid_runtime.types import Capability, Message, ToolCall
 
 if TYPE_CHECKING:
-    from opentelemetry.trace import Span
-
     from aid_runtime.agents.loop import AgentRuntime
 
 __all__ = ["DeepAgentsEngine"]
@@ -243,6 +242,14 @@ class DeepAgentsEngine:
         result to the caller, which is what a delegate is. Each subagent gets its own
         model and its own tool grant, so a delegate cannot inherit the caller's
         allow-list or spend against the caller's step budget.
+
+        Each subagent also carries its own ``_Guardrails``, because the harness builds
+        a subagent's middleware list from the spec and nothing else: an omitted
+        ``middleware`` key means the delegate's graph has no tool-call guardrail at
+        all, and the caller's middleware does not reach inside it. That is the native
+        loop's semantic too -- ``_delegate`` opens a frame for the target and drives
+        it, so the *target's* ``stage_guardrails("tool-call")`` is what runs, and the
+        caller's does not cross the boundary.
         """
         built: list[dict[str, Any]] = []
         for target_id in frame.agent.delegates:
@@ -261,6 +268,20 @@ class DeepAgentsEngine:
                         models=models,
                     ),
                     "tools": self._tools(target, frame=frame, principal=principal, span=span),
+                    "middleware": [
+                        _Guardrails(
+                            self,
+                            _delegate_frame(frame, target),
+                            principal=principal,
+                            # The delegate's span cannot exist yet: the harness runs
+                            # it inline from the `task` call, and the caller's
+                            # middleware opens that span around the dispatch. Resolving
+                            # the then-current span is what keeps the delegate's records
+                            # off the caller's span. See `_delegate_in_span`.
+                            span=None,
+                            memory_key=frame.memory_key,
+                        )
+                    ],
                 }
             )
         return built
@@ -276,9 +297,11 @@ class DeepAgentsEngine:
         """Wrap each declared tool as a harness tool whose body is our executor.
 
         The body is deliberately thin: authorization and the tool-call guardrail run
-        in middleware before it is reached, and execution goes through the same
-        ``ToolExecutor`` the native loop uses. That is what makes a tool call under
-        this engine the same event in the trace as one under the native engine.
+        in the ``_Guardrails`` middleware of whichever agent is calling -- the caller's
+        for the caller's tools, the delegate's own for the delegate's -- and execution
+        goes through the same ``ToolExecutor`` the native loop uses. That is what makes
+        a tool call under this engine the same event in the trace as one under the
+        native engine.
         """
         tools: list[Any] = []
         for tool_id in agent.tools:
@@ -463,6 +486,11 @@ class _Guardrails(AgentMiddleware):
     before the tool body, which is the only point where a decision can still stop the
     call, and it raises rather than returning an observation so the harness cannot
     hand the decision back to the model as something to work around.
+
+    One instance is bound to one frame. The caller's is built with ``_graph``; a
+    delegate's is attached to its subagent spec by ``_subagents`` and bound to the
+    delegate's frame, which is the same split the native loop makes by driving each
+    frame with its own agent's guardrails.
     """
 
     def __init__(
@@ -471,7 +499,7 @@ class _Guardrails(AgentMiddleware):
         frame: _Frame,
         *,
         principal: Principal,
-        span: Span,
+        span: Span | None,
         memory_key: str,
     ) -> None:
         super().__init__()
@@ -481,17 +509,33 @@ class _Guardrails(AgentMiddleware):
         self._span = span
         self._memory_key = memory_key
 
+    @property
+    def _record_span(self) -> Span:
+        """The span this middleware's records belong to.
+
+        The caller's instance is handed the span its frame already opened. A
+        delegate's is not: it is built with the graph, before the harness has run
+        anything, so the delegate's span is opened later, around the ``task``
+        dispatch, and is simply the span current when the delegate's tool call runs.
+        Without that, a delegate's guardrail record would be attributed to the caller.
+        """
+        return self._span if self._span is not None else get_current_span()
+
     async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
         call = _as_call(request)
         runtime = self._engine._runtime
         if call.name == _DELEGATE_TOOL:
             # Delegation is the harness's own dispatch, not a declared tool: there is
-            # no IR entry to authorize or guard against. The delegate runs under its
-            # own grant and its own middleware, so the decision is made there.
-            return await handler(request)
+            # no IR entry to authorize or guard against. It is not unguarded, though.
+            # The subagent spec carries a `_Guardrails` bound to the delegate's frame,
+            # so the delegate's own guardrails decide its tool calls -- the caller's do
+            # not cross the boundary, exactly as the native loop's `_delegate` runs the
+            # target's frame instead of applying the caller's guardrails to it. This
+            # branch only has to open the delegate's span.
+            return await self._delegate_in_span(request, handler, call)
         runtime._authorize(self._frame.agent, call, self._principal)
         guarded, halted = runtime._guardrail_tool_calls(
-            self._frame, [call], self._memory_key, span=self._span
+            self._frame, [call], self._memory_key, span=self._record_span
         )
         if halted is not None:
             raise _HaltError(halted)
@@ -502,6 +546,46 @@ class _Guardrails(AgentMiddleware):
                 tool_call={**request.tool_call, "args": guarded[0].arguments}
             )
         return await handler(request)
+
+    async def _delegate_in_span(self, request: Any, handler: Any, call: ToolCall) -> Any:
+        """Run the harness's delegation inside the delegate's own span.
+
+        The harness runs a subagent inline rather than through ``AgentRuntime._drive``,
+        so this is the one place the delegate's agent span can be opened. Without it the
+        delegate's model spans and guardrail records would all be children of the
+        caller's span, and a decision the delegate made would be reported as one the
+        caller made. A malformed ``task`` call names no delegate and is left alone --
+        the harness rejects those before any subagent runs.
+        """
+        target_id = call.arguments.get("subagent_type")
+        target = (
+            self._engine._runtime.spec.agents.get(target_id) if isinstance(target_id, str) else None
+        )
+        if target is None:
+            return await handler(request)
+        with agent_span(
+            agent_id=target.id, engine=DEEPAGENTS, tracer=self._engine._runtime._tracer
+        ):
+            return await handler(request)
+
+
+def _delegate_frame(caller: _Frame, target: AgentDefinition) -> _Frame:
+    """The frame a delegate's tool calls are decided under.
+
+    The harness keeps a subagent's transcript, so this frame carries no messages: it
+    exists because authorization and the guardrail engine need the target's own agent
+    definition, its position in the run's path and the run's memory key. It shares the
+    caller's ``guardrails`` list so a delegate's records reach the run's result, which
+    is what ``_delegate`` does on the native loop when it extends the caller's list.
+    """
+    return _Frame(
+        agent=target,
+        messages=[],
+        alias=target.model,
+        path=(*caller.path, target.id),
+        memory_key=caller.memory_key,
+        guardrails=caller.guardrails,
+    )
 
 
 def _as_call(request: Any) -> ToolCall:
