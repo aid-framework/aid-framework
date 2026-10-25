@@ -1,10 +1,11 @@
 """Prompt and semantic caching: keys, opt-in reuse, TTL, no charge on hit.
 
-The cache key is ``(model, prompt hash, tool schema hash, temperature)``. Semantic
-reuse is opt-in (explicit threshold and TTL, no silent default) and is gated by the
-*same* structural key, so a prompt change can never resurrect a response computed
-with different tools or a different model. Hits are trace-visible and free: they
-never touch the ledger.
+The cache key is ``(model, prompt transcript hash, tool identity hash, temperature,
+max output tokens, stop sequences)``. Semantic reuse is opt-in (explicit threshold
+and TTL, no silent default) and is gated by the *same* structural key, so a prompt
+change can never resurrect a response computed with different tools, a different
+model, a different cap, or different stop sequences. Hits are trace-visible and
+free: they never touch the ledger.
 """
 
 from __future__ import annotations
@@ -149,7 +150,7 @@ def test_semantic_cache_honours_ttl() -> None:
 
     # Age the stored entry past its TTL by rewriting its stored_at timestamp.
     key = cache_key_for(spec.name, request)
-    entry = cache._entries[(key.model, key.prompt_hash, key.tools_hash, key.temperature)]
+    entry = cache._entries[key]
     entry.stored_at -= 2.0
 
     assert cache.semantic_get(spec, request, threshold=0.5, ttl_seconds=1) is None
@@ -221,3 +222,90 @@ async def test_completion_cache_does_not_coalesce_inflight_requests() -> None:
     # Both observed the cold cache before either result was stored, so neither
     # silently shares the other's half-populated entry.
     assert all(not result.cache_hit for result in results)
+
+
+async def test_cache_is_keyed_by_max_output_tokens() -> None:
+    provider = FakeProvider(name="fake")
+    gateway = _gateway(_spec(cache=ModelCacheConfig(prompt=True)), provider=provider)
+    uncapped = CompletionRequest.prompt("hello")
+    capped = uncapped.model_copy(update={"max_output_tokens": 5})
+
+    first = await gateway.generate("m", uncapped)
+    second = await gateway.generate("m", capped)
+
+    assert first.cache_hit is False
+    assert second.cache_hit is False, "a different output cap must not reuse a cached body"
+    assert len(provider.calls) == 2, "the capped request must reach the provider"
+
+
+async def test_cache_is_keyed_by_stop_sequences() -> None:
+    provider = FakeProvider(name="fake")
+    gateway = _gateway(_spec(cache=ModelCacheConfig(prompt=True)), provider=provider)
+    plain = CompletionRequest.prompt("hello")
+    stopped = plain.model_copy(update={"stop": ("WORD",)})
+
+    first = await gateway.generate("m", plain)
+    second = await gateway.generate("m", stopped)
+
+    assert first.cache_hit is False
+    assert second.cache_hit is False, "a different stop set must not reuse a cached body"
+    assert len(provider.calls) == 2, "the stopped request must reach the provider"
+
+
+async def test_cache_is_keyed_by_tool_name_and_description() -> None:
+    provider = FakeProvider(name="fake")
+    gateway = _gateway(_spec(cache=ModelCacheConfig(prompt=True)), provider=provider)
+    parameters = {"type": "object", "properties": {"id": {"type": "string"}}}
+    lookup = CompletionRequest.prompt("hello").model_copy(
+        update={
+            "tools": (
+                ToolDefinition(
+                    name="lookup_customer",
+                    description="Find a customer by id",
+                    parameters=parameters,
+                ),
+            )
+        }
+    )
+    refund = CompletionRequest.prompt("hello").model_copy(
+        update={
+            "tools": (
+                ToolDefinition(
+                    name="issue_refund",
+                    description="Refund a customer's order",
+                    parameters=parameters,
+                ),
+            )
+        }
+    )
+
+    # Identical parameters must still hash differently when identity differs.
+    assert cache_key_for("m", lookup).tools_hash != cache_key_for("m", refund).tools_hash
+
+    first = await gateway.generate("m", lookup)
+    second = await gateway.generate("m", refund)
+
+    assert first.cache_hit is False
+    assert second.cache_hit is False, "a different tool identity must not reuse a cached body"
+    assert len(provider.calls) == 2, "the second tool set must reach the provider"
+    assert provider.calls[-1].tools[-1].name == "issue_refund"
+
+
+async def test_semantic_cache_does_not_cross_a_differing_cap_or_stop() -> None:
+    provider = FakeProvider(name="fake")
+    gateway = _gateway(
+        _spec(cache=ModelCacheConfig(semantic=SemanticCacheConfig(threshold=0.5, ttl_seconds=60))),
+        provider=provider,
+    )
+    base = CompletionRequest.prompt("capital of France")
+    capped = base.model_copy(update={"max_output_tokens": 5})
+    stopped = base.model_copy(update={"stop": ("paris",)})
+
+    first = await gateway.generate("m", base)
+    second = await gateway.generate("m", capped)
+    third = await gateway.generate("m", stopped)
+
+    assert first.cache_hit is False
+    assert second.cache_hit is False, "the semantic gate must compare the output cap"
+    assert third.cache_hit is False, "the semantic gate must compare the stop set"
+    assert len(provider.calls) == 3, "neither request may reuse the uncapped body"
