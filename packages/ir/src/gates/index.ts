@@ -15,7 +15,12 @@ import { deriveRequiredCapabilities } from '../capabilities.js';
 import { phase0TargetCapabilities } from '../catalog/index.js';
 import type { IrDiagnostic } from '../diagnostics.js';
 import type { IR } from '../shapes.js';
-import { agentsBudgetGate, agentsHandoffGate, agentsRefsGate } from './agents.js';
+import {
+  agentsBudgetDegradeGate,
+  agentsBudgetGate,
+  agentsHandoffGate,
+  agentsRefsGate,
+} from './agents.js';
 import { capabilityGate } from './capability.js';
 import type { Gate, GateOptions, GateReporter, GateResult, SuppressedCheck } from './contract.js';
 import { costGate } from './cost.js';
@@ -39,6 +44,7 @@ export const GATES = {
   'agents/refs-resolve': agentsRefsGate,
   'agents/handoff-cycles': agentsHandoffGate,
   'agents/budgets': agentsBudgetGate,
+  'agents/budget-degrade': agentsBudgetDegradeGate,
   'guardrails/coverage': guardrailCoverageGate,
   'guardrails/policies': guardrailPolicyGate,
   'hitl/side-effects': hitlSideEffectGate,
@@ -95,6 +101,7 @@ export { diffPaths, isNormalized, normalize } from './normalize.js';
 export { policyAuthenticates } from './security.js';
 export type { Gate, GateName as GateId, GateOptions, GateReporter, GateResult, SuppressedCheck };
 export {
+  agentsBudgetDegradeGate,
   agentsBudgetGate,
   agentsHandoffGate,
   agentsRefsGate,

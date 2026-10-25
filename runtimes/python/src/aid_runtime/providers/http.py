@@ -21,6 +21,7 @@ from aid_runtime.types import (
     CompletionRequest,
     CompletionResponse,
     FinishReason,
+    Message,
     ModelSpec,
     TokenUsage,
     ToolCall,
@@ -96,7 +97,7 @@ class OpenAICompatibleProvider:
     def _build_payload(self, request: CompletionRequest, model: ModelSpec) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model.name,
-            "messages": [message.model_dump(mode="json") for message in request.messages],
+            "messages": [_message_payload(message) for message in request.messages],
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
@@ -240,3 +241,30 @@ def _decode_arguments(raw: Any) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return decoded if isinstance(decoded, dict) else {}
+
+
+def _message_payload(message: Message) -> dict[str, Any]:
+    """One OpenAI chat message, omitting fields the transcript did not set.
+
+    Single-turn requests must keep the exact ``{"role", "content"}`` shape they had
+    before tool bookkeeping existed, so absent fields are omitted rather than sent
+    as ``null``/``[]``.
+    """
+    payload: dict[str, Any] = {"role": message.role, "content": message.content}
+    if message.tool_calls:
+        payload["tool_calls"] = [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": json.dumps(call.arguments, sort_keys=True),
+                },
+            }
+            for call in message.tool_calls
+        ]
+    if message.tool_call_id is not None:
+        payload["tool_call_id"] = message.tool_call_id
+    if message.name is not None:
+        payload["name"] = message.name
+    return payload

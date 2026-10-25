@@ -119,6 +119,7 @@ export {
 export { CANONICAL_INDENT, canonicalJson, serializeIR } from './serialize.js';
 export type {
   AgentEngine,
+  AgentOnBudgetExhausted,
   AgentShape,
   CostProfile,
   DeploymentShape,
@@ -166,6 +167,7 @@ export type {
 } from './shapes.js';
 export {
   AGENT_ENGINES,
+  AGENT_ON_BUDGET_EXHAUSTED,
   DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_OBSERVABILITY,
   DEFAULT_RUNTIME,

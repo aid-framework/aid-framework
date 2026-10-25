@@ -149,6 +149,32 @@ class ModelGateway:
 
         raise ProviderError(f"no candidate produced a response: {'; '.join(errors)}")
 
+    def projected_cost_usd(self, alias: str, request: CompletionRequest) -> float:
+        """Spend so far plus the prompt price of ``request`` on ``alias``.
+
+        This is the *same* estimate :meth:`_preflight` refuses on, exposed so an
+        agent loop can decide to route to a cheaper alias before the gateway would
+        refuse the call. One estimate, one accounting path.
+        """
+        spec = self.resolve(alias).spec
+        return self._ledger.cost_usd + sum(
+            estimate_prompt_cost_usd(spec, message.content) for message in request.messages
+        )
+
+    def fits(self, alias: str, request: CompletionRequest, budget: Budget | None) -> bool:
+        """Whether ``request`` on ``alias`` still fits ``budget``'s dollar ceiling.
+
+        Only dollars are projected: switching *alias* changes price, never token
+        count, so token ceilings cannot be improved by a cheaper model. A budget
+        with only a token ceiling therefore always "fits" here and is enforced by
+        :meth:`CostLedger.charge`, exactly as the gateway does it.
+        """
+        if budget is None or budget.max_usd is None:
+            return True
+        if self._ledger.cost_usd > budget.max_usd:
+            return False
+        return self.projected_cost_usd(alias, request) <= budget.max_usd
+
     async def stream(self, alias: str, request: CompletionRequest) -> None:
         """Declared but not implemented; see the module docstring."""
         raise FeatureDeferredError(
@@ -216,9 +242,7 @@ class ModelGateway:
         """
         if budget.max_usd is None:
             return
-        projected = self._ledger.cost_usd + sum(
-            estimate_prompt_cost_usd(pinned.spec, message.content) for message in request.messages
-        )
+        projected = self.projected_cost_usd(pinned.alias, request)
         if projected > budget.max_usd:
             raise BudgetExceededError(budget.scope, budget.max_usd, projected)
 

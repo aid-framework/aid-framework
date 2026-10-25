@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 __all__ = [
+    "AgentBudgetDegradedError",
+    "AgentTransferCycleError",
     "AidRuntimeError",
     "BudgetExceededError",
     "CapabilityMismatchError",
@@ -18,6 +20,7 @@ __all__ = [
     "FeatureDeferredError",
     "GateConfigurationError",
     "PipelineError",
+    "PolicyEvaluationError",
     "PromptNotFoundError",
     "PromptRenderError",
     "ProviderError",
@@ -162,6 +165,35 @@ class ToolExecutionError(AidRuntimeError):
 
 class PipelineError(AidRuntimeError):
     """A pipeline step failed or the pipeline was wired incorrectly."""
+
+
+class PolicyEvaluationError(AidRuntimeError):
+    """A parsed ``PolicyExpr`` referenced something the evaluator cannot decide.
+
+    The IR's policy grammar is closed, and a comparison between incompatible
+    values has no truth value. Failing closed here is what keeps a HITL gate from
+    silently deciding *not* to ask for approval.
+    """
+
+
+class AgentTransferCycleError(AidRuntimeError):
+    """A transfer chain revisited an agent that already held control.
+
+    ``agents/handoff-cycles`` rejects this at build time; the runtime refuses it
+    again rather than trusting that every caller came through the gate.
+    """
+
+    def __init__(self, path: Sequence[str]) -> None:
+        super().__init__(f"transfer cycle: {' -> '.join(path)}")
+        self.path = tuple(path)
+
+
+class AgentBudgetDegradedError(AidRuntimeError):
+    """A budget was crossed and there is no cheaper alias left to route to.
+
+    ``ir/agents-budget-degrade`` rejects this at build time for declared specs;
+    this is the run-time counterpart for a hand-built IR.
+    """
 
 
 class EvalError(AidRuntimeError):

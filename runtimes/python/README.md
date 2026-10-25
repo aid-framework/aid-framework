@@ -26,13 +26,14 @@ pip install -e ".[pgvector]"   # only if you want the pgvector store adapter
 | `structured.py` | `build_agent` — structured output via Pydantic AI only |
 | `tools.py` | `Tool` / `ToolExecutor` — declared definitions, argument validation, structured results |
 | `pipeline.py` | `Pipeline` / `PipelineContext` — plain-async named steps over a frozen context |
+| `agents/` | The native agent runtime: `AgentRuntime` — the loop, transfer vs. delegate, step/token/cost budgets with bounded degrade, memory, and a checkpointed human-in-the-loop pause |
 | `retrieval/` | Retrieval: connectors, chunkers, the `Embedder` / `Reranker` / `VectorStore` protocols, hybrid fusion, citations, and retrieval metrics |
 | `evals/` | Datasets, metrics, and the statistical baseline gate |
-| `tracing.py` | OTel GenAI spans: `llm_span`, `record_usage`, `record_cost`, `record_exception` |
-| `cost.py` | `Budget`, `CostLedger`, `estimate_cost_usd` |
+| `tracing.py` | OTel GenAI spans: `llm_span`, `agent_span`, `record_usage`, `record_cost`, `record_attributes`, `record_hitl`, `record_exception` |
+| `cost.py` | `Budget`, `CostLedger`, `estimate_cost_usd`, `estimate_tokens` |
 | `types.py` | The request/response/usage/spec models everything else is typed against |
 
-169 names are exported from `aid_runtime`. The layering is acyclic and one-directional: `errors` and `types` import
+194 names are exported from `aid_runtime`. The layering is acyclic and one-directional: `errors` and `types` import
 nothing else in the package, `gateway` is imported only by the package `__init__` and the eval runner, and no
 core module imports a higher layer back.
 
@@ -162,12 +163,39 @@ the supported early exit.
 
 **Pydantic AI is used for structured output and nothing else** (`structured.build_agent`). The orchestration
 library stays out of the control-flow path deliberately, so it remains swappable, and **no graph/orchestration
-dependency is taken at all**: agent loops, escalation routing and orchestration frameworks are deferred to
-Phase 2 ([`docs/design.md` §14](../../docs/design.md)).
+dependency is taken at all**: the agent loop in `agents/` is this package's own, and escalation routing and
+third-party orchestration frameworks remain out of scope ([`docs/design.md` §14](../../docs/design.md)).
 
 Tracing follows the OTel GenAI semantic conventions: `gen_ai.*` attributes for the operation, model, provider,
 request parameters and usage, with AID-specific values namespaced `aid.*` so the two never collide. A failing
 call records its exception exactly once.
+
+## The agent runtime
+
+`AgentRuntime.from_ir(document, providers=..., ...)` reads the emitted IR and runs an agent to a stop
+condition: model call, tool calls, observations, until a terminal answer, `maxSteps`, or a budget breach.
+Model calls go through `ModelGateway`, so fallback, cost accounting and tracing apply without a second
+implementation.
+
+**Transfer and delegation are different, and the API says which.** `_transfer` (`handoffs`) hands the
+conversation to the target and never resumes the caller, so `RunResult.agent_id` is the target and `path`
+grows. `_delegate` (`delegates`) runs the target in an isolated `[system, user]` context and returns its answer
+as a single tool observation, so `RunResult.agent_id` is the caller and `path` is unchanged. Both refuse to
+re-enter an agent already on the path.
+
+**A budget breach fails hard.** `BudgetExceededError` stops the run; the gateway preflight and the ledger both
+enforce the ceiling. An agent declaring `onBudgetExhausted: 'degrade'` (v0.2) instead steps exactly one rung
+down its declared alias ladder — no retry loop, and the build-time gate rejects the declaration when no
+strictly cheaper alias exists. Each degraded step is recorded in `StepRecord.degraded_from`, and a checkpoint
+carries its current alias so a resumed run re-routes from where it stopped.
+
+**Memory** is in-process plus one store-backed adapter. `thread` scope is the checkpointer unit: trimmed to its
+`tokenBudget`, never written to a store. `user` and `global` scopes read and write the store and render as one
+extra system message, so injection is visible in the request rather than hidden.
+
+**Human-in-the-loop** pauses by returning a checkpoint (completed steps, pending call, current alias), and
+`resume(checkpoint, decision)` continues it. The pause is recorded as an `aid.hitl` span event, not an
+attribute, because a run can pause more than once.
 
 ## Development
 

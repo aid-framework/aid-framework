@@ -823,6 +823,7 @@
         "maxSteps": { "type": "integer", "minimum": 1 },
         "maxTokensBudget": { "type": "integer", "minimum": 1 },
         "maxCostBudget": { "type": "number", "minimum": 0 },
+        "onBudgetExhausted": { "enum": ["fail", "degrade"] },
         "handoffs": { "type": "array", "items": { "type": "string" } },
         "delegates": { "type": "array", "items": { "type": "string" } },
         "engine": { "enum": ["native", "deepagents"] },

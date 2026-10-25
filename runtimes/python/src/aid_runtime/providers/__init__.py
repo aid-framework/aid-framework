@@ -8,7 +8,7 @@ deliberately out of scope.
 from __future__ import annotations
 
 from aid_runtime.providers.base import Provider
-from aid_runtime.providers.fake import FakeProvider
+from aid_runtime.providers.fake import FakeProvider, ScriptedTurn
 from aid_runtime.providers.http import DEFAULT_BASE_URL, OpenAICompatibleProvider
 
 __all__ = [
@@ -16,4 +16,5 @@ __all__ = [
     "FakeProvider",
     "OpenAICompatibleProvider",
     "Provider",
+    "ScriptedTurn",
 ]

@@ -801,6 +801,10 @@
         "maxSteps": { "type": "integer", "minimum": 1 },
         "maxTokensBudget": { "type": "integer", "minimum": 1 },
         "maxCostBudget": { "type": "number", "exclusiveMinimum": 0 },
+        "onBudgetExhausted": {
+          "description": "What a budget breach does. `fail` (the default) is a hard failure. `degrade` steps once to the first cheaper fallback alias; it requires maxCostBudget and a cheaper fallback, which the agents gate enforces at build time.",
+          "enum": ["fail", "degrade"]
+        },
         "handoffs": {
           "description": "Agents this one may transfer the conversation to; the receiving agent owns the rest of the turn.",
           "type": "array",

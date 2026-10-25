@@ -22,6 +22,7 @@ __all__ = [
     "SpendSummary",
     "estimate_cost_usd",
     "estimate_prompt_cost_usd",
+    "estimate_tokens",
 ]
 
 # Prices are quoted per 1k tokens, so a call costs fractions of a cent. Six
@@ -75,6 +76,11 @@ class SpendSummary(BaseModel):
         return self.input_tokens + self.output_tokens
 
 
+def estimate_tokens(text: str) -> int:
+    """Four characters per token, the same over-estimate used before a call."""
+    return (len(text) + 3) // 4
+
+
 def estimate_cost_usd(spec: ModelSpec, usage: TokenUsage) -> float:
     """Price a call against a pinned model's published cost."""
     return spec.cost.cost_usd(usage)
@@ -87,7 +93,7 @@ def estimate_prompt_cost_usd(spec: ModelSpec, text: str) -> float:
     deliberately an over-estimate: refusing a call that would have fit is a
     recoverable annoyance; overshooting a hard budget is not.
     """
-    estimated = TokenUsage(input_tokens=(len(text) + 3) // 4, output_tokens=0)
+    estimated = TokenUsage(input_tokens=estimate_tokens(text), output_tokens=0)
     return spec.cost.cost_usd(estimated)
 
 

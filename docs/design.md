@@ -475,10 +475,12 @@ type AgentShape = {
   maxSteps: number;
   maxTokensBudget?: number;
   maxCostBudget?: number;          // USD
-  handoffs: string[];              // other agent ids
-  delegates: string[];             // other agent ids this one may delegate a sub-task to
+  handoffs: string[];              // other agent ids; transfer of control (this agent stops talking)
+  delegates: string[];             // other agent ids this one may delegate a sub-task to (control returns)
   engine: AgentEngine;             // who owns the loop; `deepagents` needs a pinned version
   engineVersion?: string;
+  /** v0.2 only. `fail` (default) is a hard stop; `degrade` steps one rung down the alias ladder. */
+  onBudgetExhausted?: 'fail' | 'degrade';
   humanInTheLoop?: { when: PolicyExpr; channel: string };
   traits: Trait[];
 };
@@ -597,6 +599,77 @@ no network, no key, no database.
 4. **Cost/latency sanity** — estimated per-run cost vs. declared budgets; warn/fail on models without a `costProfile`. *Retrieval:* a `retrieve` step is charged `topK` chunks × the tokens in one chunk to the embedding model that serves it, so a wide `topK` over large chunks shows up in the estimate instead of being free by omission.
 5. **Security gates** — every `write`/`destructive` tool has an `auth`; every pipeline touching untrusted input has an input guardrail; every trace config redacts declared PII fields. Fail-closed by default. *Retrieval:* a store's `uri` must be `env:NAME`, and no store or retriever may carry a literal DSN or an inline credential in its authority — a literal fails **closed**.
 6. **Eval coverage** — every agent/prompt marked `ci` has a dataset and at least one metric; a spec change without a linked eval warns. *Retrieval:* a spec that declares a retriever must carry at least one eval with a `retrieval` metric, because an `exact-match` eval only sees the answer retrieval fed into and says nothing about whether the right chunks came back.
+
+### 7.5 Agent runtime semantics (Phase 2 L2)
+
+An agent's `engine: native` runs a loop the framework owns: model call, tool calls, observations, repeat
+until a terminal answer, `maxSteps`, or a budget breach. The loop consumes the emitted IR the same way
+the pipeline runtime does and goes through the model gateway, so fallback, cost accounting and tracing
+apply to agent runs by construction rather than by a second implementation.
+
+#### Transfer is not delegation
+
+These are two different control-flow shapes, and the IR gives them two different fields because
+collapsing them into one word ("handoff") hides the difference that matters to whoever has to debug it.
+
+| | `handoffs` — **transfer** | `delegates` — **delegation** |
+| --- | --- | --- |
+| Runtime primitive | `_transfer` (`transfer_to_<agent>` tool) | `_delegate` (`delegate_to_<agent>` tool) |
+| Who holds the conversation afterwards | the target agent | the calling agent |
+| Context the target sees | the caller's messages, minus system prompts | a fresh `[system, user(message)]` |
+| Control returns to the caller? | no — the caller never runs again | yes, as one tool observation |
+| `RunResult.agent_id` | the target | the caller |
+| `RunResult.path` | grows by the target | unchanged |
+| Who produces the final answer | the target | the caller |
+
+Read the last three rows as the observable contract: after a **transfer** the run belongs to the target
+(`agent_id` is the target, `path` is `[caller, target]`), and after a **delegate** it still belongs to the
+caller (`agent_id` is the caller, `path` is `[caller]`, and the target's answer arrives as a `tool`
+message the caller may ignore). A reader who confuses the two will expect the wrong agent in the trace and
+the wrong message history at the next turn. The runtime primitive names are deliberately mechanical
+(`transfer_to_*` / `delegate_to_*`, `_transfer` / `_delegate`) so that neither reads as a synonym for the
+other.
+
+Both refuse to re-enter an agent already on the run's `path`, so a cycle is a named error rather than
+infinite recursion. An agent may not list the same target in both fields, and may not target itself —
+both are build-time gate failures.
+
+#### Budgets: hard failure by default, bounded degrade on request (closes open question #7)
+
+A budget breach is a **hard failure**. The runtime raises `BudgetExceededError` and the run stops; it does
+not silently continue cheaper, because a run that quietly produces a different answer under a different
+model is worse than one that stops and says so. This is enforced by the gateway's preflight *and* by the
+ledger, so a single call cannot overshoot its ceiling.
+
+An agent may opt into `onBudgetExhausted: 'degrade'`, which routes the *next* step to the next cheaper
+alias in the declared ladder instead of failing. The degrade is deliberately small:
+
+- **One documented step.** The runtime picks the first strictly cheaper fallback of the agent's alias.
+  There is no retry loop and no cascade: if that step also breaches, the run fails hard. A "keep trying
+  cheaper models" loop would turn a cost control into an unbounded search with an unbounded bill.
+- **Fail closed at build time.** `degrade` with no cheaper alias available is a gate error, not a runtime
+  surprise — the spec author learns at build time that the escape hatch has nowhere to go.
+- **Observable.** Each degraded step is recorded in `StepRecord.degraded_from`, and `RunResult.degraded`
+  lists the `(from, to)` pairs, so a reader of the trace can see the run did not answer on the alias it was
+  declared with. A checkpointed (paused) run carries its current alias, so resuming re-routes from where
+  it was instead of snapping back to the dear alias.
+
+`onBudgetExhausted` is a v0.2 field. It appears in no v0.1 emitted artefact, so v0.1 golden outputs are
+byte-identical to before this layer.
+
+#### Memory and human-in-the-loop
+
+Memory is in-process plus exactly one store-backed adapter — no plugin taxonomy. `scope: thread` is the
+checkpointer unit: it is trimmed to its `tokenBudget` and never written to a store, because a thread's
+history *is* the run's message list. `scope: user` and `scope: global` read and write the store, and are
+rendered as one extra system message, so memory injection is visible as a change in the request the model
+receives rather than as hidden state.
+
+A run pauses when the agent declares `humanInTheLoop` and the caller does not satisfy its `when` policy.
+The pause returns a checkpoint carrying the completed steps, the pending tool call and the current alias;
+`resume(checkpoint, decision)` continues from there. The pause is a span *event* (`aid.hitl`) rather than
+an attribute, because a run may pause and resume more than once and an attribute would keep only the last
+decision.
 
 ---
 
@@ -940,7 +1013,7 @@ the layers that follow.)*
 4. **Provider abstraction depth** — lowest-common (OpenAI-compatible) vs. native features (Anthropic prompt caching, OpenAI structured outputs)? (Recommend: capability negotiation; native when declared and supported.)
 5. **Local-first dev story** — default to Ollama for `aid dev`, hosted for prod?
 6. **Default vector store** — pgvector (co-located, one fewer service) vs. a managed store? (Recommend: pgvector default.)
-7. **Budget enforcement** — hard fail vs. graceful degrade (route to a cheaper alias) when a cost/latency budget is hit?
+7. ~~**Budget enforcement** — hard fail vs. graceful degrade (route to a cheaper alias) when a cost/latency budget is hit?~~ **Closed in Phase 2 L2 (§7.5).** Hard failure is the default, because a run that silently answers on a different model is worse than one that stops. An agent may opt into `onBudgetExhausted: 'degrade'`, which steps exactly one rung down the declared alias ladder with no retry loop, must name a strictly cheaper fallback (enforced at build time, so the escape hatch cannot have nowhere to go), and is recorded in the trace as `degraded_from` so the degrade is observable rather than inferred.
 8. **Fine-tuning scope** — in-scope at Phase 4, or leave entirely to the ecosystem?
 9. **Prompt rollout** — canary/A-B routing of prompt versions tied to live evals?
 10. **Safety corpus** — build our own red-team suite or adopt an existing one?
