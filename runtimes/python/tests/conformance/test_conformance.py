@@ -32,6 +32,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from aid_runtime import (
+    AgentHandoffUnsupportedError,
     AgentRuntime,
     AidRuntimeError,
     BaselineGate,
@@ -39,8 +40,11 @@ from aid_runtime import (
     BudgetExceededError,
     Capability,
     CapabilityMismatchError,
+    ConfigurationError,
     CostLedger,
     CostProfile,
+    DeepAgentsUnavailableError,
+    DeepAgentsVersionMismatchError,
     DistanceMetric,
     EvalBaseline,
     EvalRun,
@@ -494,7 +498,7 @@ _QUERY_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
-_AGENT_FIELDS = ("maxCostBudget", "maxTokensBudget", "onBudgetExhausted")
+_AGENT_FIELDS = ("maxCostBudget", "maxTokensBudget", "onBudgetExhausted", "engineVersion")
 
 
 def _agent_document(data: Mapping[str, Any]) -> dict[str, Any]:
@@ -694,6 +698,35 @@ def _agent_memory(data: Mapping[str, Any]) -> dict[str, Any]:
     return asyncio.run(run())
 
 
+def _agent_engine(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Which backend an ``engine`` selection resolves to, or why the seam refuses.
+
+    Every refusal this reports is decided before the optional extra is imported, so
+    the verdict does not depend on whether ``deepagents`` happens to be installed:
+    transfer is native-only, and a ``deepagents`` agent must name the release this
+    runtime was built against. An engine that does start is reported as such rather
+    than as a run, because what a started engine then does is pinned by the
+    ``agent.*`` cases that the native loop answers for both backends.
+    """
+
+    async def run() -> dict[str, Any]:
+        runtime, _ = _agent_runtime(data)
+        agent = str(data.get("agent", "solo"))
+        try:
+            result = await runtime.run(agent, str(data["question"]))
+        except AgentHandoffUnsupportedError as exc:
+            return {"error": "handoff-unsupported", "agent": exc.agent, "engine": exc.engine}
+        except DeepAgentsVersionMismatchError as exc:
+            return {"error": "version-mismatch", "agent": exc.agent, "declared": exc.declared}
+        except DeepAgentsUnavailableError:
+            return {"error": "engine-unavailable", "agent": agent}
+        except ConfigurationError:
+            return {"error": "unknown-engine", "agent": agent}
+        return _agent_verdict(result)
+
+    return asyncio.run(run())
+
+
 _OPS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     "alias.resolve": _alias_resolve,
     "alias.unknown": _alias_unknown,
@@ -718,6 +751,7 @@ _OPS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     "agent.transfer": _agent_loop,
     "agent.delegate": _agent_loop,
     "agent.memory": _agent_memory,
+    "agent.engine": _agent_engine,
     "agent.guardrail": _agent_guardrail,
 }
 

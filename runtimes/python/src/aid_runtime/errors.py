@@ -11,11 +11,16 @@ from collections.abc import Sequence
 
 __all__ = [
     "AgentBudgetDegradedError",
+    "AgentHandoffUnsupportedError",
     "AgentTransferCycleError",
     "AidRuntimeError",
     "BudgetExceededError",
     "CapabilityMismatchError",
     "ConfigurationError",
+    "DeepAgentsEngineError",
+    "DeepAgentsMaxStepsError",
+    "DeepAgentsUnavailableError",
+    "DeepAgentsVersionMismatchError",
     "EvalError",
     "FeatureDeferredError",
     "GateConfigurationError",
@@ -229,6 +234,98 @@ class AgentBudgetDegradedError(AidRuntimeError):
 
 class EvalError(AidRuntimeError):
     """An eval run could not be completed."""
+
+
+class AgentHandoffUnsupportedError(AidRuntimeError):
+    """An agent asked for ``handoffs`` on an engine that has no transfer primitive.
+
+    Deep Agents has ``subagents`` -- delegation that *returns* -- and no transfer:
+    control never moves, the caller always resumes and always authors the final
+    answer. Emulating transfer with a delegate would change who answers, so the
+    engine refuses instead of silently degrading ``handoffs`` into a delegate.
+    Transfer therefore stays native-only, and the IR gate plus this error are the
+    two places that say so.
+    """
+
+    def __init__(self, agent: str, targets: Sequence[str], engine: str) -> None:
+        super().__init__(
+            f"agent {agent!r} declares handoffs {list(targets)} but runs on the {engine!r} "
+            "engine, which has no transfer primitive; transfer is native-only, and "
+            "delegation (delegates) is the deepagents equivalent"
+        )
+        self.agent = agent
+        self.targets = tuple(targets)
+        self.engine = engine
+
+
+class DeepAgentsEngineError(AidRuntimeError):
+    """The ``deepagents`` engine cannot be used as configured.
+
+    Base class so a caller can catch "the backend refused to start" without
+    enumerating the two reasons it can refuse.
+    """
+
+
+class DeepAgentsUnavailableError(DeepAgentsEngineError):
+    """The ``deepagents`` optional extra is not installed.
+
+    A named error rather than an ``ImportError`` because the fix is an install
+    instruction the caller can act on, and because an agent silently falling back
+    to the native loop would leave ``engine`` in the IR meaning nothing.
+    """
+
+    def __init__(self, extra: str, distribution: str) -> None:
+        super().__init__(
+            f"this agent runs on the 'deepagents' engine, but the {distribution!r} package "
+            f"is not installed; install the extra with: pip install '{extra}'"
+        )
+        self.extra = extra
+        self.distribution = distribution
+
+
+class DeepAgentsMaxStepsError(DeepAgentsEngineError):
+    """The harness asked for one model call more than ``maxSteps`` allows.
+
+    Raised by the adapter rather than the harness, because the harness's own call
+    limiter does not fail: it appends a synthetic "model call limits exceeded"
+    answer and lets the run finish, which would report an exhausted agent as a
+    successful one. The engine translates this into ``RunStatus.MAX_STEPS``, the
+    same outcome the native loop reports for the same condition.
+    """
+
+    def __init__(self, alias: str, max_steps: int) -> None:
+        super().__init__(
+            f"the deepagents harness requested model call {max_steps + 1} on alias "
+            f"{alias!r}, exceeding maxSteps {max_steps}; the run is exhausted"
+        )
+        self.alias = alias
+        self.max_steps = max_steps
+
+
+class DeepAgentsVersionMismatchError(DeepAgentsEngineError):
+    """``engineVersion`` does not match the release this runtime is pinned to.
+
+    The IR gate refuses ``engine: deepagents`` without a pinned ``engineVersion``
+    precisely so that this comparison can exist: an unpinned engine is a backend
+    whose behaviour can change under a stored eval baseline. A mismatch is
+    therefore a hard failure, never a warning, and it fires in both directions --
+    a declared version this runtime is not built for, and a run-time that cannot
+    find the declaration at all.
+    """
+
+    def __init__(self, agent: str, declared: str, pinned: str) -> None:
+        detail = (
+            "the IR declares no engineVersion"
+            if not declared
+            else f"the IR declares engineVersion {declared!r}"
+        )
+        super().__init__(
+            f"agent {agent!r}: {detail}, but this runtime is pinned to deepagents=={pinned}; "
+            f"set engineVersion to {pinned!r} or install the runtime that matches"
+        )
+        self.agent = agent
+        self.declared = declared
+        self.pinned = pinned
 
 
 class GateConfigurationError(EvalError):

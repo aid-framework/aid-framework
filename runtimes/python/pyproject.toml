@@ -36,6 +36,12 @@ dependencies = [
 # absent -- which is the only state CI is ever in. There is deliberately no CI job
 # for it; the adapter is not gate-covered, and the in-memory store carries the gates.
 pgvector = ["psycopg[binary]>=3.1,<4"]
+# The Deep Agents orchestration backend. Exactly pinned, never a range: the IR gate
+# demands a pinned `engineVersion`, and `aid_runtime.agents.engine.DEEPAGENTS_PIN`
+# is the one authoritative copy of this number that a run is compared against. Both
+# copies must move together, which is why the version is a single literal here and a
+# single literal there rather than a constraint that could silently widen.
+deepagents = ["deepagents==0.7.32"]
 dev = [
   "mypy>=1.11,<3",
   "opentelemetry-sdk>=1.24,<2",
@@ -129,4 +135,13 @@ follow_untyped_imports = true
 # there is nothing to resolve. Everything read off it is confined to `Any` inside the
 # one adapter that is allowed to touch it.
 module = ["psycopg.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# The Deep Agents harness is an optional extra. `deepagents` and `langgraph` are absent
+# from the default install, and `langchain`'s middleware surface is not exported with
+# types we can rely on across minor releases. Everything crossing this boundary is
+# erased at the one adapter in `agents/chat_model.py` and the one engine in
+# `agents/deep_agents.py`; the rest of the runtime never sees these names.
+module = ["deepagents.*", "langgraph.*", "langchain.*", "langchain_core.*"]
 ignore_missing_imports = true

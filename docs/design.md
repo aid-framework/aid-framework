@@ -781,6 +781,81 @@ documented patterns**, not an independent estimate of coverage against unseen at
 docstring says so. And one test pins a paraphrase that the patterns *do* miss, so the blind spot is
 visible, and says what to do if it ever starts passing.
 
+### 7.7 The agent engine seam (Phase 2 L4)
+
+`engine` selects the orchestration *backend* per agent. It is not a second IR and not a second gateway.
+`native` is the default and stays the only backend both runtimes ship; `deepagents` is an optional
+Python backend, installed with `pip install 'aid-runtime-python[deepagents]'`, and its presence changes
+nothing for an agent that does not ask for it.
+
+#### Where the seam is
+
+`agents/engine.py` owns the whole decision in one function, `check_engine(agent)`, which `agents/loop.py`
+calls before any run. The order is deliberate, and every branch either runs or fails closed with a named
+error — nothing falls through to the native loop, because an `engine` field that silently means "native"
+is worse than no field at all.
+
+| Check | Outcome |
+| --- | --- |
+| `native` | the loop runs |
+| an unrecognised engine name | `ConfigurationError` |
+| `handoffs` declared | `AgentHandoffUnsupportedError` |
+| `engineVersion` differs from the pinned release | `DeepAgentsVersionMismatchError` |
+| the optional extra is absent | `DeepAgentsUnavailableError` |
+
+#### The adapter is the budget guarantee
+
+Deep Agents calls a LangChain chat model, so `agents/chat_model.py` exposes our `ModelGateway` as a
+`BaseChatModel`. Every model call made inside the harness — a subagent's included — therefore still
+passes through alias resolution, ordered fallback, the cost ledger, the budget check and the `chat`
+span. Without that adapter the budget would quietly stop applying the moment an agent selected this
+engine, which is precisely the defect class this project exists to prevent. Three tests assert the
+guarantee *inside* a harness run — fallback, budget breach and span emission — rather than against the
+adapter in isolation.
+
+The adapter is also the only tool funnel. `bind_tools` filters through an allow-list built from the
+agent's declared tools, and Deep Agents routes every tool it can call — bundled ones included — through
+`bind_tools`. A `deepagents` agent therefore cannot reach the harness's filesystem or shell tools by
+asking for them in a prompt.
+
+#### Mapping, and the mismatch it refuses
+
+| AID requirement | Deep Agents primitive | Behaviour |
+| --- | --- | --- |
+| agent loop | `create_deep_agent` | direct |
+| `delegates` | `subagents` / `task` | delegation with an isolated context; the caller resumes and authors the answer |
+| `handoffs` (transfer) | *none* | refused by name, never degraded |
+| memory `user` / `global` | backend over our `MemoryStore` | our store stays the source of truth |
+| memory `thread` | LangGraph checkpointer | internal; our checkpoint remains the public pause/resume type |
+| HITL | `interrupt_on` | `humanInTheLoop.when` is evaluated by us before an interrupt is armed; approve / edit / reject arrive as our checkpoint decisions |
+| `maxSteps` | graph recursion limit | translated, with a per-call ceiling in the adapter; exhaustion reports the same status the native loop reports |
+| token and cost budgets | *none* | ours, through the adapter |
+| guardrails | *none* | ours, wrapped around input, output and tool calls |
+| tracing | LangSmith, optional | our OTel spans are required; LangSmith is absent and off |
+
+Transfer is the one requirement with no primitive. `subagents` delegate *and return*; control never
+moves, so emulating transfer with a delegate would change who authors the final answer. Transfer
+therefore stays native-only, and a `deepagents` agent that declares `handoffs` fails closed with
+`AgentHandoffUnsupportedError` — pinned by a test and by a conformance case, not by this paragraph.
+
+#### The pin
+
+`engineVersion` must name the release the runtime was built against. `DEEPAGENTS_PIN` in
+`agents/engine.py` is the single authoritative value; the exact-pinned extra (`deepagents==0.7.32`)
+repeats it for the installer and nothing else does. The comparison runs at run time in both directions
+— a declared version this runtime was not built for, and an agent that names none — and each fails
+closed. That comparison is the reason the IR gate refuses `engine: deepagents` without a pinned
+`engineVersion` in the first place: an unpinned engine is a backend whose behaviour can change under a
+stored eval baseline.
+
+#### Not in this layer
+
+No filesystem, shell or skills tools: they are disabled by default, are not enabled here, and are never
+enabled in required CI. No streaming under this engine — the adapter's `_astream` raises, because a
+half-supported path would emit neither a span nor a ledger entry. No LangSmith. And no TypeScript
+parity: the `agent.engine` conformance cases are scoped to Python with a recorded reason naming L6,
+where the TypeScript runtime gains its own agent backend.
+
 ---
 
 ## 8. Generator Plugin Model

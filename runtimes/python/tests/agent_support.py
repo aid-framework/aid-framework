@@ -177,6 +177,7 @@ def agent_def(
     max_tokens_budget: int | None = None,
     on_budget_exhausted: str | None = None,
     engine: str = "native",
+    engine_version: str | None = None,
     hitl: Mapping[str, Any] | None = None,
     guardrails: Sequence[str] = (),
 ) -> dict[str, Any]:
@@ -195,6 +196,8 @@ def agent_def(
     }
     if max_cost_budget is not None:
         entry["maxCostBudget"] = max_cost_budget
+    if engine_version is not None:
+        entry["engineVersion"] = engine_version
     if max_tokens_budget is not None:
         entry["maxTokensBudget"] = max_tokens_budget
     if on_budget_exhausted is not None:

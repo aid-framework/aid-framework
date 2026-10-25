@@ -127,8 +127,13 @@ jobs:
           cache: pip
           cache-dependency-path: runtimes/python/pyproject.toml
 
+      # The `deepagents` extra is installed here so the optional backend is covered by
+      # the same gate as the native loop: the engine's own tests and its four
+      # conformance cases would otherwise be skipped rather than checked. It stays
+      # network-free at test time -- no API key, no live provider, no LangSmith -- and
+      # it must not be required for the native runtime to install or run.
       - name: Install
-        run: python -m pip install -e ".[dev]"
+        run: python -m pip install -e ".[dev,deepagents]"
 
       - name: Test
         run: pytest
