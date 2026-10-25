@@ -115,7 +115,8 @@ async def test_cancellation_releases_a_slot() -> None:
 
     first.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await first
+        # gather re-raises the cancelled child's error on await.
+        await asyncio.gather(first)
 
     # The slot is free again: a second call proceeds rather than deadlocking.
     gate.set()
@@ -166,7 +167,7 @@ async def test_gateway_and_tool_executor_share_one_limiter() -> None:
     assert not active.is_set(), "the tool call ran while the model call held the shared slot"
 
     gate.set()
-    await model_task
+    await asyncio.gather(model_task)
     release.set()
     result = await tool_task
     assert result.content == "done"

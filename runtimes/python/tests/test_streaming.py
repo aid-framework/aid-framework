@@ -184,7 +184,8 @@ async def test_stream_cancellation_closes_the_stream() -> None:
     await first_delta.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        # gather re-raises the cancelled child's error on await.
+        await asyncio.gather(task)
 
     # Cancellation must have released the concurrency slot, not leaked it.
     async with limiter.run():

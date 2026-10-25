@@ -51,7 +51,6 @@ class Provider(Protocol):
         chunk carries ``finish_reason`` and ``usage`` so the gateway can account
         for the stream exactly as it accounts for :meth:`complete`.
         """
-        ...
 
     async def aclose(self) -> None:
         """Release transport resources. Must be idempotent."""
