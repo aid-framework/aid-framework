@@ -46,6 +46,7 @@ export type PlanProblemCode =
   | 'unsupported-placeholder'
   | 'tool-handler-unsupported'
   | 'tool-auth-unsupported'
+  | 'tool-confirmation-unsupported'
   | 'step-unsupported'
   | 'reference-unresolved'
   | 'trigger-unsupported'
@@ -373,6 +374,19 @@ function checkToolShape(tool: ToolShape, declared: ReadonlySet<string>): PlanPro
         'tool-auth-unsupported',
         at,
         'the runtime has no authorization hook, so a declared policy would not be enforced',
+      ),
+    );
+  }
+  /* `requiresConfirmation` is honoured by the agent loop, and this target emits no agent
+   * route: a pipeline step calls a tool directly, with nothing in between to ask a
+   * question. Emitting the flag would be a promise no route keeps. */
+  if (tool.requiresConfirmation) {
+    problems.push(
+      problem(
+        'tool-confirmation-unsupported',
+        at,
+        'this target emits no agent route, and a pipeline step has no confirmation step, ' +
+          'so the flag would not be honoured',
       ),
     );
   }

@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from app.generated.agents import agent_router
 from app.generated.routes.answer_ticket import answer_ticket_router
 
 app = FastAPI(title="support-copilot", version="0.1.0")
 """The application the spec describes, wired to the routers the generator emitted."""
 
 app.include_router(answer_ticket_router)
+app.include_router(agent_router)

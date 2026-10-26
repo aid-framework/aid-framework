@@ -25,6 +25,7 @@ import json
 import math
 import runpy
 import sys
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from aid_runtime import (
+    AgentCheckpoint,
     AgentHandoffUnsupportedError,
     AgentRuntime,
     AidRuntimeError,
@@ -49,6 +51,7 @@ from aid_runtime import (
     EvalBaseline,
     EvalRun,
     FakeProvider,
+    FileMemoryStore,
     GateResult,
     GuardrailBlockedError,
     InProcessMemoryStore,
@@ -537,7 +540,7 @@ def _agent_document(data: Mapping[str, Any]) -> dict[str, Any]:
             "id": entry["id"],
             "name": entry["name"],
             "description": entry.get("description", f"{entry['name']} tool"),
-            "requiresConfirmation": False,
+            "requiresConfirmation": bool(entry.get("requiresConfirmation", False)),
             "sideEffects": "read",
         }
         for entry in data.get("tools", [])
@@ -727,6 +730,70 @@ def _agent_engine(data: Mapping[str, Any]) -> dict[str, Any]:
     return asyncio.run(run())
 
 
+def _agent_resume(data: Mapping[str, Any]) -> dict[str, Any]:
+    """A paused run carried across a serialisation boundary, then resumed.
+
+    This is the shape the generated ``/resume`` route relies on: the run stops at a
+    confirming tool or an escalating guardrail, the caller receives the checkpoint
+    as JSON, and ``resume`` accepts that JSON back. The round trip is asserted here
+    rather than assumed, because ``AgentCheckpoint`` is the only thing a stateless
+    route has to hold a run open and a field it silently dropped would make every
+    resumed run start from the wrong step.
+    """
+
+    async def run() -> dict[str, Any]:
+        runtime, _ = _agent_runtime(data)
+        agent = str(data.get("agent", "solo"))
+        paused = await runtime.run(agent, str(data["question"]))
+        checkpoint = paused.checkpoint
+        if checkpoint is None:
+            return {"error": "did-not-pause", "status": str(paused.status)}
+        wire = checkpoint.model_dump(mode="json")
+        restored = AgentCheckpoint.model_validate(wire)
+        resumed = await runtime.resume(restored, str(data.get("decision", "approve")))
+        return {
+            "pausedStatus": str(paused.status),
+            "channel": paused.approval.channel if paused.approval is not None else None,
+            "askTools": (
+                [call.name for call in paused.approval.calls] if paused.approval is not None else []
+            ),
+            "wireRoundTrip": restored == checkpoint,
+            "status": str(resumed.status),
+            "answer": resumed.answer,
+        }
+
+    return asyncio.run(run())
+
+
+def _memory_store(data: Mapping[str, Any]) -> dict[str, Any]:
+    """A file-backed tier read back through a second store on the same path.
+
+    ``InProcessMemoryStore`` is covered by ``agent.memory``; this is the other
+    backend the emitted document can name, and the difference that matters is
+    durability. A second instance is what a second request (or a restarted process)
+    is, so reading through one is the property, not an implementation detail.
+    """
+
+    async def run() -> dict[str, Any]:
+        scope = str(data["scope"])
+        key = str(data["key"])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "memory.json"
+            writer = FileMemoryStore(path)
+            for value in data["values"]:
+                await writer.append(scope=scope, key=key, value=str(value))
+            reader = FileMemoryStore(path)
+            values = await reader.read(scope=scope, key=key)
+            other = await reader.read(scope="nobody", key=key)
+            return {
+                "values": list(values),
+                "otherScopeValues": list(other),
+                "fileWritten": path.is_file(),
+            }
+
+    return asyncio.run(run())
+
+
 _OPS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     "alias.resolve": _alias_resolve,
     "alias.unknown": _alias_unknown,
@@ -751,6 +818,8 @@ _OPS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     "agent.transfer": _agent_loop,
     "agent.delegate": _agent_loop,
     "agent.memory": _agent_memory,
+    "agent.resume": _agent_resume,
+    "memory.store": _memory_store,
     "agent.engine": _agent_engine,
     "agent.guardrail": _agent_guardrail,
 }

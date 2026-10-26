@@ -78,20 +78,37 @@ function compact(value: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * One entry of an expanded literal: the flat form when it fits, otherwise the form ruff
+ * itself would produce.
+ *
+ * A long **string** leaf has no flat form that fits and no container left to expand, so
+ * without this it emits a line over the limit and `ruff format --check` fails on generated
+ * output. The wrapped form is parenthesised implicit concatenation, which ruff leaves
+ * alone: it does not merge string literals, and the flat form does not fit by construction.
+ * Nothing changes for an entry that already fits, which is why this is invisible to every
+ * literal emitted before it existed.
+ */
+function entryLine(prefix: string, item: unknown, indent: string): string {
+  const flat = compact(item);
+  if (flat !== undefined && indent.length + prefix.length + flat.length + 1 <= MAX_LINE) {
+    return `${indent}${prefix}${flat},`;
+  }
+  if (typeof item === 'string') return `${wrappedString(prefix, item, indent)},`;
+  return `${indent}${prefix}${pythonValue(item, indent, prefix, ',')},`;
+}
+
 function expanded(value: unknown, indent: string): string {
   const inner = `${indent}${INDENT}`;
   if (Array.isArray(value)) {
     if (value.length === 0) return '[]';
-    const items = value.map((item) => `${inner}${pythonValue(item, inner, '', ',')},`);
+    const items = value.map((item) => entryLine('', item, inner));
     return `[\n${items.join('\n')}\n${indent}]`;
   }
   if (typeof value === 'object' && value !== null) {
     const entries = sortedEntries(value);
     if (entries.length === 0) return '{}';
-    const items = entries.map(
-      ([key, item]) =>
-        `${inner}${pythonString(key)}: ${pythonValue(item, inner, `${pythonString(key)}: `, ',')},`,
-    );
+    const items = entries.map(([key, item]) => entryLine(`${pythonString(key)}: `, item, inner));
     return `{\n${items.join('\n')}\n${indent}}`;
   }
   return compact(value) ?? 'None';
@@ -298,11 +315,29 @@ function splitEscaped(text: string, budget: number): string[] {
  * would overflow by exactly the length of the word it is attached to.
  */
 export function argumentString(keyword: string, text: string, indent = ''): string {
-  const budget = MAX_LINE - indent.length - keyword.length - INDENT.length - 3;
+  return wrappedString(`${keyword}=`, text, indent);
+}
+
+/**
+ * `prefix` (a mapping key or a keyword-argument binder) followed by `text`: on one line
+ * when the prefix and the text together fit, otherwise as parenthesised implicit
+ * concatenation.
+ *
+ * The two cases measure against **different** columns, which is the whole point. A text
+ * that does not fit beside the prefix may still fit on a line of its own inside the
+ * parentheses, and that is the shape `ruff format` produces and leaves alone: it merges
+ * adjacent pieces greedily up to the width, so a piece sized for the prefix column would
+ * be merged back and the file would fail `ruff format --check`. The pieces are therefore
+ * sized for the continuation column, and a text that fits there is emitted as a single
+ * parenthesised piece rather than overflowing the line it shares with the prefix.
+ */
+function wrappedString(prefix: string, text: string, indent: string): string {
+  const oneLine = `${indent}${prefix}${pythonString(text)}`;
+  if (!text.includes('\n') && oneLine.length <= MAX_LINE) return oneLine;
+  const inner = `${indent}${INDENT}`;
+  const budget = MAX_LINE - inner.length - 3;
   const pieces: string[] = [];
   for (const line of splitLines(text)) pieces.push(...splitEscaped(line, budget));
-  if (pieces.length <= 1) return `${indent}${keyword}=${pythonString(pieces[0] ?? '')}`;
-  const inner = `${indent}${INDENT}`;
   const rendered = pieces.map((piece) => `${inner}${pythonString(piece)}`);
-  return `${indent}${keyword}=(\n${rendered.join('\n')}\n${indent})`;
+  return `${indent}${prefix}(\n${rendered.join('\n')}\n${indent})`;
 }

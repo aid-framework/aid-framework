@@ -7,19 +7,38 @@ deterministic tool passes its own implementation by keyword.
 
 from __future__ import annotations
 
-from aid_runtime import ToolExecutor
+from aid_runtime import Tool, ToolExecutor
 
 from ...business.tools import IMPLEMENTATIONS
+from ..contracts.issue_refund import IssueRefundTool
 from ..contracts.lookup_customer import LookupCustomerTool
+from .issue_refund import as_issue_refund
 from .lookup_customer import as_lookup_customer
+
+
+def build_agent_tools(
+    *,
+    issue_refund: IssueRefundTool = IMPLEMENTATIONS["issue_refund"],
+    lookup_customer: LookupCustomerTool = IMPLEMENTATIONS["lookup_customer"],
+) -> tuple[Tool, ...]:
+    """Every declared tool, adapted. The agent runtime takes these directly, so the agent route and
+    the pipeline route call the same implementations.
+    """
+
+    return (as_issue_refund(issue_refund), as_lookup_customer(lookup_customer))
 
 
 def build_executor(
     *,
+    tools: tuple[Tool, ...] | None = None,
+    issue_refund: IssueRefundTool = IMPLEMENTATIONS["issue_refund"],
     lookup_customer: LookupCustomerTool = IMPLEMENTATIONS["lookup_customer"],
 ) -> ToolExecutor:
     """Every declared tool, adapted and ready to execute."""
 
-    return ToolExecutor(
-        tools=(as_lookup_customer(lookup_customer),),
-    )
+    if tools is None:
+        tools = build_agent_tools(
+            issue_refund=issue_refund,
+            lookup_customer=lookup_customer,
+        )
+    return ToolExecutor(tools=tools)

@@ -17,7 +17,12 @@ from aid_runtime import (
 
 from ..deps import Deps
 from ..gateway.models import FALLBACKS
-from ..guardrails import ENGINE, INPUT_GUARDRAILS, enforce_guardrail
+from ..guardrails import (
+    ENGINE,
+    INPUT_GUARDRAILS,
+    TOOL_CALL_GUARDRAILS,
+    enforce_guardrail,
+)
 from ..requests import AnswerTicketRequest
 from ..schemas import Answer, Customer
 
@@ -28,12 +33,15 @@ async def customer(ctx: PipelineContext) -> PipelineContext:
     deps = cast(Deps, ctx.require("deps"))
     event = cast(AnswerTicketRequest, ctx.require("event"))
 
-    _outcome = await deps.tools.execute(
-        ToolCall(
-            arguments={"body": event.body, "subject": event.subject},
-            id="customer",
-            name="lookup_customer",
+    _verdict = enforce_guardrail(
+        ENGINE.check_tool_call(
+            TOOL_CALL_GUARDRAILS,
+            "lookup_customer",
+            {"body": event.body, "subject": event.subject},
         ),
+    )
+    _outcome = await deps.tools.execute(
+        ToolCall(arguments=dict(_verdict.arguments), id="customer", name="lookup_customer"),
     )
     if _outcome.is_error:
         raise RuntimeError(f"tool lookup_customer failed: {_outcome.content}")

@@ -213,6 +213,45 @@ const CLAIMS: readonly Claim[] = [
     planned: /^app\/generated\/guardrails\.py$/,
   },
   {
+    capability: 'agents',
+    emitter: {
+      path: 'packages/generators/py-fastapi/src/emit/agents.ts',
+      marker: 'export function emitAgents',
+    },
+    pyRuntime: {
+      path: 'runtimes/python/src/aid_runtime/agents/loop.py',
+      marker: 'class AgentRuntime',
+    },
+    // Withdrawn rather than forgotten: `runtimes/typescript` ships no agent loop, so the
+    // emitted router has nothing to call on that side. TS parity is layer L6, and the gap
+    // is recorded here so the audit can tell it from an omission.
+    tsRuntimeGap:
+      'the TypeScript runtime has no agent loop, so the emitted agent router has no TS counterpart',
+    behaviour: {
+      path: 'examples/support-copilot/tests/test_agents.py',
+      marker: 'def test_a_run_pauses_and_the_checkpoint_resumes_it',
+    },
+    planned: /^app\/generated\/agents\.py$/,
+  },
+  {
+    capability: 'cursor-memory',
+    emitter: {
+      path: 'packages/generators/py-fastapi/src/emit/agents.ts',
+      marker: 'export function emitAgents',
+    },
+    pyRuntime: {
+      path: 'runtimes/python/src/aid_runtime/agents/memory.py',
+      marker: 'IMPLEMENTED_MEMORY_KINDS',
+    },
+    tsRuntimeGap:
+      'the TypeScript runtime ships no memory store, so the emitted memory tiers have no TS counterpart',
+    behaviour: {
+      path: 'examples/support-copilot/tests/test_agents.py',
+      marker: 'def test_the_thread_tier_is_served_and_stays_run_local',
+    },
+    planned: /^app\/generated\/agents\.py$/,
+  },
+  {
     capability: 'streaming',
     emitter: {
       path: 'packages/generators/py-fastapi/src/emit/sse.ts',
@@ -403,6 +442,8 @@ describe('the capabilities this target declares', () => {
       'Capability.TOOL_CALLING',
     ]);
     expect(report.targetWired).toEqual([
+      'agents',
+      'cursor-memory',
       'embeddings',
       'guardrails',
       'http-trigger',

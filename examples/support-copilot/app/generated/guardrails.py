@@ -18,7 +18,14 @@ import logging
 from aid_runtime import GuardrailBlockedError
 from aid_runtime.agents import GuardrailDefinition, GuardrailEngine, GuardrailVerdict
 
-__all__ = ["ENGINE", "GUARDRAILS", "INPUT_GUARDRAILS", "enforce_guardrail", "guardrail_block"]
+__all__ = [
+    "ENGINE",
+    "GUARDRAILS",
+    "INPUT_GUARDRAILS",
+    "TOOL_CALL_GUARDRAILS",
+    "enforce_guardrail",
+    "guardrail_block",
+]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,6 +34,17 @@ _STOPPING = frozenset({"block", "escalate"})
 ENGINE = GuardrailEngine()
 
 GUARDRAILS: tuple[GuardrailDefinition, ...] = (
+    GuardrailDefinition(
+        id="refund_args",
+        stages=("tool-call",),
+        policies=("secret-scan",),
+        action="escalate",
+        redact=(),
+        tools=(),
+        message="A refund call carried something that looks like a credential, so it was held.",
+        fallback_prompt=None,
+        log=True,
+    ),
     GuardrailDefinition(
         id="ticket_intake",
         stages=("input",),
@@ -55,6 +73,10 @@ _BY_ID: dict[str, GuardrailDefinition] = {g.id: g for g in GUARDRAILS}
 
 INPUT_GUARDRAILS: tuple[GuardrailDefinition, ...] = tuple(
     g for g in GUARDRAILS if "input" in g.stages
+)
+
+TOOL_CALL_GUARDRAILS: tuple[GuardrailDefinition, ...] = tuple(
+    g for g in GUARDRAILS if "tool-call" in g.stages
 )
 
 

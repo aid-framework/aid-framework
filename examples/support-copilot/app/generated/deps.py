@@ -2,25 +2,27 @@
 # Owned by the generator: regenerate with `aid gen`. See aid.manifest.json.
 
 """The container a pipeline step reads from its context: the model gateway, the prompt registry, and
-the tool executor. The retrievers the spec declares travel with it too.
+the tool executor. The agent route reads the same gateway and the same tool objects. The retrievers
+the spec declares travel with it too.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from aid_runtime import (
     ConfigurationError,
     ModelGateway,
     PromptRegistry,
     Retriever,
+    Tool,
     ToolExecutor,
 )
 
 from .gateway import build_gateway
 from .prompts import build_registry
 from .retrieval.bindings import build_retrievers
-from .tools import build_executor
+from .tools import build_agent_tools, build_executor
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +32,7 @@ class Deps:
     gateway: ModelGateway
     prompts: PromptRegistry
     tools: ToolExecutor
+    agent_tools: tuple[Tool, ...] = field(default_factory=build_agent_tools)
     retrievers: dict[str, Retriever] | None = None
 
     def retriever(self, retriever_id: str) -> Retriever:
@@ -52,14 +55,17 @@ def build_deps(
     gateway: ModelGateway | None = None,
     prompts: PromptRegistry | None = None,
     tools: ToolExecutor | None = None,
+    agent_tools: tuple[Tool, ...] | None = None,
     retrievers: dict[str, Retriever] | None = None,
 ) -> Deps:
     """The app's dependencies, each defaulting to the wiring the spec generated."""
 
+    declared_tools = build_agent_tools() if agent_tools is None else agent_tools
     return Deps(
         gateway=build_gateway() if gateway is None else gateway,
         prompts=build_registry() if prompts is None else prompts,
-        tools=build_executor() if tools is None else tools,
+        tools=build_executor(tools=declared_tools) if tools is None else tools,
+        agent_tools=declared_tools,
         retrievers=build_retrievers() if retrievers is None else retrievers,
     )
 

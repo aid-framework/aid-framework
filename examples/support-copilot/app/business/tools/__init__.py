@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from .issue_refund import IssueRefund
 from .lookup_customer import LookupCustomer
 
 IMPLEMENTATIONS: dict[str, Any] = {
+    "issue_refund": IssueRefund(),
     "lookup_customer": LookupCustomer(),
 }

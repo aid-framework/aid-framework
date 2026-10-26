@@ -16,9 +16,11 @@
  */
 
 import {
+  type AgentShape,
   type EvalShape,
   type IR,
   type ModelParams,
+  type ModelShape,
   PHASE_0_PROVIDERS,
   type PipelineShape,
   type PromptShape,
@@ -55,8 +57,10 @@ export type PlanProblemCode =
   | 'missing-step'
   | 'unresolved-reference'
   | 'unresolved-type'
+  | 'unsupported-agent'
   | 'unsupported-capability'
   | 'unsupported-collection'
+  | 'unsupported-memory'
   | 'unsupported-eval-input'
   | 'unsupported-eval-target'
   | 'unsupported-examples'
@@ -95,10 +99,12 @@ export interface PlanProblem {
  * capability, so a spec never names one), and the retriever and store declarations are
  * walked through `emit/retrieval.ts`. `deployments` and `guardrails` left it in P7a, when
  * the target learned to emit the `Accept` branch and the four guardrail stages -- see
- * `./emit/sse.ts` and `./emit/guardrails.ts`. `agents` and `memory` stay, because a
- * pipeline route has no agent loop and no conversation to keep; that is P7b.
+ * `./emit/sse.ts` and `./emit/guardrails.ts`. `agents` and `memory` left it in P7b, each
+ * when the emitter that consumes the collection landed (`./emit/agents.ts`), never to
+ * silence a gate: `checkCollections` still refuses both on request, and
+ * `target-surface.test.ts` calls it with the pre-P7b list to prove so.
  */
-export const UNSUPPORTED_COLLECTIONS = ['agents', 'memory'] as const;
+export const UNSUPPORTED_COLLECTIONS = [] as const;
 
 /** The binding names the generated entrypoint owns, so a step may not claim them. */
 export const RESERVED_BINDINGS = ['context', 'deps', 'event', 'response', 'steps'] as const;
@@ -148,10 +154,20 @@ export function checkTarget(ir: IR): PlanProblem[] {
   ];
 }
 
-export function checkCollections(ir: IR): PlanProblem[] {
+/**
+ * The collections this target refuses, overridable so the refusal itself stays testable.
+ *
+ * `unsupported` defaults to `UNSUPPORTED_COLLECTIONS`, which is now empty. A test passes
+ * the pre-P7b list explicitly, which is what keeps "this target emits no wiring for
+ * `agents`" a live code path rather than a comment about code that used to exist.
+ */
+export function checkCollections(
+  ir: IR,
+  unsupported: readonly string[] = UNSUPPORTED_COLLECTIONS,
+): PlanProblem[] {
   const problems: PlanProblem[] = [];
-  for (const name of UNSUPPORTED_COLLECTIONS) {
-    const entries = ir[name] as readonly { readonly id: string }[] | undefined;
+  for (const name of unsupported) {
+    const entries = (ir as unknown as Record<string, readonly { readonly id: string }[]>)[name];
     if (!Array.isArray(entries) || entries.length === 0) continue;
     const ids = [...entries.map((entry) => entry.id)].sort(compareIds).join(', ');
     problems.push(
@@ -461,9 +477,32 @@ export function checkPrompts(ir: IR): PlanProblem[] {
   return problems;
 }
 
+/** Tool ids some pipeline step calls, and so the ids a pipeline route executes. */
+export function pipelineToolIds(ir: IR): Set<string> {
+  const ids = new Set<string>();
+  for (const pipeline of ir.pipelines ?? []) {
+    for (const step of pipeline.steps) if (step.kind === 'tool') ids.add(step.tool);
+  }
+  return ids;
+}
+
+/** Tool ids some agent declares, and so the ids an agent route can call. */
+export function agentToolIds(ir: IR): Set<string> {
+  const ids = new Set<string>();
+  for (const agent of ir.agents ?? []) for (const tool of agent.tools) ids.add(tool);
+  return ids;
+}
+
 export function checkTools(ir: IR): PlanProblem[] {
   const types = sortedTypes(ir);
   const problems: PlanProblem[] = [];
+  /* A `requiresConfirmation` or `auth` declaration is a guarantee *some* route keeps.
+   * An agent route honours both: the loop pauses before a confirming call and evaluates
+   * a tool's `auth` against the caller. A pipeline `tool` step honours neither -- it
+   * executes the call inline -- so the declaration is only expressible when no pipeline
+   * can reach the tool. Rejecting every flag outright (the pre-P7b rule) would be
+   * stricter than the runtime and would make the agent route undeclarable. */
+  const fromPipelines = pipelineToolIds(ir);
   for (const tool of ir.tools) {
     const path = `tools.${tool.id}`;
     if (tool.handler?.kind !== 'business') {
@@ -490,24 +529,29 @@ export function checkTools(ir: IR): PlanProblem[] {
         );
       }
     }
-    if (tool.auth !== undefined) {
-      problems.push(
-        problem(
-          'unsupported-tool-auth',
-          `${path}.auth`,
-          'the runtime has no authorization hook, so this predicate would not be enforced; ' +
-            'enforce it in the business handler until the runtime grows one',
-        ),
-      );
-    }
-    if (tool.requiresConfirmation === true) {
-      problems.push(
-        problem(
-          'unsupported-tool-confirmation',
-          `${path}.requiresConfirmation`,
-          'the runtime has no confirmation flow, so this guard would not be enforced',
-        ),
-      );
+    if (fromPipelines.has(tool.id)) {
+      if (tool.auth !== undefined) {
+        problems.push(
+          problem(
+            'unsupported-tool-auth',
+            `${path}.auth`,
+            `a pipeline 'tool' step calls this tool inline and the pipeline route has no ` +
+              `authorization hook, so this predicate would not be enforced there; remove ` +
+              `the declaration, drop the pipeline step, or reach the tool from an agent only`,
+          ),
+        );
+      }
+      if (tool.requiresConfirmation === true) {
+        problems.push(
+          problem(
+            'unsupported-tool-confirmation',
+            `${path}.requiresConfirmation`,
+            `a pipeline 'tool' step calls this tool inline and the pipeline route has no ` +
+              `confirmation flow, so this guard would not be enforced there; remove the ` +
+              `declaration, drop the pipeline step, or reach the tool from an agent only`,
+          ),
+        );
+      }
     }
   }
   return problems;
@@ -911,6 +955,316 @@ function checkRetrieverDeclaration(
  * checks are per declaration, and a `retrieve` step only has to check that the retriever
  * it names exists.
  */
+/**
+ * The memory kinds the runtime actually serves, mirroring `IMPLEMENTED_MEMORY_KINDS` in
+ * `aid_runtime.agents.memory`. The other four kinds need a summarizer, an embedding index
+ * or a clock, so they are refused at plan time rather than at the first request.
+ */
+export const SUPPORTED_MEMORY_KINDS = ['buffer', 'window'] as const;
+
+/**
+ * Whether `agent` can end a run in `RunStatus.PAUSED`, and so whether this app needs a
+ * resume route.
+ *
+ * Three independent sources, all verified at `runtimes/python/src/aid_runtime/agents`:
+ *
+ * 1. `agent.approval` -- a declared `humanInTheLoop`, consulted by `_needs_approval`;
+ * 2. **any tool the agent may call with `requiresConfirmation`** -- `_needs_approval`
+ *    returns `True` for these *before* it looks at `agent.approval`, so a confirming
+ *    tool pauses an agent that declares no `humanInTheLoop` at all;
+ * 3. **any guardrail the agent declares with `action: escalate`** -- the loop calls
+ *    `_guardrail_pause` at the `input`, `output` and `tool-call` stages with no approval
+ *    involved.
+ *
+ * Emitting the route only for source 1 would ship an app that pauses with no way to
+ * resume, which is why this predicate is a union rather than a null check.
+ */
+export function agentCanPause(ir: IR, agent: AgentShape): boolean {
+  if (agent.humanInTheLoop !== undefined) return true;
+  const byId = new Map(ir.tools.map((tool) => [tool.id, tool]));
+  for (const toolId of agent.tools) {
+    if (byId.get(toolId)?.requiresConfirmation === true) return true;
+  }
+  const guardrails = new Map((ir.guardrails ?? []).map((guardrail) => [guardrail.id, guardrail]));
+  for (const guardrailId of agent.guardrails) {
+    if (guardrails.get(guardrailId)?.action === 'escalate') return true;
+  }
+  return false;
+}
+
+/**
+ * The models the agent route actually reads, in declared-id order.
+ *
+ * `from_ir` builds a `ModelSpec` for **every** model in the document it is handed, and
+ * `_model` refuses one that resolves no `costProfile` ("a budget cannot be enforced
+ * against an unpriced model"). So the set matters twice over: it is what the emitted
+ * document has to be narrowed to, and what `checkAgents` has to price.
+ *
+ * The closure is each agent's model plus everything reachable through `fallbacks`, and
+ * nothing else. Fallbacks are part of it because the loop hands `fallbacks_for(alias)` to
+ * *every* gateway call (`loop.py`: `gateway.call(alias, request,
+ * fallbacks=self._spec.fallbacks_for(alias), ...)`), not only to a budget-degrade step, so
+ * a fallback is reachable on any provider failure. Models outside the closure are never
+ * named by the agent route -- the pipeline routes resolve through their own gateway config
+ * -- and including them would only add declarations the runtime refuses to parse.
+ */
+export function agentModelClosure(ir: IR): ModelShape[] {
+  const byId = new Map(ir.models.map((model) => [model.id, model]));
+  const reached = new Set<string>();
+  const queue: string[] = [];
+  for (const agent of ir.agents ?? []) {
+    if (!reached.has(agent.model)) {
+      reached.add(agent.model);
+      queue.push(agent.model);
+    }
+  }
+  while (queue.length > 0) {
+    const model = byId.get(queue.shift() as string);
+    if (model === undefined) continue;
+    for (const fallback of model.fallbacks) {
+      if (!reached.has(fallback)) {
+        reached.add(fallback);
+        queue.push(fallback);
+      }
+    }
+  }
+  return ir.models
+    .filter((model) => reached.has(model.id))
+    .sort((left, right) => compareIds(left.id, right.id));
+}
+
+/**
+ * The agent declarations this target cannot express, refused rather than downgraded.
+ *
+ * `AgentDefinition` in `aid_runtime.agents.ir` is the whole of what the loop understands,
+ * so the rule for each check below is the same: a field the runtime drops must stop
+ * generation instead of being emitted and ignored.
+ */
+export function checkAgents(ir: IR): PlanProblem[] {
+  const problems: PlanProblem[] = [];
+  const promptById = new Map(ir.prompts.map((prompt) => [prompt.id, prompt]));
+  const toolIds = new Set(ir.tools.map((tool) => tool.id));
+  const memoryIds = new Set((ir.memory ?? []).map((memory) => memory.id));
+  const guardrailIds = new Set((ir.guardrails ?? []).map((guardrail) => guardrail.id));
+  const modelIds = new Set(ir.models.map((model) => model.id));
+
+  for (const agent of ir.agents ?? []) {
+    const path = `agents.${agent.id}`;
+    /* `AgentDefinition` has no `retrievers` field: the loop builds its messages from the
+     * resolved prompt and `memory`, and never queries a retriever. Emitting the agent
+     * would drop the declaration, so a spec that wants retrieval has to put it in the
+     * prompt itself. */
+    if (agent.retrievers.length > 0) {
+      problems.push(
+        problem(
+          'unsupported-agent',
+          `${path}.retrievers`,
+          `the native agent loop has no retrieval step, so ${JSON.stringify(agent.retrievers)} ` +
+            'would never run; inline the retrieved context in the prompt instead',
+        ),
+      );
+    }
+    /* No `structuredOutput` either: the loop returns the model's text as `RunResult.answer`
+     * and performs no schema validation, so the declaration would be a promise nothing
+     * keeps. A prompt that declares an output schema is the supported spelling. */
+    if (agent.structuredOutput !== undefined) {
+      problems.push(
+        problem(
+          'unsupported-agent',
+          `${path}.structuredOutput`,
+          'the native agent loop performs no structured-output validation, so this ' +
+            "declaration would not be enforced; declare the schema on the agent's prompt",
+        ),
+      );
+    }
+    /* The instructions prompt becomes the system message through its *template*, verbatim:
+     * `from_ir` reads `prompts[].template` and the loop never renders variables. A prompt
+     * with variables would therefore reach the model as unrendered `{{name}}` text. */
+    const instructions = promptById.get(agent.instructions);
+    if (instructions === undefined) {
+      problems.push(
+        problem(
+          'unresolved-reference',
+          `${path}.instructions`,
+          `prompt '${agent.instructions}' is not declared`,
+        ),
+      );
+    } else if (instructions.variables.length > 0) {
+      problems.push(
+        problem(
+          'unsupported-agent',
+          `${path}.instructions`,
+          `prompt '${instructions.id}' declares variables ` +
+            `(${instructions.variables
+              .map((variable) => variable.name)
+              .sort(compareIds)
+              .join(', ')}) ` +
+            'that the agent loop never renders, so the model would receive the template ' +
+            'verbatim; declare a variable-free prompt for an agent to use',
+        ),
+      );
+    }
+    for (const toolId of agent.tools) {
+      if (!toolIds.has(toolId)) {
+        problems.push(
+          problem('unresolved-reference', `${path}.tools`, `tool '${toolId}' is not declared`),
+        );
+      }
+    }
+    for (const memoryId of agent.memory) {
+      if (!memoryIds.has(memoryId)) {
+        problems.push(
+          problem('unresolved-reference', `${path}.memory`, `memory '${memoryId}' is not declared`),
+        );
+      }
+    }
+    for (const guardrailId of agent.guardrails) {
+      if (!guardrailIds.has(guardrailId)) {
+        problems.push(
+          problem(
+            'unresolved-reference',
+            `${path}.guardrails`,
+            `guardrail '${guardrailId}' is not declared`,
+          ),
+        );
+      }
+    }
+    if (!modelIds.has(agent.model)) {
+      problems.push(
+        problem('unresolved-reference', `${path}.model`, `model '${agent.model}' is not declared`),
+      );
+    }
+    /* `engine: 'deepagents'` is implemented, but by a module that imports the pinned
+     * `deepagents` framework. The generated app declares no such dependency, so emitting
+     * the engine would ship an app that fails at import; this is a target-dependency
+     * deferral, stated rather than hidden. */
+    if (agent.engine !== 'native') {
+      problems.push(
+        problem(
+          'unsupported-agent',
+          `${path}.engine`,
+          `the generated app installs no '${agent.engine}' framework, so this engine ` +
+            "cannot run here; use engine 'native', or add the dependency and wire " +
+            '`build_runtime` to it',
+        ),
+      );
+    }
+  }
+  /* A model the agent route reads must be priced. `_model` refuses an unpriced model at
+   * construction, so a spec that reaches one through its agent would generate an app that
+   * fails on the first request; `agentModelClosure` is exactly the set that gets emitted,
+   * so this is also the set the runtime has to accept. */
+  for (const model of agentModelClosure(ir)) {
+    if (model.costProfile === undefined) {
+      problems.push(
+        problem(
+          'unsupported-agent',
+          `models.${model.id}.costProfile`,
+          `model '${model.id}' resolves no cost profile from the pinned catalog, and the ` +
+            'agent loop refuses an unpriced model because no budget can be enforced ' +
+            "against one; this model is an agent's own or reached through its fallbacks, " +
+            'so the route reads it -- use a catalogued `modelId`, or drop the fallback ' +
+            'that reaches this one',
+        ),
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * The memory declarations this target cannot honour, refused rather than approximated.
+ *
+ * This mirrors `check_memory_supported` exactly. That function raises
+ * `FeatureDeferredError` for a kind outside `IMPLEMENTED_MEMORY_KINDS`, for
+ * `summarizeModel`, for `ttl` and for a non-empty `redact`; catching those at plan time
+ * turns a runtime 500 into a generation failure that names the declaration.
+ */
+export function checkMemory(ir: IR): PlanProblem[] {
+  const problems: PlanProblem[] = [];
+  const supportedKinds: readonly string[] = SUPPORTED_MEMORY_KINDS;
+
+  for (const memory of ir.memory ?? []) {
+    const path = `memory.${memory.id}`;
+    if (!supportedKinds.includes(memory.kind)) {
+      problems.push(
+        problem(
+          'unsupported-memory',
+          `${path}.kind`,
+          `the runtime implements ${SUPPORTED_MEMORY_KINDS.join(' and ')} memory and refuses ` +
+            `'${memory.kind}' by name; serve it as a buffer, or declare the kind once the ` +
+            'runtime grows a summarizer or an index',
+        ),
+      );
+    }
+    if (memory.summarizeModel !== undefined) {
+      problems.push(
+        problem(
+          'unsupported-memory',
+          `${path}.summarizeModel`,
+          'no summarizer is implemented, so this declaration would be ignored',
+        ),
+      );
+    }
+    if (memory.ttl !== undefined) {
+      problems.push(
+        problem(
+          'unsupported-memory',
+          `${path}.ttl`,
+          'expiry enforcement is not implemented, so entries would never expire',
+        ),
+      );
+    }
+    if (memory.redact.length > 0) {
+      problems.push(
+        problem(
+          'unsupported-memory',
+          `${path}.redact`,
+          'memory redaction is not implemented, so the declared fields would still be ' +
+            'stored and replayed',
+        ),
+      );
+    }
+    /* `_store_for` chooses the store from `backend` alone, and a generated app registers
+     * none: any backend other than the in-process default raises `ConfigurationError` on
+     * the first write. Rejecting it here keeps a spec from describing a buffer this app
+     * cannot serve. */
+    if (memory.backend !== undefined && memory.backend !== 'in-process') {
+      problems.push(
+        problem(
+          'unsupported-memory',
+          `${path}.backend`,
+          `a generated app registers no MemoryStore, so backend '${memory.backend}' cannot ` +
+            "be served; omit 'backend', or set it to 'in-process'",
+        ),
+      );
+    }
+    /* `_memory` copies `store` into `MemoryDefinition.store`, which nothing consults -- the
+     * store comes from `backend`. A spec that set only `store` would silently get the
+     * in-process buffer, so the field is refused rather than quietly ignored. */
+    if (memory.store !== undefined) {
+      problems.push(
+        problem(
+          'unsupported-memory',
+          `${path}.store`,
+          "the runtime selects its store from 'backend' and never reads 'store'; set " +
+            "'backend' instead",
+        ),
+      );
+    }
+    if (!Number.isInteger(memory.tokenBudget) || memory.tokenBudget < 1) {
+      problems.push(
+        problem(
+          'missing-limit',
+          `${path}.tokenBudget`,
+          `the runtime needs a positive token budget, got ${memory.tokenBudget}`,
+        ),
+      );
+    }
+  }
+  return problems;
+}
+
 export function checkRetrievers(ir: IR): PlanProblem[] {
   const problems: PlanProblem[] = [];
   for (const retriever of ir.retrievers) {
@@ -1712,15 +2066,28 @@ function checkGuardrails(ir: IR): PlanProblem[] {
       // Escalation is a question put to a human and resumed from a checkpoint. The agent
       // loop owns that checkpoint; a pipeline route has none, so an escalated pipeline
       // run would stop with nobody to answer -- which is a block wearing a different name.
-      problems.push(
-        problem(
-          'unsupported-guardrail',
-          `${path}.action`,
-          `'${guardrail.id}' escalates, but escalation needs the agent loop's checkpoint and ` +
-            'resume, and a pipeline route has neither. Use action: block to refuse the ' +
-            'request, or action: flag to record it and continue',
-        ),
-      );
+      //
+      // Which guardrails a pipeline route *can* run is therefore the whole question, and
+      // it is not "all of them". The generated route enforces exactly one stage table,
+      // `INPUT_GUARDRAILS`, which is every guardrail in the document whose `stages`
+      // contains `input` -- so an escalate guardrail that never declares `input` is
+      // unreachable from a pipeline route and reachable only from an agent that names it.
+      // Rejecting that one would be refusing the single useful shape of escalation, and
+      // leaving the agent loop's `_guardrail_pause` with no way to ever be reached.
+      const pipelineReachable = guardrail.stages.includes('input');
+      if (pipelineReachable) {
+        problems.push(
+          problem(
+            'unsupported-guardrail',
+            `${path}.action`,
+            `'${guardrail.id}' escalates at the input stage, but escalation needs the agent ` +
+              "loop's checkpoint and resume, and the generate route -- which enforces every " +
+              'input-stage guardrail in the document -- has neither. Use action: block to ' +
+              'refuse the request, action: flag to record it and continue, or drop the input ' +
+              'stage so only the agent route runs it',
+          ),
+        );
+      }
     }
     if (guardrail.action !== 'redact') continue;
     for (const policy of guardrail.policies) {
@@ -1847,6 +2214,8 @@ export function checkPlan(ir: IR): PlanProblem[] {
     ...checkIrVersion(ir),
     ...checkTarget(ir),
     ...checkCollections(ir),
+    ...checkAgents(ir),
+    ...checkMemory(ir),
     ...checkGuardrails(ir),
     ...checkDeployments(ir),
     ...checkObservability(ir),

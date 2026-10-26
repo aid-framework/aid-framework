@@ -13,8 +13,9 @@ is the knob that simulates a model getting worse.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 
-from aid_runtime import FakeProvider, Retriever, ToolExecutor
+from aid_runtime import FakeProvider, Retriever, ScriptedTurn, ToolExecutor
 
 from app.generated.deps import Deps, build_deps
 from app.generated.gateway import build_gateway
@@ -34,16 +35,28 @@ IDEAL_ANSWERS: dict[str, str] = {
 """One ideal answer per dataset case, keyed by a phrase that case's prompt contains."""
 
 
-def fake_provider(*, accuracy: float = 1.0, seed: int = 0) -> FakeProvider:
+def fake_provider(
+    *,
+    accuracy: float = 1.0,
+    seed: int = 0,
+    script: Sequence[ScriptedTurn] = (),
+) -> FakeProvider:
     """A seeded simulation of the `fast` model.
 
     At ``accuracy=1.0`` every case is answered ideally, which is how the stored
     baseline was recorded. Below 1.0 the provider returns an unparseable answer
     for a case it gets "wrong", so a lower accuracy lowers the mean of the
     `json-valid` metric -- which is the regression the gate has to catch.
+
+    ``script`` is the other kind of determinism, and the one an agent needs: a tool
+    call is the part of a model's output a canned text answer cannot express. The
+    script is consumed one turn per call, so a run that pauses and resumes keeps
+    counting across both requests only when the provider instance is reused -- which
+    is why `fake_deps(script=...)` is called once and the deps it builds are held,
+    rather than rebuilt per request.
     """
 
-    return FakeProvider(answers=IDEAL_ANSWERS, accuracy=accuracy, seed=seed)
+    return FakeProvider(answers=IDEAL_ANSWERS, accuracy=accuracy, seed=seed, script=script)
 
 
 def fake_deps(
@@ -52,6 +65,7 @@ def fake_deps(
     seed: int = 0,
     tools: ToolExecutor | None = None,
     retrievers: dict[str, Retriever] | None = None,
+    script: Sequence[ScriptedTurn] = (),
 ) -> Deps:
     """The generated app's dependencies, with the network replaced by the fake provider.
 
@@ -63,6 +77,6 @@ def fake_deps(
     can read it back.
     """
 
-    provider = fake_provider(accuracy=accuracy, seed=seed)
+    provider = fake_provider(accuracy=accuracy, seed=seed, script=script)
     gateway = build_gateway(providers={"fake": provider, "openai": provider})
     return build_deps(gateway=gateway, tools=tools, retrievers=retrievers)

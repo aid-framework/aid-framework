@@ -82,6 +82,25 @@ export interface ExampleBuild {
   plan: Plan;
 }
 
+/** Spec text to a checked, gated IR -- stopping before this target's own plan checks. */
+export function lowerForSpecText(text: string, file = EXAMPLE_SPEC_PATH): IR {
+  const spec = checkSpecText(text, { file });
+  requireNoErrors('the spec did not pass the spec checks', spec.diagnostics);
+  if (spec.value === undefined) {
+    throw new Error('the spec parsed to nothing');
+  }
+
+  const { ir, diagnostics } = buildIR(spec.value, { file });
+  requireNoErrors('the spec did not lower to an IR', diagnostics);
+
+  const gates = runGates(ir, {
+    targetCapabilities: { [PY_FASTAPI_TARGET]: PY_FASTAPI_MANIFEST.capabilities },
+  });
+  requireNoErrors('the IR did not pass the build gates', gates.diagnostics);
+
+  return ir;
+}
+
 /** Spec text to a plan, through the same checks and gates the CLI will run. */
 export function buildForSpecText(text: string, file = EXAMPLE_SPEC_PATH): ExampleBuild {
   const spec = checkSpecText(text, { file });

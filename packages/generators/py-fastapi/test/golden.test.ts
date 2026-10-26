@@ -56,10 +56,13 @@ describe('the committed example', () => {
   it('holds the whole of both managed tiers, and only those', () => {
     const shipped = shippedManagedTree();
     // 27 rather than 25 since P7a: an input guardrail adds `generated/guardrails.py`,
-    // and a `streaming: true` deployment adds `generated/sse.py`.
-    expect(generated().length).toBe(27);
-    expect(planFilesByOwner('business').length).toBe(4);
-    expect(shipped.size).toBe(31);
+    // and a `streaming: true` deployment adds `generated/sse.py`. 31 since P7b: an agent
+    // adds `generated/agents.py` plus a prompt, a contract and a tool adapter for the tool
+    // it calls -- four files, and the counts below are what makes an emitter that quietly
+    // stopped writing one of them a failure rather than a smaller number nobody reads.
+    expect(generated().length).toBe(31);
+    expect(planFilesByOwner('business').length).toBe(5);
+    expect(shipped.size).toBe(36);
   });
 
   it('records every generated file in aid.manifest.json at the hash of its bytes', () => {
