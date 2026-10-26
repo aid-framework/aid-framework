@@ -15,8 +15,18 @@
  *   an emitter, a runtime and a committed example. The TypeScript runtime still defers
  *   streaming (ratified to L6), which is why `@aid/ir`'s derivation and this list are
  *   kept separate concerns.
+ * - `agents` and `cursor-memory` are declared since layer P7b, and they are two
+ *   declarations rather than one because the IR derives two: `agents` from an `agents`
+ *   collection, `cursor-memory` from a `memory` collection (there is no `memory`
+ *   capability to declare). Both are backed by emitted code -- `generated/agents.py`
+ *   builds the runtime over this app's own gateway and tools and serves the routes --
+ *   and by the example's `tests/test_agents.py`, which pauses a run and resumes it. The
+ *   TypeScript target declares neither, so `@aid/ir` will route a spec that needs them
+ *   to the Python target or refuse it.
  * - the absence of `emitsAgainst.orchestration` — Phase 0 control flow is plain async,
- *   and orchestration frameworks are deferred to Phase 2.
+ *   and orchestration frameworks are deferred to Phase 2. An agent loop is not an
+ *   orchestration framework: the emitted `build_runtime` calls `AgentRuntime.from_ir`
+ *   from the repo's own runtime and depends on nothing outside it.
  */
 
 import { IR_VERSION, type TargetCapabilityDeclarations } from '@aid/ir';
@@ -51,6 +61,8 @@ export const PY_FASTAPI_MANIFEST_INPUT: GeneratorManifestInput = {
     'embeddings',
     'rerank',
     'guardrails',
+    'agents',
+    'cursor-memory',
   ],
   emitsAgainst: {
     structuredOutput: 'pydantic',

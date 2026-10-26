@@ -1,0 +1,309 @@
+specVersion: "0.2"
+
+# The example app: the smallest spec that still exercises every contract the
+# py-fastapi target emits -- a model gateway with a pinned model and a fallback, a
+# prompt the registry serves, a business tool behind a generated adapter, a structured
+# output, an HTTP route, a retriever over a local corpus with citations, an ingest
+# entry point, an input guardrail, a streaming deployment, and an eval that gates on a
+# statistical threshold.
+
+project:
+  name: support-copilot
+  namespace: aid.examples.support
+  description: Classifies an inbound support ticket and answers it with a structured reply.
+  targets:
+    - py-fastapi
+
+types:
+  Ticket:
+    kind: struct
+    fields:
+      subject:
+        type: string
+        required: true
+        description: The ticket subject line.
+      body:
+        type: string
+        required: true
+        description: The ticket body, as the customer wrote it.
+  Customer:
+    kind: struct
+    fields:
+      id:
+        type: string
+        required: true
+        description: The account identifier.
+      name:
+        type: string
+        required: true
+        description: The account name, for the reply to address.
+      plan:
+        type: string
+        required: true
+        enum: [free, pro, enterprise]
+      open_tickets:
+        type: integer
+        required: true
+        minimum: 0
+        description: How many tickets the account already has open.
+  Answer:
+    kind: struct
+    fields:
+      summary:
+        type: string
+        required: true
+        description: One sentence describing what the customer is asking for.
+      category:
+        type: string
+        required: true
+        enum: [billing, bug, howto, other]
+      confidence:
+        type: number
+        required: true
+        minimum: 0
+        maximum: 1
+
+models:
+  fast:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [json-schema, tools, streaming]
+    params:
+      temperature: 0.2
+      maxTokens: 512
+    costProfile: openai-gpt-4o-mini
+    limits:
+      maxInputTokens: 8192
+      maxOutputTokens: 512
+    fallbacks: [offline]
+  # The fallback is the fake provider, so the example runs end to end with no network
+  # and no key. The eval gate samples against this one.
+  offline:
+    provider: fake
+    modelId: fake-deterministic-1
+    capabilities: [json-schema, tools, streaming]
+  # Retrieval is wired with the same discipline: a deterministic fake embedder, so the
+  # whole path -- chunk, embed, index, search, cite -- runs in CI with no network and no
+  # key. The `embeddings` capability is what makes this model an embedding model; the IR
+  # has no `embeddings` section, an entry exists per model that declares it.
+  #
+  # `modelId` names the catalogued model rather than an invented id, which is what lets
+  # the cost gate price the chunks a retriever materialises: a profile resolves from the
+  # pinned catalog by `modelId`, and an id the catalog does not know leaves the eval
+  # unpriced. This mirrors `packages/spec/test/fixtures/valid/retrieval.spec.yaml`, the
+  # offline retrieval fixture the spec layer ships.
+  embed:
+    provider: fake
+    modelId: text-embedding-3-small
+    capabilities: [embeddings]
+  # The runtime's `reranker_for` matches "lexical" against the name the IR carries, which
+  # is this alias rather than `modelId`, so the alias is what has to say it.
+  lexical:
+    provider: fake
+    modelId: fake-lexical-rerank
+
+stores:
+  handbook:
+    # In memory: the example indexes a two-file corpus on ingest and searches it in
+    # process. The pgvector adapter path ships with the runtime and a compose file ships
+    # beside it (design §D2); wiring one here would make the example unrunnable without a
+    # PostgreSQL, and no required gate may touch a database.
+    kind: memory
+    # The vector width. A retriever must fix one -- from its embedding or its store --
+    # because a width resolved at run time would let a store accept vectors a later run
+    # cannot compare.
+    dimensions: 1536
+
+retrievers:
+  handbook:
+    source:
+      kind: file
+      uri: ./docs
+      glob: "**/*.md"
+    chunking:
+      strategy: recursive
+      size: 800
+      overlap: 100
+      keepMetadata: [path]
+    embedModel: embed
+    store: handbook
+    index:
+      metric: cosine
+      hybrid: true
+    topK: 5
+    rerank:
+      model: lexical
+      topN: 3
+    refresh:
+      mode: full
+    traits: [citations]
+
+prompts:
+  classify_ticket:
+    version: 1
+    model: fast
+    template: |
+      You classify inbound support tickets for the ACME support desk.
+
+      Subject: {{ subject }}
+
+      Handbook excerpts retrieved for the subject, or nothing when nothing matched.
+      {{ handbook }}
+
+      Answer with a JSON object holding exactly three fields:
+        * summary: one sentence describing the customer's problem
+        * category: one of billing, bug, howto, other
+        * confidence: your confidence in the category, a number between 0 and 1
+    variables:
+      subject:
+        type: string
+        required: true
+      # The variable the `retrieve` step's binding feeds. Its name matches that binding
+      # (`as: handbook`) because the generated call inlines the retrieved context under
+      # it, and it is `required: true` because the template interpolates it: the prompt
+      # registry rejects both an unsupplied variable and a supplied-but-unused one, so a
+      # binding the body never interpolates would raise on the first request.
+      handbook:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: Answer
+
+tools:
+  lookup_customer:
+    description: Look up the account that filed a ticket.
+    input: Ticket
+    output: Customer
+    handler:
+      kind: business
+      symbol: lookup_customer
+    sideEffects: read
+    timeoutMs: 5000
+    retries: 1
+    idempotency: key
+    # No `auth:` predicate here on purpose: the runtime has no authorization hook yet,
+    # so `hasScope("customers:read")` would be an unenforced claim. The validator
+    # refuses to emit one rather than let the spec imply a check nothing performs.
+
+guardrails:
+  # Every `input`-stage guardrail declared in a document runs on every HTTP generate
+  # route of that document. That is a property of the IR, not of this file: a pipeline
+  # has no field naming a guardrail, and the security gate that demands one is
+  # document-global. The consequence worth knowing is that an agent-scoped guardrail
+  # declared beside a pipeline would inspect pipeline input too -- this document declares
+  # no agent, so here the two cannot disagree.
+  ticket_intake:
+    stages: [input]
+    policies: [prompt-injection]
+    action: block
+    onFail:
+      # `message` is the text the 400 carries, and the reason a client can tell a refusal
+      # from a failure: a block is a decision, not an outage, so it is a 4xx.
+      message: This ticket reads as an attempt to redirect the assistant, so it was refused.
+      log: true
+  ticket_pii:
+    stages: [input]
+    policies: [pii-detect]
+    action: redact
+    # The input stage's payload is exactly `{"text": <the rendered prompt>}`, so `text`
+    # is the only field name a redaction can mask there. The generator refuses any other
+    # name rather than emit a redaction that could never run.
+    redact: [text]
+    onFail:
+      message: Contact details in the ticket were masked before the model saw them.
+      log: false
+
+evals:
+  classify_quality:
+    description: Whether the classifier returns a well-formed answer for each ticket.
+    # The spec language names an eval's target as `pipeline:<id>`, and a pipeline counts
+    # as one subject only when a single prompt is rendered against a single model.
+    target: pipeline:answer_ticket
+    dataset:
+      source: file
+      uri: evals/classify_quality.json
+    metrics:
+      - kind: json-schema
+        schema: Answer
+    gate:
+      # `ci: true` is what makes this a gate rather than a report. An `llm-judge` metric
+      # is deliberately absent: the spec layer refuses one under a CI gate, and design
+      # §11 defers it, so the app's gate measures only what the runtime can compute
+      # deterministically.
+      ci: true
+      maxRegression: 0.05
+      samples: 5
+  # Retrieval is measured by a *different* harness, which is why this is a second eval
+  # rather than a second metric on the one above. `classify_quality` asks whether the
+  # classifier shaped an answer well -- one prediction per case, through the model --
+  # and this asks whether the handbook returned the pages that answer the ticket -- one
+  # ranked, cited result per case, through the retriever. The runtime samples the second
+  # question with `RetrievalGate`, which produces its own metrics, so an eval that asked
+  # both would have to be measured twice and reported once; the generator refuses that
+  # combination rather than silently dropping half of it.
+  handbook_quality:
+    description: Whether retrieval finds the handbook pages a ticket's subject needs.
+    target: pipeline:answer_ticket
+    dataset:
+      source: file
+      uri: evals/handbook_quality.json
+    metrics:
+      # `expectDocs` are the documents the retriever's own ids name. A document id is its
+      # path relative to the retriever's `uri` (`./docs`), which is why these are bare
+      # filenames rather than `docs/billing.md`; a run whose index is empty reports 0.0
+      # for every one of them. `k` is how many results count as an answer.
+      #
+      # One `retrieval` metric covers the whole question: the runtime answers it with the
+      # family of measurements it ships -- recall@k, MRR and citation grounding -- and the
+      # generated gate is built from those metric objects, so no name written here can
+      # drift from a name the runtime no longer produces.
+      - kind: retrieval
+        expectDocs: [billing.md, exports.md]
+        k: 5
+    gate:
+      ci: true
+      maxRegression: 0.05
+      samples: 5
+
+pipelines:
+  answer_ticket:
+    description: Classify a ticket and return a structured answer.
+    trigger:
+      http:
+        method: post
+        path: /tickets/answer
+    steps:
+      - tool:
+          tool: lookup_customer
+          input:
+            subject: "{{ event.subject }}"
+            body: "{{ event.body }}"
+          as: customer
+      - retrieve:
+          retriever: handbook
+          query: "{{ event.subject }}"
+          # The binding name. It is also the prompt variable the retrieved context is
+          # inlined under, so the two are written to agree.
+          as: handbook
+      - generate:
+          prompt: classify_ticket
+          input:
+            subject: "{{ event.subject }}"
+          context: handbook
+          as: answer
+      - emit:
+          event: Answer
+
+deployments:
+  # A deployment says where the app runs, not how it is generated. `streaming` is the only
+  # field here that reaches generated code: it makes the route answer a request that
+  # accepts `text/event-stream` with the model's deltas as SSE frames, and it is what
+  # makes the target declare the `streaming` capability. `secrets` names what the platform
+  # must supply -- the process reads them from its own environment, so there is nothing for
+  # the generator to emit for them.
+  api:
+    target: container
+    streaming: true
+    secrets: [OPENAI_API_KEY]

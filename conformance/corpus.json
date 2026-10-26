@@ -1747,6 +1747,83 @@
         "agent": "solo",
         "declared": "0.0.0"
       }
+    },
+    {
+      "id": "agent-resume-across-json",
+      "op": "agent.resume",
+      "runtimes": ["python"],
+      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. P7b emits the resume route for the Python target, so this case is the parity target for the TypeScript impl that has to answer the same questions.",
+      "description": "A run stops at a tool that requires confirmation, the checkpoint survives a JSON round trip, and the approved run continues from the same step. The confirmation is declared on the tool rather than in a policy, which is the source P7b's route predicate has to notice without a humanInTheLoop.",
+      "input": {
+        "models": [
+          {
+            "id": "cheap",
+            "inputPer1kUsd": 0.00015,
+            "outputPer1kUsd": 0.0006
+          }
+        ],
+        "prompts": [
+          {
+            "id": "solo",
+            "template": "You are solo."
+          }
+        ],
+        "tools": [
+          {
+            "id": "refund",
+            "name": "refund",
+            "requiresConfirmation": true
+          }
+        ],
+        "agents": [
+          {
+            "id": "solo",
+            "instructions": "solo",
+            "model": "cheap",
+            "maxSteps": 3,
+            "tools": ["refund"]
+          }
+        ],
+        "script": [
+          {
+            "tool": "refund",
+            "arguments": {
+              "query": "order-1"
+            }
+          },
+          {
+            "text": "refunded"
+          }
+        ],
+        "agent": "solo",
+        "question": "refund order 1",
+        "decision": "approve"
+      },
+      "expect": {
+        "pausedStatus": "paused",
+        "channel": "tool-confirmation",
+        "askTools": ["refund"],
+        "wireRoundTrip": true,
+        "status": "completed",
+        "answer": "refunded"
+      }
+    },
+    {
+      "id": "memory-file-store-survives-a-second-instance",
+      "op": "memory.store",
+      "runtimes": ["python"],
+      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. P7b is what makes a file-backed tier reachable from an emitted document, so the case is scoped to the runtime that can serve it.",
+      "description": "A file-backed tier is durable: values appended through one store are read back through a second store on the same path, and a different scope sees none of them. InProcessMemoryStore is already covered by agent-memory-scope; durability is the property that distinguishes this backend.",
+      "input": {
+        "scope": "user",
+        "key": "thread-a",
+        "values": ["alpha", "beta"]
+      },
+      "expect": {
+        "values": ["alpha", "beta"],
+        "otherScopeValues": [],
+        "fileWritten": true
+      }
     }
   ]
 }

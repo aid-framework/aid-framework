@@ -541,7 +541,10 @@ function emitToolStep(
         INDENT,
       ),
     );
-    callArguments = '_verdict.arguments';
+    // `GuardrailVerdict.arguments` is a `Mapping` and `ToolCall.arguments` is a `dict`: a
+    // copy keeps the redaction while satisfying the call, which mypy checks on the emitted
+    // tree. This branch is only reachable once some guardrail declares the `tool-call` stage.
+    callArguments = 'dict(_verdict.arguments)';
   }
   lines.push(
     callStatement(

@@ -12,6 +12,7 @@ import type { IR } from '@aid/ir';
 
 import { INDENT } from '../python.js';
 import { assemble, HEADER, importBlock, importFrom } from '../template.js';
+import { hasAgents } from './agents.js';
 import type { EmittedFile } from './file.js';
 import { GENERATED_ROOT, generated } from './file.js';
 import { pythonDoc } from './text.js';
@@ -29,6 +30,10 @@ export const DEPS_BINDING = 'deps';
  */
 export function emitDeps(ir: IR): EmittedFile {
   const retrieval = ir.retrievers.length > 0;
+  /* The agent route needs the tool objects the runtime takes, the pipeline route needs the
+   * executor. One tuple, built once, handed to both -- so a tool cannot be permissioned one
+   * way on one route and another way on the other. */
+  const agents = hasAgents(ir);
   return generated(
     DEPS_PATH,
     assemble([
@@ -36,24 +41,27 @@ export function emitDeps(ir: IR): EmittedFile {
       pythonDoc(
         'The container a pipeline step reads from its context: the model gateway, the ' +
           'prompt registry, and the tool executor.' +
+          (agents ? ' The agent route reads the same gateway and the same tool objects.' : '') +
           (retrieval ? ' The retrievers the spec declares travel with it too.' : ''),
       ),
       importBlock([
-        [importFrom('dataclasses', ['dataclass'])],
+        [importFrom('dataclasses', agents ? ['dataclass', 'field'] : ['dataclass'])],
         [
           importFrom('aid_runtime', [
             ...(retrieval ? ['ConfigurationError'] : []),
             'ModelGateway',
             'PromptRegistry',
             ...(retrieval ? ['Retriever'] : []),
-            'ToolExecutor',
+            ...(agents ? ['Tool', 'ToolExecutor'] : ['ToolExecutor']),
           ]),
         ],
         [
           'from .gateway import build_gateway',
           'from .prompts import build_registry',
           ...(retrieval ? ['from .retrieval.bindings import build_retrievers'] : []),
-          'from .tools import build_executor',
+          agents
+            ? 'from .tools import build_agent_tools, build_executor'
+            : 'from .tools import build_executor',
         ],
       ]),
       [
@@ -63,6 +71,9 @@ export function emitDeps(ir: IR): EmittedFile {
         `${INDENT}gateway: ModelGateway`,
         `${INDENT}prompts: PromptRegistry`,
         `${INDENT}tools: ToolExecutor`,
+        ...(agents
+          ? [`${INDENT}agent_tools: tuple[Tool, ...] = field(default_factory=build_agent_tools)`]
+          : []),
         ...(retrieval
           ? [
               `${INDENT}retrievers: dict[str, Retriever] | None = None`,
@@ -89,16 +100,28 @@ export function emitDeps(ir: IR): EmittedFile {
         `${INDENT}gateway: ModelGateway | None = None,`,
         `${INDENT}prompts: PromptRegistry | None = None,`,
         `${INDENT}tools: ToolExecutor | None = None,`,
+        ...(agents ? [`${INDENT}agent_tools: tuple[Tool, ...] | None = None,`] : []),
         ...(retrieval ? [`${INDENT}retrievers: dict[str, Retriever] | None = None,`] : []),
         ') -> Deps:',
         pythonDoc(
           "The app's dependencies, each defaulting to the wiring the spec generated.",
           INDENT,
         ),
+        ...(agents
+          ? [
+              `${INDENT}declared_tools = build_agent_tools() if agent_tools is None else agent_tools`,
+            ]
+          : []),
         `${INDENT}return Deps(`,
         `${INDENT}${INDENT}gateway=build_gateway() if gateway is None else gateway,`,
         `${INDENT}${INDENT}prompts=build_registry() if prompts is None else prompts,`,
-        `${INDENT}${INDENT}tools=build_executor() if tools is None else tools,`,
+        ...(agents
+          ? [
+              `${INDENT}${INDENT}tools=build_executor(tools=declared_tools) ` +
+                'if tools is None else tools,',
+              `${INDENT}${INDENT}agent_tools=declared_tools,`,
+            ]
+          : [`${INDENT}${INDENT}tools=build_executor() if tools is None else tools,`]),
         ...(retrieval
           ? [
               `${INDENT}${INDENT}retrievers=build_retrievers() if retrievers is None else retrievers,`,

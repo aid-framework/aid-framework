@@ -244,6 +244,12 @@ export const TARGET_WIRED_CAPABILITIES: Readonly<Record<string, string>> = {
   guardrails:
     'the generated guardrail module and the GuardrailEngine calls the generate step, ' +
     'the tool adapter and the retriever bindings emit',
+  agents:
+    'the agent runtime and router generated in app/generated/agents.py, which ' +
+    'AgentRuntime.from_ir resolves from the emitted document',
+  'cursor-memory':
+    'the memory tiers in the emitted document, served by the runtime memory store the ' +
+    'agent runtime is built over',
 };
 
 /** A target-capability declaration read three ways, so no promise goes unaccounted for. */

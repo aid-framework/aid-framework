@@ -24,6 +24,8 @@ describe('the Phase 0 generator set', () => {
   it('is the replacement for the IR package placeholder', () => {
     expect(phase0TargetCapabilities()).toEqual({
       [PY_FASTAPI_TARGET]: [
+        'agents',
+        'cursor-memory',
         'embeddings',
         'guardrails',
         'http-trigger',
@@ -61,6 +63,8 @@ describe('the py-fastapi declaration', () => {
 
   it('declares streaming, because the emitted route serves SSE and the Python runtime streams', () => {
     expect(PY_FASTAPI_MANIFEST.capabilities).toEqual([
+      'agents',
+      'cursor-memory',
       'embeddings',
       'guardrails',
       'http-trigger',
@@ -82,11 +86,27 @@ describe('the py-fastapi declaration', () => {
   it('declares guardrails, because the Python runtime executes them', () => {
     // `guardrails` is the P7a half of the same question `streaming` answers: the
     // runtime ships `GuardrailEngine` and the generator emits the wiring that calls it.
-    // `agents` stays out; that is P7b.
     expect(PY_FASTAPI_MANIFEST.capabilities).toContain('guardrails');
     expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).toContain('guardrails');
-    expect(PY_FASTAPI_MANIFEST.capabilities).not.toContain('agents');
-    expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).not.toContain('agents');
+  });
+
+  it('declares agents and cursor-memory since P7b, because the emitted route runs them', () => {
+    // P7a pinned `not.toContain('agents')` here, and P7b is what changes the answer, so
+    // the assertion inverts rather than disappearing: the declaration is the claim that
+    // `generated/agents.py` serves the collection, and the evidence is that file plus the
+    // example's `tests/test_agents.py`, which pauses a run and resumes it.
+    expect(PY_FASTAPI_MANIFEST.capabilities).toContain('agents');
+    expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).toContain('agents');
+    // The IR derives `cursor-memory` from a `memory` collection -- there is no `memory`
+    // capability to declare -- so a target that serves memory backends says so by name.
+    expect(PY_FASTAPI_MANIFEST.capabilities).toContain('cursor-memory');
+    expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).toContain('cursor-memory');
+    // Both declarations moved together: the input is what the manifest is parsed from,
+    // so a split between them would be a generated manifest that disagrees with itself.
+    // Sorted first because parsing sorts and the input keeps declaration order.
+    expect(PY_FASTAPI_MANIFEST.capabilities).toEqual(
+      [...PY_FASTAPI_MANIFEST_INPUT.capabilities].sort(),
+    );
   });
 
   it('declares the retrieval capabilities the emitted wiring satisfies', () => {

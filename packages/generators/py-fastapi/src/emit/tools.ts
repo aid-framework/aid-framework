@@ -14,6 +14,7 @@ import type { IR, ToolShape } from '@aid/ir';
 import { className, moduleName } from '../names.js';
 import { INDENT, pythonStatement, pythonString } from '../python.js';
 import { assemble, HEADER, importBlock, importFrom, tupleLiteral } from '../template.js';
+import { hasAgents } from './agents.js';
 import { BUSINESS_TOOLS_INIT_PATH } from './contracts.js';
 import type { EmittedFile } from './file.js';
 import { business, GENERATED_ROOT, generated } from './file.js';
@@ -122,16 +123,69 @@ export function emitToolsInit(ir: IR): EmittedFile {
   const adapted = tools.map((tool) => `as_${moduleName(tool.id)}(${moduleName(tool.id)})`);
 
   const hasTools = tools.length > 0;
-  const signature = hasTools
-    ? ['def build_executor(', `${INDENT}*,`, ...parameters, ') -> ToolExecutor:']
-    : ['def build_executor() -> ToolExecutor:'];
-  const body = hasTools
+  /* An agent runtime takes tool objects, a pipeline takes an executor. Both are built from
+   * the same `IMPLEMENTATIONS` mapping, and `build_deps` builds the tuple once and hands the
+   * same objects to both -- see the seam test that asserts the two agree on ids, permissions
+   * and confirmation flags. Emitted only for an app that has an agent: a generator that
+   * added this to an agent-free app would move that app's bytes for nothing. */
+  const agentTools = hasAgents(ir);
+  const agentToolsSignature = hasTools
+    ? ['def build_agent_tools(', `${INDENT}*,`, ...parameters, ') -> tuple[Tool, ...]:']
+    : ['def build_agent_tools() -> tuple[Tool, ...]:'];
+  const agentToolsBlock = agentTools
     ? [
-        `${INDENT}return ToolExecutor(`,
-        `${INDENT}${INDENT}tools=${tupleLiteral(adapted, INDENT + INDENT, 'tools=')},`,
-        `${INDENT})`,
+        [
+          ...agentToolsSignature,
+          pythonDoc(
+            'Every declared tool, adapted. The agent runtime takes these directly, so the ' +
+              'agent route and the pipeline route call the same implementations.',
+            INDENT,
+          ),
+          hasTools
+            ? `${INDENT}return ${tupleLiteral(adapted, INDENT, 'return ')}`
+            : `${INDENT}return ()`,
+        ].join('\n'),
       ]
-    : [`${INDENT}return ToolExecutor(tools=())`];
+    : [];
+
+  const signature = hasTools
+    ? [
+        'def build_executor(',
+        `${INDENT}*,`,
+        ...(agentTools ? [`${INDENT}tools: tuple[Tool, ...] | None = None,`] : []),
+        ...parameters,
+        ') -> ToolExecutor:',
+      ]
+    : agentTools
+      ? [
+          'def build_executor(',
+          `${INDENT}*,`,
+          `${INDENT}tools: tuple[Tool, ...] | None = None,`,
+          ') -> ToolExecutor:',
+        ]
+      : ['def build_executor() -> ToolExecutor:'];
+  const body = agentTools
+    ? [
+        `${INDENT}if tools is None:`,
+        hasTools
+          ? [
+              `${INDENT}${INDENT}tools = build_agent_tools(`,
+              ...tools.map(
+                (tool) =>
+                  `${INDENT}${INDENT}${INDENT}${moduleName(tool.id)}=${moduleName(tool.id)},`,
+              ),
+              `${INDENT}${INDENT})`,
+            ].join('\n')
+          : `${INDENT}${INDENT}tools = build_agent_tools()`,
+        `${INDENT}return ToolExecutor(tools=tools)`,
+      ]
+    : hasTools
+      ? [
+          `${INDENT}return ToolExecutor(`,
+          `${INDENT}${INDENT}tools=${tupleLiteral(adapted, INDENT + INDENT, 'tools=')},`,
+          `${INDENT})`,
+        ]
+      : [`${INDENT}return ToolExecutor(tools=())`];
 
   return generated(
     TOOLS_INIT_PATH,
@@ -142,11 +196,12 @@ export function emitToolsInit(ir: IR): EmittedFile {
           'test that needs a deterministic tool passes its own implementation by keyword.',
       ),
       importBlock([
-        [importFrom('aid_runtime', ['ToolExecutor'])],
+        [importFrom('aid_runtime', agentTools ? ['Tool', 'ToolExecutor'] : ['ToolExecutor'])],
         ...(hasTools
           ? [['from ...business.tools import IMPLEMENTATIONS', ...imports, ...protocols]]
           : []),
       ]),
+      ...agentToolsBlock,
       [
         ...signature,
         pythonDoc('Every declared tool, adapted and ready to execute.', INDENT),

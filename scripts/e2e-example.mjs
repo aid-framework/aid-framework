@@ -14,6 +14,10 @@
  *      with 200 over a real socket -- generated code that runs, not code that looks
  *      plausible. A 200 is only reachable if the route, the pipeline, the business tool and
  *      the model gateway all wired up, so the assertion is not just "the server is up".
+ *   4. The same app runs an agent to a pause and finishes it from the checkpoint:
+ *      `POST /agents/refund_agent/run` stops at the confirming tool and hands back a
+ *      checkpoint, and `POST /agents/resume` completes the run. Two requests, so a route
+ *      that returned a canned 200 would not pass.
  *
  * The generated app talks to a model provider, so booting it offline needs the example's
  * own seam: `tests/fake_gateway.py` is the same dependency override the example's test suite
@@ -55,8 +59,26 @@ const BUSINESS_SEEDS = [
   'app/business/__init__.py',
   'app/business/prompts/__init__.py',
   'app/business/tools/__init__.py',
+  'app/business/tools/issue_refund.py',
   'app/business/tools/lookup_customer.py',
 ];
+
+/**
+ * The agent half of claim 3. `refund_agent` declares `humanInTheLoop`, so the run stops
+ * before the tool executes and hands back a checkpoint; approving it continues the same
+ * run, which is where the second scripted turn -- the answer -- is consumed.
+ *
+ * The script is per provider **instance**, so the agent assertions get a server of their
+ * own: one scripted provider shared with the pipeline server would spend turn one on the
+ * ticket request. That is why the shim takes a mode rather than always installing the same
+ * override.
+ */
+const AGENT_REQUEST = { text: 'Acme was charged twice this month; please refund it.' };
+const AGENT_TOOLS_ARGS = {
+  subject: 'Acme: I was charged twice this month',
+  body: 'Please refund the duplicate charge.',
+};
+const AGENT_ANSWER = 'Acme Corp is on the enterprise plan, and the duplicate charge was refunded.';
 
 /**
  * Boots the regenerated app with its gateway dependency overridden to the example's
@@ -75,9 +97,13 @@ import sys
 import uvicorn
 
 import app as app_package
+from aid_runtime import ScriptedTurn
 from app.generated.deps import get_deps
 from app.main import app
 from tests.fake_gateway import fake_deps
+
+AGENT_TOOL_ARGS = ${JSON.stringify(AGENT_TOOLS_ARGS)}
+AGENT_ANSWER = ${JSON.stringify(AGENT_ANSWER)}
 
 
 def main() -> None:
@@ -85,7 +111,18 @@ def main() -> None:
     imported = os.path.realpath(app_package.__file__)
     if not imported.startswith(root):
         raise SystemExit(f"imported {imported}, expected the regenerated tree under {root}")
-    app.dependency_overrides[get_deps] = lambda: fake_deps()
+    if sys.argv[3] == "agent":
+        # Built once, not per request: the script is consumed one turn per model call, and
+        # a provider rebuilt for the resume would replay the tool call instead of answering.
+        deps = fake_deps(
+            script=(
+                ScriptedTurn.tool("lookup_customer", AGENT_TOOL_ARGS),
+                ScriptedTurn.answer(AGENT_ANSWER),
+            )
+        )
+        app.dependency_overrides[get_deps] = lambda: deps
+    else:
+        app.dependency_overrides[get_deps] = lambda: fake_deps()
     uvicorn.run(app, host="127.0.0.1", port=int(sys.argv[1]), log_level="warning")
 
 
@@ -223,21 +260,22 @@ function waitForExit(child, timeoutMs) {
 }
 
 /**
- * Claim 3: the regenerated app imports, boots and answers over a real socket.
+ * Boot the regenerated app on a free port under the shim's `mode`, and hand back everything
+ * the assertions need. Nothing is awaited for readiness here: the app is ready when it
+ * accepts a connection, which `postWhenReady` is what discovers.
  *
  * @param {string} directory
+ * @param {'pipeline' | 'agent'} mode
  */
-async function assertRegeneratedAppAnswers(directory) {
-  log('==> booting the regenerated app and sending a real request');
+async function bootApp(directory, mode) {
   const port = await freePort();
-  const child = spawn(python, ['-c', SERVER_SHIM, String(port), directory], {
+  const child = spawn(python, ['-c', SERVER_SHIM, String(port), directory, mode], {
     cwd: directory,
     stdio: ['ignore', 'pipe', 'pipe'],
     // The regenerated tree wins over the installed distribution, whatever the order the
     // interpreter would otherwise resolve `app` in. The shim asserts it actually did.
     env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONPATH: directory },
   });
-
   let output = '';
   child.stdout?.setEncoding('utf8').on('data', (chunk) => {
     output += chunk;
@@ -245,43 +283,108 @@ async function assertRegeneratedAppAnswers(directory) {
   child.stderr?.setEncoding('utf8').on('data', (chunk) => {
     output += chunk;
   });
+  return { child, port, output: () => output };
+}
 
-  const url = `http://127.0.0.1:${port}/tickets/answer`;
+/**
+ * POST until the server answers, failing loudly if it exited or never came up.
+ *
+ * @param {{ child: import('node:child_process').ChildProcess, port: number, output: () => string }} server
+ * @param {string} path
+ * @param {unknown} body
+ * @returns {Promise<Response>}
+ */
+async function postWhenReady(server, path, body) {
+  const url = `http://127.0.0.1:${server.port}${path}`;
   const deadline = Date.now() + 60_000;
-  try {
-    /** @type {Response | undefined} */
-    let response;
-    while (response === undefined) {
-      if (child.exitCode !== null) {
-        throw new Error(`the app exited with ${child.exitCode} before it answered:\n${output}`);
-      }
-      if (Date.now() > deadline) {
-        throw new Error(`the app did not answer within 60s:\n${output}`);
-      }
-      try {
-        response = await fetch(url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(REQUEST),
-        });
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
+  for (;;) {
+    if (server.child.exitCode !== null) {
+      throw new Error(
+        `the app exited with ${server.child.exitCode} before it answered:\n${server.output()}`,
+      );
     }
+    if (Date.now() > deadline) {
+      throw new Error(`the app did not answer within 60s:\n${server.output()}`);
+    }
+    try {
+      return await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}
 
+/**
+ * @param {{ child: import('node:child_process').ChildProcess }} server
+ */
+async function stopApp(server) {
+  server.child.kill('SIGTERM');
+  if (!(await waitForExit(server.child, 10_000))) {
+    server.child.kill('SIGKILL');
+    await waitForExit(server.child, 5_000);
+  }
+}
+
+/**
+ * Claim 3: the regenerated app imports, boots and answers over a real socket.
+ *
+ * @param {string} directory
+ */
+async function assertRegeneratedAppAnswers(directory) {
+  log('==> booting the regenerated app and sending a real request');
+  const server = await bootApp(directory, 'pipeline');
+  try {
+    const response = await postWhenReady(server, '/tickets/answer', REQUEST);
     const body = await response.text();
-    require(response.status === 200, `POST ${url} answered ${response.status}: ${body}`);
+    require(response.status === 200, `POST /tickets/answer answered ${response.status}: ${body}`);
     const answer = JSON.parse(body);
     require(answer.category ===
       'billing', `the answer was not the one the pipeline produced: ${body}`);
     require(typeof answer.summary === 'string' && answer.summary !== '', `empty summary: ${body}`);
     log(`    POST /tickets/answer -> 200 ${body}`);
   } finally {
-    child.kill('SIGTERM');
-    if (!(await waitForExit(child, 10_000))) {
-      child.kill('SIGKILL');
-      await waitForExit(child, 5_000);
-    }
+    await stopApp(server);
+  }
+}
+
+/**
+ * Claim 4: the agent route runs, pauses, and resumes over a real socket.
+ *
+ * A 200 alone would not prove this: the run has to stop with a checkpoint and the *second*
+ * request has to finish it, which is only reachable if the emitted route built a runtime
+ * over this app's gateway and handed back a checkpoint a client can hold.
+ *
+ * @param {string} directory
+ */
+async function assertRegeneratedAgentPausesAndResumes(directory) {
+  log('==> booting the regenerated app and running an agent through a pause');
+  const server = await bootApp(directory, 'agent');
+  try {
+    const started = await postWhenReady(server, '/agents/refund_agent/run', AGENT_REQUEST);
+    const startedBody = await started.text();
+    require(started.status === 200, `the run answered ${started.status}: ${startedBody}`);
+    const paused = JSON.parse(startedBody);
+    require(paused.status === 'paused', `the run did not pause for approval: ${startedBody}`);
+    require(paused.checkpoint !== null, `the pause carried no checkpoint: ${startedBody}`);
+    log(`    POST /agents/refund_agent/run -> 200 paused, checkpoint handed back`);
+
+    const resumed = await postWhenReady(server, '/agents/resume', {
+      checkpoint: paused.checkpoint,
+      decision: 'approve',
+    });
+    const resumedBody = await resumed.text();
+    require(resumed.status === 200, `the resume answered ${resumed.status}: ${resumedBody}`);
+    const finished = JSON.parse(resumedBody);
+    require(finished.status === 'completed', `the resume did not finish the run: ${resumedBody}`);
+    require(finished.answer ===
+      AGENT_ANSWER, `the answer was not the scripted one: ${resumedBody}`);
+    log(`    POST /agents/resume -> 200 completed ${JSON.stringify(finished.answer)}`);
+  } finally {
+    await stopApp(server);
   }
 }
 
@@ -296,6 +399,7 @@ async function main() {
     assertRegenerationIsANoOp(regenerated);
     assertSpecAloneReproducesGeneratedCode(join(workRoot, 'fresh'));
     await assertRegeneratedAppAnswers(regenerated);
+    await assertRegeneratedAgentPausesAndResumes(regenerated);
     log('==> ok: regeneration is byte-identical and the regenerated app runs');
   } finally {
     rmSync(workRoot, { recursive: true, force: true });

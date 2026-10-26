@@ -63,6 +63,20 @@ ALIASES: dict[str, ModelSpec] = {
             }
         ),
     ),
+    "triage": ModelSpec(
+        name="gpt-4o-mini",
+        provider="openai",
+        cost=CostProfile(input_per_1k_usd=0.00015, output_per_1k_usd=0.0006),
+        context_window=8192,
+        max_output_tokens=400,
+        capabilities=frozenset(
+            {
+                Capability.STREAMING,
+                Capability.STRUCTURED_OUTPUT,
+                Capability.TOOL_CALLING,
+            }
+        ),
+    ),
 }
 
 FALLBACKS: dict[str, tuple[str, ...]] = {

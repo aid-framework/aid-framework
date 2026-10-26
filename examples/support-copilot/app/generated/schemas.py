@@ -30,6 +30,20 @@ class Customer(BaseModel):
     plan: Literal["free", "pro", "enterprise"]
 
 
+class Refund(BaseModel):
+    """Declared by the spec, with no description."""
+
+    amount: float = Field(ge=0, description="How much to refund, in the account's currency.")
+    subject: str = Field(description="The ticket the refund is for.")
+
+
+class RefundReceipt(BaseModel):
+    """Declared by the spec, with no description."""
+
+    refund_id: str = Field(description="The identifier the billing system assigned.")
+    status: Literal["issued", "declined"]
+
+
 class Ticket(BaseModel):
     """Declared by the spec, with no description."""
 

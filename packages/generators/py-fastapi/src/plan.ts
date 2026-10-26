@@ -16,6 +16,7 @@
 import type { GeneratedFile, Plan } from '@aid/generator-sdk';
 import type { IR } from '@aid/ir';
 
+import { emitAgents, hasAgents } from './emit/agents.js';
 import { emitBusinessToolSeed, emitContractsInit, emitToolContract } from './emit/contracts.js';
 import { emitDeps } from './emit/deps.js';
 import { emitEval, emitEvalsInit } from './emit/evals.js';
@@ -64,6 +65,7 @@ export function filesFor(ir: IR): GeneratedFile[] {
     emitDeps(ir),
     emitGatewayModels(ir),
     emitGatewayInit(),
+    ...(hasAgents(ir) ? [emitAgents(ir)] : []),
     ...(hasGuardrails(ir) ? [emitGuardrails(ir)] : []),
     ...(servesStreams ? [emitSse()] : []),
     ...tools.map((tool) => emitToolAdapter(ir, tool)),

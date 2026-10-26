@@ -21,9 +21,17 @@
  * `FeatureDeferredError` and no guardrail was ever evaluated; a declaration is only
  * worth the code behind it, so the prose moves with the code rather than ahead of it.
  *
- * `agents` and `memory` remain unsupported by this target, and `./validate.ts` is what
- * turns a spec that requires either into a plan-time rejection instead of a partially
- * generated application.
+ * `agents` and `cursor-memory` are declared since layer P7b, and the declaration carries
+ * the same promise as the rows above: there is an emitter (`./emit/agents.ts`), the
+ * Python runtime implements the agent loop, and the committed example exercises it end to
+ * end. `cursor-memory` is the IR's capability for a declared memory tier -- there is no
+ * `memory` capability in `REQUIRED_CAPABILITIES` -- so a spec that declares memory derives
+ * `cursor-memory`, and declaring it here is the statement that this target serves it.
+ *
+ * Before P7b this block said both were unsupported and `./validate.ts` rejected a spec
+ * mentioning either. It still does reject the parts of each collection the runtime cannot
+ * honour (`agents[].retrievers`, `agents[].structuredOutput`, four memory kinds, `ttl`,
+ * `redact`), so a declaration here is not a claim that every field is expressible.
  */
 
 import {
@@ -52,6 +60,8 @@ export const PY_FASTAPI_MANIFEST_INPUT: GeneratorManifestInput = {
     'embeddings',
     'rerank',
     'guardrails',
+    'agents',
+    'cursor-memory',
   ],
   emitsAgainst: {
     structuredOutput: 'pydantic',

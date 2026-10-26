@@ -9,8 +9,9 @@
  *
  * These tests pin the closure from both sides. The positive cases prove the wiring is
  * emitted and ordered so a block cannot reach the model; the negative cases prove the
- * gate that demanded the guardrail is still there, and that the collections P7b owns --
- * `agents` and `memory` -- are still refused rather than quietly ignored.
+ * gate that demanded the guardrail is still there. `agents` and `memory` were refused
+ * here until P7b emitted them; that refusal now lives in `agents-memory.test.ts`, which
+ * pins the constant as empty rather than listing what is missing.
  *
  * The behavioural half of the same claims -- a block answering 400 without calling the
  * provider, a redaction changing the text the provider sees, SSE frames with a terminal
@@ -383,54 +384,18 @@ describe('guardrail actions a pipeline route cannot honour', () => {
   });
 });
 
-describe('the collections P7b owns are still refused', () => {
-  it('lists exactly `agents` and `memory`', () => {
-    expect([...UNSUPPORTED_COLLECTIONS]).toEqual(['agents', 'memory']);
+describe('the collections P7b owns are no longer refused', () => {
+  it('leaves nothing unsupported, because both emitters now exist', () => {
+    // Named as an exact list rather than a length: this constant shrinking is the layer
+    // landing, so a collection added back here has to be written down and justified, and
+    // P21's rule -- shrink only when the emitter exists -- stays visible in the assertion.
+    expect([...UNSUPPORTED_COLLECTIONS]).toEqual([]);
   });
 
-  it('refuses `agents`', () => {
-    const ir: IR = {
-      ...example().ir,
-      agents: [
-        {
-          id: 'assistant',
-          name: 'assistant',
-          instructions: 'classify_ticket',
-          model: 'fast',
-          tools: [],
-          retrievers: [],
-          memory: [],
-          guardrails: [],
-          maxSteps: 4,
-          handoffs: [],
-          delegates: [],
-          engine: 'native',
-          traits: [],
-        },
-      ],
-    };
+  it('emits an agent router for the example rather than refusing its agent', () => {
+    const files = fileMap(examplePlan().files);
 
-    expect(codes(ir)).toContain('unsupported-collection');
-    expect(() => planPyFastApi(ir)).toThrow(/unsupported-collection[\s\S]*'agents'/);
-  });
-
-  it('refuses `memory`', () => {
-    const ir: IR = {
-      ...example().ir,
-      memory: [
-        {
-          id: 'conversation',
-          kind: 'buffer',
-          scope: 'thread',
-          tokenBudget: 2048,
-          redact: [],
-          traits: [],
-        },
-      ],
-    };
-
-    expect(codes(ir)).toContain('unsupported-collection');
-    expect(() => planPyFastApi(ir)).toThrow(/unsupported-collection[\s\S]*'memory'/);
+    expect(files.get('app/generated/agents.py')).toBeDefined();
   });
 });
 

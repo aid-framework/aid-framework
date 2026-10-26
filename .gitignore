@@ -108,3 +108,9 @@ replay_pid*
 .cache/
 .tmp/
 tmp/
+
+# ── Local scratch output ─────────────────────────────────────
+# Gate runs redirect tool output to files so the interesting lines can be read back; those
+# are working notes, never artifacts. No `.log` file is tracked, so the pattern is global.
+*.log
+

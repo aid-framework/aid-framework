@@ -9,10 +9,12 @@
 
 import { compareIds, sortById } from '@aid/generator-sdk';
 import type {
+  AgentShape,
   EmbeddingShape,
   EvalShape,
   GuardrailShape,
   IR,
+  MemoryShape,
   ModelShape,
   PipelineShape,
   PromptShape,
@@ -23,6 +25,16 @@ import type {
 
 export function orderedModels(ir: IR): ModelShape[] {
   return sortById(ir.models);
+}
+
+/** Agent declarations in declared-id order; the order their tables are emitted in. */
+export function orderedAgents(ir: IR): AgentShape[] {
+  return sortById(ir.agents ?? []);
+}
+
+/** Memory tiers in declared-id order. */
+export function orderedMemory(ir: IR): MemoryShape[] {
+  return sortById(ir.memory ?? []);
 }
 
 /** Guardrails in declared-id order, which is the order their tables are emitted in. */

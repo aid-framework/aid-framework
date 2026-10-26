@@ -4,8 +4,9 @@ specVersion: "0.2"
 # py-fastapi target emits -- a model gateway with a pinned model and a fallback, a
 # prompt the registry serves, a business tool behind a generated adapter, a structured
 # output, an HTTP route, a retriever over a local corpus with citations, an ingest
-# entry point, an input guardrail, a streaming deployment, and an eval that gates on a
-# statistical threshold.
+# entry point, an input guardrail, a streaming deployment, an eval that gates on a
+# statistical threshold, and an agent route with a memory tier, a confirmation step and
+# the resume route those imply.
 
 project:
   name: support-copilot
@@ -62,6 +63,29 @@ types:
         required: true
         minimum: 0
         maximum: 1
+  Refund:
+    kind: struct
+    fields:
+      subject:
+        type: string
+        required: true
+        description: The ticket the refund is for.
+      amount:
+        type: number
+        required: true
+        minimum: 0
+        description: How much to refund, in the account's currency.
+  RefundReceipt:
+    kind: struct
+    fields:
+      refund_id:
+        type: string
+        required: true
+        description: The identifier the billing system assigned.
+      status:
+        type: string
+        required: true
+        enum: [issued, declined]
 
 models:
   fast:
@@ -102,6 +126,27 @@ models:
   lexical:
     provider: fake
     modelId: fake-lexical-rerank
+  # The agent route gets its own model, and this is the shortest way to say why. The agent
+  # runtime resolves the document it is handed with `from_ir`, which builds a spec for
+  # *every* model in that document and refuses one that resolves no `costProfile` -- "a
+  # budget cannot be enforced against an unpriced model". `fast` is priced, but its
+  # `offline` fallback is not: the pinned catalog knows no price for the fake provider, so
+  # a fallback chain is exactly what the agent document cannot carry. `triage` therefore
+  # declares no fallbacks, and the generator refuses an agent whose model reaches an
+  # unpriced model rather than dropping the fallback behind the reader's back. The pipeline
+  # keeps its own `fast` -> `offline` chain, on the gateway config it generates for itself.
+  triage:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [json-schema, tools, streaming]
+    params:
+      temperature: 0
+      maxTokens: 400
+    costProfile: openai-gpt-4o-mini
+    limits:
+      maxInputTokens: 8192
+      maxOutputTokens: 400
 
 stores:
   handbook:
@@ -170,6 +215,23 @@ prompts:
     output:
       kind: structured
       schema: Answer
+  # The agent's instructions, and the second thing `from_ir` makes you notice: the loop
+  # reads `prompts[].template` and never renders variables, so a prompt an agent uses has
+  # to be variable-free. The generator refuses one that is not, because otherwise the
+  # model would receive the literal text `{{ subject }}`.
+  ticket_agent_prompt:
+    version: 1
+    model: triage
+    template: |
+      You are the ACME support desk's refund agent.
+
+      You have two tools. `lookup_customer` returns the account that filed a ticket;
+      `issue_refund` moves money, and a person has to approve it before it runs.
+
+      Look the account up before you propose a refund, refund no more than once per
+      subject, and answer in one or two sentences once the refund is issued or declined.
+    output:
+      kind: text
 
 tools:
   lookup_customer:
@@ -183,17 +245,58 @@ tools:
     timeoutMs: 5000
     retries: 1
     idempotency: key
-    # No `auth:` predicate here on purpose: the runtime has no authorization hook yet,
-    # so `hasScope("customers:read")` would be an unenforced claim. The validator
-    # refuses to emit one rather than let the spec imply a check nothing performs.
+    # A read tool needs no `auth:` and must not pretend to one: the pipeline route has no
+    # authorization hook, so `hasScope("customers:read")` here would be a check nothing
+    # performs. A `write` tool is the different case below, where the agent loop really
+    # does evaluate the policy before the call.
+  issue_refund:
+    description: Issue a refund against the account that filed a ticket.
+    input: Refund
+    output: RefundReceipt
+    handler:
+      kind: business
+      symbol: issue_refund
+    sideEffects: write
+    # Required by the IR's security gate for any write, and honoured only on the agent
+    # route: `AgentRuntime._authorize` evaluates this against the run's principal before
+    # the call executes and denies a write that declares none. The pipeline route never
+    # calls this tool, which is the condition under which the generator will emit an
+    # `auth` at all -- so the declaration cannot become a promise the generate route
+    # silently drops.
+    #
+    # `isAuthenticated()` rather than `hasRole("billing")` because this app has no auth
+    # layer yet: the runtime's `Principal()` is the anonymous-but-authenticated caller,
+    # so a role check here would deny every call and the example would ship a tool that
+    # cannot run. Whoever adds authentication in Phase 3 narrows this to a role; the
+    # generated route passes no principal, so anything narrower fails closed today.
+    auth: isAuthenticated()
+    # The other field only an agent route can honour. `_needs_approval` pauses the run
+    # before this tool is called and hands the caller a checkpoint; a pipeline step has no
+    # confirmation step between it and the tool, so the generator refuses the flag on any
+    # tool a pipeline step calls, and the TypeScript target refuses it outright.
+    requiresConfirmation: true
+    timeoutMs: 5000
+    idempotency: key
 
 guardrails:
-  # Every `input`-stage guardrail declared in a document runs on every HTTP generate
-  # route of that document. That is a property of the IR, not of this file: a pipeline
-  # has no field naming a guardrail, and the security gate that demands one is
-  # document-global. The consequence worth knowing is that an agent-scoped guardrail
-  # declared beside a pipeline would inspect pipeline input too -- this document declares
-  # no agent, so here the two cannot disagree.
+  # Where these run is two different places, and adding an agent is what made the
+  # difference visible. The generated generate route calls
+  # `ENGINE.check_input(INPUT_GUARDRAILS, <the rendered prompt>)` inline, and
+  # `INPUT_GUARDRAILS` is *every* guardrail in this document with `input` in `stages` --
+  # so the pipeline route runs all of them whether or not it names them, which is what
+  # "the security gate is document-global" means in practice.
+  #
+  # The agent route is not that. It runs `agent.guardrails`: the ones its agent names, at
+  # the stages each declares. So `refund_agent` below names `ticket_intake` and is
+  # inspected by it, and an agent that named nothing would be inspected by nothing -- a
+  # guardrail declared here reaches an agent only because the agent lists it. The two can
+  # disagree in both directions, and both are deliberate: `ticket_pii` is declared here,
+  # runs on the generate route, and no agent names it, so the agent route never sees it.
+  #
+  # `refund_args` below is the case where the disagreement is the point. Because the
+  # generate route enforces exactly the `input`-stage table, a guardrail with no `input`
+  # stage is unreachable from it -- which is what makes `action: escalate` legal there and
+  # illegal on any input-stage guardrail.
   ticket_intake:
     stages: [input]
     policies: [prompt-injection]
@@ -214,6 +317,54 @@ guardrails:
     onFail:
       message: Contact details in the ticket were masked before the model saw them.
       log: false
+  refund_args:
+    # No `input` stage, and that is load-bearing rather than incidental. The generate route
+    # enforces every input-stage guardrail in the document, so an `escalate` here would ask
+    # the pipeline a question it can never be answered on -- the generator refuses that. At
+    # the `tool-call` stage only the agent loop reaches it, and only because the agent names
+    # it, so escalation has a checkpoint to hand back and a route to resume from.
+    #
+    # This is also what the IR's coverage gate requires of `issue_refund`, the one tool here
+    # with `sideEffects: write`: a write must reach a stage that can inspect the call before
+    # it happens, and naming no `tools` makes this one cover every tool.
+    stages: [tool-call]
+    policies: [secret-scan]
+    action: escalate
+    onFail:
+      message: A refund call carried something that looks like a credential, so it was held.
+      log: true
+
+memory:
+  # One tier, and the only kind the runtime implements today: `buffer` and `window` are
+  # `IMPLEMENTED_MEMORY_KINDS`, and the generator refuses the other four by name instead
+  # of accepting a tier that would be ignored. No `backend` or `store` either -- a
+  # generated app registers no `MemoryStore`, so `_store_for` serves the in-process default
+  # and any other backend would raise on the first write.
+  ticket_thread:
+    kind: buffer
+    scope: thread
+    tokenBudget: 2000
+
+agents:
+  refund_agent:
+    name: Refund agent
+    instructions: ticket_agent_prompt
+    model: triage
+    tools: [lookup_customer, issue_refund]
+    memory: [ticket_thread]
+    # Named rather than inherited: see the comment on `guardrails` above. This is what makes
+    # the same injection check run on the agent route as on the generate route, and what
+    # puts `refund_args` in front of every tool call the agent makes.
+    guardrails: [ticket_intake, refund_args]
+    maxSteps: 6
+    maxCostBudget: 0.05
+    # `true` is a closed policy expression, so every run asks before it issues a refund.
+    # The checkpoint the paused run returns is what `POST /agents/resume` takes back, and
+    # the route exists because this agent can pause -- as it also would if it declared no
+    # approval at all and only named a confirming tool, or escalated from a guardrail.
+    humanInTheLoop:
+      when: "true"
+      channel: refunds
 
 evals:
   classify_quality:

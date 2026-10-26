@@ -54,7 +54,7 @@
       "additionalProperties": { "$ref": "#/$defs/retriever" }
     },
     "agents": {
-      "description": "Agents: a model, instructions, the tools and retrievers it may use, and the budget it may spend. Declarable from spec v0.2; no Phase 2 L1 target can execute one, so a spec that declares an agent is rejected by the capability gate rather than silently generated.",
+      "description": "Agents: a model, instructions, the tools and retrievers it may use, and the budget it may spend. Declarable from spec v0.2; a target that emits no agent route is rejected by the capability gate rather than silently generating one.",
       "type": "object",
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/name" },
@@ -68,7 +68,7 @@
       "additionalProperties": { "$ref": "#/$defs/guardrail" }
     },
     "memory": {
-      "description": "Memory tiers: what is remembered, for how long, within what token budget, and where it lives. Declarable from spec v0.2; the backends ship in a later layer.",
+      "description": "Memory tiers: what is remembered, for how long, within what token budget, and where it lives. Declarable from spec v0.2; the kinds a target cannot serve are refused by its plan gate rather than approximated.",
       "type": "object",
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/name" },
@@ -355,6 +355,11 @@
           "description": "Drives the fail-closed security gate: write and destructive require auth.",
           "enum": ["none", "read", "write", "destructive"],
           "default": "none"
+        },
+        "requiresConfirmation": {
+          "description": "The agent loop pauses before running this tool and waits for a human decision. A pipeline step has no confirmation step, so a target that emits no agent route refuses the flag rather than ignoring it.",
+          "type": "boolean",
+          "default": false
         },
         "handler": {
           "description": "Where the implementation lives. `business` means a user-owned module, so the generated code imports it rather than inlining logic.",

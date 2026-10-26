@@ -16,6 +16,8 @@ def generated_capabilities() -> dict[str, Any]:
     return {
         "capabilities": {
             "declared": [
+                "agents",
+                "cursor-memory",
                 "embeddings",
                 "guardrails",
                 "http-trigger",
@@ -32,6 +34,8 @@ def generated_capabilities() -> dict[str, Any]:
                 "Capability.TOOL_CALLING",
             ],
             "targetWired": [
+                "agents",
+                "cursor-memory",
                 "embeddings",
                 "guardrails",
                 "http-trigger",
@@ -59,8 +63,19 @@ def generated_capabilities() -> dict[str, Any]:
                     "Capability.STRUCTURED_OUTPUT",
                     "Capability.TOOL_CALLING",
                 ],
+                "triage": [
+                    "Capability.STREAMING",
+                    "Capability.STRUCTURED_OUTPUT",
+                    "Capability.TOOL_CALLING",
+                ],
             },
-            "unrepresentable": {"embed": [], "fast": [], "lexical": [], "offline": []},
+            "unrepresentable": {
+                "embed": [],
+                "fast": [],
+                "lexical": [],
+                "offline": [],
+                "triage": [],
+            },
         },
         "observability": {"redact": [], "trace": True},
         "target": "py-fastapi",
