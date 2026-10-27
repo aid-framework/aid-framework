@@ -12,9 +12,11 @@ from aid_runtime import (
     Pipeline,
     PipelineContext,
     ToolCall,
+    parallel,
     run_structured,
 )
 
+from ..control import MAX_STEP_DEPTH
 from ..deps import Deps
 from ..gateway.models import FALLBACKS
 from ..guardrails import (
@@ -59,6 +61,76 @@ async def handbook(ctx: PipelineContext) -> PipelineContext:
     return ctx.with_values(handbook=handbook)
 
 
+async def _parallel_1_arm_1_1_customer_note(ctx: PipelineContext) -> PipelineContext:
+    """Run prompt `customer_note` v1 on model `fast`."""
+
+    deps = cast(Deps, ctx.require("deps"))
+    customer = cast(Customer, ctx.require("customer"))
+
+    async def _call(text: str) -> str:
+        """Ask the model for one completion."""
+
+        _request = CompletionRequest.prompt(text)
+        _response = await deps.gateway.generate(
+            "fast",
+            _request,
+            fallbacks=FALLBACKS.get("fast", ()),
+        )
+        return _response.text
+
+    _rendered = deps.prompts.render(
+        "customer_note",
+        version="1",
+        values={"customer": str(customer)},
+    )
+    _verdict = enforce_guardrail(ENGINE.check_input(INPUT_GUARDRAILS, _rendered.text))
+    customer_note = await _call(_verdict.text)
+    return ctx.with_values(customer_note=customer_note)
+
+
+async def _parallel_1_arm_2_1_handbook_note(ctx: PipelineContext) -> PipelineContext:
+    """Run prompt `handbook_note` v1 on model `fast`."""
+
+    deps = cast(Deps, ctx.require("deps"))
+    handbook = ctx.require("handbook")
+
+    async def _call(text: str) -> str:
+        """Ask the model for one completion."""
+
+        _request = CompletionRequest.prompt(text)
+        _response = await deps.gateway.generate(
+            "fast",
+            _request,
+            fallbacks=FALLBACKS.get("fast", ()),
+        )
+        return _response.text
+
+    _rendered = deps.prompts.render(
+        "handbook_note",
+        version="1",
+        values={"handbook": str(handbook)},
+    )
+    _verdict = enforce_guardrail(ENGINE.check_input(INPUT_GUARDRAILS, _rendered.text))
+    handbook_note = await _call(_verdict.text)
+    return ctx.with_values(handbook_note=handbook_note)
+
+
+async def _parallel_1(ctx: PipelineContext) -> PipelineContext:
+    """Run all 2 arms concurrently under the deployment's single concurrency cap, then merge what
+    they bound in branch order.
+    """
+
+    _step = parallel(
+        branches=[
+            Pipeline.of(_parallel_1_arm_1_1_customer_note),
+            Pipeline.of(_parallel_1_arm_2_1_handbook_note),
+        ],
+        max_depth=MAX_STEP_DEPTH,
+        name="_parallel_1",
+    )
+    return await _step(ctx)
+
+
 async def answer(ctx: PipelineContext) -> PipelineContext:
     """Run prompt `classify_ticket` v1 on model `fast`."""
 
@@ -94,9 +166,12 @@ async def _stream_request(deps: Deps, event: AnswerTicketRequest) -> tuple[str, 
     this point through the pipeline and this route reaches it directly.
     """
 
-    ctx = PipelineContext(values={"deps": deps, "event": event})
+    ctx = PipelineContext(
+        values={"deps": deps, "event": event, "limiter": deps.limiter, "depth": 0}
+    )
     ctx = await customer(ctx)
     ctx = await handbook(ctx)
+    ctx = await _parallel_1(ctx)
 
     _rendered = deps.prompts.render(
         "classify_ticket",
@@ -111,4 +186,4 @@ async def _stream_request(deps: Deps, event: AnswerTicketRequest) -> tuple[str, 
 def answer_ticket_pipeline() -> Pipeline:
     """The `answer_ticket` pipeline, in the order the spec declares it."""
 
-    return Pipeline.of(customer, handbook, answer)
+    return Pipeline.of(customer, handbook, _parallel_1, answer)

@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from aid_runtime import (
+    ConcurrencyLimiter,
     ConfigurationError,
     ModelGateway,
     PromptRegistry,
@@ -19,6 +20,7 @@ from aid_runtime import (
     ToolExecutor,
 )
 
+from .control import CONCURRENCY_LIMIT
 from .gateway import build_gateway
 from .prompts import build_registry
 from .retrieval.bindings import build_retrievers
@@ -32,6 +34,9 @@ class Deps:
     gateway: ModelGateway
     prompts: PromptRegistry
     tools: ToolExecutor
+    #: The one cap a fan-out draws from. The app builds it once, so a
+    #: parallel step cannot invent a second, wider bound beside it.
+    limiter: ConcurrencyLimiter
     agent_tools: tuple[Tool, ...] = field(default_factory=build_agent_tools)
     retrievers: dict[str, Retriever] | None = None
 
@@ -55,17 +60,21 @@ def build_deps(
     gateway: ModelGateway | None = None,
     prompts: PromptRegistry | None = None,
     tools: ToolExecutor | None = None,
+    limiter: ConcurrencyLimiter | None = None,
     agent_tools: tuple[Tool, ...] | None = None,
     retrievers: dict[str, Retriever] | None = None,
 ) -> Deps:
     """The app's dependencies, each defaulting to the wiring the spec generated."""
 
     declared_tools = build_agent_tools() if agent_tools is None else agent_tools
+    if limiter is None:
+        limiter = ConcurrencyLimiter(CONCURRENCY_LIMIT)
     return Deps(
         gateway=build_gateway() if gateway is None else gateway,
         prompts=build_registry() if prompts is None else prompts,
         tools=build_executor(tools=declared_tools) if tools is None else tools,
         agent_tools=declared_tools,
+        limiter=limiter,
         retrievers=build_retrievers() if retrievers is None else retrievers,
     )
 

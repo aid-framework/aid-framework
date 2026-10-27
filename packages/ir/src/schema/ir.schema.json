@@ -496,8 +496,70 @@
             "kind": { "const": "emit" },
             "event": { "type": "string", "minLength": 1 }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Authorization branching: runs one of two step lists. `when` reads the caller's Principal and never a context value, because the policy grammar has no operand for one.",
+          "required": ["kind", "when", "then", "else"],
+          "properties": {
+            "kind": { "const": "branch" },
+            "when": { "$ref": "#/$defs/policyExpr" },
+            "then": { "$ref": "#/$defs/stepList" },
+            "else": {
+              "type": "array",
+              "description": "Empty when the spec declared no alternative, so a false predicate runs nothing and the branch binds nothing.",
+              "items": { "$ref": "#/$defs/step" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Runs every arm concurrently under the deployment's one cap and merges their bindings in branch order.",
+          "required": ["kind", "branches"],
+          "properties": {
+            "kind": { "const": "parallel" },
+            "branches": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "items": { "$ref": "#/$defs/stepList" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Applies one step to every item of a bound list and binds the ordered list of results.",
+          "required": ["kind", "over", "as", "step"],
+          "properties": {
+            "kind": { "const": "map" },
+            "over": { "$ref": "#/$defs/identifier" },
+            "as": { "$ref": "#/$defs/identifier" },
+            "step": { "$ref": "#/$defs/step" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Applies one prompt to every item of a bound list and binds the ordered list of replies.",
+          "required": ["kind", "over", "prompt", "model", "as"],
+          "properties": {
+            "kind": { "const": "reduce" },
+            "over": { "$ref": "#/$defs/identifier" },
+            "prompt": { "$ref": "#/$defs/identifier" },
+            "model": { "$ref": "#/$defs/identifier" },
+            "as": { "$ref": "#/$defs/identifier" }
+          }
         }
       ]
+    },
+    "stepList": {
+      "type": "array",
+      "description": "A step list nested inside a composite. Non-empty: an arm that runs nothing is one the author should delete, not a no-op to emit.",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" }
     },
     "errorPolicy": {
       "type": "object",

@@ -358,7 +358,11 @@ describe('an eval that stopped measuring the app would be caught', () => {
 
   it('catches a pipeline that stopped passing the chain the eval mirrors', () => {
     const original = pipelineSource();
-    const mutated = original.replace('fallbacks=FALLBACKS.get("fast", ())', '');
+    // Every `generate` in the module has to lose the chain, not just the first one: the
+    // example's parallel added two more model calls above the one the pipeline binds, so
+    // stripping a single occurrence leaves the wiring the check looks for intact and the
+    // mutation stops falsifying anything.
+    const mutated = original.replaceAll('fallbacks=FALLBACKS.get("fast", ())', '');
 
     expect(mutated).not.toBe(original);
     expect(wiringProblems(evalSource(), mutated)).toEqual([

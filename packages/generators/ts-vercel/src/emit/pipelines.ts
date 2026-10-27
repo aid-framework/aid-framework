@@ -13,15 +13,16 @@
  * emitting it would break `validatePlan` and the next `aid gen`. See the README.
  */
 
-import type {
-  GenerateStep,
-  IR,
-  PipelineShape,
-  StepInput,
-  StepInputValue,
-  StepShape,
-  ToolStep,
-  TypeField,
+import {
+  type GenerateStep,
+  type IR,
+  isCompositeStep,
+  type PipelineShape,
+  type StepInput,
+  type StepInputValue,
+  type StepShape,
+  type ToolStep,
+  type TypeField,
 } from '@aid/ir';
 import { className, literal, memberAccess, propertyKey, toSnakeCase } from '../names.js';
 import { type EmittedFile, generated, paths, pipelinePath, routePath } from './file.js';
@@ -87,6 +88,13 @@ function escapeLiteral(text: string): string {
   return text.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
 }
 
+/** A step this target emits code for: everything except `emit` and the four composites. */
+type FlatStep = GenerateStep | RetrieveStep | ToolStep;
+
+function isFlatStep(step: StepShape): step is FlatStep {
+  return step.kind === 'generate' || step.kind === 'retrieve' || step.kind === 'tool';
+}
+
 function inputEntries(input: StepInput): Entry[] {
   return Object.keys(input)
     .sort()
@@ -97,8 +105,8 @@ function inputObject(input: StepInput, indent = ''): string {
   return objectLiteral(inputEntries(input), indent);
 }
 
-function stepConstant(pipeline: PipelineShape, step: StepShape, index: number): string {
-  const name = step.kind === 'emit' ? `emit${index}` : toSnakeCase(step.as);
+function stepConstant(pipeline: PipelineShape, step: FlatStep): string {
+  const name = toSnakeCase(step.as);
   return `${camel(pipeline.id)}${className(name)}Step`;
 }
 
@@ -119,8 +127,12 @@ function stepModule(
   contextType: string,
 ): string {
   // An `emit` step declares which value is the answer; it emits no code, and the route
-  // reads that binding directly.
+  // reads that binding directly. The validator refuses composite steps before emission
+  // reaches here, so reaching this branch is a generator bug rather than a user error.
   if (step.kind === 'emit') return '';
+  if (isCompositeStep(step)) {
+    throw new Error(`the Next.js emitter has no composite step emitter for ${step.kind} (L6)`);
+  }
   return step.kind === 'tool'
     ? toolStepModule(ir, pipeline, step, index, contextType)
     : step.kind === 'retrieve'
@@ -140,7 +152,7 @@ function toolStepModule(
   index: number,
   contextType: string,
 ): string {
-  const constant = stepConstant(pipeline, step, index);
+  const constant = stepConstant(pipeline, step);
   const tool = ir.tools.find((candidate) => candidate.id === step.tool);
   const callId = `${pipeline.id}:${step.as}:${index}`;
   const output = tool === undefined ? undefined : schemaNameFor(tool.output);
@@ -187,11 +199,11 @@ function retrieveStepModule(
   ir: IR,
   pipeline: PipelineShape,
   step: RetrieveStep,
-  index: number,
+  _index: number,
   contextType: string,
 ): string {
   void ir;
-  const constant = stepConstant(pipeline, step, index);
+  const constant = stepConstant(pipeline, step);
   const query = templateToTs(step.query);
   const inline = `  const ${propertyKey(step.as)} = await deps.retriever(${literal(
     step.retriever,
@@ -219,10 +231,10 @@ function generateStepModule(
   ir: IR,
   pipeline: PipelineShape,
   step: GenerateStep,
-  index: number,
+  _index: number,
   contextType: string,
 ): string {
-  const constant = stepConstant(pipeline, step, index);
+  const constant = stepConstant(pipeline, step);
   const prompt = ir.prompts.find((candidate) => candidate.id === step.prompt);
   const variables =
     prompt?.variables.map((variable) => variable.name) ?? Object.keys(step.input).sort();
@@ -263,8 +275,8 @@ export function emitPipelineModule(ir: IR, pipeline: PipelineShape): EmittedFile
     stepModule(ir, pipeline, step, index, contextType),
   );
   const names = pipeline.steps
-    .filter((step) => step.kind !== 'emit')
-    .map((step) => [step.as, stepConstant(pipeline, step, pipeline.steps.indexOf(step))] as const);
+    .filter(isFlatStep)
+    .map((step) => [step.as, stepConstant(pipeline, step)] as const);
 
   const hasStructured = pipeline.steps.some((step) => step.kind === 'generate');
   const hasTool = pipeline.steps.some((step) => step.kind === 'tool');
@@ -381,7 +393,7 @@ export function emitRouteModule(ir: IR, pipeline: PipelineShape): EmittedFile {
   const answer = pipelineAnswer(ir, pipeline);
   const trigger =
     pipeline.trigger.kind === 'http' ? pipeline.trigger : { method: 'POST', path: '/' };
-  const finalStep = [...pipeline.steps].reverse().find((step) => step.kind !== 'emit');
+  const finalStep = [...pipeline.steps].reverse().find(isFlatStep);
 
   const header = [
     importStatement('@aid/runtime', [

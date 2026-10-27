@@ -60,9 +60,11 @@ describe('the committed example', () => {
     // adds `generated/agents.py` plus a prompt, a contract and a tool adapter for the tool
     // it calls -- four files, and the counts below are what makes an emitter that quietly
     // stopped writing one of them a failure rather than a smaller number nobody reads.
-    expect(generated().length).toBe(31);
+    // 34 since L5b: a composite adds `generated/control.py`, and the example's parallel
+    // pulls in the two prompt modules its arms render.
+    expect(generated().length).toBe(34);
     expect(planFilesByOwner('business').length).toBe(5);
-    expect(shipped.size).toBe(36);
+    expect(shipped.size).toBe(39);
   });
 
   it('records every generated file in aid.manifest.json at the hash of its bytes', () => {

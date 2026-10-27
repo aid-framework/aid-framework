@@ -6,7 +6,7 @@ import {
 } from '@aid/spec';
 import { describe, expect, it } from 'vitest';
 
-import type { BuildContext } from '../src/index.js';
+import type { BuildContext, StepShape } from '../src/index.js';
 import {
   buildEvalTarget,
   buildIR,
@@ -56,6 +56,20 @@ const TOP_LEVEL_KEYS = [
   'runtime',
   'requiredCapabilities',
 ];
+
+/** Every step kind in a list, composite children included. */
+function stepKinds(steps: readonly StepShape[]): string[] {
+  return steps.flatMap((step) => [
+    step.kind,
+    ...(step.kind === 'branch'
+      ? [...stepKinds(step.then), ...stepKinds(step.else)]
+      : step.kind === 'parallel'
+        ? step.branches.flatMap((arm) => stepKinds(arm))
+        : step.kind === 'map'
+          ? stepKinds([step.step])
+          : []),
+  ]);
+}
 
 const { ir, diagnostics } = buildFixture('full.yaml');
 
@@ -155,9 +169,15 @@ describe('buildIR', () => {
   });
 
   it('covers every supported step kind', () => {
-    const kinds = [...ir.pipelines, ...buildFixture('retrieval.yaml').ir.pipelines].flatMap(
-      (pipeline) => pipeline.steps.map((step) => step.kind),
-    );
+    // Each family lives in the fixture that can carry it: `full.yaml` and `retrieval.yaml`
+    // hold the leaf kinds, and a composite needs a declared cap and a list to iterate, so
+    // it gets a fixture of its own. A kind supported in the spec but buildable by no
+    // fixture is a kind no test would notice being deleted.
+    const kinds = [
+      ...ir.pipelines,
+      ...buildFixture('retrieval.yaml').ir.pipelines,
+      ...buildFixture('composite.yaml').ir.pipelines,
+    ].flatMap((pipeline) => stepKinds(pipeline.steps));
     expect(new Set(kinds)).toEqual(new Set<string>(SUPPORTED_STEP_KINDS));
   });
 

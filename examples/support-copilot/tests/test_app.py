@@ -7,9 +7,18 @@ valid and not merely diffable against a fixture.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import Callable
 
-from aid_runtime import FakeProvider
+from aid_runtime import (
+    CompletionRequest,
+    CompletionResponse,
+    ConcurrencyLimiter,
+    FakeProvider,
+    ModelSpec,
+    PipelineContext,
+)
 from fastapi.testclient import TestClient
 
 from app.business.tools.lookup_customer import LookupCustomer
@@ -17,15 +26,21 @@ from app.generated.contracts import ToolContext
 from app.generated.deps import Deps, build_deps, get_deps
 from app.generated.gateway import build_gateway
 from app.generated.gateway.models import ALIASES, FALLBACKS
+from app.generated.pipelines.answer_ticket import answer_ticket_pipeline
+from app.generated.requests import AnswerTicketRequest
 from app.generated.schemas import Customer, Ticket
 from app.generated.tools import build_executor
 from app.main import app
-from tests.fake_gateway import fake_deps, fake_provider
+from tests.fake_gateway import IDEAL_ANSWERS, fake_deps, fake_provider
 
 REQUEST: dict[str, str] = {
     "subject": "Acme: I was charged twice this month",
     "body": "Please refund the duplicate charge.",
 }
+
+#: A phrase only the guarded `classify_ticket` prompt carries, so a test can tell
+#: that call apart from the ones the steps before it make.
+GUARDED_PROMPT = "You classify inbound support tickets for the ACME support desk."
 
 
 def fake_deps_override() -> Deps:
@@ -151,7 +166,11 @@ def test_an_input_guardrail_block_is_a_refusal_and_never_reaches_the_model() -> 
 
     assert response.status_code == 400, response.text
     assert "ticket_intake" in response.json()["detail"]
-    assert provider.calls == []
+    # The refusal has to stop the *guarded* call. The two calls before it are the
+    # `parallel` arms, which the spec puts ahead of `classify_ticket` and which the
+    # guardrail therefore cannot cover: what a block guarantees is that the refused
+    # text never reached the model, not that nothing before the guardrail ran.
+    assert not any(GUARDED_PROMPT in call.messages[-1].content for call in provider.calls)
 
 
 def test_an_input_guardrail_redact_changes_the_text_the_model_sees() -> None:
@@ -174,7 +193,13 @@ def test_an_input_guardrail_redact_changes_the_text_the_model_sees() -> None:
         app.dependency_overrides.clear()
 
     assert response.status_code == 200, response.text
-    sent = provider.calls[0].messages[-1].content
+    guarded = [
+        call.messages[-1].content
+        for call in provider.calls
+        if GUARDED_PROMPT in call.messages[-1].content
+    ]
+    assert len(guarded) == 1, "the classify call should be the only guarded one"
+    sent = guarded[0]
     assert "ada@example.com" not in sent
     assert "[REDACTED:pii-detect]" in sent
 
@@ -225,3 +250,113 @@ def test_the_same_route_answers_json_without_the_stream_header() -> None:
     assert response.status_code == 200, response.text
     assert response.headers["content-type"].startswith("application/json")
     assert response.json()["category"] == "billing"
+
+
+class GatedProvider(FakeProvider):
+    """A provider that holds every call until the test releases it.
+
+    Blocking is the only way to tell a concurrent fan-out from a serial one: a
+    provider that answered at once would let both arms finish before the second
+    started, so a `parallel` that ran its arms one after another would look
+    exactly like one that ran them together.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(answers=IDEAL_ANSWERS, accuracy=1.0, seed=0)
+        self.release = asyncio.Event()
+        self.prompts: list[str] = []
+        self.in_flight = 0
+        self.high_water = 0
+
+    async def complete(self, request: CompletionRequest, *, model: ModelSpec) -> CompletionResponse:
+        self.prompts.append(request.messages[-1].content)
+        self.in_flight += 1
+        self.high_water = max(self.high_water, self.in_flight)
+        try:
+            await self.release.wait()
+            return await super().complete(request, model=model)
+        finally:
+            self.in_flight -= 1
+
+
+async def _settle(predicate: Callable[[], bool]) -> None:
+    """Yield to the event loop until the predicate holds, or fail saying so."""
+
+    for _ in range(2000):
+        if predicate():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("the pipeline never reached the state the test waited for")
+
+
+def _pipeline_context(provider: FakeProvider, limit: int) -> PipelineContext:
+    """The context a generated route seeds, around one inspectable provider.
+
+    The limiter is built here rather than defaulted so a test can set the cap the
+    spec declares, and so `deps.limiter` and the context's limiter are provably the
+    same object -- the composite draws from the context, not from a second limiter
+    of its own.
+    """
+
+    deps = build_deps(
+        gateway=build_gateway(providers={"fake": provider, "openai": provider}),
+        limiter=ConcurrencyLimiter(limit),
+    )
+    return PipelineContext(
+        values={
+            "deps": deps,
+            "event": AnswerTicketRequest(**REQUEST),
+            "limiter": deps.limiter,
+            "depth": 0,
+        }
+    )
+
+
+async def test_the_parallel_runs_both_arms_at_once() -> None:
+    """The example's `parallel` executes both arms, concurrently, under one cap.
+
+    The example's composite is *structural*: `customer_note` and `handbook_note` are
+    bound and read by nothing, so the response bytes are identical whether or not the
+    parallel ran. A 200 therefore proves nothing about it, and this test is the
+    evidence instead -- both arms reach the model before either is released.
+    """
+
+    provider = GatedProvider()
+    context = _pipeline_context(provider, limit=4)
+    running = asyncio.ensure_future(answer_ticket_pipeline().run(context))
+    await _settle(lambda: provider.in_flight >= 2)
+    assert provider.in_flight == 2, "both arms should be at the model at once"
+
+    provider.release.set()
+    result = await asyncio.wait_for(running, timeout=30)
+
+    assert provider.high_water == 2
+    assert provider.high_water <= context.require("limiter").limit
+    assert any("Summarize what is known about the customer" in p for p in provider.prompts)
+    assert any("Summarize the handbook excerpts" in p for p in provider.prompts)
+    assert isinstance(result.get("customer_note"), str)
+    assert isinstance(result.get("handbook_note"), str)
+
+
+async def test_the_cap_is_the_ceiling_the_arms_observe() -> None:
+    """At a cap of one the two arms take turns, which is the ceiling made visible.
+
+    Without this the previous test would still pass if the composite ignored the
+    limiter entirely: two arms at once is also what an unbounded fan-out looks like.
+    One slot and a high-water mark of one is what an honoured cap looks like.
+    """
+
+    provider = GatedProvider()
+    context = _pipeline_context(provider, limit=1)
+    running = asyncio.ensure_future(answer_ticket_pipeline().run(context))
+    await _settle(lambda: provider.in_flight >= 1)
+    await asyncio.sleep(0)
+
+    assert provider.high_water == 1, "a cap of one must not admit a second arm"
+
+    provider.release.set()
+    result = await asyncio.wait_for(running, timeout=30)
+
+    assert provider.high_water == 1
+    assert isinstance(result.get("customer_note"), str)
+    assert isinstance(result.get("handbook_note"), str)

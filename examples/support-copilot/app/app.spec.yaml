@@ -215,6 +215,35 @@ prompts:
     output:
       kind: structured
       schema: Answer
+  # The two halves of what the parallel step below reads. Each is a one-variable prompt
+  # so the composite can run them side by side: the point of the example's `parallel` is
+  # that two independent model calls happen under one cap, not that the answer changes.
+  customer_note:
+    version: 1
+    model: fast
+    template: |
+      Summarize what is known about the customer below in one sentence.
+
+      {{ customer }}
+    variables:
+      customer:
+        type: string
+        required: true
+    output:
+      kind: text
+  handbook_note:
+    version: 1
+    model: fast
+    template: |
+      Summarize the handbook excerpts below in one sentence.
+
+      {{ handbook }}
+    variables:
+      handbook:
+        type: string
+        required: true
+    output:
+      kind: text
   # The agent's instructions, and the second thing `from_ir` makes you notice: the loop
   # reads `prompts[].template` and never renders variables, so a prompt an agent uses has
   # to be variable-free. The generator refuses one that is not, because otherwise the
@@ -438,6 +467,23 @@ pipelines:
           # The binding name. It is also the prompt variable the retrieved context is
           # inlined under, so the two are written to agree.
           as: handbook
+      # Two independent readings of what the request already holds, run side by side. The
+      # cap comes from `deployments.api.concurrency`, the same limiter the gateway and the
+      # tools take, so a fan-out cannot widen the bound the rest of the app runs under.
+      # Both arms are required to run: a `parallel` that ran neither would still answer,
+      # which is why the wiring is asserted rather than inferred from the response bytes.
+      - parallel:
+          branches:
+            - - generate:
+                  prompt: customer_note
+                  input:
+                    customer: "{{ customer }}"
+                  as: customer_note
+            - - generate:
+                  prompt: handbook_note
+                  input:
+                    handbook: "{{ handbook }}"
+                  as: handbook_note
       - generate:
           prompt: classify_ticket
           input:
@@ -457,4 +503,7 @@ deployments:
   api:
     target: container
     streaming: true
+    # The cap a `parallel`/`map`/`reduce` fan-out draws from. Declaring it is what makes
+    # the pipeline's composite steps generatable; the smallest declared value wins.
+    concurrency: 4
     secrets: [OPENAI_API_KEY]

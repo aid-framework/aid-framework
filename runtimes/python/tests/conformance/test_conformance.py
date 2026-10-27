@@ -33,6 +33,15 @@ from typing import Any
 from pydantic import BaseModel
 
 from aid_runtime import (
+    DEPTH_KEY,
+    INDEX_KEY,
+    ITEM_KEY,
+    LIMITER_KEY,
+    MAX_STEP_DEPTH,
+    PRINCIPAL_KEY,
+    REDUCED_KEY,
+    RESERVED_KEYS,
+    STEPS_KEY,
     AgentCheckpoint,
     AgentHandoffUnsupportedError,
     AgentRuntime,
@@ -42,6 +51,7 @@ from aid_runtime import (
     BudgetExceededError,
     Capability,
     CapabilityMismatchError,
+    ConcurrencyLimiter,
     ConfigurationError,
     CostLedger,
     CostProfile,
@@ -60,6 +70,10 @@ from aid_runtime import (
     MetricRun,
     ModelGateway,
     ModelSpec,
+    Pipeline,
+    PipelineContext,
+    PipelineError,
+    Principal,
     PromptNotFoundError,
     PromptRegistry,
     PromptRenderError,
@@ -72,11 +86,15 @@ from aid_runtime import (
     ToolPermissionError,
     UnknownModelAliasError,
     bm25_scores,
+    branch,
     estimate_cost_usd,
     fuse,
     lexical_ranking,
     lexical_score,
+    map_step,
+    parallel,
     parse_structured,
+    reduce_step,
     run_structured,
     similarity,
     z_critical,
@@ -794,6 +812,204 @@ def _memory_store(data: Mapping[str, Any]) -> dict[str, Any]:
     return asyncio.run(run())
 
 
+# --- composite steps ---------------------------------------------------------
+
+#: Keys a composite owns, plus the record of what ran that ``Pipeline`` writes. A
+#: verdict reports the spec's bindings only, so an observation never carries a
+#: runtime class name and the two runtimes can be diffed field for field.
+_PLUMBING = RESERVED_KEYS | {STEPS_KEY}
+
+
+def _principal(data: Mapping[str, Any]) -> Principal:
+    """The caller a ``steps.branch`` case decides for, spelled the way a route seeds it.
+
+    ``authenticated`` is stated rather than defaulted wherever the case turns on it: a
+    ``Principal`` defaults to authenticated, so a case that leaves it out is asserting
+    the authenticated arm whether it meant to or not.
+    """
+    spec = data.get("principal", {})
+    return Principal(
+        roles=frozenset(str(role) for role in spec.get("roles", [])),
+        scopes=frozenset(str(scope) for scope in spec.get("scopes", [])),
+        authenticated=bool(spec.get("authenticated", True)),
+    )
+
+
+def _seeded(data: Mapping[str, Any], limiter: ConcurrencyLimiter) -> PipelineContext:
+    """The context an emitted route hands a composite: the case's values, then the two
+    keys the application owns."""
+    values = {str(key): value for key, value in data.get("values", {}).items()}
+    values[LIMITER_KEY] = limiter
+    values[PRINCIPAL_KEY] = _principal(data)
+    return PipelineContext(values=values)
+
+
+def _bound(context: PipelineContext, data: Mapping[str, Any]) -> dict[str, Any]:
+    """What the composite bound, in the order it bound it.
+
+    The case's own seeded values are excluded too: they are what the composite read,
+    not what it produced, so a verdict cannot be satisfied by echoing its input.
+    """
+    seeded = set(data.get("values", {}))
+    return {
+        str(key): value
+        for key, value in context.values.items()
+        if key not in _PLUMBING and key not in seeded
+    }
+
+
+def _steps_branch(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``branch``: which arm the principal selected, and what that arm bound.
+
+    A case that declares no alternative is how "neither arm ran" is observed, and the
+    composite binds nothing at all in that case rather than an empty or stale value.
+    """
+    ran: list[str] = []
+
+    def arm(which: str, binds: Mapping[str, Any]) -> Pipeline:
+        async def run(current: PipelineContext) -> PipelineContext:
+            ran.append(which)
+            return current.with_values(**{str(key): value for key, value in binds.items()})
+
+        run.__name__ = which
+        return Pipeline.of(run)
+
+    alternative = data.get("elseBinds")
+    composite = branch(
+        when=data["when"],
+        then=arm("then", data.get("thenBinds", {})),
+        otherwise=None if alternative is None else arm("otherwise", alternative),
+    )
+    result = asyncio.run(Pipeline.of(composite).run(_seeded(data, ConcurrencyLimiter(1))))
+    return {"ran": ran, "bound": _bound(result, data)}
+
+
+def _steps_parallel(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``parallel``: the ceiling the arms observed, the order they ended in, and the
+    order their bindings reached the context.
+
+    ``after`` names the arms an arm waits for, so the reverse-completion case is decided
+    by the corpus instead of by how a machine happens to schedule tasks: the arms really
+    do finish last-declared first, and the merge order is still declaration order.
+    ``highWater`` is the most arms that ever held a slot at once, which is the only
+    evidence the cap was applied rather than merely passed.
+    """
+    arms = list(data["arms"])
+    in_flight = {"now": 0, "high": 0}
+    finished: list[str] = []
+    done = {index: asyncio.Event() for index in range(len(arms))}
+
+    def arm(index: int, spec: Mapping[str, Any]) -> Pipeline:
+        name = str(spec["bind"])
+
+        async def run(current: PipelineContext) -> PipelineContext:
+            # Counted from the moment the arm holds a slot, which is before it waits: an
+            # arm waiting on a sibling is still one of the arms the cap is holding, so
+            # counting only the post-wait region would report a ceiling of one.
+            in_flight["now"] += 1
+            in_flight["high"] = max(in_flight["high"], in_flight["now"])
+            for wait_for in spec.get("after", []):
+                await done[int(wait_for)].wait()
+            # Yield while holding the slot, so a second arm can take the other one and
+            # the ceiling is some value above one rather than an artefact of not trying.
+            await asyncio.sleep(0)
+            in_flight["now"] -= 1
+            finished.append(name)
+            done[index].set()
+            return current.with_values(**{name: name})
+
+        run.__name__ = name
+        return Pipeline.of(run)
+
+    composite = parallel(branches=[arm(index, spec) for index, spec in enumerate(arms)])
+    result = asyncio.run(
+        Pipeline.of(composite).run(_seeded(data, ConcurrencyLimiter(int(data["limit"]))))
+    )
+    return {
+        "highWater": in_flight["high"],
+        "finished": finished,
+        "order": list(_bound(result, data)),
+    }
+
+
+def _steps_map(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``map``: the per-item bindings in input order, with the position each ran at.
+
+    The body binds ``at`` and ``value`` from the two keys the composite writes, so the
+    verdict shows both that every item ran once and which position it believed it had.
+    """
+    over = str(data["over"])
+
+    async def observe(current: PipelineContext) -> PipelineContext:
+        return current.with_values(at=current.require(INDEX_KEY), value=current.require(ITEM_KEY))
+
+    observe.__name__ = "observe"
+    composite = map_step(over=over, as_=str(data["as"]), step=Pipeline.of(observe))
+    result = asyncio.run(
+        Pipeline.of(composite).run(_seeded(data, ConcurrencyLimiter(int(data["limit"]))))
+    )
+    return {"bound": _bound(result, data)}
+
+
+def _steps_reduce(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``reduce``: the collected per-item results in input order.
+
+    Each iteration yields a number of times that decreases with its position, so the
+    last item ends first and the collected list is still read in input order.
+    ``finished`` reports the order the iterations actually ended in, so a runtime that
+    collected in completion order fails instead of passing by luck.
+    """
+    over = str(data["over"])
+    finished: list[Any] = []
+
+    async def collect(current: PipelineContext) -> PipelineContext:
+        index = int(current.require(INDEX_KEY))
+        item = current.require(ITEM_KEY)
+        for _ in range(len(current.require(over)) - index):
+            await asyncio.sleep(0)
+        finished.append(item)
+        return current.with_values(**{REDUCED_KEY: item})
+
+    collect.__name__ = "collect"
+    composite = reduce_step(over=over, as_=str(data["as"]), step=Pipeline.of(collect))
+    result = asyncio.run(
+        Pipeline.of(composite).run(_seeded(data, ConcurrencyLimiter(int(data["limit"]))))
+    )
+    return {"bound": _bound(result, data), "finished": finished}
+
+
+def _steps_depth(data: Mapping[str, Any]) -> dict[str, Any]:
+    """How deep a nest a runtime allows before it refuses the next level.
+
+    The nest is one ``parallel`` per level and the leaf is not a composite at all, so
+    the bound is the family's rather than one kind's: every composite charges the same
+    ``depth`` key. A refusal is reported as an outcome because refusing is the contract
+    -- a nest past the bound that ran anyway would be the failure.
+    """
+    levels = int(data["levels"])
+    reached: dict[str, Any] = {"depth": None}
+
+    async def leaf(current: PipelineContext) -> PipelineContext:
+        reached["depth"] = int(current.get(DEPTH_KEY, 0))
+        return current
+
+    leaf.__name__ = "leaf"
+    nested = Pipeline.of(leaf)
+    for _ in range(levels):
+        nested = Pipeline.of(parallel(branches=[nested]))
+    try:
+        asyncio.run(nested.run(_seeded(data, ConcurrencyLimiter(1))))
+    except PipelineError as exc:
+        reason = "max-depth" if "nested deeper than" in str(exc) else "other"
+        return {"refused": True, "maxDepth": MAX_STEP_DEPTH, "depth": None, "reason": reason}
+    return {
+        "refused": False,
+        "maxDepth": MAX_STEP_DEPTH,
+        "depth": reached["depth"],
+        "reason": None,
+    }
+
+
 _OPS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     "alias.resolve": _alias_resolve,
     "alias.unknown": _alias_unknown,
@@ -820,6 +1036,11 @@ _OPS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     "agent.memory": _agent_memory,
     "agent.resume": _agent_resume,
     "memory.store": _memory_store,
+    "steps.branch": _steps_branch,
+    "steps.parallel": _steps_parallel,
+    "steps.map": _steps_map,
+    "steps.reduce": _steps_reduce,
+    "steps.depth": _steps_depth,
     "agent.engine": _agent_engine,
     "agent.guardrail": _agent_guardrail,
 }

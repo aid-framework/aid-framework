@@ -9,18 +9,21 @@
  * the output: a generated app that boots while silently skipping a step is worse than
  * one that was never written.
  */
-
 import {
+  type EmitStep,
   type EvalShape,
+  type GenerateStep,
   type IR,
+  isCompositeStep,
   isRequiredCapability,
   type MetricShape,
   type ModelCapability,
   type PipelineShape,
   type PrimitiveType,
   type PromptShape,
-  type StepShape,
+  type RetrieveStep,
   type ToolShape,
+  type ToolStep,
   type TypeRef,
   type TypeShape,
 } from '@aid/ir';
@@ -498,6 +501,16 @@ function checkPipelineShape(
   const bound = new Set<string>();
   for (const [index, step] of pipeline.steps.entries()) {
     const stepAt = `${at}.steps.${index}`;
+    if (isCompositeStep(step)) {
+      problems.push(
+        problem(
+          'step-unsupported',
+          stepAt,
+          `step kind ${step.kind} has no Next.js emitter yet (it lands with L6); the Python target emits it today`,
+        ),
+      );
+      continue;
+    }
     problems.push(...checkStepShape(step, stepAt, tools, prompts, retrievers, bound));
     if (step.kind !== 'emit') {
       if ((RESERVED_BINDINGS as readonly string[]).includes(step.as)) {
@@ -521,7 +534,7 @@ function checkPipelineShape(
 }
 
 function checkStepShape(
-  step: StepShape,
+  step: GenerateStep | RetrieveStep | ToolStep | EmitStep,
   at: string,
   tools: ReadonlySet<string>,
   prompts: ReadonlyMap<string, PromptShape>,

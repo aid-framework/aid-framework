@@ -7,7 +7,7 @@
  * type, so there is exactly one definition of each shape per generated app.
  */
 
-import type { IR, StepInputValue, TypeField, TypeRef, TypeShape } from '@aid/ir';
+import type { IR, StepInputValue, StepShape, TypeField, TypeRef, TypeShape } from '@aid/ir';
 import { className, literal, zodPrimitive } from '../names.js';
 import { type EmittedFile, generated, paths } from './file.js';
 import { moduleText } from './text.js';
@@ -78,16 +78,27 @@ export function eventFields(ir: IR): { name: string; field?: TypeField }[] {
     if (head !== 'event' || second === undefined || rest.length > 0) return;
     if (!names.includes(second)) names.push(second);
   };
-  for (const pipeline of ir.pipelines) {
-    for (const step of pipeline.steps) {
-      if (step.kind === 'emit' || step.kind === 'retrieve') continue;
-      for (const value of Object.values(step.input)) visit(value);
-    }
-  }
+  for (const pipeline of ir.pipelines) visitSteps(pipeline.steps, visit);
   return names.map((name) => {
     const field = fieldIndex.get(name);
     return field === undefined ? { name } : { name, field };
   });
+}
+
+/** Walks nested steps so a composite's inner references still shape the request schema. */
+function visitSteps(steps: readonly StepShape[], visit: (value: StepInputValue) => void): void {
+  for (const step of steps) {
+    if (step.kind === 'branch') {
+      visitSteps(step.then, visit);
+      visitSteps(step.else, visit);
+    } else if (step.kind === 'parallel') {
+      for (const arm of step.branches) visitSteps(arm, visit);
+    } else if (step.kind === 'map') {
+      visitSteps([step.step], visit);
+    } else if (step.kind !== 'emit' && step.kind !== 'retrieve' && step.kind !== 'reduce') {
+      for (const value of Object.values(step.input)) visit(value);
+    }
+  }
 }
 
 function requestFieldLine(entry: { name: string; field?: TypeField }): string {

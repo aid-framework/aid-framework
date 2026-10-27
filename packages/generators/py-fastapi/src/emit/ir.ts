@@ -17,7 +17,7 @@ import type {
   TypeShape,
 } from '@aid/ir';
 import type { StepBinding } from '../validate.js';
-import { bindingOf, sortedTypes } from '../validate.js';
+import { bindingOf, ITERATION_INDEX, ITERATION_ITEM, sortedTypes } from '../validate.js';
 
 export function typeTable(ir: IR): Map<string, TypeShape> {
   return sortedTypes(ir);
@@ -61,22 +61,74 @@ export function eventTypeOf(pipeline: PipelineShape): string | undefined {
 }
 
 /**
- * The bindings in scope before each step, mirroring the validator's construction.
+ * The bindings in scope before every step of a pipeline, composites included.
  *
- * `[stepIndex]` is the scope *entering* that step (excluding its own binding), which
- * is exactly what a step's input references are resolved against.
+ * Keyed by the step object itself rather than by an index, because a composite's arms
+ * are not positions in the top-level list. Each arm starts from the scope its composite
+ * was entered with -- the arms run *instead of* each other, so neither sees what the
+ * other binds -- while what a composite hands a later sibling is the merge of its arms'
+ * bindings, which is what the validator already checked a downstream reference against.
+ */
+export function scopeMap(pipeline: PipelineShape, ir: IR): Map<StepShape, StepBinding[]> {
+  const scopes = new Map<StepShape, StepBinding[]>();
+  const walk = (list: readonly StepShape[], outer: StepBinding[]): StepBinding[] => {
+    const inScope = [...outer];
+    for (const step of list) {
+      scopes.set(step, [...inScope]);
+      if (step.kind === 'branch') {
+        const thenScope = walk(step.then, inScope);
+        const elseScope = walk(step.else, inScope);
+        const inElse = new Set(elseScope.slice(inScope.length).map((entry) => entry.name));
+        for (const entry of thenScope.slice(inScope.length)) {
+          if (inElse.has(entry.name)) inScope.push({ name: entry.name, type: undefined });
+        }
+        continue;
+      }
+      if (step.kind === 'parallel') {
+        const merged = new Map<string, StepBinding>();
+        for (const arm of step.branches) {
+          for (const entry of walk(arm, inScope).slice(inScope.length)) {
+            if (!merged.has(entry.name)) merged.set(entry.name, entry);
+          }
+        }
+        inScope.push(...merged.values());
+        continue;
+      }
+      if (step.kind === 'map') {
+        walk(
+          [step.step],
+          [
+            ...inScope,
+            { name: ITERATION_ITEM, type: undefined },
+            { name: ITERATION_INDEX, type: undefined },
+          ],
+        );
+        inScope.push({ name: step.as, type: undefined });
+        continue;
+      }
+      if (step.kind === 'reduce') {
+        // A `reduce` binds the ordered list of one string per item, not the items.
+        inScope.push({ name: step.as, type: { kind: 'primitive', name: 'string', list: true } });
+        continue;
+      }
+      const bound = bindingOf(step);
+      if (bound !== undefined) inScope.push({ name: bound, type: bindingType(step, ir) });
+    }
+    return inScope;
+  };
+  walk(pipeline.steps ?? [], [{ name: 'event', type: undefined }]);
+  return scopes;
+}
+
+/**
+ * The bindings in scope before each top-level step, in declaration order.
+ *
+ * A route and the streaming path both need one entry per position, so the tree-shaped
+ * answer above is flattened here rather than five times at the call sites.
  */
 export function scopesOf(pipeline: PipelineShape, ir: IR): StepBinding[][] {
-  const scopes: StepBinding[][] = [];
-  let inScope: StepBinding[] = [{ name: 'event', type: undefined }];
-  for (const step of pipeline.steps ?? []) {
-    scopes.push(inScope);
-    const bound = bindingOf(step);
-    if (bound === undefined) continue;
-    const type = bindingType(step, ir);
-    inScope = [...inScope, { name: bound, type }];
-  }
-  return scopes;
+  const scopes = scopeMap(pipeline, ir);
+  return (pipeline.steps ?? []).map((step) => scopes.get(step) ?? []);
 }
 
 function bindingType(step: StepShape, ir: IR): TypeRef | undefined {
