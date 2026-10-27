@@ -10,7 +10,6 @@ pipelines:
         method: post
         path: /probe
     steps:
-      - rerank:
-          retriever: knowledge
-          topN: 3
-          as: docs
+      - assert:
+          that: "{{ answer.confidence }} > 0.5"
+          message: confidence too low

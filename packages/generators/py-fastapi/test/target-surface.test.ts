@@ -288,9 +288,16 @@ describe('streaming is negotiated on the request, same route', () => {
     const preflight = body.slice(0, body.indexOf('def answer_ticket_pipeline'));
     expect(preflight).toContain('ctx = await customer(ctx)');
     expect(preflight).toContain('ctx = await handbook(ctx)');
+    // The wiring steps run here too, not only on the JSON path: a stream cannot carry a
+    // guardrail block or a reranked subset, so they have to happen before the first frame.
+    expect(preflight).toContain('ctx = await _guard_1(ctx)');
+    expect(preflight).toContain('ctx = await triage(ctx)');
+    expect(preflight).toContain('ctx = await ranked(ctx)');
+    expect(preflight).toContain('ctx = await _guard_2(ctx)');
     // `ctx.require` rather than a local: a local named after a binding would shadow the
-    // step function of the same name and rebind it as an unbound local.
-    expect(preflight).toContain('ctx.require("handbook")');
+    // step function of the same name and rebind it as an unbound local. The prompt reads
+    // the reranked subset, so that is the binding this asserts.
+    expect(preflight).toContain('ctx.require("ranked")');
   });
 
   it('keeps the signature inline when it fits and one parameter per line when it does not', () => {

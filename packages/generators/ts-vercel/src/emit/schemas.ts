@@ -95,7 +95,7 @@ function visitSteps(steps: readonly StepShape[], visit: (value: StepInputValue) 
       for (const arm of step.branches) visitSteps(arm, visit);
     } else if (step.kind === 'map') {
       visitSteps([step.step], visit);
-    } else if (step.kind !== 'emit' && step.kind !== 'retrieve' && step.kind !== 'reduce') {
+    } else if (step.kind === 'generate' || step.kind === 'tool') {
       for (const value of Object.values(step.input)) visit(value);
     }
   }

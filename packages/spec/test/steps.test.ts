@@ -168,8 +168,10 @@ describe('composite step kinds', () => {
 });
 
 describe('step nesting bound', () => {
+  const GENERATE_LEAF = `generate:\n  prompt: classify\n  input:\n    text: "{{ items }}"\n  as: leaf`;
+
   /** Wraps `body` in `depth` nested branches, each binding the same name in both arms. */
-  function nested(depth: number): string {
+  function nested(depth: number, leaf = GENERATE_LEAF): string {
     /** Places a multi-line mapping as one sequence item; continuation lines clear the `- `. */
     const item = (text: string, by: number): string => {
       const [first, ...rest] = text.split('\n');
@@ -178,7 +180,7 @@ describe('step nesting bound', () => {
         ...rest.map((line) => `${' '.repeat(by + 2)}${line}`),
       ].join('\n');
     };
-    let inner = `generate:\n  prompt: classify\n  input:\n    text: "{{ items }}"\n  as: leaf`;
+    let inner = leaf;
     for (let level = 0; level < depth; level += 1) {
       inner = `branch:\n  when: 'isAuthenticated()'\n  then:\n${item(inner, 4)}\n  else:\n${item(inner, 4)}`;
     }
@@ -197,6 +199,22 @@ describe('step nesting bound', () => {
     );
     expect(tooDeep.length).toBeGreaterThan(0);
     expect(tooDeep[0]?.message).toContain('limit of 4');
+  });
+
+  // The limit bounds composite recursion, and these three produce a value rather than a
+  // body, so a wiring leaf at the limit is exactly at the limit -- not one past it. If a
+  // wiring kind were ever counted as a composite, the leaf would sit at depth 5 and these
+  // cases would report `stepNestingTooDeep`.
+  it.each([
+    [
+      'rerank',
+      `rerank:\n  over: items\n  query: "{{ items }}"\n  model: lexical\n  topN: 3\n  as: ranked`,
+    ],
+    ['guard', `guard:\n  guardrail: pii\n  stage: input\n  text: "hello"`],
+    ['agent', `agent:\n  agent: triage\n  text: "{{ items }}"\n  as: triage_out`],
+  ])('counts a %s leaf as no nesting', (_kind, leaf) => {
+    const diagnostics = check(specWith(steps(seed, nested(4, leaf))));
+    expect(codes(diagnostics)).not.toContain(DIAGNOSTIC_CODES.stepNestingTooDeep);
   });
 });
 
@@ -447,5 +465,73 @@ describe('diagnostic paths', () => {
     expect(problem === undefined ? undefined : formatPath(problem.path)).toBe(
       'pipelines.demo.steps[1].branch.then',
     );
+  });
+});
+
+describe('wiring step kinds', () => {
+  it('accepts rerank, guard and agent in one pipeline', () => {
+    expect(
+      messages(
+        check(
+          specWith(
+            steps(
+              seed,
+              `      - rerank:
+          over: items
+          query: "{{ event.subject }}"
+          model: lexical
+          topN: 2
+          as: ranked`,
+              `      - guard:
+          guardrail: inbound
+          stage: output
+          text: "{{ event.subject }}"`,
+              `      - agent:
+          agent: triage
+          text: "{{ event.subject }}"
+          as: triaged`,
+            ),
+          ),
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  // The three kinds carry scalar templates rather than an `input` map, so they need
+  // their own malformed-template branch: without it a broken mustache in `rerank.query`
+  // reaches the generator and fails at render time instead of at validation.
+  it.each([
+    [
+      'rerank',
+      'query',
+      `      - rerank:
+          over: items
+          query: "{{ event.subject }"
+          model: lexical
+          topN: 2
+          as: ranked`,
+    ],
+    [
+      'guard',
+      'text',
+      `      - guard:
+          guardrail: inbound
+          stage: output
+          text: "{{ event.subject }"`,
+    ],
+    [
+      'agent',
+      'text',
+      `      - agent:
+          agent: triage
+          text: "{{ event.subject }"
+          as: triaged`,
+    ],
+  ] as const)('reports a malformed %s template in %s', (kind, field, block) => {
+    const diagnostics = check(specWith(steps(seed, block)));
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.malformedTemplate]);
+    expect(diagnostics.map((diagnostic) => formatPath(diagnostic.path))).toEqual([
+      `pipelines.demo.steps[1].${kind}.${field}`,
+    ]);
   });
 });

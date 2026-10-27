@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 /**
- * Regenerates `examples/support-copilot` from its spec.
+ * Regenerates one of the `examples/` apps from its spec.
+ *
+ * The app defaults to `support-copilot`; pass an example directory name as the
+ * first argument to regenerate another one (`pnpm generate:guarded` does that for
+ * `examples/guarded-reply`). Both apps go through the identical path below, which
+ * is the point: a second example must not demonstrate a different generator.
  *
  * This is the example's `aid gen`, and it is deliberately three library calls rather
  * than a bespoke code path: the spec is checked and lowered by `@aid/spec` and `@aid/ir`,
@@ -35,7 +40,8 @@ import { planPyFastApi } from '../dist/plan.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..', '..', '..');
-const appRoot = join(repoRoot, 'examples', 'support-copilot');
+const example = process.argv[2] ?? 'support-copilot';
+const appRoot = join(repoRoot, 'examples', example);
 const specPath = join(appRoot, 'app', 'app.spec.yaml');
 const manifestPath = join(appRoot, 'app', 'aid.manifest.json');
 
@@ -114,7 +120,7 @@ if (errors.length > 0) {
 sink.write('app/aid.manifest.json', serializeAidManifest(manifest));
 
 console.log(
-  `support-copilot: ${report.created.length} created, ${report.updated.length} updated, ` +
+  `${example}: ${report.created.length} created, ${report.updated.length} updated, ` +
     `${report.unchanged.length} unchanged, ${report.kept.length} kept (business)`,
 );
 for (const diagnostic of report.diagnostics) {

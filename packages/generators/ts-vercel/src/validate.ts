@@ -481,6 +481,15 @@ export function checkPipelines(ir: IR): PlanProblem[] {
   return problems;
 }
 
+/** One reason for every kind this target cannot emit, so the gap is named in one place. */
+function unemittedStep(kind: string, at: string): PlanProblem {
+  return problem(
+    'step-unsupported',
+    at,
+    `step kind ${kind} has no Next.js emitter yet (it lands with L6); the Python target emits it today`,
+  );
+}
+
 function checkPipelineShape(
   pipeline: PipelineShape,
   tools: ReadonlySet<string>,
@@ -502,13 +511,14 @@ function checkPipelineShape(
   for (const [index, step] of pipeline.steps.entries()) {
     const stepAt = `${at}.steps.${index}`;
     if (isCompositeStep(step)) {
-      problems.push(
-        problem(
-          'step-unsupported',
-          stepAt,
-          `step kind ${step.kind} has no Next.js emitter yet (it lands with L6); the Python target emits it today`,
-        ),
-      );
+      problems.push(unemittedStep(step.kind, stepAt));
+      continue;
+    }
+    // `rerank`, `guard` and `agent` are leaves, not composites, but they are just as
+    // unemitted: the Python target generates them and the Next.js target refuses them
+    // with the same reason, so the gap is named rather than silently emitted as nothing.
+    if (step.kind === 'rerank' || step.kind === 'guard' || step.kind === 'agent') {
+      problems.push(unemittedStep(step.kind, stepAt));
       continue;
     }
     problems.push(...checkStepShape(step, stepAt, tools, prompts, retrievers, bound));

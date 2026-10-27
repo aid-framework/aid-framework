@@ -15,9 +15,12 @@ from aid_runtime import (
     ConfigurationError,
     ModelGateway,
     PromptRegistry,
+    Reranker,
+    RerankSpec,
     Retriever,
     Tool,
     ToolExecutor,
+    reranker_for,
 )
 
 from .control import CONCURRENCY_LIMIT
@@ -50,6 +53,17 @@ class Deps:
             raise ConfigurationError(
                 f"retriever {retriever_id!r} is not declared in the spec"
             ) from None
+
+    def reranker(self, model: str, top_n: int) -> Reranker:
+        """The scorer a rerank step names. The runtime selector owns which models it can serve, so a
+        step cannot run a scorer the app never built, and a model it cannot serve is refused here
+        rather than answered by a scorer of another name.
+        """
+
+        declared = reranker_for(RerankSpec(model=model, topN=top_n))
+        if declared is None:
+            raise ConfigurationError(f"rerank model {model!r} names no reranker")
+        return declared
 
 
 _SINGLETON: Deps | None = None

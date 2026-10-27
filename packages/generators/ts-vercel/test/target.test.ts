@@ -428,4 +428,71 @@ describe('the fail-closed plan', () => {
 
     expect(checkPlan(ir).map((problem) => problem.code)).toContain('eval-metric-unsupported');
   });
+
+  /** The example's IR with `step` first in the pipeline, which is enough to be refused. */
+  function withFirstStep(step: Record<string, unknown>) {
+    return mutated((copy) => {
+      const pipeline = copy.pipelines[0];
+      if (pipeline === undefined) throw new Error('the example has no pipeline');
+      (pipeline.steps as unknown[]).unshift(step);
+    });
+  }
+
+  /** The refusal names the kind, says which target emits it, and stops the plan. */
+  function expectRefused(ir: ReturnType<typeof example>['ir'], kind: string): void {
+    const problems = checkPlan(ir);
+    expect(problems.map((problem) => problem.code)).toEqual(['step-unsupported']);
+    const [first] = problems;
+    expect(first?.message).toContain(kind);
+    expect(first?.message).toContain('L6');
+    expect(() => planTsVercel(ir)).toThrow(/step-unsupported/);
+  }
+
+  it('refuses a rerank step, which the Python target emits today', () => {
+    // `rerank` is a leaf, not a composite, so the composite branch cannot cover it: it
+    // reaches the same refusal through its own check. A target that emitted nothing for
+    // it would produce a pipeline that silently skipped the step.
+    expectRefused(
+      withFirstStep({
+        kind: 'rerank',
+        over: 'handbook',
+        query: 'subject',
+        model: 'lexical',
+        topN: 1,
+        as: 'ranked',
+      }),
+      'rerank',
+    );
+  });
+
+  it('refuses a guard step, which the Python target emits today', () => {
+    expectRefused(
+      withFirstStep({
+        kind: 'guard',
+        guardrail: 'handbook_pii',
+        stage: 'retrieval',
+        text: '{{ handbook }}',
+      }),
+      'guard',
+    );
+  });
+
+  it('refuses an agent step, which the Python target emits today', () => {
+    expectRefused(
+      withFirstStep({
+        kind: 'agent',
+        agent: 'triage_agent',
+        text: 'subject',
+        as: 'triage',
+      }),
+      'agent',
+    );
+  });
+
+  it('still refuses a composite, so the leaf refusal did not replace that branch', () => {
+    // The three leaves above were added beside the composite check, not in place of it.
+    // Without this, narrowing `isCompositeStep` to nothing would leave the three leaf
+    // tests passing and composites silently emitted as no code at all.
+    expectRefused(withFirstStep({ kind: 'parallel', branches: [[]] }), 'parallel');
+  });
 });

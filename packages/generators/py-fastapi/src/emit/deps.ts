@@ -13,7 +13,7 @@ import type { IR } from '@aid/ir';
 import { INDENT } from '../python.js';
 import { assemble, HEADER, importBlock, importFrom } from '../template.js';
 import { hasAgents } from './agents.js';
-import { CONCURRENCY_LIMIT, hasFanOut } from './control.js';
+import { CONCURRENCY_LIMIT, everyStep, hasFanOut } from './control.js';
 import type { EmittedFile } from './file.js';
 import { GENERATED_ROOT, generated } from './file.js';
 import { pythonDoc } from './text.js';
@@ -39,6 +39,10 @@ export function emitDeps(ir: IR): EmittedFile {
    * executor. One tuple, built once, handed to both -- so a tool cannot be permissioned one
    * way on one route and another way on the other. */
   const agents = hasAgents(ir);
+  /* A `rerank` step names a model, and the model selects the scorer. The container is where
+   * that selection lives, so a test can hand a pipeline a reranker of its own without editing
+   * the step -- the same seam `retriever()` gives a retrieval test. */
+  const rerank = everyStep(ir.pipelines).some((step) => step.kind === 'rerank');
   return generated(
     DEPS_PATH,
     assemble([
@@ -53,10 +57,11 @@ export function emitDeps(ir: IR): EmittedFile {
         [importFrom('dataclasses', agents ? ['dataclass', 'field'] : ['dataclass'])],
         [
           importFrom('aid_runtime', [
-            ...(retrieval ? ['ConfigurationError'] : []),
+            ...(retrieval || rerank ? ['ConfigurationError'] : []),
             ...(fanOut ? ['ConcurrencyLimiter'] : []),
             'ModelGateway',
             'PromptRegistry',
+            ...(rerank ? ['Reranker', 'RerankSpec', 'reranker_for'] : []),
             ...(retrieval ? ['Retriever'] : []),
             ...(agents ? ['Tool', 'ToolExecutor'] : ['ToolExecutor']),
           ]),
@@ -104,6 +109,24 @@ export function emitDeps(ir: IR): EmittedFile {
               `${INDENT}${INDENT}${INDENT}raise ConfigurationError(`,
               `${INDENT}${INDENT}${INDENT}${INDENT}f"retriever {retriever_id!r} is not declared in the spec"`,
               `${INDENT}${INDENT}${INDENT}) from None`,
+            ]
+          : []),
+        ...(rerank
+          ? [
+              '',
+              `${INDENT}def reranker(self, model: str, top_n: int) -> Reranker:`,
+              pythonDoc(
+                'The scorer a rerank step names. The runtime selector owns which models it ' +
+                  'can serve, so a step cannot run a scorer the app never built, and a model ' +
+                  'it cannot serve is refused here rather than answered by a scorer of another ' +
+                  'name.',
+                `${INDENT}${INDENT}`,
+              ),
+              `${INDENT}${INDENT}declared = reranker_for(RerankSpec(model=model, topN=top_n))`,
+              `${INDENT}${INDENT}if declared is None:`,
+              `${INDENT}${INDENT}${INDENT}raise ConfigurationError(` +
+                `f"rerank model {model!r} names no reranker")`,
+              `${INDENT}${INDENT}return declared`,
             ]
           : []),
       ].join('\n'),

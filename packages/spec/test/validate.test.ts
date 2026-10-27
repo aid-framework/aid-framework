@@ -8,6 +8,7 @@ import {
   formatPath,
   MODEL_CACHE_MIN_VERSION,
   type PathSegment,
+  RETIRED_STEP_KINDS,
   SECTION_MIN_VERSION,
   SPEC_VERSION,
   SUPPORTED_SECTIONS,
@@ -65,28 +66,30 @@ describe('spec version', () => {
     expect(Object.values(SECTION_MIN_VERSION)).toEqual(['0.2', '0.2', '0.2', '0.2']);
   });
 
-  it('keeps the supported and deferred step kinds disjoint', () => {
-    const overlap = SUPPORTED_STEP_KINDS.filter((kind) =>
-      (DEFERRED_STEP_KINDS as readonly string[]).includes(kind),
+  it('keeps the supported, deferred and retired step kinds pairwise disjoint', () => {
+    const retired = Object.keys(RETIRED_STEP_KINDS);
+    const overlap = SUPPORTED_STEP_KINDS.filter(
+      (kind) => (DEFERRED_STEP_KINDS as readonly string[]).includes(kind) || retired.includes(kind),
     );
     expect(overlap).toEqual([]);
     expect([...SUPPORTED_STEP_KINDS].sort()).toEqual([
+      'agent',
       'branch',
       'emit',
       'generate',
+      'guard',
       'map',
       'parallel',
       'reduce',
+      'rerank',
       'retrieve',
       'tool',
     ]);
-    expect([...DEFERRED_STEP_KINDS].sort()).toEqual([
-      'agent',
-      'assert',
-      'guard',
-      'human',
-      'rerank',
-    ]);
+    // Exactly the one genuinely pending kind, so the phase-exit criterion ("the
+    // deferred list is empty") stays reachable. A retired kind belongs in
+    // `RETIRED_STEP_KINDS`, where re-adding it is a real change rather than a no-op.
+    expect([...DEFERRED_STEP_KINDS]).toEqual(['assert']);
+    expect(retired.sort()).toEqual(['human']);
   });
 });
 
@@ -149,6 +152,10 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
   'malformed-template.spec.yaml': {
     code: DIAGNOSTIC_CODES.malformedTemplate,
     path: ['prompts', 'classify', 'template'],
+  },
+  'retired-step.spec.yaml': {
+    code: DIAGNOSTIC_CODES.unsupportedStep,
+    path: ['pipelines', 'probe', 'steps', 0],
   },
   'model-cache-below-version.spec.yaml': {
     code: DIAGNOSTIC_CODES.notSupported,
@@ -247,6 +254,40 @@ describe('invalid fixtures', () => {
     if (!diagnostic?.line) throw new Error('expected a diagnostic carrying a line number');
 
     expect(text.split('\n')[diagnostic.line - 1]).toContain('agents:');
+  });
+});
+
+describe('retired step kinds', () => {
+  it('names the replacement spelling for a retired step', () => {
+    const result = checkSpecText(readFixture('invalid/retired-step.spec.yaml'));
+    expect(codes(result.diagnostics)).toEqual([DIAGNOSTIC_CODES.unsupportedStep]);
+    // Falsifiable: delete the retired-kind branch and this falls through to the generic
+    // "exactly one of ..." error, whose hint never names the replacement.
+    expect(result.diagnostics[0]?.message).toContain('retired');
+    expect(result.diagnostics[0]?.hint).toContain('agent.humanInTheLoop');
+    expect(result.diagnostics[0]?.hint).toContain('agents[].humanInTheLoop');
+  });
+
+  it('does not confuse a deferred kind with a retired one', () => {
+    const result = checkSpecText(readFixture('invalid/deferred-step.spec.yaml'));
+    expect(result.diagnostics[0]?.message).toContain('not implemented yet');
+    expect(result.diagnostics[0]?.hint).not.toContain('humanInTheLoop');
+  });
+
+  it('validates an agent that declares the replacement pause', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.2',
+      project: { name: 'p' },
+      agents: {
+        refund: {
+          instructions: 'p',
+          model: 'm',
+          maxSteps: 1,
+          humanInTheLoop: { when: 'true', channel: 'refunds' },
+        },
+      },
+    });
+    expect(diagnostics).toEqual([]);
   });
 });
 

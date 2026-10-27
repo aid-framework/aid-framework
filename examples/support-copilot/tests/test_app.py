@@ -10,14 +10,25 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
+from typing import cast
+from unittest.mock import patch
 
 from aid_runtime import (
+    Chunk,
+    Citation,
     CompletionRequest,
     CompletionResponse,
     ConcurrencyLimiter,
+    CostLedger,
     FakeProvider,
     ModelSpec,
     PipelineContext,
+    RetrievalResult,
+    RetrievedItem,
+    Retriever,
+    RunResult,
+    RunStatus,
+    SourceDocument,
 )
 from fastapi.testclient import TestClient
 
@@ -26,9 +37,11 @@ from app.generated.contracts import ToolContext
 from app.generated.deps import Deps, build_deps, get_deps
 from app.generated.gateway import build_gateway
 from app.generated.gateway.models import ALIASES, FALLBACKS
+from app.generated.pipelines import answer_ticket as answer_ticket_module
 from app.generated.pipelines.answer_ticket import answer_ticket_pipeline
 from app.generated.requests import AnswerTicketRequest
-from app.generated.schemas import Customer, Ticket
+from app.generated.retrieval.bindings import build_binding, build_retriever
+from app.generated.schemas import Answer, Customer, Ticket
 from app.generated.tools import build_executor
 from app.main import app
 from tests.fake_gateway import IDEAL_ANSWERS, fake_deps, fake_provider
@@ -41,6 +54,9 @@ REQUEST: dict[str, str] = {
 #: A phrase only the guarded `classify_ticket` prompt carries, so a test can tell
 #: that call apart from the ones the steps before it make.
 GUARDED_PROMPT = "You classify inbound support tickets for the ACME support desk."
+
+#: The same, for the `triage_ticket` prompt the `agent` step runs.
+TRIAGE_PROMPT = "You read one line of a support ticket"
 
 
 def fake_deps_override() -> Deps:
@@ -129,16 +145,17 @@ def test_a_failing_tool_fails_the_request() -> None:
     assert "lookup_customer" in response.json()["detail"]
 
 
-def deps_with(provider: FakeProvider) -> Deps:
+def deps_with(provider: FakeProvider, retrievers: dict[str, Retriever] | None = None) -> Deps:
     """The generated dependencies around one provider the test can inspect.
 
     `calls` on a `FakeProvider` is the record of what the model was asked, which
     is what turns "the guardrail refused this" into a claim that can be checked:
-    an empty list is proof the model was never reached.
+    an empty list is proof the model was never reached. `retrievers` is the same
+    seam one level down -- left `None`, the retrievers the spec declares are built.
     """
 
     gateway = build_gateway(providers={"fake": provider, "openai": provider})
-    return build_deps(gateway=gateway)
+    return build_deps(gateway=gateway, retrievers=retrievers)
 
 
 def test_an_input_guardrail_block_is_a_refusal_and_never_reaches_the_model() -> None:
@@ -289,18 +306,24 @@ async def _settle(predicate: Callable[[], bool]) -> None:
     raise AssertionError("the pipeline never reached the state the test waited for")
 
 
-def _pipeline_context(provider: FakeProvider, limit: int) -> PipelineContext:
+def _pipeline_context(
+    provider: FakeProvider,
+    limit: int,
+    retrievers: dict[str, Retriever] | None = None,
+) -> PipelineContext:
     """The context a generated route seeds, around one inspectable provider.
 
     The limiter is built here rather than defaulted so a test can set the cap the
     spec declares, and so `deps.limiter` and the context's limiter are provably the
     same object -- the composite draws from the context, not from a second limiter
-    of its own.
+    of its own. `retrievers` is the seam a step test replaces when it needs to
+    control exactly which passages reach the `rerank` and `guard` steps.
     """
 
     deps = build_deps(
         gateway=build_gateway(providers={"fake": provider, "openai": provider}),
         limiter=ConcurrencyLimiter(limit),
+        retrievers=retrievers,
     )
     return PipelineContext(
         values={
@@ -360,3 +383,306 @@ async def test_the_cap_is_the_ceiling_the_arms_observe() -> None:
     assert provider.high_water == 1
     assert isinstance(result.get("customer_note"), str)
     assert isinstance(result.get("handbook_note"), str)
+
+
+def _asked(provider: FakeProvider, phrase: str) -> bool:
+    """Whether any message of any call the provider saw carried `phrase`.
+
+    Every message, not just the last: a prompt step sends the rendered template as
+    the one user message, while the agent runtime sends its instructions as the
+    system message and the step's text after it.
+    """
+
+    return any(phrase in message.content for call in provider.calls for message in call.messages)
+
+
+def _retrieved(*texts: str) -> RetrievalResult:
+    """A `handbook` result whose passages are `texts`, ranked in that order."""
+
+    return RetrievalResult(
+        retriever="handbook",
+        query="handbook",
+        items=tuple(
+            RetrievedItem(
+                chunk=Chunk(
+                    chunk_id=f"sha256:{index}",
+                    doc_id=f"page-{index}.md",
+                    uri="docs/page.md",
+                    index=index,
+                    start=0,
+                    end=len(text),
+                    text=text,
+                ),
+                score=1.0 - index / 10,
+                rank=index + 1,
+                citation=Citation(
+                    doc_id=f"page-{index}.md",
+                    chunk_id=f"sha256:{index}",
+                    uri="docs/page.md",
+                    index=index,
+                ),
+            )
+            for index, text in enumerate(texts)
+        ),
+    )
+
+
+class StubRetriever:
+    """A retriever that answers from canned passages, and never guards them.
+
+    Injected through the generated `retrievers` seam, so the `handbook` step runs
+    unchanged. What it omits on purpose is the retriever's own `retrieval`-stage
+    check (`Retriever._guard_retrieval`), and that omission is what lets it measure
+    the emitted `guard` step: with the retriever not deciding, a block can only
+    have come from the step.
+    """
+
+    def __init__(self, result: RetrievalResult) -> None:
+        self._result = result
+        self.calls = 0
+
+    async def retrieve(self, query: str, *, top_k: int | None = None) -> RetrievalResult:
+        self.calls += 1
+        return self._result
+
+
+def _as_retriever(stub: StubRetriever) -> dict[str, Retriever]:
+    """The stub in the shape the `retrievers` seam declares."""
+
+    return {"handbook": cast(Retriever, stub)}
+
+
+#: The passage that shares the most terms with the agent's prose, and is therefore
+#: what a lexical rerank of the three below has to put first. It is deliberately not
+#: the passage the stub ranks first: a test that only counted items would also pass
+#: for a step that truncated the incoming order without scoring anything.
+DECISIVE_PASSAGE = "A duplicate charge is charged twice for one subscription period."
+
+
+async def test_the_rerank_step_rescores_against_the_agent_and_keeps_the_top_n() -> None:
+    """The `rerank` step reorders, truncates, and keeps the provenance it inherited.
+
+    The step's query is `{{ triage }}` -- the agent's answer, not the ticket the
+    retriever searched with -- so the step is a second, different question asked of
+    the same passages. `DECISIVE_PASSAGE` is third in and first out: the ordering
+    assertion is what fails if the scoring is deleted, because truncation alone
+    would keep "Billing questions go to the billing queue." in front.
+    """
+
+    provider = fake_provider()
+    stub = StubRetriever(
+        _retrieved(
+            "Billing questions go to the billing queue.",
+            "Exports run nightly at 02:00 UTC.",
+            DECISIVE_PASSAGE,
+        )
+    )
+    context = _pipeline_context(provider, limit=4, retrievers=_as_retriever(stub))
+    result = await answer_ticket_pipeline().run(context)
+
+    found = result.get("handbook")
+    ranked = result.get("ranked")
+    assert isinstance(found, RetrievalResult)
+    assert isinstance(ranked, RetrievalResult)
+    assert stub.calls == 1
+    assert len(found.items) == 3, "the three passages the stub returned, untouched"
+    assert found.items[0].chunk.text == "Billing questions go to the billing queue."
+    assert ranked.items[0].chunk.text == DECISIVE_PASSAGE, "the scoring decides the order"
+    assert ranked.items[0].chunk.text != found.items[0].chunk.text, "and it is not a no-op"
+    assert len(ranked.items) == 1, "the step declares topN: 1"
+    # The rerank narrows what retrieval found; it does not re-derive it. Keeping the
+    # retriever id and query is the provenance the prompt and the citations rely on.
+    assert ranked.retriever == "handbook"
+    assert ranked.query == "handbook"
+    assert ranked.items[0].citation == found.items[2].citation, "the citation travels with it"
+
+
+async def test_the_declared_retriever_narrows_the_candidates_before_the_step_sees_them() -> None:
+    """The retriever's own rerank caps the binding, and the step narrows that cap again.
+
+    Two reranks run in this app and they are not the same one: `handbook` declares
+    its own `rerank` cap, which retrieval applies before anything is bound, and the
+    step applies a second, tighter `topN` to what survived. The corpus here is
+    deliberately larger than the declared cap, so the count assertions measure
+    truncation rather than the size of the corpus -- and the cap is read from the
+    binding the generator emitted, so a change to the spec's `topN` moves the
+    expectation with it instead of leaving a stale number behind.
+    """
+
+    declared = build_binding("handbook").rerank
+    assert declared is not None, "this test is about the retriever's declared rerank"
+
+    documents = [
+        SourceDocument(
+            doc_id=f"page-{index}.md",
+            uri=f"docs/page-{index}.md",
+            text=text,
+        )
+        for index, text in enumerate(
+            (
+                "Billing questions go to the billing queue.",
+                "Exports run nightly at 02:00 UTC.",
+                DECISIVE_PASSAGE,
+                "Passwords reset from account settings.",
+            )
+        )
+    ]
+    retriever = build_retriever("handbook", ledger=CostLedger())
+    await retriever.ingest(documents)
+
+    provider = fake_provider()
+    context = _pipeline_context(provider, limit=4, retrievers={"handbook": retriever})
+    result = await answer_ticket_pipeline().run(context)
+
+    found = result.get("handbook")
+    ranked = result.get("ranked")
+    assert isinstance(found, RetrievalResult)
+    assert isinstance(ranked, RetrievalResult)
+    assert len(found.items) == declared.top_n, "the retriever's cap, not the corpus size"
+    assert len(found.items) < len(documents), "the cap has to bind for this to measure anything"
+    assert len(ranked.items) == 1, "the step's own `topN: 1` narrows the cap again"
+    # Which of the survivors wins is the stub test's claim, where the corpus is
+    # controlled. Here the property that has to hold is the one the rerank must never
+    # break: the step narrows what retrieval found and introduces nothing of its own.
+    assert ranked.items[0].chunk.chunk_id in {item.chunk.chunk_id for item in found.items}
+
+
+async def test_the_agent_step_runs_the_declared_agent_and_binds_its_answer() -> None:
+    """The `agent` step reaches the model through the agent runtime, and binds a string.
+
+    The spec names an agent, not a prompt, so the assertion has to be about the
+    agent's own prompt reaching the model -- otherwise a step that called
+    `classify_ticket` again and bound that text would pass.
+    """
+
+    provider = fake_provider()
+    context = _pipeline_context(
+        provider, limit=4, retrievers=_as_retriever(StubRetriever(_retrieved("Refunds take days.")))
+    )
+    result = await answer_ticket_pipeline().run(context)
+
+    triage = result.get("triage")
+    assert isinstance(triage, str)
+    assert triage, "a completed run binds the agent's answer"
+    assert _asked(provider, TRIAGE_PROMPT)
+
+
+class _NonCompletingRuntime:
+    """An agent runtime reporting a run that stopped before it had an answer."""
+
+    def __init__(self, status: RunStatus) -> None:
+        self._status = status
+
+    async def run(self, agent_id: str, text: str) -> RunResult:
+        return RunResult(status=self._status, agent_id=agent_id)
+
+
+def _stuck_runtime(**_kwargs: object) -> _NonCompletingRuntime:
+    """`build_runtime`, replaced by a runtime that cannot finish."""
+
+    return _NonCompletingRuntime(RunStatus.MAX_STEPS)
+
+
+def test_an_agent_run_that_does_not_complete_fails_the_request() -> None:
+    """A paused or truncated run is neither swallowed nor resumed: it fails closed.
+
+    `RunResult` is allowed to end without an answer, so the step has to decide what
+    that means for the pipeline. Binding `answer` anyway would put an empty string
+    into the prompt and hide the truncation behind a plausible-looking 200.
+    """
+
+    app.dependency_overrides[get_deps] = fake_deps_override
+    try:
+        with patch.object(answer_ticket_module, "build_runtime", _stuck_runtime):
+            response = TestClient(app).post("/tickets/answer", json=REQUEST)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 502, response.text
+    detail = response.json()["detail"]
+    assert "triage_agent" in detail
+    assert "max-steps" in detail
+
+
+def test_the_retrieval_guard_step_blocks_a_passage_the_retriever_let_through() -> None:
+    """The emitted `guard` at `stage: retrieval` decides, and decides before the model.
+
+    The stub retriever does the fetching and none of the guarding, so the block can
+    only come from the step. The triage call is the control: it runs *between* the
+    retrieve and the guard, so seeing it proves the pipeline was past retrieval
+    when it stopped -- a block raised inside the retriever would have ended the run
+    three steps earlier.
+    """
+
+    provider = fake_provider()
+    stub = StubRetriever(_retrieved("Refunds over 500 need ada@example.com to approve."))
+    app.dependency_overrides[get_deps] = lambda: deps_with(provider, _as_retriever(stub))
+    try:
+        response = TestClient(app).post("/tickets/answer", json=REQUEST)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 400, response.text
+    assert "handbook_pii" in response.json()["detail"]
+    assert stub.calls == 1
+    assert _asked(provider, TRIAGE_PROMPT)
+    assert not _asked(provider, GUARDED_PROMPT)
+
+
+async def test_the_generated_retriever_blocks_a_passage_before_any_model_is_asked() -> None:
+    """The other half: the retriever the spec builds enforces the same guardrail.
+
+    `build_retriever` hands every retriever the `retrieval` table as a constructor
+    seam, so declaring `handbook_pii` protects this app whether or not a `guard`
+    step exists -- the step re-checks the reranked subset rather than being the only
+    enforcement. The two tests are deliberately paired: the stub above isolates the
+    step by removing the retriever's own check, and this one removes the stub. A
+    request that is refused with no model call at all is what says the block came
+    from `retrieve`, which runs before every prompt, the parallel arms and the agent.
+    """
+
+    retriever = build_retriever("handbook", ledger=CostLedger())
+    await retriever.ingest(
+        [
+            SourceDocument(
+                doc_id="refunds.md",
+                uri="docs/refunds.md",
+                text=(
+                    "A duplicate charge is charged twice for one subscription period. "
+                    "Refunds over 500 need security@example.com to approve."
+                ),
+            )
+        ]
+    )
+
+    provider = fake_provider()
+    app.dependency_overrides[get_deps] = lambda: deps_with(provider, {"handbook": retriever})
+    try:
+        response = TestClient(app).post("/tickets/answer", json=REQUEST)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 400, response.text
+    assert "handbook_pii" in response.json()["detail"]
+    assert provider.calls == [], "retrieval runs first, so no prompt was ever rendered"
+
+
+async def test_the_generate_step_still_asks_for_the_answer_schema() -> None:
+    """The agent's prose is a search query; `Answer` is still the reply.
+
+    `triage` now feeds `classify_ticket`, which is exactly the rewiring that could
+    drop the answer contract: the guard step reads `answer`, the `emit` step emits
+    it, and the eval's metrics are `summary`/`category`/`confidence`. Both halves
+    are pinned -- the prompt asks for those fields, and the step binds an `Answer`.
+    """
+
+    deps = fake_deps()
+    rendered = deps.prompts.render(
+        "classify_ticket", version="1", values={"ranked": "", "subject": REQUEST["subject"]}
+    )
+    for field in ("summary", "category", "confidence"):
+        assert field in rendered.text
+
+    context = _pipeline_context(fake_provider(), limit=4)
+    result = await answer_ticket_pipeline().run(context)
+    assert isinstance(result.get("answer"), Answer)

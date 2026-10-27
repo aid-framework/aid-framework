@@ -2102,6 +2102,111 @@
         "depth": null,
         "reason": "max-depth"
       }
+    },
+    {
+      "id": "steps-rerank-narrows-the-binding-it-reads-and-keeps-its-provenance",
+      "op": "steps.rerank",
+      "description": "A rerank step with topN 2 keeps the two best-covering passages in the reranker's order, re-ranks them from 1, and leaves the binding's own query and retriever alone -- the step reads the query but does not own it.",
+      "runtimes": ["python"],
+      "reason": "L5c wires rerank/guard/agent into the Python generator and runtime. The TypeScript runtime has no step kinds to drive at all until L6 of the Phase 2 plan, so every steps.* case is scoped to the runtime that implements them.",
+      "input": {
+        "over": "handbook",
+        "as": "ranked",
+        "query": "reset password email",
+        "seedQuery": "how do I get back into my account",
+        "retriever": "handbook",
+        "model": "lexical",
+        "topN": 2,
+        "items": [
+          "Contact the help desk for anything else.",
+          "Reset your password from the email link.",
+          "You can change your email address in settings."
+        ]
+      },
+      "expect": {
+        "bound": "ranked",
+        "items": [
+          "Reset your password from the email link.",
+          "You can change your email address in settings."
+        ],
+        "ranks": [1, 2],
+        "query": "how do I get back into my account",
+        "retriever": "handbook"
+      }
+    },
+    {
+      "id": "steps-guard-inspects-the-passages-a-retrieval-step-would-splice",
+      "op": "steps.guard",
+      "description": "A retrieval-stage guard is handed the texts of the items in the binding, not the query, so a contact detail that exists only in a passage is refused -- the projection is the whole point of the stage, and a step that checked the query would allow this.",
+      "runtimes": ["python"],
+      "reason": "L5c wires rerank/guard/agent into the Python generator and runtime. The TypeScript runtime has no step kinds to drive at all until L6 of the Phase 2 plan, so every steps.* case is scoped to the runtime that implements them.",
+      "input": {
+        "stage": "retrieval",
+        "retriever": "handbook",
+        "seedQuery": "lost badge",
+        "guardrail": {
+          "id": "handbook_pii",
+          "stages": ["retrieval"],
+          "policies": ["pii-detect"],
+          "action": "block",
+          "onFail": {
+            "message": "The handbook passage matched for this ticket carries contact details.",
+            "log": true
+          }
+        },
+        "items": [
+          "Lost badges are replaced at the front desk.",
+          "Questions about a lost badge go to security@example.com."
+        ]
+      },
+      "expect": {
+        "error": "guardrail-blocked",
+        "guardrail": "handbook_pii",
+        "stage": "retrieval"
+      }
+    },
+    {
+      "id": "steps-agent-charges-the-enclosing-runs-ledger",
+      "op": "steps.agent",
+      "description": "An agent step builds its runtime over the enclosing gateway, so the call it makes is recorded on that gateway's ledger: a step that brought its own ledger would spend outside the pipeline's budget while looking identical from outside.",
+      "runtimes": ["python"],
+      "reason": "L5c wires rerank/guard/agent into the Python generator and runtime. The TypeScript runtime has no step kinds to drive at all until L6 of the Phase 2 plan, so every steps.* case is scoped to the runtime that implements them.",
+      "input": {
+        "models": [
+          {
+            "id": "cheap",
+            "inputPer1kUsd": 0.00015,
+            "outputPer1kUsd": 0.0006
+          }
+        ],
+        "prompts": [
+          {
+            "id": "triage",
+            "template": "You are triage."
+          }
+        ],
+        "agents": [
+          {
+            "id": "triage_agent",
+            "instructions": "triage",
+            "model": "cheap",
+            "maxSteps": 2
+          }
+        ],
+        "script": [
+          {
+            "text": "reset"
+          }
+        ],
+        "agent": "triage_agent",
+        "text": "my password will not reset"
+      },
+      "expect": {
+        "status": "completed",
+        "answer": "reset",
+        "calls": 1,
+        "charged": true
+      }
     }
   ]
 }

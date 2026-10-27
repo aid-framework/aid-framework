@@ -51,6 +51,8 @@ from aid_runtime import (
     BudgetExceededError,
     Capability,
     CapabilityMismatchError,
+    Chunk,
+    Citation,
     ConcurrencyLimiter,
     ConfigurationError,
     CostLedger,
@@ -78,6 +80,9 @@ from aid_runtime import (
     PromptRegistry,
     PromptRenderError,
     PromptTemplate,
+    RerankSpec,
+    RetrievalResult,
+    RetrievedItem,
     ScriptedTurn,
     StructuredOutputError,
     Threshold,
@@ -95,10 +100,13 @@ from aid_runtime import (
     parallel,
     parse_structured,
     reduce_step,
+    reranker_for,
     run_structured,
     similarity,
     z_critical,
 )
+from aid_runtime.agents import GuardrailDefinition, GuardrailEngine
+from aid_runtime.agents.ir import from_ir
 
 #: ``tests/conformance/test_conformance.py`` is four levels below the repository root.
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -1010,6 +1018,169 @@ def _steps_depth(data: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _retrieval_binding(data: Mapping[str, Any]) -> RetrievalResult:
+    """The binding the wiring steps read, shaped like a ``retrieve`` result.
+
+    Position is both the chunk index and the incoming rank, so a case can state the
+    order the step was handed and the order it produced without inventing a third
+    vocabulary for either. The scores are placeholders: a ``rerank`` recomputes them,
+    and a ``guard`` never reads them.
+    """
+    items = tuple(
+        RetrievedItem(
+            chunk=Chunk(
+                chunk_id=f"chunk-{position}",
+                doc_id="handbook",
+                uri="handbook.md",
+                index=position,
+                start=0,
+                end=len(str(text)),
+                text=str(text),
+            ),
+            score=1.0,
+            rank=position + 1,
+            citation=Citation(doc_id="handbook", chunk_id=f"chunk-{position}", index=position),
+        )
+        for position, text in enumerate(data["items"])
+    )
+    return RetrievalResult(
+        retriever=str(data.get("retriever", "handbook")),
+        query=str(data.get("seedQuery", "")),
+        items=items,
+    )
+
+
+def _guardrail_definition(data: Mapping[str, Any]) -> GuardrailDefinition:
+    """The one named guardrail the step resolves through the generated ``BY_ID``."""
+    entry = data["guardrail"]
+    on_fail = entry.get("onFail", {})
+    return GuardrailDefinition(
+        id=str(entry["id"]),
+        stages=tuple(str(stage) for stage in entry["stages"]),
+        policies=tuple(str(policy) for policy in entry["policies"]),
+        action=str(entry["action"]),
+        redact=tuple(str(pattern) for pattern in entry.get("redact", [])),
+        tools=tuple(str(tool) for tool in entry.get("tools", [])),
+        message=str(on_fail.get("message", "")),
+        fallback_prompt=on_fail.get("fallbackPrompt"),
+        log=bool(on_fail.get("log", False)),
+    )
+
+
+def _steps_rerank(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``rerank`` step: the binding it rebinds, re-ordered and cut to ``topN``.
+
+    The step rewrites the *items* of the binding it reads and leaves every other field
+    alone, so the verdict reports the whole binding. ``items``/``ranks`` prove the
+    reranker decided the order and the ceiling held; ``query``/``retriever`` prove the
+    step rebound the binding it read rather than fabricating an unrelated one. The
+    case's step query deliberately differs from the seeded one, so a step that wrote
+    its own query into the binding fails here instead of passing quietly.
+    """
+    over = str(data["over"])
+    top_n = int(data["topN"])
+    values = {str(key): value for key, value in data.get("values", {}).items()}
+    values[over] = _retrieval_binding(data)
+
+    async def run(current: PipelineContext) -> PipelineContext:
+        reranker = reranker_for(RerankSpec.model_validate({"model": data["model"], "topN": top_n}))
+        assert reranker is not None  # a declared model always resolves to one
+        seeded: RetrievalResult = current.require(over)
+        scored = await reranker.rerank(str(data["query"]), seeded.items, top_n=top_n)
+        return current.with_values(**{str(data["as"]): seeded.model_copy(update={"items": scored})})
+
+    context = _seeded(
+        {"values": values, "principal": data.get("principal", {})},
+        ConcurrencyLimiter(1),
+    )
+    bound: RetrievalResult = asyncio.run(Pipeline.of(run).run(context)).require(str(data["as"]))
+    return {
+        "bound": str(data["as"]),
+        "items": [item.chunk.text for item in bound.items],
+        "ranks": [item.rank for item in bound.items],
+        "query": bound.query,
+        "retriever": bound.retriever,
+    }
+
+
+#: The actions that stop a pipeline. ``escalate`` stops like a ``block`` because a
+#: route has no checkpoint to resume a question from -- the generated
+#: ``enforce_guardrail`` treats both the same way, and this mirrors it.
+_STOPPING_ACTIONS = frozenset({"block", "escalate"})
+
+
+def _steps_guard(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``guard`` step: the payload its stage is handed, and what the engine decided.
+
+    The payload is the stage's, not the case's. ``input`` and ``output`` hand the
+    rendered text; ``retrieval`` hands the *texts of the items in the binding* -- the
+    passages a prompt would splice -- which is exactly the projection the emitted step
+    makes. The case's contact detail lives in a passage and nowhere else, so a step
+    that inspected the query instead of the context would pass here, which is why this
+    case is the one that pins the projection.
+
+    A stopping action is reported as an error rather than a verdict: the emitted step
+    raises, so a refusal is the contract and a run that continued would be the failure.
+    """
+    stage = str(data["stage"])
+    definition = _guardrail_definition(data)
+    engine = GuardrailEngine({definition.id: definition})
+    payload: list[str] | str
+    if stage == "retrieval":
+        payload = [item.chunk.text for item in _retrieval_binding(data).items]
+        verdict = engine.check_retrieval((definition,), payload)
+    elif stage in {"input", "output"}:
+        payload = str(data["text"])
+        check = engine.check_input if stage == "input" else engine.check_output
+        verdict = check((definition,), payload)
+    else:
+        raise ConfigurationError(f"the guard step has no {stage!r} stage")
+    deciding = verdict.deciding
+    if deciding is not None and deciding.action in _STOPPING_ACTIONS:
+        return {
+            "error": "guardrail-blocked",
+            "guardrail": deciding.guardrail,
+            "stage": deciding.stage,
+        }
+    return {
+        "stage": verdict.stage,
+        "payload": payload,
+        "fired": [record.guardrail for record in verdict.records],
+        "action": verdict.action,
+    }
+
+
+def _steps_agent(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``agent`` step: what it bound, and where its spend landed.
+
+    The runtime is built over the *enclosing* gateway, the way the emitted step builds
+    it over ``deps.gateway``, so the tokens the agent spends have to appear on that
+    gateway's ledger: ``charged`` is the whole budget claim in one field. A step that
+    built a runtime with its own ledger reports ``false`` and escapes a pipeline budget
+    while still looking like it has one. The step is also a fresh run rather than a
+    resumed thread, so ``answer`` is that run's final answer and nothing else is bound.
+    """
+
+    async def run() -> dict[str, Any]:
+        spec = from_ir(_agent_document(data))
+        provider = FakeProvider(
+            name=_AGENT_PROVIDER,
+            script=[_scripted(step) for step in data.get("script", [])],
+        )
+        gateway = ModelGateway({_AGENT_PROVIDER: provider}, spec.models)
+        runtime = AgentRuntime(spec, gateway, tools=[])
+        result = await runtime.run(str(data["agent"]), str(data["text"]))
+        spent = gateway.ledger
+        return {
+            "status": str(result.status),
+            "answer": result.answer,
+            "calls": len(provider.calls),
+            "charged": len(spent.entries) == len(provider.calls) and spent.total_tokens > 0,
+        }
+
+    return asyncio.run(run())
+
+
 _OPS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     "alias.resolve": _alias_resolve,
     "alias.unknown": _alias_unknown,
@@ -1041,6 +1212,9 @@ _OPS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     "steps.map": _steps_map,
     "steps.reduce": _steps_reduce,
     "steps.depth": _steps_depth,
+    "steps.rerank": _steps_rerank,
+    "steps.guard": _steps_guard,
+    "steps.agent": _steps_agent,
     "agent.engine": _agent_engine,
     "agent.guardrail": _agent_guardrail,
 }

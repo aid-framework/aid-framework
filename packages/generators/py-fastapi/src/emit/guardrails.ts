@@ -17,6 +17,10 @@
  * and an `input` guardrail an agent declares inspects pipeline input too. The module
  * docstring says so where a reader of the generated code will find it.
  *
+ * A `guard` *step* is the one exception, and it is the opposite case: the step names a
+ * guardrail and a stage, so it runs that declaration alone through `BY_ID` instead of
+ * running the stage's whole table. That is why `BY_ID` is public here.
+ *
  * ## What a stage's payload is
  *
  * `{"text": ...}` for `input`, `output` and `retrieval`; the tool's own arguments for
@@ -94,13 +98,14 @@ function tables(ir: IR): string[] {
 /**
  * The module's public surface, declared.
  *
- * A route imports `ENGINE`, the stage tables and the two functions, so the stage table is
- * read only from another module. `__all__` says so in the file itself, which is both the
- * documentation a reader wants and the statement a static analyzer needs before it can
+ * A route imports `ENGINE`, the stage tables and the two functions; a `guard` step reads
+ * `BY_ID` to run one named declaration. `__all__` says so in the file itself, which is both
+ * the documentation a reader wants and the statement a static analyzer needs before it can
  * tell an exported name from a dead one.
  */
 function exports(ir: IR): string {
   const names = [
+    'BY_ID',
     'ENGINE',
     'GUARDRAILS',
     ...STAGES.filter((stage) => stageGuardrails(ir, stage).length > 0).map(stageTable),
@@ -123,7 +128,7 @@ const ENFORCE = [
     INDENT,
   ),
   `${INDENT}for record in verdict.records:`,
-  `${INDENT}${INDENT}if _BY_ID[record.guardrail].log:`,
+  `${INDENT}${INDENT}if BY_ID[record.guardrail].log:`,
   `${INDENT}${INDENT}${INDENT}_LOGGER.warning(`,
   `${INDENT}${INDENT}${INDENT}${INDENT}"guardrail %s fired at the %s stage over %s: %s",`,
   `${INDENT}${INDENT}${INDENT}${INDENT}record.guardrail,`,
@@ -163,13 +168,16 @@ export function emitGuardrails(ir: IR): EmittedFile {
     assemble([
       HEADER,
       pythonDoc(
-        'The guardrails the spec declares, and the check every pipeline route runs. Each ' +
-          'declaration applies to *every* pipeline route in this app, not to the one that ' +
-          'named it: the IR attaches a guardrail to a prompt or an agent and gives a ' +
-          'pipeline no field for one, and the security gate that requires an `input` stage ' +
-          'is document-wide. So an `input` guardrail inspects the prompt text of every HTTP ' +
-          '`generate` route, and an `input` guardrail an agent declares inspects pipeline ' +
-          'input too. A guardrail evaluates the stage payload the runtime defines -- ' +
+        'The guardrails the spec declares, the table that finds one by id, and the check a ' +
+          'stage call runs. A declaration an `input` or `output` stage names applies to ' +
+          '*every* generated route, not to the one that named it: the IR attaches a ' +
+          'guardrail to a prompt or an agent, and the security gate that requires an ' +
+          '`input` stage is document-wide. So an `input` guardrail inspects the prompt text ' +
+          'of every HTTP `generate` route, and an `input` guardrail an agent declares ' +
+          'inspects pipeline input too. A `guard` step is the other case: it names one ' +
+          'declaration and one stage, so it runs that declaration alone through `BY_ID` ' +
+          'rather than the stage table. A guardrail evaluates the stage payload the runtime ' +
+          'defines -- ' +
           "{'text': ...} for the `input`, `output` and `retrieval` stages, the tool's own " +
           'arguments for `tool-call` -- so a `redact` action names `text` on the first three.',
       ),
@@ -189,7 +197,7 @@ export function emitGuardrails(ir: IR): EmittedFile {
       '_STOPPING = frozenset({"block", "escalate"})',
       'ENGINE = GuardrailEngine()',
       ['GUARDRAILS: tuple[GuardrailDefinition, ...] = (', ...definitions, ')'].join('\n'),
-      '_BY_ID: dict[str, GuardrailDefinition] = {g.id: g for g in GUARDRAILS}',
+      'BY_ID: dict[str, GuardrailDefinition] = {g.id: g for g in GUARDRAILS}',
       ...tables(ir).map((table) => ['', table].join('\n')),
       ENFORCE,
       BLOCK,

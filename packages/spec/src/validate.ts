@@ -80,18 +80,46 @@ export const SUPPORTED_STEP_KINDS = [
   'parallel',
   'map',
   'reduce',
+  'rerank',
+  'guard',
+  'agent',
 ] as const;
 
 /**
  * Pipeline step kinds the design doc describes for a later phase.
  *
- * `human` is not merely deferred: it is retired. A human-in-the-loop pause is a
- * property of an *agent* (`agents[].humanInTheLoop`), which the runtime already
- * implements, so a `human` pipeline step would be a second, unaligned way to spell
- * the same thing. It stays listed here so a document that used the old spelling is
- * told which phase serves it rather than being told the key is unknown.
+ * `assert` is the only one left: the design marks it eval-time only, so it is not a
+ * pipeline step until the eval layer lands. When it does, this list empties -- that is
+ * the phase-exit criterion, which is why a retired kind must never be parked here.
  */
-export const DEFERRED_STEP_KINDS = ['rerank', 'agent', 'guard', 'assert', 'human'] as const;
+export const DEFERRED_STEP_KINDS = ['assert'] as const;
+
+/**
+ * Pipeline step kinds that were removed rather than deferred, and the spelling that
+ * replaces each one.
+ *
+ * `human` is not pending: a human-in-the-loop pause is a property of an *agent*
+ * (`agents[].humanInTheLoop`), which the runtime already implements, so a `human`
+ * pipeline step would be a second, unaligned way to spell the same thing -- and a
+ * second pause mechanism. It is kept in this list, not in `DEFERRED_STEP_KINDS`, so a
+ * document using the old spelling is told the replacement instead of being told the
+ * key is unknown, while leaving the deferred list honest: re-adding `human` there
+ * would make its retirement a no-op.
+ */
+export const RETIRED_STEP_KINDS: Readonly<Record<string, string>> = {
+  human: 'agents[].humanInTheLoop',
+};
+
+/**
+ * The spelling that replaces a retired step kind, or `undefined` when the kind is not
+ * retired.
+ *
+ * Kept as a function so the "is this kind retired" test and the hint it produces can
+ * never disagree about what the replacement is.
+ */
+export function retiredStepReplacement(kind: string): string | undefined {
+  return Object.hasOwn(RETIRED_STEP_KINDS, kind) ? RETIRED_STEP_KINDS[kind] : undefined;
+}
 
 /**
  * The composite step kinds: the four a pipeline may nest inside another step.
@@ -460,12 +488,29 @@ function stepDiagnostics(
     walkSteps(steps, ['pipelines', pipelineName, 'steps'], 0, ({ body, path, depth }) => {
       const keys = Object.keys(body);
 
+      // A retired kind is checked before the deferred list and before the unknown-kind
+      // fallback: the point of retiring `human` is that a document using it is told the
+      // replacement, which the generic "exactly one of ..." error cannot say.
+      const retiredKey = keys.find((key) => retiredStepReplacement(key) !== undefined);
+      if (retiredKey !== undefined) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.unsupportedStep,
+            message: `pipeline step '${retiredKey}' was retired and is no longer part of the language`,
+            path,
+            hint: `use ${retiredStepReplacement(retiredKey)} instead (the \`agent.humanInTheLoop\` option): a pause belongs to an agent, not to a pipeline step`,
+          }),
+        );
+        reported.add(JSON.stringify(path));
+        return;
+      }
+
       const deferredKey = keys.find((key) => deferred.has(key));
       if (deferredKey !== undefined) {
         diagnostics.push(
           errorDiagnostic({
             code: DIAGNOSTIC_CODES.unsupportedStep,
-            message: `pipeline step '${deferredKey}' is not implemented in spec v0.1`,
+            message: `pipeline step '${deferredKey}' is not implemented yet`,
             path,
             hint: `supported steps are ${SUPPORTED_STEP_KINDS.join(', ')}`,
           }),
@@ -603,7 +648,7 @@ function templateDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnos
         }
       }
 
-      const query = asRecord(asRecord(body.retrieve).query);
+      const query = asRecord(body.retrieve).query;
       if (typeof query === 'string') {
         const problem = findMalformedTemplate(query);
         if (problem !== undefined) {
@@ -612,6 +657,29 @@ function templateDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnos
               code: DIAGNOSTIC_CODES.malformedTemplate,
               message: `step ${path[path.length - 1]} (retrieve) query ${problem}`,
               path: [...path, 'retrieve', 'query'],
+            }),
+          );
+        }
+      }
+
+      // `rerank.query`, `guard.text` and `agent.text` are scalar templates rather than
+      // template maps, so the `input` loop above cannot see them.
+      for (const [kind, field] of [
+        ['rerank', 'query'],
+        ['guard', 'text'],
+        ['agent', 'text'],
+      ] as const) {
+        const value = asRecord(body[kind])[field];
+        if (typeof value !== 'string') {
+          continue;
+        }
+        const problem = findMalformedTemplate(value);
+        if (problem !== undefined) {
+          diagnostics.push(
+            errorDiagnostic({
+              code: DIAGNOSTIC_CODES.malformedTemplate,
+              message: `step ${path[path.length - 1]} (${kind}) ${field} ${problem}`,
+              path: [...path, kind, field],
             }),
           );
         }
@@ -668,7 +736,15 @@ function ownBinding(
   body: Record<string, unknown>,
   path: DiagnosticPath,
 ): { name: string; at: DiagnosticPath } | undefined {
-  for (const kind of ['generate', 'tool', 'retrieve', 'map', 'reduce'] as const) {
+  for (const kind of [
+    'generate',
+    'tool',
+    'retrieve',
+    'map',
+    'reduce',
+    'rerank',
+    'agent',
+  ] as const) {
     const binding = asRecord(body[kind]).as;
     if (typeof binding === 'string') {
       return { name: binding, at: [...path, kind, 'as'] };

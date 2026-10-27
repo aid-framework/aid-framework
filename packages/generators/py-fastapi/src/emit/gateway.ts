@@ -19,7 +19,7 @@ import type { IR, ModelShape } from '@aid/ir';
 
 import { modelCapabilities, providerAdapter } from '../names.js';
 import { INDENT, MAX_LINE, pythonNumber, pythonString } from '../python.js';
-import { assemble, HEADER, importFrom, tupleLiteral } from '../template.js';
+import { assemble, dictBlock, HEADER, importFrom, tupleLiteral } from '../template.js';
 import type { EmittedFile } from './file.js';
 import { GENERATED_ROOT, generated } from './file.js';
 import { orderedModels } from './order.js';
@@ -163,8 +163,8 @@ export function emitGatewayModels(ir: IR): EmittedFile {
       ),
       'import os',
       importFrom('aid_runtime', runtimeNames),
-      ['ALIASES: dict[str, ModelSpec] = {', ...aliases, '}'].join('\n'),
-      ['FALLBACKS: dict[str, tuple[str, ...]] = {', ...fallbacks, '}'].join('\n'),
+      dictBlock('ALIASES: dict[str, ModelSpec] =', aliases),
+      dictBlock('FALLBACKS: dict[str, tuple[str, ...]] =', fallbacks),
       [
         'def default_providers() -> dict[str, Provider]:',
         pythonDoc(

@@ -48,6 +48,10 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           queries: security-and-quality
+          # Scopes analysis around a duplicate-generated-package false positive; the
+          # mechanism, why the scope is uniform across examples, and the coverage given
+          # up are all recorded in the config file itself.
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4

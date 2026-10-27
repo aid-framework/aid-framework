@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .deps import Deps, get_deps
 from .prompts import TEMPLATES
 
-AGENT_IDS: tuple[str, ...] = ("refund_agent",)
+AGENT_IDS: tuple[str, ...] = ("refund_agent", "triage_agent")
 
 DOCUMENT: dict[str, Any] = {
     "agents": [
@@ -45,8 +45,35 @@ DOCUMENT: dict[str, Any] = {
             "onBudgetExhausted": "fail",
             "tools": ["lookup_customer", "issue_refund"],
         },
+        {
+            "delegates": [],
+            "engine": "native",
+            "guardrails": ["ticket_intake"],
+            "handoffs": [],
+            "id": "triage_agent",
+            "instructions": "triage_ticket",
+            "maxCostBudget": 0.02,
+            "maxSteps": 2,
+            "memory": [],
+            "model": "triage",
+            "name": "Intake agent",
+            "onBudgetExhausted": "fail",
+            "tools": [],
+        },
     ],
     "guardrails": [
+        {
+            "action": "block",
+            "id": "handbook_pii",
+            "onFail": {
+                "log": True,
+                "message": "The handbook passage matched for this ticket carries contact details.",
+            },
+            "policies": ["pii-detect"],
+            "redact": [],
+            "stages": ["retrieval"],
+            "tools": [],
+        },
         {
             "action": "escalate",
             "id": "refund_args",

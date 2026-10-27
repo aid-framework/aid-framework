@@ -25,6 +25,8 @@ from aid_runtime import (
     binding_from_spec,
 )
 
+from ..guardrails import RETRIEVAL_GUARDRAILS
+
 APP_ROOT = str(Path(__file__).resolve().parents[2])
 
 HANDBOOK_EMBEDDING: dict[str, Any] = {
@@ -95,7 +97,9 @@ def build_retriever(
     in-memory store, or how a caller shares the process cost ledger. The store is constructed here,
     so a store whose driver is not installed raises its configuration error at this call rather than
     at the first search. The corpus resolves against the app directory, so exactly which files are
-    indexed does not depend on where the process was started.
+    indexed does not depend on where the process was started. Every passage that comes back is
+    checked against the `retrieval` guardrails before the caller sees it, so a redacted passage is
+    redacted for the prompt too.
     """
 
     return Retriever(
@@ -105,6 +109,7 @@ def build_retriever(
         reranker=reranker,
         ledger=ledger,
         base_dir=APP_ROOT,
+        guardrails=RETRIEVAL_GUARDRAILS,
     )
 
 

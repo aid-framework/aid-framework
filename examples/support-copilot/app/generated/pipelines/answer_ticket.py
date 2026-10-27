@@ -16,10 +16,12 @@ from aid_runtime import (
     run_structured,
 )
 
+from ..agents import build_runtime
 from ..control import MAX_STEP_DEPTH
 from ..deps import Deps
 from ..gateway.models import FALLBACKS
 from ..guardrails import (
+    BY_ID,
     ENGINE,
     INPUT_GUARDRAILS,
     TOOL_CALL_GUARDRAILS,
@@ -27,6 +29,19 @@ from ..guardrails import (
 )
 from ..requests import AnswerTicketRequest
 from ..schemas import Answer, Customer
+
+
+async def _guard_1(ctx: PipelineContext) -> PipelineContext:
+    """Run the `ticket_intake` guardrail at the `input` stage, and pass the context on: a guardrail
+    that allows the payload has nothing to bind.
+    """
+
+    event = cast(AnswerTicketRequest, ctx.require("event"))
+
+    _payload = f"{event.subject}"
+
+    enforce_guardrail(ENGINE.check_input((BY_ID["ticket_intake"],), _payload))
+    return ctx
 
 
 async def customer(ctx: PipelineContext) -> PipelineContext:
@@ -131,12 +146,53 @@ async def _parallel_1(ctx: PipelineContext) -> PipelineContext:
     return await _step(ctx)
 
 
+async def triage(ctx: PipelineContext) -> PipelineContext:
+    """Run the `triage_agent` agent over the rendered text and bind its answer."""
+
+    deps = cast(Deps, ctx.require("deps"))
+    event = cast(AnswerTicketRequest, ctx.require("event"))
+
+    _runtime = build_runtime(gateway=deps.gateway, tools=deps.agent_tools)
+    _outcome = await _runtime.run("triage_agent", f"{event.subject}")
+    if not _outcome.completed:
+        raise RuntimeError(f"agent triage_agent did not complete: {_outcome.status}")
+    triage = _outcome.answer
+    return ctx.with_values(triage=triage)
+
+
+async def ranked(ctx: PipelineContext) -> PipelineContext:
+    """Rescore the `handbook` passages with the `lexical` reranker and bind the top 1, keeping the
+    provenance the retrieval established.
+    """
+
+    deps = cast(Deps, ctx.require("deps"))
+    handbook = ctx.require("handbook")
+    triage = ctx.require("triage")
+
+    _scored = await deps.reranker("lexical", 1).rerank(f"{triage!s}", handbook.items, top_n=1)
+    ranked = handbook.model_copy(update={"items": _scored})
+    return ctx.with_values(ranked=ranked)
+
+
+async def _guard_2(ctx: PipelineContext) -> PipelineContext:
+    """Run the `handbook_pii` guardrail at the `retrieval` stage, and pass the context on: a
+    guardrail that allows the payload has nothing to bind.
+    """
+
+    ranked = ctx.require("ranked")
+
+    _payload = [item.chunk.text for item in ranked.items]
+
+    enforce_guardrail(ENGINE.check_retrieval((BY_ID["handbook_pii"],), _payload))
+    return ctx
+
+
 async def answer(ctx: PipelineContext) -> PipelineContext:
     """Run prompt `classify_ticket` v1 on model `fast`."""
 
     deps = cast(Deps, ctx.require("deps"))
     event = cast(AnswerTicketRequest, ctx.require("event"))
-    handbook = ctx.require("handbook")
+    ranked = ctx.require("ranked")
 
     async def _call(text: str) -> str:
         """Ask the model for one completion."""
@@ -152,7 +208,7 @@ async def answer(ctx: PipelineContext) -> PipelineContext:
     _rendered = deps.prompts.render(
         "classify_ticket",
         version="1",
-        values={"handbook": handbook.context, "subject": event.subject},
+        values={"ranked": ranked.context, "subject": event.subject},
     )
     _verdict = enforce_guardrail(ENGINE.check_input(INPUT_GUARDRAILS, _rendered.text))
     answer = await run_structured(_call, Answer, _verdict.text)
@@ -169,14 +225,18 @@ async def _stream_request(deps: Deps, event: AnswerTicketRequest) -> tuple[str, 
     ctx = PipelineContext(
         values={"deps": deps, "event": event, "limiter": deps.limiter, "depth": 0}
     )
+    ctx = await _guard_1(ctx)
     ctx = await customer(ctx)
     ctx = await handbook(ctx)
     ctx = await _parallel_1(ctx)
+    ctx = await triage(ctx)
+    ctx = await ranked(ctx)
+    ctx = await _guard_2(ctx)
 
     _rendered = deps.prompts.render(
         "classify_ticket",
         version="1",
-        values={"handbook": ctx.require("handbook").context, "subject": event.subject},
+        values={"ranked": ctx.require("ranked").context, "subject": event.subject},
     )
     _verdict = enforce_guardrail(ENGINE.check_input(INPUT_GUARDRAILS, _rendered.text))
     _request = CompletionRequest.prompt(_verdict.text)
@@ -186,4 +246,4 @@ async def _stream_request(deps: Deps, event: AnswerTicketRequest) -> tuple[str, 
 def answer_ticket_pipeline() -> Pipeline:
     """The `answer_ticket` pipeline, in the order the spec declares it."""
 
-    return Pipeline.of(customer, handbook, _parallel_1, answer)
+    return Pipeline.of(_guard_1, customer, handbook, _parallel_1, triage, ranked, _guard_2, answer)

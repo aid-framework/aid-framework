@@ -21,6 +21,8 @@ const NAMESPACES = [
   'stores',
   'retrievers',
   'pipelines',
+  'guardrails',
+  'agents',
 ] as const;
 
 type Namespace = (typeof NAMESPACES)[number];
@@ -54,6 +56,8 @@ export function referentialGate(ir: IR, options: GateOptions): GateResult {
       stores: new Set(ir.stores.map((entry) => entry.id)),
       retrievers: new Set(ir.retrievers.map((entry) => entry.id)),
       pipelines: new Set(ir.pipelines.map((entry) => entry.id)),
+      guardrails: new Set(ir.guardrails.map((entry) => entry.id)),
+      agents: new Set(ir.agents.map((entry) => entry.id)),
     },
   };
 
@@ -342,9 +346,17 @@ function checkPipelineSteps(
  */
 const TOP_LEVEL = 3;
 
-/** The binding a step adds to the surrounding scope, or `undefined` if it adds none. */
+/**
+ * The binding a step adds to the surrounding scope, or `undefined` if it adds none.
+ *
+ * `guard` binds nothing on purpose: it observes a payload, and the actions that could
+ * rewrite one are refused before generation, so there is no value to name.
+ */
 function bindingOf(step: StepShape): string | undefined {
-  return step.kind === 'emit' || step.kind === 'branch' || step.kind === 'parallel'
+  return step.kind === 'emit' ||
+    step.kind === 'branch' ||
+    step.kind === 'parallel' ||
+    step.kind === 'guard'
     ? undefined
     : step.as;
 }
@@ -513,6 +525,14 @@ function checkStepReferences(step: StepShape, state: WalkState): void {
     if (!scope.names.types.has(step.event)) {
       reportRef(step.event, 'types', scope, [...base, 'event'], diagnostics, report);
     }
+  } else if (step.kind === 'guard') {
+    if (!scope.names.guardrails.has(step.guardrail)) {
+      reportRef(step.guardrail, 'guardrails', scope, [...base, 'guardrail'], diagnostics, report);
+    }
+  } else if (step.kind === 'agent') {
+    if (!scope.names.agents.has(step.agent)) {
+      reportRef(step.agent, 'agents', scope, [...base, 'agent'], diagnostics, report);
+    }
   }
 
   if (step.kind === 'reduce' && !scope.names.prompts.has(step.prompt)) {
@@ -526,6 +546,17 @@ function checkStepReferences(step: StepShape, state: WalkState): void {
         message: `the referential gate rejected this reference: "${step.over}" names no binding in pipeline "${state.pipeline.id}", so a ${step.kind} has no list to iterate`,
         path: [...base, step.kind, 'over'],
         hint: `bind the list with an earlier step and point \`over\` at that binding name`,
+      }),
+    );
+  }
+
+  if (step.kind === 'rerank' && !state.allBindings.has(step.over)) {
+    diagnostics.push(
+      report.error({
+        code: IR_DIAGNOSTIC_CODES.refUnresolved,
+        message: `the referential gate rejected this reference: "${step.over}" names no binding in pipeline "${state.pipeline.id}", so a rerank has no retrieved items to reorder`,
+        path: [...base, 'rerank', 'over'],
+        hint: 'point `over` at a `retrieve` (or earlier `rerank`) step binding',
       }),
     );
   }
@@ -553,6 +584,21 @@ function stepReferences(step: StepShape): { path: (string | number)[]; value: St
   }
   if (step.kind === 'map' || step.kind === 'reduce') {
     return [{ path: [step.kind, 'over'], value: { kind: 'reference', path: [step.over] } }];
+  }
+  if (step.kind === 'rerank') {
+    return [
+      { path: ['rerank', 'over'], value: { kind: 'reference', path: [step.over] } },
+      { path: ['rerank', 'query'], value: { kind: 'template', template: step.query } },
+    ];
+  }
+  if (step.kind === 'guard') {
+    // At the `retrieval` stage `text` is one reference to a retrieval binding rather
+    // than template text; it is still a reference either way, and the projection the
+    // generator emits reads that binding's items.
+    return [{ path: ['guard', 'text'], value: { kind: 'template', template: step.text } }];
+  }
+  if (step.kind === 'agent') {
+    return [{ path: ['agent', 'text'], value: { kind: 'template', template: step.text } }];
   }
   const references: { path: (string | number)[]; value: StepInputValue }[] = Object.entries(
     step.input,

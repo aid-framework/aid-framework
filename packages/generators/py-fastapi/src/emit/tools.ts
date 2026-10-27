@@ -13,7 +13,7 @@ import type { IR, ToolShape } from '@aid/ir';
 
 import { className, moduleName } from '../names.js';
 import { INDENT, pythonStatement, pythonString } from '../python.js';
-import { assemble, HEADER, importBlock, importFrom, tupleLiteral } from '../template.js';
+import { assemble, dictBlock, HEADER, importBlock, importFrom, tupleLiteral } from '../template.js';
 import { hasAgents } from './agents.js';
 import { BUSINESS_TOOLS_INIT_PATH } from './contracts.js';
 import type { EmittedFile } from './file.js';
@@ -241,7 +241,7 @@ export function emitBusinessToolsInit(ir: IR): EmittedFile {
             'generated executor reads this mapping, so adding a tool means adding it here too.',
         ),
         importBlock([[importFrom('typing', ['Any'])], imports]),
-        ['IMPLEMENTATIONS: dict[str, Any] = {', ...entries, '}'].join('\n'),
+        dictBlock('IMPLEMENTATIONS: dict[str, Any] =', entries),
       ],
       'business',
     ),

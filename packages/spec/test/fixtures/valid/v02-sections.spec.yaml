@@ -231,6 +231,24 @@ pipelines:
         method: post
         path: /tickets/classify
     steps:
+      - retrieve:
+          retriever: handbook
+          query: "{{event.subject}}"
+          as: excerpts
+      - rerank:
+          over: excerpts
+          query: "{{event.subject}}"
+          model: lexical
+          topN: 3
+          as: ranked
+      - guard:
+          guardrail: inbound
+          stage: input
+          text: "{{event.subject}}"
+      - agent:
+          agent: escalation
+          text: "{{event.subject}}"
+          as: triage
       - generate:
           prompt: classify_ticket
           input:

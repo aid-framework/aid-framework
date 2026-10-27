@@ -1,0 +1,32 @@
+# CodeQL configuration for the `analyze` job in `.github/workflows/codeql.yml`.
+#
+# The generator emits the same package path -- `app.generated.*` -- for every app it
+# builds, so a checkout holding two generated Python apps defines each module twice with
+# different contents:
+#
+#   examples/support-copilot/app/generated/deps.py   build_deps(*, gateway, prompts, tools, limiter, agent_tools, retrievers)
+#   examples/guarded-reply/app/generated/deps.py     build_deps(*, gateway, prompts, tools, agent_tools)
+#   examples/support-copilot/app/generated/tools/__init__.py  build_executor(*, tools, issue_refund, lookup_customer)
+#   examples/guarded-reply/app/generated/tools/__init__.py    build_executor(*, tools)
+#
+# CodeQL's Python call resolution is not package-root aware, so a call in one app's tests
+# resolves against the other app's definition and reports a keyword argument the real
+# target does accept. The four alerts that prompted this file were exactly
+# `build_deps(retrievers=...)`, `build_deps(limiter=...)` and
+# `build_executor(lookup_customer=...)` -- every one a parameter the *other* app lacks.
+# At run time each app imports its own `app` package, which is why both suites pass.
+#
+# The scope is deliberately uniform over `examples/*/app/generated` rather than narrow to
+# the one example that exposed it: the collision is a property of the generator's fixed
+# output layout, so it returns as soon as a third Python example lands. Hand-written code
+# stays analyzed -- only emitted modules are excluded -- because a hole wide enough to
+# swallow an example's tests would hide real findings to silence four false ones.
+#
+# What that gives up: emitted Python is no longer scanned for call-signature mistakes. It
+# is gated instead by regeneration byte-identity in CI (`git diff --exit-code` after
+# `pnpm generate:example` / `pnpm generate:guarded`), by the generator's own tests, by the
+# conformance suite, and by each example's pytest, ruff, format and mypy runs.
+name: AID Framework CodeQL configuration
+
+paths-ignore:
+  - examples/*/app/generated/**
