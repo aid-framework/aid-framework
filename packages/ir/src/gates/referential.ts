@@ -322,75 +322,241 @@ function checkPipelineSteps(
   diagnostics: IrDiagnostic[],
   report: Reporter,
 ): void {
-  const bound = new Map<string, number>();
   const allBindings = new Set<string>();
-  for (const step of pipeline.steps) {
-    if (step.kind !== 'emit') allBindings.add(step.as);
+  collectBindingNames(pipeline.steps, allBindings);
+  walkStepList(pipeline.steps, {
+    pipeline,
+    ir,
+    scope,
+    diagnostics,
+    report,
+    allBindings,
+    visible: new Map<string, string>(),
+    base: ['pipelines', pipeline.id, 'steps'],
+  });
+}
+
+/**
+ * The path length of a top-level step list: `pipelines`, the pipeline id, `steps`. A
+ * nested list is longer, which is how a message tells the two apart.
+ */
+const TOP_LEVEL = 3;
+
+/** The binding a step adds to the surrounding scope, or `undefined` if it adds none. */
+function bindingOf(step: StepShape): string | undefined {
+  return step.kind === 'emit' || step.kind === 'branch' || step.kind === 'parallel'
+    ? undefined
+    : step.as;
+}
+
+/** Render a step path as `pipelines.p.steps[2].branch.then[0]`, for a message. */
+function locate(path: readonly (string | number)[]): string {
+  return path
+    .map((segment, index) =>
+      typeof segment === 'number' ? `[${segment}]` : `${index > 0 ? '.' : ''}${segment}`,
+    )
+    .join('');
+}
+
+/**
+ * Names that escape a step list and so can be referenced later. A `map` body is
+ * excluded on purpose: its bindings are per-item and never escape the iteration.
+ */
+function collectBindingNames(steps: readonly StepShape[], into: Set<string>): void {
+  for (const step of steps) {
+    const own = bindingOf(step);
+    if (own !== undefined) into.add(own);
+    if (step.kind === 'branch') {
+      collectBindingNames(step.then, into);
+      collectBindingNames(step.else, into);
+    } else if (step.kind === 'parallel') {
+      for (const arm of step.branches) collectBindingNames(arm, into);
+    }
   }
+}
 
-  pipeline.steps.forEach((step, index) => {
-    const base = ['pipelines', pipeline.id, 'steps', index];
+interface WalkState {
+  pipeline: PipelineShape;
+  ir: IR;
+  scope: Scope;
+  diagnostics: IrDiagnostic[];
+  report: Reporter;
+  /** Every name the pipeline binds, for the forward-reference rule. */
+  allBindings: ReadonlySet<string>;
+  /** Names visible here: the enclosing scope plus what earlier steps bound. */
+  visible: ReadonlyMap<string, string>;
+  /** Diagnostic path of the step list being walked. */
+  base: (string | number)[];
+}
 
-    if (step.kind === 'generate') {
-      if (scope.names.prompts.has(step.prompt)) {
-        checkPromptInput(step, ir, base, diagnostics, report);
+/**
+ * Walks a step list in order and returns the scope its successors see. Composite arms
+ * run in their own copy of the scope, so a name bound inside one arm is not visible in
+ * the next arm, and a name bound only inside a `map` iteration never escapes.
+ */
+function walkStepList(steps: readonly StepShape[], state: WalkState): Map<string, string> {
+  const visible = new Map(state.visible);
+
+  steps.forEach((step, index) => {
+    const base = [...state.base, index];
+    const here: WalkState = { ...state, base, visible };
+
+    checkStepReferences(step, here);
+
+    const own = bindingOf(step);
+    if (own !== undefined) {
+      const previous = visible.get(own);
+      if (previous !== undefined) {
+        state.diagnostics.push(
+          state.report.error({
+            code: IR_DIAGNOSTIC_CODES.bindingDuplicate,
+            message: `the referential gate rejected this binding: "${own}" is already bound by ${previous} in pipeline "${state.pipeline.id}"`,
+            path: [...base, 'as'],
+            hint: 'a binding name is unique within one pipeline scope',
+          }),
+        );
       } else {
-        reportRef(step.prompt, 'prompts', scope, [...base, 'prompt'], diagnostics, report);
+        // A top-level step keeps the wording the message has always had; only a nested
+        // one needs the full path, because "step 2" alone does not say which arm it is in.
+        visible.set(own, state.base.length === TOP_LEVEL ? `step ${index}` : locate(base));
       }
-    } else if (step.kind === 'tool') {
-      if (!scope.names.tools.has(step.tool)) {
-        reportRef(step.tool, 'tools', scope, [...base, 'tool'], diagnostics, report);
-      }
-    } else if (step.kind === 'retrieve') {
-      if (!scope.names.retrievers.has(step.retriever)) {
-        reportRef(step.retriever, 'retrievers', scope, [...base, 'retriever'], diagnostics, report);
-      }
-    } else if (!scope.names.types.has(step.event)) {
-      reportRef(step.event, 'types', scope, [...base, 'event'], diagnostics, report);
     }
 
-    if (step.kind === 'emit') return;
+    const escaped = walkComposite(step, here);
+    for (const [name, where] of escaped) {
+      visible.set(name, where);
+    }
+  });
 
-    const previous = bound.get(step.as);
-    if (previous !== undefined) {
+  return visible;
+}
+
+/**
+ * The names a composite makes visible afterwards. Per-kind on purpose: a `branch` runs
+ * one arm, so the same name in both arms is the sound shape and merges silently; a
+ * `parallel` runs every arm at once, so one name from two arms would be resolved by
+ * completion order and is a duplicate instead.
+ */
+function walkComposite(step: StepShape, state: WalkState): ReadonlyMap<string, string> {
+  if (step.kind === 'branch') {
+    const thenScope = walkStepList(step.then, {
+      ...state,
+      base: [...state.base, 'branch', 'then'],
+    });
+    const elseScope = walkStepList(step.else, {
+      ...state,
+      base: [...state.base, 'branch', 'else'],
+    });
+    const merged = new Map(state.visible);
+    for (const [name, where] of thenScope) merged.set(name, where);
+    for (const [name, where] of elseScope) merged.set(name, where);
+    return merged;
+  }
+
+  if (step.kind === 'parallel') {
+    const merged = new Map(state.visible);
+    step.branches.forEach((arm, index) => {
+      const armScope = walkStepList(arm, {
+        ...state,
+        base: [...state.base, 'parallel', 'branches', index],
+      });
+      for (const [name, where] of armScope) {
+        if (state.visible.has(name)) continue;
+        const rival = merged.get(name);
+        if (rival !== undefined) {
+          state.diagnostics.push(
+            state.report.error({
+              code: IR_DIAGNOSTIC_CODES.bindingDuplicate,
+              message: `the referential gate rejected this binding: "${name}" is bound by two parallel branches (${rival} and ${where}) in pipeline "${state.pipeline.id}"`,
+              path: [...state.base, 'parallel', 'branches', index],
+              hint: 'parallel arms merge into one context, so a name bound by two arms would be resolved by which finished last',
+            }),
+          );
+          continue;
+        }
+        merged.set(name, where);
+      }
+    });
+    return merged;
+  }
+
+  if (step.kind === 'map') {
+    // `item` and `index` are what the iteration offers; the body's bindings are local.
+    const inner = new Map(state.visible);
+    inner.set('item', 'the `item` a map iteration binds');
+    inner.set('index', 'the `index` a map iteration binds');
+    walkStepList([step.step], { ...state, base: [...state.base, 'map', 'step'], visible: inner });
+  }
+
+  return state.visible;
+}
+
+/** The referential checks a single step's own fields need, excluding its composites. */
+function checkStepReferences(step: StepShape, state: WalkState): void {
+  const { base, ir, scope, diagnostics, report } = state;
+
+  if (step.kind === 'generate') {
+    if (scope.names.prompts.has(step.prompt)) {
+      checkPromptInput(step, ir, base, diagnostics, report);
+    } else {
+      reportRef(step.prompt, 'prompts', scope, [...base, 'prompt'], diagnostics, report);
+    }
+  } else if (step.kind === 'tool') {
+    if (!scope.names.tools.has(step.tool)) {
+      reportRef(step.tool, 'tools', scope, [...base, 'tool'], diagnostics, report);
+    }
+  } else if (step.kind === 'retrieve') {
+    if (!scope.names.retrievers.has(step.retriever)) {
+      reportRef(step.retriever, 'retrievers', scope, [...base, 'retriever'], diagnostics, report);
+    }
+  } else if (step.kind === 'emit') {
+    if (!scope.names.types.has(step.event)) {
+      reportRef(step.event, 'types', scope, [...base, 'event'], diagnostics, report);
+    }
+  }
+
+  if (step.kind === 'reduce' && !scope.names.prompts.has(step.prompt)) {
+    reportRef(step.prompt, 'prompts', scope, [...base, 'prompt'], diagnostics, report);
+  }
+
+  if ((step.kind === 'map' || step.kind === 'reduce') && !state.allBindings.has(step.over)) {
+    diagnostics.push(
+      report.error({
+        code: IR_DIAGNOSTIC_CODES.refUnresolved,
+        message: `the referential gate rejected this reference: "${step.over}" names no binding in pipeline "${state.pipeline.id}", so a ${step.kind} has no list to iterate`,
+        path: [...base, step.kind, 'over'],
+        hint: `bind the list with an earlier step and point \`over\` at that binding name`,
+      }),
+    );
+  }
+
+  for (const { path, value } of stepReferences(step)) {
+    for (const root of referencedRoots(value)) {
+      if (state.visible.has(root) || !state.allBindings.has(root)) continue;
       diagnostics.push(
         report.error({
-          code: IR_DIAGNOSTIC_CODES.bindingDuplicate,
-          message: `the referential gate rejected this binding: "${step.as}" is already bound by step ${previous} in pipeline "${pipeline.id}"`,
-          path: [...base, 'as'],
-          hint: 'a binding name is unique within one pipeline scope',
+          code: IR_DIAGNOSTIC_CODES.bindingForwardReference,
+          message: `the referential gate rejected this reference: "${root}" is bound by a later step of pipeline "${state.pipeline.id}"`,
+          path: [...base, ...path],
+          hint: 'bindings are defined before use',
         }),
       );
     }
-
-    for (const { path, value } of stepReferences(step)) {
-      for (const root of referencedRoots(value)) {
-        if (bound.has(root) || !allBindings.has(root)) continue;
-        diagnostics.push(
-          report.error({
-            code: IR_DIAGNOSTIC_CODES.bindingForwardReference,
-            message: `the referential gate rejected this reference: "${root}" is bound by a later step of pipeline "${pipeline.id}"`,
-            path: [...base, ...path],
-            hint: 'bindings are defined before use',
-          }),
-        );
-      }
-    }
-
-    bound.set(step.as, index);
-  });
+  }
 }
 
 /** Where one step's references live, so the forward-reference rule covers every kind. */
 function stepReferences(step: StepShape): { path: (string | number)[]; value: StepInputValue }[] {
-  if (step.kind === 'emit') return [];
+  if (step.kind === 'emit' || step.kind === 'branch' || step.kind === 'parallel') return [];
   if (step.kind === 'retrieve') {
     return [{ path: ['query'], value: { kind: 'template', template: step.query } }];
   }
-  const references = Object.entries(step.input).map(([key, value]) => ({
-    path: ['input', key],
-    value,
-  }));
+  if (step.kind === 'map' || step.kind === 'reduce') {
+    return [{ path: [step.kind, 'over'], value: { kind: 'reference', path: [step.over] } }];
+  }
+  const references: { path: (string | number)[]; value: StepInputValue }[] = Object.entries(
+    step.input,
+  ).map(([key, value]) => ({ path: ['input', key], value }));
   if (step.kind === 'generate' && step.context !== undefined) {
     references.push({ path: ['context'], value: { kind: 'reference', path: [step.context] } });
   }

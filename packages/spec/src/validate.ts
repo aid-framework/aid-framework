@@ -9,7 +9,7 @@ import {
   errorDiagnostic,
   type PathSegment,
 } from './diagnostics.js';
-import { findMalformedTemplate } from './parse.js';
+import { findMalformedTemplate, templateRoots } from './parse.js';
 import specSchema from './schema/spec.schema.json' with { type: 'json' };
 import type { SourceDocument } from './source-document.js';
 
@@ -71,20 +71,47 @@ export const SECTION_MIN_VERSION: Partial<
 export const MODEL_CACHE_MIN_VERSION: SpecVersion = '0.3';
 
 /** Pipeline step kinds implemented in spec v0.1. */
-export const SUPPORTED_STEP_KINDS = ['generate', 'retrieve', 'tool', 'emit'] as const;
-
-/** Pipeline step kinds the design doc describes for a later phase. */
-export const DEFERRED_STEP_KINDS = [
-  'rerank',
-  'agent',
-  'guard',
+export const SUPPORTED_STEP_KINDS = [
+  'generate',
+  'retrieve',
+  'tool',
+  'emit',
   'branch',
   'parallel',
   'map',
   'reduce',
-  'assert',
-  'human',
 ] as const;
+
+/**
+ * Pipeline step kinds the design doc describes for a later phase.
+ *
+ * `human` is not merely deferred: it is retired. A human-in-the-loop pause is a
+ * property of an *agent* (`agents[].humanInTheLoop`), which the runtime already
+ * implements, so a `human` pipeline step would be a second, unaligned way to spell
+ * the same thing. It stays listed here so a document that used the old spelling is
+ * told which phase serves it rather than being told the key is unknown.
+ */
+export const DEFERRED_STEP_KINDS = ['rerank', 'agent', 'guard', 'assert', 'human'] as const;
+
+/**
+ * The composite step kinds: the four a pipeline may nest inside another step.
+ *
+ * They are separate from `SUPPORTED_STEP_KINDS` because they are the only kinds that
+ * can recurse, so the nesting bound and the "no `emit` inside a composite" rule have
+ * exactly one list to consult.
+ */
+export const COMPOSITE_STEP_KINDS = ['branch', 'parallel', 'map', 'reduce'] as const;
+
+/**
+ * Deepest composite nesting a pipeline may declare.
+ *
+ * Enforced here (a plan error, before any code is generated) and again in the
+ * runtime (`aid_runtime.control.MAX_STEP_DEPTH`). The runtime value is *emitted* into
+ * the generated package rather than imported, so a drift between the two is a test
+ * failure rather than a silent divergence -- see `MAX_STEP_DEPTH` in
+ * `packages/ir/src/shapes.ts`.
+ */
+export const MAX_STEP_DEPTH = 4;
 
 export interface ValidateOptions {
   /** Used to resolve line/column for each diagnostic. */
@@ -365,6 +392,55 @@ export function specVersionAtLeast(declared: string | undefined, required: SpecV
   return true;
 }
 
+interface WalkedStep {
+  body: Record<string, unknown>;
+  path: DiagnosticPath;
+  /** Number of composite steps enclosing this one; 0 at the top level. */
+  depth: number;
+}
+
+/**
+ * Visit every step in a list, recursing into the composite kinds.
+ *
+ * One walker serves the kind check, the nesting bound and the template check, so the
+ * four composite shapes are enumerated exactly once. A new composite kind that this
+ * function does not know about is therefore a single missing `case` rather than three
+ * independently-maintained recursions.
+ */
+function walkSteps(
+  steps: unknown,
+  basePath: DiagnosticPath,
+  depth: number,
+  visit: (step: WalkedStep) => void,
+): void {
+  if (!Array.isArray(steps)) {
+    return;
+  }
+  steps.forEach((step, index) => {
+    const body = asRecord(step);
+    const path: DiagnosticPath = [...basePath, index];
+    visit({ body, path, depth });
+
+    const branch = asRecord(body.branch);
+    if (Object.keys(branch).length > 0) {
+      walkSteps(branch.then, [...path, 'branch', 'then'], depth + 1, visit);
+      walkSteps(branch.else, [...path, 'branch', 'else'], depth + 1, visit);
+    }
+
+    const parallel = asRecord(body.parallel);
+    if (Array.isArray(parallel.branches)) {
+      parallel.branches.forEach((arm, armIndex) => {
+        walkSteps(arm, [...path, 'parallel', 'branches', armIndex], depth + 1, visit);
+      });
+    }
+
+    const map = asRecord(body.map);
+    if (Object.keys(asRecord(map.step)).length > 0) {
+      walkSteps([map.step], [...path, 'map', 'step'], depth + 1, visit);
+    }
+  });
+}
+
 function stepDiagnostics(
   spec: Record<string, unknown>,
   diagnostics: Diagnostic[],
@@ -380,10 +456,9 @@ function stepDiagnostics(
       continue;
     }
 
-    steps.forEach((step, index) => {
-      const body = asRecord(step);
+    let fanout = false;
+    walkSteps(steps, ['pipelines', pipelineName, 'steps'], 0, ({ body, path, depth }) => {
       const keys = Object.keys(body);
-      const path: DiagnosticPath = ['pipelines', pipelineName, 'steps', index];
 
       const deferredKey = keys.find((key) => deferred.has(key));
       if (deferredKey !== undefined) {
@@ -412,9 +487,75 @@ function stepDiagnostics(
           }),
         );
         reported.add(JSON.stringify(path));
+        return;
+      }
+
+      if (kinds[0] === 'parallel' || kinds[0] === 'map' || kinds[0] === 'reduce') {
+        fanout = true;
+      }
+
+      // An `emit` is the pipeline's response, so it is a position in the top-level
+      // list and nowhere else: a response cannot be bound, forwarded or merged, and
+      // a composite's only way to affect the run is through the context.
+      if (depth > 0 && kinds[0] === 'emit') {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.nestedEmitStep,
+            message:
+              'an `emit` step must be a top-level pipeline step, not nested inside a composite',
+            path,
+            hint: 'a composite reports its result by binding a name in the context; only the pipeline itself emits the response',
+          }),
+        );
+        reported.add(JSON.stringify(path));
+      }
+
+      if (depth > MAX_STEP_DEPTH) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.stepNestingTooDeep,
+            message: `pipeline step is nested ${depth} composites deep, past the limit of ${MAX_STEP_DEPTH}`,
+            path,
+            hint: `flatten the pipeline, or move part of it into a separate pipeline; the limit is ${MAX_STEP_DEPTH} levels of ${COMPOSITE_STEP_KINDS.join('/')}`,
+          }),
+        );
+        reported.add(JSON.stringify(path));
+      }
+
+      if (kinds[0] === 'parallel' && Array.isArray(asRecord(body.parallel).branches)) {
+        const branches = asRecord(body.parallel).branches as unknown[];
+        if (branches.length === 0) {
+          diagnostics.push(
+            errorDiagnostic({
+              code: DIAGNOSTIC_CODES.unsupportedStep,
+              message: 'a `parallel` step needs at least one branch',
+              path,
+            }),
+          );
+          reported.add(JSON.stringify(path));
+        }
       }
     });
+
+    if (fanout && !declaresConcurrency(spec)) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.fanoutWithoutConcurrency,
+          message: `pipeline '${pipelineName}' fans out with parallel/map/reduce but no deployment declares \`concurrency\`, so the fan-out would have no cap`,
+          path: ['pipelines', pipelineName, 'steps'],
+          hint: 'declare `concurrency: <n>` on a deployment (for example `deployments.api.concurrency: 8`); the effective cap is the smallest `concurrency` across all deployments',
+        }),
+      );
+    }
   }
+}
+
+/** True when any deployment declares a cap; the smallest one is the effective cap. */
+function declaresConcurrency(spec: Record<string, unknown>): boolean {
+  return Object.values(asRecord(spec.deployments)).some((deployment) => {
+    const value = asRecord(deployment).concurrency;
+    return typeof value === 'number' && Number.isInteger(value) && value >= 1;
+  });
 }
 
 function templateDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnostic[]): void {
@@ -442,8 +583,7 @@ function templateDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnos
     if (!Array.isArray(steps)) {
       continue;
     }
-    steps.forEach((step, index) => {
-      const body = asRecord(step);
+    walkSteps(steps, ['pipelines', pipelineName, 'steps'], 0, ({ body, path }) => {
       for (const kind of SUPPORTED_STEP_KINDS) {
         const input = asRecord(asRecord(body[kind]).input);
         for (const [key, value] of Object.entries(input)) {
@@ -455,8 +595,8 @@ function templateDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnos
             diagnostics.push(
               errorDiagnostic({
                 code: DIAGNOSTIC_CODES.malformedTemplate,
-                message: `step ${index} (${kind}) input '${key}' ${problem}`,
-                path: ['pipelines', pipelineName, 'steps', index, kind, 'input', key],
+                message: `step ${path[path.length - 1]} (${kind}) input '${key}' ${problem}`,
+                path: [...path, kind, 'input', key],
               }),
             );
           }
@@ -470,8 +610,8 @@ function templateDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnos
           diagnostics.push(
             errorDiagnostic({
               code: DIAGNOSTIC_CODES.malformedTemplate,
-              message: `step ${index} (retrieve) query ${problem}`,
-              path: ['pipelines', pipelineName, 'steps', index, 'retrieve', 'query'],
+              message: `step ${path[path.length - 1]} (retrieve) query ${problem}`,
+              path: [...path, 'retrieve', 'query'],
             }),
           );
         }
@@ -483,6 +623,22 @@ function templateDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnos
 /**
  * Binding names must be unique within a pipeline. Checked here rather than in the
  * IR because it needs no cross-section knowledge.
+ *
+ * The scope rules follow the runtime's:
+ *
+ * - A `branch` arm is a separate path, so the same name in `then` and `else` is not a
+ *   duplicate -- it is the only sound shape, because a name bound on one path and not
+ *   the other makes the context depend on which arm ran.
+ * - A `map` body runs once per item, so its bindings are local to one iteration and
+ *   only `map.as` escapes.
+ * - `parallel` arms merge into one context, so a name bound by two arms is a
+ *   duplicate rather than a last-writer-wins race.
+ *
+ * A `branch` composite binds only the names *both* arms bind, which is why the same
+ * name in `then` and `else` is the sound shape. With no `else`, the composite binds
+ * nothing: when the condition is false no arm runs at all. A name bound by only one
+ * arm therefore exists or not depending on the branch, so reading it downstream is a
+ * path-dependent failure -- see `branchAsymmetryDiagnostics`.
  */
 function bindingDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnostic[]): void {
   const pipelines = asRecord(spec.pipelines);
@@ -492,29 +648,280 @@ function bindingDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnost
     if (!Array.isArray(steps)) {
       continue;
     }
+    collectBindings(steps, ['pipelines', pipelineName, 'steps'], new Map(), diagnostics);
+    branchAsymmetryDiagnostics(steps, ['pipelines', pipelineName, 'steps'], diagnostics);
+  }
+}
 
-    const seen = new Map<string, number>();
-    steps.forEach((step, index) => {
-      const body = asRecord(step);
-      for (const kind of ['generate', 'retrieve', 'tool'] as const) {
-        const binding = asRecord(body[kind]).as;
-        if (typeof binding !== 'string') {
-          continue;
+/** Render a diagnostic path as `steps[2].branch.then[0]`, for an error message. */
+function pathLabel(path: DiagnosticPath): string {
+  return path
+    .map((segment, index) =>
+      typeof segment === 'number' && index > 0
+        ? `[${segment}]`
+        : `${index > 0 ? '.' : ''}${segment}`,
+    )
+    .join('');
+}
+
+function ownBinding(
+  body: Record<string, unknown>,
+  path: DiagnosticPath,
+): { name: string; at: DiagnosticPath } | undefined {
+  for (const kind of ['generate', 'tool', 'retrieve', 'map', 'reduce'] as const) {
+    const binding = asRecord(body[kind]).as;
+    if (typeof binding === 'string') {
+      return { name: binding, at: [...path, kind, 'as'] };
+    }
+  }
+  return undefined;
+}
+
+function collectBindings(
+  steps: unknown,
+  basePath: DiagnosticPath,
+  bound: Map<string, string>,
+  diagnostics: Diagnostic[],
+): Map<string, string> {
+  if (!Array.isArray(steps)) {
+    return new Map(bound);
+  }
+  let next = new Map(bound);
+
+  steps.forEach((step, index) => {
+    const body = asRecord(step);
+    const path: DiagnosticPath = [...basePath, index];
+
+    const own = ownBinding(body, path);
+    if (own !== undefined) {
+      const previous = next.get(own.name);
+      if (previous !== undefined) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.duplicateBinding,
+            message: `binding '${own.name}' is already bound at ${previous}`,
+            path: own.at,
+          }),
+        );
+      } else {
+        next.set(own.name, pathLabel(path));
+      }
+    }
+
+    const branch = asRecord(body.branch);
+    if (Object.keys(branch).length > 0) {
+      const thenBound = collectBindings(
+        branch.then,
+        [...path, 'branch', 'then'],
+        next,
+        diagnostics,
+      );
+      const elseBound = collectBindings(
+        branch.else,
+        [...path, 'branch', 'else'],
+        next,
+        diagnostics,
+      );
+      next = new Map([...thenBound, ...elseBound]);
+    }
+
+    const parallel = asRecord(body.parallel);
+    if (Array.isArray(parallel.branches)) {
+      const merged = new Map(next);
+      parallel.branches.forEach((arm, armIndex) => {
+        const armBound = collectBindings(
+          arm,
+          [...path, 'parallel', 'branches', armIndex],
+          next,
+          diagnostics,
+        );
+        for (const [name, label] of armBound) {
+          if (next.has(name)) continue;
+          const rival = merged.get(name);
+          if (rival !== undefined) {
+            diagnostics.push(
+              errorDiagnostic({
+                code: DIAGNOSTIC_CODES.duplicateBinding,
+                message: `binding '${name}' is bound by two parallel branches (${rival} and ${pathLabel([...path, 'parallel', 'branches', armIndex])}), so the merged context would depend on which finished last`,
+                path: [...path, 'parallel', 'branches', armIndex],
+              }),
+            );
+          } else {
+            merged.set(name, label);
+          }
         }
-        const previous = seen.get(binding);
-        if (previous !== undefined) {
+      });
+      next = merged;
+    }
+
+    const map = asRecord(body.map);
+    if (Object.keys(asRecord(map.step)).length > 0) {
+      // Per-item scope: the body's bindings do not escape the iteration.
+      collectBindings([map.step], [...path, 'map', 'step'], new Map(), diagnostics);
+    }
+  });
+
+  return next;
+}
+
+/**
+ * A `branch` runs exactly one arm, so a name bound by one arm and not the other is
+ * present or absent depending on the condition. Reading such a name after the branch
+ * would fail at runtime on one path and succeed on the other -- the path-dependent
+ * class of bug that the deterministic-ordering rule exists to prevent, arriving here
+ * through the context instead of through completion order.
+ *
+ * Only the symmetric difference is a problem: a name in both arms is fine, and a name
+ * only one arm binds is fine as long as nothing outside the branch reads it.
+ */
+function branchAsymmetryDiagnostics(
+  steps: unknown,
+  basePath: DiagnosticPath,
+  diagnostics: Diagnostic[],
+  outerDownstream: ReadonlySet<string> = new Set(),
+): void {
+  if (!Array.isArray(steps)) {
+    return;
+  }
+
+  steps.forEach((step, index) => {
+    const body = asRecord(step);
+    const path: DiagnosticPath = [...basePath, index];
+
+    // A reference counts as downstream if it runs after this step on any path: a later
+    // sibling, anything after the enclosing composite, or anything inside this step but
+    // outside the branch's own arms. The arms are excluded on purpose -- reading a name
+    // in the arm that binds it is fine.
+    const downstream = new Set<string>(outerDownstream);
+    collectLeafReferenceRoots(step, downstream);
+    for (const later of steps.slice(index + 1)) collectReferenceRoots(later, downstream);
+    forEachNestedStepList(step, (nested, suffix) => {
+      if (suffix[0] === 'branch') {
+        return;
+      }
+      for (const inner of nested) collectReferenceRoots(inner, downstream);
+    });
+
+    const branch = asRecord(body.branch);
+    if (Object.keys(branch).length > 0) {
+      const thenNames = exportedBindings(branch.then);
+      const elseNames = exportedBindings(branch.else);
+
+      const arms = [
+        { arm: 'then', own: thenNames, other: elseNames, sibling: 'else' },
+        { arm: 'else', own: elseNames, other: thenNames, sibling: 'then' },
+      ] as const;
+
+      for (const { arm, own, other, sibling } of arms) {
+        for (const name of own) {
+          if (other.has(name) || !downstream.has(name)) {
+            continue;
+          }
           diagnostics.push(
             errorDiagnostic({
-              code: DIAGNOSTIC_CODES.duplicateBinding,
-              message: `binding '${binding}' is already used by step ${previous}`,
-              path: ['pipelines', pipelineName, 'steps', index, kind, 'as'],
+              code: DIAGNOSTIC_CODES.branchArmBindingMismatch,
+              message: `binding '${name}' is bound by the '${arm}' arm of this branch but not by its '${sibling}' arm, and a later step reads it, so '${name}' would exist or not depending on which arm ran`,
+              path: [...path, 'branch', arm],
+              hint: `bind '${name}' in both arms, or move the step that reads it inside the '${arm}' arm`,
             }),
           );
-        } else {
-          seen.set(binding, index);
         }
       }
+    }
+
+    forEachNestedStepList(step, (nested, suffix) =>
+      branchAsymmetryDiagnostics(nested, [...path, ...suffix], diagnostics, downstream),
+    );
+  });
+}
+
+/** Names a step list binds once it finishes, including the names its composites bind. */
+function exportedBindings(steps: unknown): Set<string> {
+  const names = new Set<string>();
+  if (!Array.isArray(steps)) {
+    return names;
+  }
+  for (const step of steps) {
+    const own = ownBinding(asRecord(step), []);
+    if (own !== undefined) {
+      names.add(own.name);
+    }
+    // A `map` body's bindings are per-item and do not escape, so they are excluded.
+    forEachNestedStepList(step, (nested) => {
+      for (const name of exportedBindings(nested)) {
+        names.add(name);
+      }
     });
+  }
+  return names;
+}
+
+/** Every binding name read anywhere inside `step`, resolvable against the same context. */
+function collectReferenceRoots(step: unknown, roots: Set<string>): Set<string> {
+  collectLeafReferenceRoots(step, roots);
+  forEachNestedStepList(step, (nested) => {
+    for (const inner of nested) {
+      collectReferenceRoots(inner, roots);
+    }
+  });
+  return roots;
+}
+
+/** Name references in a step's own fields, without descending into its composites. */
+function collectLeafReferenceRoots(step: unknown, roots: Set<string>): Set<string> {
+  const body = asRecord(step);
+  for (const kind of ['generate', 'retrieve', 'tool', 'emit'] as const) {
+    const node = asRecord(body[kind]);
+    for (const value of Object.values(asRecord(node.input))) {
+      if (typeof value === 'string') {
+        for (const root of templateRoots(value)) {
+          roots.add(root);
+        }
+      }
+    }
+    if (typeof node.query === 'string') {
+      for (const root of templateRoots(node.query)) {
+        roots.add(root);
+      }
+    }
+  }
+  for (const kind of ['map', 'reduce'] as const) {
+    const over = asRecord(body[kind]).over;
+    if (typeof over === 'string') {
+      roots.add(over);
+    }
+  }
+  return roots;
+}
+
+/**
+ * Visits the step lists a composite contains, with the path suffix that reaches each.
+ * `map.step` is deliberately omitted: it is a single step, not a list, and its
+ * bindings are per-item.
+ */
+function forEachNestedStepList(
+  step: unknown,
+  visit: (steps: readonly unknown[], suffix: DiagnosticPath) => void,
+): void {
+  const body = asRecord(step);
+  const branch = asRecord(body.branch);
+  if (Array.isArray(branch.then)) {
+    visit(branch.then, ['branch', 'then']);
+  }
+  if (Array.isArray(branch.else)) {
+    visit(branch.else, ['branch', 'else']);
+  }
+  const parallel = asRecord(body.parallel);
+  if (Array.isArray(parallel.branches)) {
+    parallel.branches.forEach((arm, index) => {
+      if (Array.isArray(arm)) {
+        visit(arm, ['parallel', 'branches', index]);
+      }
+    });
+  }
+  const mapBody = asRecord(body.map).step;
+  if (Object.keys(asRecord(mapBody)).length > 0) {
+    visit([mapBody], ['map', 'step']);
   }
 }
 

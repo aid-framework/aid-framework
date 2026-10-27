@@ -1,0 +1,150 @@
+specVersion: "0.2"
+project:
+  name: composite
+  description: Exercises the four composite step kinds in pipelines that a target can emit.
+  targets: [py-fastapi]
+types:
+  Triage:
+    kind: struct
+    fields:
+      subject:
+        type: string
+        required: true
+      text:
+        type: string
+        required: true
+models:
+  fast:
+    provider: fake
+    modelId: fake-echo
+    capabilities: [json-schema]
+  embed:
+    provider: fake
+    modelId: fake-embedding
+    capabilities: [embeddings]
+stores:
+  docs:
+    kind: memory
+    dimensions: 8
+retrievers:
+  handbook:
+    source:
+      kind: file
+      uri: ./docs
+      glob: "**/*.md"
+    chunking:
+      strategy: recursive
+      size: 800
+      overlap: 100
+    embedModel: embed
+    store: docs
+    index:
+      metric: cosine
+    topK: 5
+    refresh:
+      mode: full
+prompts:
+  draft:
+    version: 1
+    model: fast
+    template: "Draft a reply about {{subject}}"
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: text
+  grade:
+    version: 1
+    model: fast
+    template: "Rate how well this excerpt answers the question: {{excerpt}}"
+    variables:
+      excerpt:
+        type: string
+        required: true
+    output:
+      kind: text
+  compose:
+    version: 1
+    model: fast
+    template: "Compose the reply from {{source}}"
+    variables:
+      source:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: Triage
+# A fan-out needs one declared cap; it is the limiter every composite draws from.
+deployments:
+  prod:
+    target: serverless
+    secrets: [FAKE_API_KEY]
+    concurrency: 4
+pipelines:
+  triage:
+    description: Branch on the caller, fan out, then grade every excerpt under one cap.
+    trigger:
+      http:
+        method: post
+        path: /triage
+    steps:
+      - generate:
+          prompt: draft
+          input:
+            subject: "{{event.subject}}"
+          as: plan
+      # `when` reads the caller's Principal, never a context value: the policy grammar
+      # has no operand for one. Both arms bind `escalation` so the name is sound after.
+      - branch:
+          when: "hasRole('agent')"
+          then:
+            - generate:
+                prompt: draft
+                input:
+                  subject: "{{plan}}"
+                as: escalation
+          else:
+            - generate:
+                prompt: draft
+                input:
+                  subject: "{{plan}}"
+                as: escalation
+      - parallel:
+          branches:
+            - - generate:
+                  prompt: draft
+                  input:
+                    subject: "{{escalation}}"
+                  as: summary
+            - - generate:
+                  prompt: draft
+                  input:
+                    subject: "{{escalation}}"
+                  as: advice
+      - retrieve:
+          retriever: handbook
+          query: "{{summary}}"
+          as: excerpts
+      - map:
+          over: excerpts
+          as: grades
+          step:
+            generate:
+              prompt: grade
+              input:
+                excerpt: "{{item}}"
+              as: one_grade
+      - reduce:
+          over: excerpts
+          prompt: grade
+          as: reduced
+      # The only binding whose declared type is the emitted event, so the response
+      # plan has one source per field instead of an ambiguity it must refuse.
+      - generate:
+          prompt: compose
+          input:
+            source: "{{reduced}}"
+          as: report
+      - emit:
+          event: Triage

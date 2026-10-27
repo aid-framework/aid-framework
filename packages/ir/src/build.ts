@@ -22,6 +22,7 @@ import {
   type AgentEngine,
   type AgentOnBudgetExhausted,
   type AgentShape,
+  type BranchStep,
   DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_OBSERVABILITY,
   DEFAULT_RUNTIME,
@@ -39,6 +40,7 @@ import {
   isIndexMetric,
   isProvider,
   isVectorStoreKind,
+  type MapStep,
   type MemoryShape,
   type MetricShape,
   type ModelLimits,
@@ -140,7 +142,7 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
   const sensitive = sensitiveNames({ types, prompts });
   const observability = buildObservability(root.observability, sensitive);
   const promptModels = new Map(prompts.map((prompt) => [prompt.id, prompt.model]));
-  const pipelines = buildPipelines(root.pipelines, observability, sensitive, promptModels);
+  const pipelines = buildPipelines(root.pipelines, observability, sensitive, promptModels, context);
   const evals = buildEvals(root.evals, context);
 
   const ir: IR = {
@@ -590,6 +592,7 @@ function buildPipelines(
   observability: ObservabilityShape,
   sensitive: readonly string[],
   promptModels: Map<string, string>,
+  context: BuildContext,
 ): PipelineShape[] {
   const record = asRecord(raw) ?? {};
   return sortedKeys(record).map((id) => {
@@ -603,7 +606,7 @@ function buildPipelines(
         method: asString(trigger.method) ?? 'post',
         path: asString(trigger.path) ?? '/',
       },
-      steps: asArray(entry.steps).map((step) => buildStep(step, promptModels)),
+      steps: buildStepList(entry.steps, promptModels, context, ['pipelines', id, 'steps']),
       errorPolicy: buildErrorPolicy(entry.errorPolicy),
       observability: buildObservability(entry.observability, sensitive, observability),
     };
@@ -622,7 +625,23 @@ function buildErrorPolicy(raw: unknown): ErrorPolicy {
   };
 }
 
-function buildStep(raw: unknown, promptModels: Map<string, string>): StepShape {
+function buildStepList(
+  raw: unknown,
+  promptModels: Map<string, string>,
+  context: BuildContext,
+  path: readonly (string | number)[],
+): StepShape[] {
+  return asArray(raw).map((step, index) =>
+    buildStep(step, promptModels, context, [...path, index]),
+  );
+}
+
+function buildStep(
+  raw: unknown,
+  promptModels: Map<string, string>,
+  context: BuildContext,
+  path: readonly (string | number)[],
+): StepShape {
   const record = asRecord(raw) ?? {};
   const generate = asRecord(record.generate);
   if (generate !== undefined) {
@@ -634,8 +653,8 @@ function buildStep(raw: unknown, promptModels: Map<string, string>): StepShape {
       input: buildStepInput(generate.input),
       as: asString(generate.as) ?? '',
     };
-    const context = asString(generate.context);
-    if (context !== undefined) step.context = context;
+    const contextName = asString(generate.context);
+    if (contextName !== undefined) step.context = contextName;
     return step;
   }
   const retrieve = asRecord(record.retrieve);
@@ -651,8 +670,68 @@ function buildStep(raw: unknown, promptModels: Map<string, string>): StepShape {
       as: asString(tool.as) ?? '',
     };
   }
+  const branch = asRecord(record.branch);
+  if (branch !== undefined) {
+    return buildBranchStep(branch, promptModels, context, [...path, 'branch']);
+  }
+  const parallel = asRecord(record.parallel);
+  if (parallel !== undefined) {
+    const arms = asArray(parallel.branches);
+    return {
+      kind: 'parallel',
+      branches: arms.map((arm, index) =>
+        buildStepList(arm, promptModels, context, [...path, 'parallel', 'branches', index]),
+      ),
+    };
+  }
+  const map = asRecord(record.map);
+  if (map !== undefined) {
+    const body = asRecord(map.step) ?? {};
+    const mapStep: MapStep = {
+      kind: 'map',
+      over: asString(map.over) ?? '',
+      as: asString(map.as) ?? '',
+      step: buildStep(body, promptModels, context, [...path, 'map', 'step']),
+    };
+    return mapStep;
+  }
+  const reduce = asRecord(record.reduce);
+  if (reduce !== undefined) {
+    const prompt = asString(reduce.prompt) ?? '';
+    return {
+      kind: 'reduce',
+      over: asString(reduce.over) ?? '',
+      prompt,
+      model: promptModels.get(prompt) ?? '',
+      as: asString(reduce.as) ?? '',
+    };
+  }
   const emit = asRecord(record.emit);
   return { kind: 'emit', event: asString(emit?.event) ?? '' };
+}
+
+/**
+ * The spec layer already rejected a `when` the grammar cannot parse, so a parse failure
+ * here means the two layers disagree. It still has to yield a `BranchStep`, because
+ * `StepShape` has no "broken" variant: an unparsable predicate becomes the constant
+ * `false`, so the failure closes the arm rather than opening it.
+ */
+function buildBranchStep(
+  branch: Record<string, unknown>,
+  promptModels: Map<string, string>,
+  context: BuildContext,
+  path: readonly (string | number)[],
+): BranchStep {
+  const source = asString(branch.when) ?? '';
+  const parsed = parsePolicyExpr(source, { path: [...path, 'when'], file: context.file });
+  context.diagnostics.push(...parsed.diagnostics);
+  return {
+    kind: 'branch',
+    when: parsed.ast ?? { kind: 'boolean', value: false },
+    // biome-ignore lint/suspicious/noThenProperty: the branch shape names its taken arm `then`.
+    then: buildStepList(branch.then, promptModels, context, [...path, 'then']),
+    else: buildStepList(branch.else, promptModels, context, [...path, 'else']),
+  };
 }
 
 /** `query` stays as declared: the runtime interpolates it per request. */

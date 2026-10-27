@@ -761,7 +761,28 @@ export function responsePlan(
  * placeholder inside a string carries no type for it.
  */
 function checkStepTemplates(step: StepShape, path: string, problems: PlanProblem[]): void {
-  if (step.kind === 'emit' || step.kind === 'retrieve') return;
+  if (step.kind === 'branch') {
+    for (const [index, nested] of step.then.entries()) {
+      checkStepTemplates(nested, `${path}.branch.then[${index}]`, problems);
+    }
+    for (const [index, nested] of step.else.entries()) {
+      checkStepTemplates(nested, `${path}.branch.else[${index}]`, problems);
+    }
+    return;
+  }
+  if (step.kind === 'parallel') {
+    for (const [armIndex, arm] of step.branches.entries()) {
+      for (const [index, nested] of arm.entries()) {
+        checkStepTemplates(nested, `${path}.parallel.branches[${armIndex}][${index}]`, problems);
+      }
+    }
+    return;
+  }
+  if (step.kind === 'map') {
+    checkStepTemplates(step.step, `${path}.map.step`, problems);
+    return;
+  }
+  if (step.kind === 'emit' || step.kind === 'retrieve' || step.kind === 'reduce') return;
   for (const [key, value] of Object.entries(step.input ?? {})) {
     if (value.kind !== 'template') continue;
     const names = templatePlaceholders(value.template);
@@ -1395,62 +1416,103 @@ export function requestPlan(ir: IR, pipeline: PipelineShape): RequestPlan {
 
   const bindings: StepBinding[] = [{ name: 'event', type: undefined }];
   const steps: readonly StepShape[] = pipeline.steps ?? [];
-  steps.forEach((step, index) => {
-    const path = `${base}.steps[${index}]`;
-    if (step.kind === 'emit') {
-      const target = types.get(step.event);
-      if (target === undefined) return;
-      for (const source of responsePlan(bindings, step.event, types, path).sources) {
-        const [root, name] = source.path;
-        if (root !== 'event' || name === undefined) continue;
-        const field = target.fields.find((candidate) => candidate.name === name);
-        if (field !== undefined) add(name, field.type, `${path}.event.${name}`);
+  const walkSteps = (list: readonly StepShape[], at: string, bindings: StepBinding[]): void => {
+    list.forEach((step, index) => {
+      const path = `${at}[${index}]`;
+      if (step.kind === 'branch') {
+        const thenScope: StepBinding[] = [...bindings];
+        const elseScope: StepBinding[] = [...bindings];
+        walkSteps(step.then, `${path}.branch.then`, thenScope);
+        walkSteps(step.else, `${path}.branch.else`, elseScope);
+        const elseNames = new Set(elseScope.slice(bindings.length).map((entry) => entry.name));
+        for (const entry of thenScope.slice(bindings.length)) {
+          if (elseNames.has(entry.name)) bindings.push({ name: entry.name, type: undefined });
+        }
+        return;
       }
-      return;
-    }
-
-    // A retrieval query is interpolated per request, so an `event.<field>` placeholder in
-    // it is a request field whose type the query itself fixes: a query is text, so the
-    // field is a string. `checkRetrieveQuery` refuses every other root, which is why this
-    // branch only ever reads whole event fields.
-    if (step.kind === 'retrieve') {
-      for (const name of templatePlaceholders(step.query)) {
-        const [root, field, ...rest] = name.split('.');
-        if (root !== 'event' || field === undefined || rest.length > 0) continue;
-        add(field, { kind: 'primitive', name: 'string', list: false }, `${path}.query`);
+      if (step.kind === 'parallel') {
+        const merged = new Map<string, StepBinding>();
+        step.branches.forEach((arm, armIndex) => {
+          const armScope: StepBinding[] = [...bindings];
+          walkSteps(arm, `${path}.parallel.branches[${armIndex}]`, armScope);
+          for (const entry of armScope.slice(bindings.length)) {
+            if (!merged.has(entry.name)) merged.set(entry.name, entry);
+          }
+        });
+        bindings.push(...merged.values());
+        return;
       }
-      bindings.push({ name: step.as, type: undefined });
-      return;
-    }
+      if (step.kind === 'map') {
+        const inner: StepBinding[] = [
+          ...bindings,
+          { name: ITERATION_ITEM, type: undefined },
+          { name: ITERATION_INDEX, type: undefined },
+        ];
+        walkSteps([step.step], `${path}.map.step`, inner);
+        bindings.push({ name: step.as, type: undefined });
+        return;
+      }
+      if (step.kind === 'reduce') {
+        bindings.push({ name: step.as, type: undefined });
+        return;
+      }
+      if (step.kind === 'emit') {
+        const target = types.get(step.event);
+        if (target === undefined) return;
+        for (const source of responsePlan(bindings, step.event, types, path).sources) {
+          const [root, name] = source.path;
+          if (root !== 'event' || name === undefined) continue;
+          const field = target.fields.find((candidate) => candidate.name === name);
+          if (field !== undefined) add(name, field.type, `${path}.event.${name}`);
+        }
+        return;
+      }
 
-    const wanted = new Map<string, TypeRef>();
-    if (step.kind === 'generate') {
-      const prompt = prompts.get(step.prompt);
-      for (const variable of prompt?.variables ?? []) wanted.set(variable.name, variable.type);
-    } else if (step.kind === 'tool') {
+      // A retrieval query is interpolated per request, so an `event.<field>` placeholder in
+      // it is a request field whose type the query itself fixes: a query is text, so the
+      // field is a string. `checkRetrieveQuery` refuses every other root, which is why this
+      // branch only ever reads whole event fields.
+      if (step.kind === 'retrieve') {
+        for (const name of templatePlaceholders(step.query)) {
+          const [root, field, ...rest] = name.split('.');
+          if (root !== 'event' || field === undefined || rest.length > 0) continue;
+          add(field, { kind: 'primitive', name: 'string', list: false }, `${path}.query`);
+        }
+        bindings.push({ name: step.as, type: undefined });
+        return;
+      }
+
+      const wanted = new Map<string, TypeRef>();
+      if (step.kind === 'generate') {
+        const prompt = prompts.get(step.prompt);
+        for (const variable of prompt?.variables ?? []) wanted.set(variable.name, variable.type);
+      } else if (step.kind === 'tool') {
+        const tool = tools.get(step.tool);
+        const input = tool === undefined ? undefined : structFields(tool.input, types);
+        for (const field of input?.fields ?? []) wanted.set(field.name, field.type);
+      }
+      for (const [key, value] of Object.entries(step.input ?? {})) {
+        if (value.kind !== 'reference') continue;
+        const [root, name, ...rest] = value.path;
+        if (root !== 'event' || name === undefined || rest.length > 0) continue;
+        const inferred = wanted.get(key);
+        if (inferred !== undefined) add(name, inferred, `${path}.input.${key}`);
+      }
+      if (step.kind === 'generate') {
+        const declared = prompts.get(step.prompt)?.output;
+        const schema = declared?.kind === 'structured' ? declared.schema : undefined;
+        // `checkPrompts` refuses a structured output that names no declared struct, so a
+        // missing schema here is unreachable; the fallback keeps the type honest.
+        const output: TypeRef = schema ?? { kind: 'primitive', name: 'string', list: false };
+        bindings.push({ name: step.as, type: output });
+        return;
+      }
       const tool = tools.get(step.tool);
-      const input = tool === undefined ? undefined : structFields(tool.input, types);
-      for (const field of input?.fields ?? []) wanted.set(field.name, field.type);
-    }
-    for (const [key, value] of Object.entries(step.input ?? {})) {
-      if (value.kind !== 'reference') continue;
-      const [root, name, ...rest] = value.path;
-      if (root !== 'event' || name === undefined || rest.length > 0) continue;
-      const inferred = wanted.get(key);
-      if (inferred !== undefined) add(name, inferred, `${path}.input.${key}`);
-    }
-    if (step.kind === 'generate') {
-      const declared = prompts.get(step.prompt)?.output;
-      const schema = declared?.kind === 'structured' ? declared.schema : undefined;
-      // `checkPrompts` refuses a structured output that names no declared struct, so a
-      // missing schema here is unreachable; the fallback keeps the type honest.
-      const output: TypeRef = schema ?? { kind: 'primitive', name: 'string', list: false };
-      bindings.push({ name: step.as, type: output });
-      return;
-    }
-    const tool = tools.get(step.tool);
-    bindings.push({ name: step.as, type: tool?.output });
-  });
+      bindings.push({ name: step.as, type: tool?.output });
+    });
+  };
+
+  walkSteps(steps, `${base}.steps`, bindings);
 
   return {
     fields: [...fields.entries()]
@@ -1460,10 +1522,16 @@ export function requestPlan(ir: IR, pipeline: PipelineShape): RequestPlan {
   };
 }
 
-/** The binding name a step introduces, or `undefined` for the terminal emit. */
+/** The binding name a step introduces, or `undefined` when the step introduces none. */
 export function bindingOf(step: StepShape): string | undefined {
-  return step.kind === 'emit' ? undefined : step.as;
+  return step.kind === 'emit' || step.kind === 'branch' || step.kind === 'parallel'
+    ? undefined
+    : step.as;
 }
+
+/** The names a `map` iteration exposes to its body. */
+export const ITERATION_ITEM = 'item';
+export const ITERATION_INDEX = 'index';
 
 export function checkPipelines(ir: IR): PlanProblem[] {
   const types = sortedTypes(ir);
@@ -1543,185 +1611,285 @@ export function checkPipelines(ir: IR): PlanProblem[] {
         ),
       );
     }
-    steps.forEach((step, index) => {
-      const path = `${base}.steps[${index}]`;
-      const names = bindings.map((binding) => binding.name);
-      const bound = bindingOf(step);
-      checkStepTemplates(step, path, problems);
-      if (bound !== undefined) {
-        if (names.includes(bound)) {
-          problems.push(
-            problem(
-              'duplicate-binding',
-              path,
-              `binding '${bound}' is reused, which makes every reference to it ambiguous`,
-            ),
-          );
+    // A composite nests step lists, so the walk recurses. `at` is the path prefix the
+    // list index is appended to, which keeps a nested problem addressable.
+    const walkSteps = (list: readonly StepShape[], at: string, bindings: StepBinding[]): void => {
+      list.forEach((step, index) => {
+        const path = `${at}[${index}]`;
+        const names = bindings.map((binding) => binding.name);
+        const bound = bindingOf(step);
+        checkStepTemplates(step, path, problems);
+        if (bound !== undefined) {
+          if (names.includes(bound)) {
+            problems.push(
+              problem(
+                'duplicate-binding',
+                path,
+                `binding '${bound}' is reused, which makes every reference to it ambiguous`,
+              ),
+            );
+          }
+          if ((RESERVED_BINDINGS as readonly string[]).includes(bound)) {
+            problems.push(
+              problem('duplicate-binding', path, `'${bound}' is owned by the generated entrypoint`),
+            );
+          }
+          // A binding is passed through the pipeline context as a Python keyword
+          // argument, so a name that is not an identifier could not be bound at all.
+          if (!isUsableIdentifier(bound)) {
+            problems.push(
+              problem(
+                'unusable-name',
+                path,
+                `binding '${bound}' is not a usable Python identifier; each binding becomes a ` +
+                  'keyword argument carried through `PipelineContext`',
+              ),
+            );
+          }
+          // The generated step body owns every local whose name starts with an
+          // underscore, so a binding spelled that way would shadow one of them.
+          if (bound.startsWith('_')) {
+            problems.push(
+              problem(
+                'unusable-name',
+                path,
+                `binding '${bound}' starts with an underscore, which the generated step body ` +
+                  'reserves for its own locals; rename it',
+              ),
+            );
+          }
+          // A binding is read back inside the step body as a local, so two bindings
+          // that differ only in where the generated snake-casing puts underscores
+          // would be the same Python name.
+          const key = moduleName(bound);
+          if (names.some((name) => moduleName(name) === key)) {
+            problems.push(
+              problem(
+                'duplicate-binding',
+                path,
+                `binding '${bound}' becomes '${key}' in the generated step, which an earlier ` +
+                  'binding already became; rename one of them',
+              ),
+            );
+          }
         }
-        if ((RESERVED_BINDINGS as readonly string[]).includes(bound)) {
-          problems.push(
-            problem('duplicate-binding', path, `'${bound}' is owned by the generated entrypoint`),
-          );
-        }
-        // A binding is passed through the pipeline context as a Python keyword
-        // argument, so a name that is not an identifier could not be bound at all.
-        if (!isUsableIdentifier(bound)) {
-          problems.push(
-            problem(
-              'unusable-name',
-              path,
-              `binding '${bound}' is not a usable Python identifier; each binding becomes a ` +
-                'keyword argument carried through `PipelineContext`',
-            ),
-          );
-        }
-        // The generated step body owns every local whose name starts with an
-        // underscore, so a binding spelled that way would shadow one of them.
-        if (bound.startsWith('_')) {
-          problems.push(
-            problem(
-              'unusable-name',
-              path,
-              `binding '${bound}' starts with an underscore, which the generated step body ` +
-                'reserves for its own locals; rename it',
-            ),
-          );
-        }
-        // A binding is read back inside the step body as a local, so two bindings
-        // that differ only in where the generated snake-casing puts underscores
-        // would be the same Python name.
-        const key = moduleName(bound);
-        if (names.some((name) => moduleName(name) === key)) {
-          problems.push(
-            problem(
-              'duplicate-binding',
-              path,
-              `binding '${bound}' becomes '${key}' in the generated step, which an earlier ` +
-                'binding already became; rename one of them',
-            ),
-          );
-        }
-      }
-      if (step.kind === 'emit') {
-        if (index !== steps.length - 1) {
-          problems.push(
-            problem('missing-emit', path, 'only the final step may emit the HTTP response'),
-          );
-        }
-        if (!types.has(step.event)) {
-          problems.push(
-            problem(
-              'unresolved-type',
-              `${path}.event`,
-              `event '${step.event}' is not a declared struct`,
-            ),
-          );
+        if (step.kind === 'branch') {
+          const thenScope: StepBinding[] = [...bindings];
+          const elseScope: StepBinding[] = [...bindings];
+          walkSteps(step.then, `${path}.branch.then`, thenScope);
+          walkSteps(step.else, `${path}.branch.else`, elseScope);
+          // A branch binds only the names both arms bind. A name one arm omits would resolve
+          // or raise depending on which arm ran, so it is not a binding of the branch at all;
+          // with no `else` one arm is empty and the branch therefore binds nothing.
+          const elseNames = new Set(elseScope.slice(bindings.length).map((entry) => entry.name));
+          for (const entry of thenScope.slice(bindings.length)) {
+            if (elseNames.has(entry.name)) bindings.push({ name: entry.name, type: undefined });
+          }
           return;
         }
-        problems.push(...responsePlan(bindings, step.event, types, path).problems);
-        return;
-      }
-      if (step.kind === 'tool') {
-        const tool = tools.get(step.tool);
-        if (tool === undefined) {
-          problems.push(
-            problem('unresolved-reference', `${path}.tool`, `tool '${step.tool}' is not declared`),
-          );
+        if (step.kind === 'parallel') {
+          const merged = new Map<string, StepBinding>();
+          step.branches.forEach((arm, armIndex) => {
+            const armScope: StepBinding[] = [...bindings];
+            walkSteps(arm, `${path}.parallel.branches[${armIndex}]`, armScope);
+            for (const entry of armScope.slice(bindings.length)) {
+              if (merged.has(entry.name)) {
+                problems.push(
+                  problem(
+                    'duplicate-binding',
+                    `${path}.parallel.branches[${armIndex}]`,
+                    `parallel arms both bind '${entry.name}', so the merged context would ` +
+                      'depend on which arm finished last',
+                  ),
+                );
+                continue;
+              }
+              merged.set(entry.name, entry);
+            }
+          });
+          bindings.push(...merged.values());
           return;
         }
-        const keys = checkStepInput(step.input, path, bindings, types, problems);
-        const fields = structFields(tool.input, types);
-        const required = fields?.fields.filter((field) => field.required).map((f) => f.name) ?? [];
-        checkArgumentKeys(keys, fields, required, `${path}.input`, problems, `tool '${tool.id}'`);
-        bindings.push({ name: step.as, type: tool.output });
-        return;
-      }
-      if (step.kind === 'retrieve') {
-        checkRetrieveStep(ir, step, path, bindings, problems);
-        // The binding stays untyped on purpose: a retrieval step yields items and a
-        // rendered context, not a struct, so `emit/ir.ts` reports no type for it and the
-        // generated call is the only thing that reads it.
-        bindings.push({ name: step.as, type: undefined });
-        return;
-      }
-      const prompt = prompts.get(step.prompt);
-      if (prompt === undefined) {
-        problems.push(
-          problem(
-            'unresolved-reference',
-            `${path}.prompt`,
-            `prompt '${step.prompt}' is not declared`,
-          ),
-        );
-        return;
-      }
-      if (!models.has(step.model)) {
-        problems.push(
-          problem(
-            'unresolved-reference',
-            `${path}.model`,
-            `model alias '${step.model}' is not declared`,
-          ),
-        );
-      }
-      const keys = checkStepInput(step.input, path, bindings, types, problems);
-      const wanted = renderNames(prompt);
-      for (const name of keys) {
-        if (!wanted.includes(name)) {
-          problems.push(
-            problem(
-              'unused-input',
-              `${path}.input`,
-              `prompt '${prompt.id}' declares no variable '${name}'`,
-            ),
-          );
+        if (step.kind === 'map') {
+          if (!names.includes(step.over)) {
+            problems.push(
+              problem(
+                'unresolved-reference',
+                `${path}.map.over`,
+                `'${step.over}' is not bound at this step, so the map has no list to iterate`,
+              ),
+            );
+          }
+          // The body sees the iteration's own names; its bindings are per-item and never
+          // escape, so it walks a copy of the scope.
+          const inner: StepBinding[] = [
+            ...bindings,
+            { name: ITERATION_ITEM, type: undefined },
+            { name: ITERATION_INDEX, type: undefined },
+          ];
+          walkSteps([step.step], `${path}.map.step`, inner);
+          bindings.push({ name: step.as, type: undefined });
+          return;
         }
-      }
-      // A retrieved context reaches the prompt through `step.context`, which the runtime
-      // refuses when the template does not use it, so both halves are checked here: the
-      // name has to be one the rendered template accepts, and it has to name a binding
-      // that actually holds retrieved items.
-      if (step.context !== undefined) {
-        if (!retrieved.has(step.context)) {
+        if (step.kind === 'reduce') {
+          if (!names.includes(step.over)) {
+            problems.push(
+              problem(
+                'unresolved-reference',
+                `${path}.reduce.over`,
+                `'${step.over}' is not bound at this step, so the reduce has no list to iterate`,
+              ),
+            );
+          }
+          if (!prompts.has(step.prompt)) {
+            problems.push(
+              problem(
+                'unresolved-reference',
+                `${path}.reduce.prompt`,
+                `prompt '${step.prompt}' is not declared`,
+              ),
+            );
+          }
+          if (!models.has(step.model)) {
+            problems.push(
+              problem(
+                'unresolved-reference',
+                `${path}.reduce.model`,
+                `model alias '${step.model}' is not declared`,
+              ),
+            );
+          }
+          bindings.push({ name: step.as, type: undefined });
+          return;
+        }
+        if (step.kind === 'emit') {
+          if (index !== list.length - 1) {
+            problems.push(
+              problem('missing-emit', path, 'only the final step may emit the HTTP response'),
+            );
+          }
+          if (!types.has(step.event)) {
+            problems.push(
+              problem(
+                'unresolved-type',
+                `${path}.event`,
+                `event '${step.event}' is not a declared struct`,
+              ),
+            );
+            return;
+          }
+          problems.push(...responsePlan(bindings, step.event, types, path).problems);
+          return;
+        }
+        if (step.kind === 'tool') {
+          const tool = tools.get(step.tool);
+          if (tool === undefined) {
+            problems.push(
+              problem(
+                'unresolved-reference',
+                `${path}.tool`,
+                `tool '${step.tool}' is not declared`,
+              ),
+            );
+            return;
+          }
+          const keys = checkStepInput(step.input, path, bindings, types, problems);
+          const fields = structFields(tool.input, types);
+          const required =
+            fields?.fields.filter((field) => field.required).map((f) => f.name) ?? [];
+          checkArgumentKeys(keys, fields, required, `${path}.input`, problems, `tool '${tool.id}'`);
+          bindings.push({ name: step.as, type: tool.output });
+          return;
+        }
+        if (step.kind === 'retrieve') {
+          checkRetrieveStep(ir, step, path, bindings, problems);
+          // The binding stays untyped on purpose: a retrieval step yields items and a
+          // rendered context, not a struct, so `emit/ir.ts` reports no type for it and the
+          // generated call is the only thing that reads it.
+          bindings.push({ name: step.as, type: undefined });
+          return;
+        }
+        const prompt = prompts.get(step.prompt);
+        if (prompt === undefined) {
           problems.push(
             problem(
               'unresolved-reference',
-              `${path}.context`,
-              `'${step.context}' is not a retrieval binding; the generated call inlines the ` +
-                "items of a 'retrieve' step, and only that step declares one",
+              `${path}.prompt`,
+              `prompt '${step.prompt}' is not declared`,
             ),
           );
+          return;
         }
-        const accepted = new Set([
-          ...flatPlaceholders(prompt),
-          ...prompt.variables.filter((variable) => variable.required).map((v) => v.name),
-        ]);
-        if (!accepted.has(step.context)) {
+        if (!models.has(step.model)) {
           problems.push(
             problem(
-              'unused-input',
-              `${path}.context`,
-              `the runtime rejects a prompt value the template does not use: prompt ` +
-                `'${prompt.id}' neither interpolates '${step.context}' nor declares it ` +
-                'required, so the rendered call would raise',
+              'unresolved-reference',
+              `${path}.model`,
+              `model alias '${step.model}' is not declared`,
             ),
           );
         }
-      }
-      for (const name of wanted) {
-        // The context variable is supplied by `step.context` rather than by an input key,
-        // so it is the one variable that is legitimately absent from the step's inputs.
-        if (name === step.context) continue;
-        if (!keys.includes(name)) {
-          problems.push(
-            problem('missing-input', `${path}.input`, `prompt '${prompt.id}' requires '${name}'`),
-          );
+        const keys = checkStepInput(step.input, path, bindings, types, problems);
+        const wanted = renderNames(prompt);
+        for (const name of keys) {
+          if (!wanted.includes(name)) {
+            problems.push(
+              problem(
+                'unused-input',
+                `${path}.input`,
+                `prompt '${prompt.id}' declares no variable '${name}'`,
+              ),
+            );
+          }
         }
-      }
-      const schema = prompt.output.kind === 'structured' ? prompt.output.schema : undefined;
-      const output: TypeRef = schema ?? { kind: 'primitive', name: 'string', list: false };
-      bindings.push({ name: step.as, type: output });
-    });
+        // A retrieved context reaches the prompt through `step.context`, which the runtime
+        // refuses when the template does not use it, so both halves are checked here: the
+        // name has to be one the rendered template accepts, and it has to name a binding
+        // that actually holds retrieved items.
+        if (step.context !== undefined) {
+          if (!retrieved.has(step.context)) {
+            problems.push(
+              problem(
+                'unresolved-reference',
+                `${path}.context`,
+                `'${step.context}' is not a retrieval binding; the generated call inlines the ` +
+                  "items of a 'retrieve' step, and only that step declares one",
+              ),
+            );
+          }
+          const accepted = new Set([
+            ...flatPlaceholders(prompt),
+            ...prompt.variables.filter((variable) => variable.required).map((v) => v.name),
+          ]);
+          if (!accepted.has(step.context)) {
+            problems.push(
+              problem(
+                'unused-input',
+                `${path}.context`,
+                `the runtime rejects a prompt value the template does not use: prompt ` +
+                  `'${prompt.id}' neither interpolates '${step.context}' nor declares it ` +
+                  'required, so the rendered call would raise',
+              ),
+            );
+          }
+        }
+        for (const name of wanted) {
+          // The context variable is supplied by `step.context` rather than by an input key,
+          // so it is the one variable that is legitimately absent from the step's inputs.
+          if (name === step.context) continue;
+          if (!keys.includes(name)) {
+            problems.push(
+              problem('missing-input', `${path}.input`, `prompt '${prompt.id}' requires '${name}'`),
+            );
+          }
+        }
+        const schema = prompt.output.kind === 'structured' ? prompt.output.schema : undefined;
+        const output: TypeRef = schema ?? { kind: 'primitive', name: 'string', list: false };
+        bindings.push({ name: step.as, type: output });
+      });
+    };
+
+    walkSteps(steps, `${base}.steps`, bindings);
   }
   return problems;
 }

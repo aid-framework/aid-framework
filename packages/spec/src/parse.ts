@@ -112,3 +112,18 @@ export function findMalformedTemplate(text: string): string | undefined {
   }
   return undefined;
 }
+
+/**
+ * The binding names a template reads, i.e. the root segment of every placeholder.
+ * `{{ ticket.subject }}` reads binding `ticket`.
+ */
+export function templateRoots(text: string): string[] {
+  const roots: string[] = [];
+  for (const match of text.matchAll(PLACEHOLDER)) {
+    const root = match[1]?.split('.')[0];
+    if (root !== undefined) {
+      roots.push(root);
+    }
+  }
+  return roots;
+}

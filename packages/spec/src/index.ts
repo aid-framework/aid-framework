@@ -34,8 +34,10 @@ export {
 export { SourceDocument } from './source-document.js';
 
 export {
+  COMPOSITE_STEP_KINDS,
   DEFERRED_SECTIONS,
   DEFERRED_STEP_KINDS,
+  MAX_STEP_DEPTH,
   MODEL_CACHE_MIN_VERSION,
   SECTION_MIN_VERSION,
   type SpecVersion,

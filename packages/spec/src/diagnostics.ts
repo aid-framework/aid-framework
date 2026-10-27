@@ -28,6 +28,10 @@ export const DIAGNOSTIC_CODES = {
   malformedTemplate: 'spec/malformed-template',
   duplicateBinding: 'spec/duplicate-binding',
   metricUnavailableInCi: 'spec/metric-unavailable-in-ci',
+  stepNestingTooDeep: 'spec/step-nesting-too-deep',
+  nestedEmitStep: 'spec/nested-emit-step',
+  fanoutWithoutConcurrency: 'spec/fanout-without-concurrency',
+  branchArmBindingMismatch: 'spec/branch-arm-binding-mismatch',
 } as const;
 
 /** Codes are namespaced `<layer>/<slug>`. This layer's own codes are `spec/*`. */

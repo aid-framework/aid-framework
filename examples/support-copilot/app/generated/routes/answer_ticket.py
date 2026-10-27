@@ -40,7 +40,9 @@ async def answer_ticket_endpoint(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return StreamingResponse(deps.gateway.stream(_alias, _request), media_type=EVENT_STREAM)
     try:
-        context = await answer_ticket_pipeline().run({"deps": deps, "event": event})
+        context = await answer_ticket_pipeline().run(
+            {"deps": deps, "event": event, "limiter": deps.limiter, "depth": 0},
+        )
     except PipelineError as exc:
         _blocked = guardrail_block(exc)
         if _blocked is not None:

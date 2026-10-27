@@ -270,7 +270,74 @@ export interface RetrieveStep {
   as: string;
 }
 
-export type StepShape = GenerateStep | RetrieveStep | ToolStep | EmitStep;
+/**
+ * Authorization branching. `when` is evaluated against the caller's Principal and
+ * nothing else: the grammar has no operand for a context value, so a branch cannot
+ * read what an earlier step produced. Data-driven control flow is `map`/`reduce`.
+ */
+export interface BranchStep {
+  kind: 'branch';
+  when: PolicyExpr;
+  then: StepShape[];
+  /** Absent when the spec declared no alternative; then the branch binds nothing. */
+  else: StepShape[];
+}
+
+/** Each arm runs concurrently under the deployment's single concurrency cap. */
+export interface ParallelStep {
+  kind: 'parallel';
+  branches: StepShape[][];
+}
+
+/** Applies `step` to every item of `over`, concurrently; binds the ordered results. */
+export interface MapStep {
+  kind: 'map';
+  over: string;
+  as: string;
+  step: StepShape;
+}
+
+/**
+ * Applies `prompt` to every item of `over`, concurrently, and binds the ordered list of
+ * results. Combining them is a following `generate` step, so no merge strategy is
+ * invented here.
+ */
+export interface ReduceStep {
+  kind: 'reduce';
+  over: string;
+  prompt: string;
+  /** Model alias the prompt resolves to, inlined so a runtime need not re-resolve. */
+  model: string;
+  as: string;
+}
+
+export type StepShape =
+  | GenerateStep
+  | RetrieveStep
+  | ToolStep
+  | EmitStep
+  | BranchStep
+  | ParallelStep
+  | MapStep
+  | ReduceStep;
+
+/** The composite kinds: the four that nest other steps and so can recurse. */
+export const COMPOSITE_STEP_KINDS = ['branch', 'parallel', 'map', 'reduce'] as const;
+
+/** The step kinds that contain other steps, so every walker has one guard to reach for. */
+export type CompositeStep = BranchStep | ParallelStep | MapStep | ReduceStep;
+
+export function isCompositeStep(step: { kind: StepShape['kind'] }): step is CompositeStep {
+  return (COMPOSITE_STEP_KINDS as readonly string[]).includes(step.kind);
+}
+
+/**
+ * Deepest composite nesting a pipeline may declare. The spec layer owns the number and
+ * rejects a deeper pipeline before generation; the generator *emits* it into the
+ * generated package (`aid_runtime.control` keeps a default for hand-written use), so a
+ * drift between build and runtime fails a test instead of diverging silently.
+ */
+export { MAX_STEP_DEPTH } from '@aid/spec';
 
 export interface ErrorPolicy {
   retries: number;

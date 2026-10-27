@@ -121,6 +121,19 @@ function normalizePipeline(pipeline: PipelineShape, inherited: ObservabilityShap
 
 function normalizeStep(step: StepShape): StepShape {
   if (step.kind === 'emit' || step.kind === 'retrieve') return step;
+  if (step.kind === 'branch') {
+    return {
+      ...step,
+      // biome-ignore lint/suspicious/noThenProperty: the branch shape names its taken arm `then`.
+      then: step.then.map(normalizeStep),
+      ...(step.else === undefined ? {} : { else: step.else.map(normalizeStep) }),
+    };
+  }
+  if (step.kind === 'parallel') {
+    return { ...step, branches: step.branches.map((arm) => arm.map(normalizeStep)) };
+  }
+  if (step.kind === 'map') return { ...step, step: normalizeStep(step.step) };
+  if (step.kind === 'reduce') return step;
   return { ...step, input: step.input ?? {} };
 }
 

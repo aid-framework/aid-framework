@@ -13,6 +13,7 @@ import type { IR } from '@aid/ir';
 import { INDENT } from '../python.js';
 import { assemble, HEADER, importBlock, importFrom } from '../template.js';
 import { hasAgents } from './agents.js';
+import { CONCURRENCY_LIMIT, hasFanOut } from './control.js';
 import type { EmittedFile } from './file.js';
 import { GENERATED_ROOT, generated } from './file.js';
 import { pythonDoc } from './text.js';
@@ -30,6 +31,10 @@ export const DEPS_BINDING = 'deps';
  */
 export function emitDeps(ir: IR): EmittedFile {
   const retrieval = ir.retrievers.length > 0;
+  /* A fan-out needs exactly one limiter, so the app builds one and hands every composite
+   * the same instance. A spec with no fan-out declares no cap and gets no limiter: there
+   * is nothing for it to bound. */
+  const fanOut = hasFanOut(ir.pipelines);
   /* The agent route needs the tool objects the runtime takes, the pipeline route needs the
    * executor. One tuple, built once, handed to both -- so a tool cannot be permissioned one
    * way on one route and another way on the other. */
@@ -49,6 +54,7 @@ export function emitDeps(ir: IR): EmittedFile {
         [
           importFrom('aid_runtime', [
             ...(retrieval ? ['ConfigurationError'] : []),
+            ...(fanOut ? ['ConcurrencyLimiter'] : []),
             'ModelGateway',
             'PromptRegistry',
             ...(retrieval ? ['Retriever'] : []),
@@ -56,6 +62,7 @@ export function emitDeps(ir: IR): EmittedFile {
           ]),
         ],
         [
+          ...(fanOut ? [`from .control import ${CONCURRENCY_LIMIT}`] : []),
           'from .gateway import build_gateway',
           'from .prompts import build_registry',
           ...(retrieval ? ['from .retrieval.bindings import build_retrievers'] : []),
@@ -71,6 +78,13 @@ export function emitDeps(ir: IR): EmittedFile {
         `${INDENT}gateway: ModelGateway`,
         `${INDENT}prompts: PromptRegistry`,
         `${INDENT}tools: ToolExecutor`,
+        ...(fanOut
+          ? [
+              `${INDENT}#: The one cap a fan-out draws from. The app builds it once, so a`,
+              `${INDENT}#: parallel step cannot invent a second, wider bound beside it.`,
+              `${INDENT}limiter: ConcurrencyLimiter`,
+            ]
+          : []),
         ...(agents
           ? [`${INDENT}agent_tools: tuple[Tool, ...] = field(default_factory=build_agent_tools)`]
           : []),
@@ -100,6 +114,7 @@ export function emitDeps(ir: IR): EmittedFile {
         `${INDENT}gateway: ModelGateway | None = None,`,
         `${INDENT}prompts: PromptRegistry | None = None,`,
         `${INDENT}tools: ToolExecutor | None = None,`,
+        ...(fanOut ? [`${INDENT}limiter: ConcurrencyLimiter | None = None,`] : []),
         ...(agents ? [`${INDENT}agent_tools: tuple[Tool, ...] | None = None,`] : []),
         ...(retrieval ? [`${INDENT}retrievers: dict[str, Retriever] | None = None,`] : []),
         ') -> Deps:',
@@ -112,6 +127,12 @@ export function emitDeps(ir: IR): EmittedFile {
               `${INDENT}declared_tools = build_agent_tools() if agent_tools is None else agent_tools`,
             ]
           : []),
+        ...(fanOut
+          ? [
+              `${INDENT}if limiter is None:`,
+              `${INDENT}${INDENT}limiter = ConcurrencyLimiter(${CONCURRENCY_LIMIT})`,
+            ]
+          : []),
         `${INDENT}return Deps(`,
         `${INDENT}${INDENT}gateway=build_gateway() if gateway is None else gateway,`,
         `${INDENT}${INDENT}prompts=build_registry() if prompts is None else prompts,`,
@@ -122,6 +143,7 @@ export function emitDeps(ir: IR): EmittedFile {
               `${INDENT}${INDENT}agent_tools=declared_tools,`,
             ]
           : [`${INDENT}${INDENT}tools=build_executor() if tools is None else tools,`]),
+        ...(fanOut ? [`${INDENT}${INDENT}limiter=limiter,`] : []),
         ...(retrieval
           ? [
               `${INDENT}${INDENT}retrievers=build_retrievers() if retrievers is None else retrievers,`,

@@ -81,8 +81,15 @@
       "generator": "@aid/generator-py-fastapi",
       "generatorVersion": "0.1.0",
       "owner": "generated",
+      "path": "app/generated/control.py",
+      "sha256": "aa36b548484af95512109092752db26e67c132e7b1b90120853aa0e8d50bd38a"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
       "path": "app/generated/deps.py",
-      "sha256": "81df224fa9421939d5f0bd66a79d54053b7659ff7ca47029b8deea21d40e9b88"
+      "sha256": "18a62deebc4e37855d1dc12a39aa6eb2ea8bdd9a43ab8e5c66018ea5a5009ad0"
     },
     {
       "generator": "@aid/generator-py-fastapi",
@@ -145,14 +152,14 @@
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/pipelines/answer_ticket.py",
-      "sha256": "6645996b57c10cc0ee5ac1df9931054a0735d60e38453d0a7e89e583de1227c8"
+      "sha256": "d2dee5170baa5133fa0c10719c09087bd652296de79665a7758c47d65b4ca9a6"
     },
     {
       "generator": "@aid/generator-py-fastapi",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/prompts/__init__.py",
-      "sha256": "7fd697be529309603e17f6e22318d4d3e4498ecc1e2ffae23aa01685019d1643"
+      "sha256": "bf838b59f4b4b69e7958dcf08c20eddf844b9e0f5fee57e2ea8600ef4b4b23ba"
     },
     {
       "generator": "@aid/generator-py-fastapi",
@@ -160,6 +167,20 @@
       "owner": "generated",
       "path": "app/generated/prompts/classify_ticket.py",
       "sha256": "08254871bf6aa3c64eb6ce3d9513ebe96eab69f577cd77db1204508e032d8447"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/prompts/customer_note.py",
+      "sha256": "925053dedffbed48d6c1bb8fc6d9eb42322558bdc4bb0554976e277cfe83a373"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/prompts/handbook_note.py",
+      "sha256": "a18f5ddc57e4f29f82a8d8449117a2165d0a4bd0f376f9981b19d7377bb98123"
     },
     {
       "generator": "@aid/generator-py-fastapi",
@@ -215,7 +236,7 @@
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/routes/answer_ticket.py",
-      "sha256": "0eeeaa4cd4efa196b2143198ee8de2742a7d8288f49213b854d64d210f9915e1"
+      "sha256": "6b975e972742ff0f91bcb4358c6579c705ddc19791c6d924edf26e587ab576ca"
     },
     {
       "generator": "@aid/generator-py-fastapi",

@@ -28,6 +28,7 @@ import type {
   TypeRef,
   TypeShape,
 } from '@aid/ir';
+import { isCompositeStep } from '@aid/ir';
 
 import { annotationFor, className, fieldName, moduleName } from '../names.js';
 import { interpolate, templatePlaceholders } from '../placeholders.js';
@@ -42,12 +43,23 @@ import {
 import { streamedStepIndex, streams } from '../streaming.js';
 import { assemble, HEADER, importBlock, importFrom } from '../template.js';
 import type { ResponseSource, StepBinding } from '../validate.js';
-import { bindingOf, renderNames, requestPlan, responsePlan } from '../validate.js';
+import { bindingOf, ITERATION_ITEM, renderNames, requestPlan, responsePlan } from '../validate.js';
+import {
+  ANONYMOUS_PRINCIPAL,
+  childrenOf,
+  DEPTH_KEY,
+  hasBranch,
+  hasComposite,
+  hasFanOut,
+  LIMITER_KEY,
+  PRINCIPAL_KEY,
+  REDUCED_KEY,
+} from './control.js';
 import { DEPS_BINDING } from './deps.js';
 import type { EmittedFile } from './file.js';
 import { GENERATED_ROOT, generated } from './file.js';
 import { hasGuardrails, stageGuardrails, stageTable } from './guardrails.js';
-import { promptOf, scopesOf, structOf, toolOf, typeTable } from './ir.js';
+import { promptOf, scopeMap, structOf, toolOf, typeTable } from './ir.js';
 import { orderedPipelines } from './order.js';
 import { promptVersion } from './prompts.js';
 import { require } from './require.js';
@@ -88,8 +100,14 @@ export function contextKey(name: string): string {
   return moduleName(name);
 }
 
-export function stepFunctionName(step: StepShape): string {
-  return contextKey(bindingOf(step) ?? 'response');
+/**
+ * The Python function a step is emitted as.
+ *
+ * A composite binds no name of its own, so `names` supplies the module-unique function
+ * name `compositeNames` assigned it; every other kind is named after what it binds.
+ */
+export function stepFunctionName(step: StepShape, names?: ReadonlyMap<StepShape, string>): string {
+  return names?.get(step) ?? contextKey(bindingOf(step) ?? 'response');
 }
 
 function byName(left: string, right: string): number {
@@ -112,6 +130,32 @@ function call(callee: string, args: readonly string[], indent: string, prefixLen
   if (inline && indent.length + prefixLength + oneLine.length <= MAX_LINE) return oneLine;
   const inner = indent + INDENT;
   return `${callee}(\n${args.map((arg) => `${inner}${arg},`).join('\n')}\n${indent})`;
+}
+
+/**
+ * `PipelineContext(values=...)` for `_stream_request`, on one line when it fits and as an
+ * exploded call otherwise.
+ *
+ * `mapping` sizes its output for the column it is handed, and on one line the brace sits
+ * behind the whole `ctx = PipelineContext(values=` prefix -- not behind the indent. Passing
+ * the indent alone therefore reports a seed as short enough while the line it lands on
+ * overflows, which is exactly what a four-entry seed did. The two shapes measure different
+ * columns because they are different plants: exploded, the brace follows `values=` on a
+ * line of its own.
+ */
+function contextCall(
+  pipeline: PipelineShape,
+  deps: string,
+  indent: string,
+  prefix: string,
+): string {
+  const seed = contextSeed(pipeline, deps);
+  const head = `${indent}${prefix}PipelineContext(`;
+  const oneLine = `${head}values=${mapping(seed, ' '.repeat(head.length))})`;
+  if (oneLine.length <= MAX_LINE) return oneLine;
+  const inner = `${indent}${INDENT}`;
+  const brace = inner.length + 'values='.length;
+  return `${head}\n${inner}values=${mapping(seed, ' '.repeat(brace))}\n${indent})`;
 }
 
 /** A statement whose value is a call, measured with the prefix it is assigned to. */
@@ -158,10 +202,23 @@ export function renderReference(
  *
  * An `emit` step takes none and a `retrieve` step carries a query instead, so the
  * union cannot be indexed directly; every caller wants the same empty set for those
- * rather than a branch of its own.
+ * rather than a branch of its own. The composite kinds take no template input either:
+ * `branch` and `parallel` are decided by their arms, and `map`/`reduce` name the list
+ * they iterate in `over` -- a bare binding, not a template, so it is surfaced as the
+ * reference it is rather than silently dropped.
  */
 export function stepInputs(step: StepShape): Readonly<Record<string, StepInputValue>> {
-  return step.kind === 'emit' || step.kind === 'retrieve' ? {} : step.input;
+  if (step.kind === 'emit' || step.kind === 'retrieve') return {};
+  if (step.kind === 'branch' || step.kind === 'parallel') return {};
+  if (step.kind === 'map' || step.kind === 'reduce') {
+    return {
+      over: { kind: 'reference', path: [step.over] },
+      ...(step.kind === 'reduce'
+        ? { prompt: { kind: 'template' as const, template: step.prompt } }
+        : {}),
+    };
+  }
+  return step.input;
 }
 
 /**
@@ -194,6 +251,9 @@ export function referencedRoots(step: StepShape): string[] {
   }
   const retrieved = step.kind === 'generate' ? step.context : undefined;
   if (retrieved !== undefined) add(retrieved);
+  for (const child of childrenOf(step)) {
+    for (const name of referencedRoots(child)) add(name);
+  }
   return roots.sort(byName);
 }
 
@@ -253,6 +313,7 @@ interface StepImports {
   readonly json: Set<string>;
   readonly gateway: Set<string>;
   readonly guardrails: Set<string>;
+  readonly control: Set<string>;
 }
 
 /**
@@ -432,12 +493,19 @@ function emitGenerateStep(
   context: ExpressionContext,
   imports: StepImports,
   request: string,
+  bodyName?: string,
 ): string {
   const prompt = require(step.kind === 'generate'
     ? promptOf(ir, step.prompt)
     : undefined, 'a prompt for a generate step');
   const alias = step.kind === 'generate' ? step.model : '';
+  /* A `reduce` synthesizes a generate step of its own, which is not one of the spec's
+   * steps and so has no entry in the composite name map; its function name is handed in.
+   * The binding it writes is still the one its `as` names: two reduce composites in one
+   * pipeline would otherwise collide on the module-level definition, but the runtime
+   * collects a fixed key per item, so the binding cannot be renamed without breaking it. */
   const key = stepFunctionName(step);
+  const fn = bodyName ?? key;
   // The validator refuses a structured output whose schema is not a declared struct,
   // because the runtime's structured path parses into a Pydantic model.
   const schema = prompt.output.kind === 'structured' ? prompt.output.schema : undefined;
@@ -452,7 +520,7 @@ function emitGenerateStep(
   const hasFallbacks = (ir.models.find((model) => model.id === alias)?.fallbacks ?? []).length > 0;
   if (hasFallbacks) imports.gateway.add('FALLBACKS');
   const outputCheck = guardrailCheck(ir, 'output', imports, '_response.text');
-  const lines = [`async def ${key}(ctx: PipelineContext) -> PipelineContext:`];
+  const lines = [`async def ${fn}(ctx: PipelineContext) -> PipelineContext:`];
   lines.push(
     pythonDoc(
       `Run prompt \`${prompt.id}\` v${promptVersion(prompt.version)} on model \`${alias}\`.`,
@@ -505,11 +573,15 @@ function emitToolStep(
   context: ExpressionContext,
   imports: StepImports,
   request: string,
+  bodyName?: string,
 ): string {
   const tool = require(step.kind === 'tool'
     ? toolOf(ir, step.tool)
     : undefined, 'a tool for a tool step');
   const key = stepFunctionName(step);
+  /* A nested step takes the position-qualified name the composite map assigned
+   * it; the binding it writes stays the one its `as` names. */
+  const fn = bodyName ?? key;
   const inner = INDENT + INDENT;
   const arguments_ = sortedPairs(
     Object.entries(stepInputs(step)).map(([name, value]) => [
@@ -526,7 +598,7 @@ function emitToolStep(
   imports.runtime.add('PipelineContext');
   imports.runtime.add('Pipeline');
   imports.runtime.add('ToolCall');
-  const lines = [`async def ${key}(ctx: PipelineContext) -> PipelineContext:`];
+  const lines = [`async def ${fn}(ctx: PipelineContext) -> PipelineContext:`];
   lines.push(pythonDoc(`Call tool \`${tool.id}\` and bind what it returns.`, INDENT));
   lines.push(...localLines(step, context, imports, request).map((line) => `${INDENT}${line}`));
   lines.push('');
@@ -589,6 +661,7 @@ function emitRetrieveStep(
   context: ExpressionContext,
   imports: StepImports,
   request: string,
+  bodyName?: string,
 ): string {
   const retrieverId = require(step.kind === 'retrieve'
     ? step.retriever
@@ -597,6 +670,9 @@ function emitRetrieveStep(
     (entry) => entry.id === retrieverId,
   ), `the '${retrieverId}' retriever a retrieve step names`);
   const key = stepFunctionName(step);
+  /* A nested step takes the position-qualified name the composite map assigned
+   * it; the binding it writes stays the one its `as` names. */
+  const fn = bodyName ?? key;
   // The query is interpolated per request, so it is rendered as the f-string the
   // runtime's `PipelineContext.require` can fill in; the validator has already checked
   // that every placeholder names a value the step body holds.
@@ -608,7 +684,7 @@ function emitRetrieveStep(
 
   imports.runtime.add('PipelineContext');
   imports.runtime.add('Pipeline');
-  const lines = [`async def ${key}(ctx: PipelineContext) -> PipelineContext:`];
+  const lines = [`async def ${fn}(ctx: PipelineContext) -> PipelineContext:`];
   lines.push(
     pythonDoc(`Search the \`${retriever.id}\` index and bind the cited passages.`, INDENT),
   );
@@ -624,6 +700,242 @@ function emitRetrieveStep(
   );
   lines.push(`${INDENT}return ctx.with_values(${key}=${key})`);
   return lines.join('\n');
+}
+
+/**
+ * The Python function name of every step a composite nests, plus every composite step.
+ *
+ * A `branch` and a `parallel` bind no name, so `stepFunctionName` has nothing to call
+ * them after, and `Pipeline.of` refuses two steps with one name -- a pipeline holding two
+ * branches would collide on the second. A nested step *does* bind a name, but two arms of
+ * one branch may bind the same one (the validator accepts arms with identical key sets),
+ * and Python's module scope is flat, so binding names alone would emit two `def escalation`
+ * where the second shadows the first and both arms run it. Every nested step therefore
+ * takes a position-qualified name, `<composite>_<arm>_<index>_<binding>`.
+ *
+ * The leading underscore is a spelling the validator already refuses for a user binding,
+ * so these names cannot shadow one, and numbering them by position keeps the output a
+ * function of the IR alone.
+ */
+export function compositeNames(pipeline: PipelineShape): Map<StepShape, string> {
+  const names = new Map<StepShape, string>();
+  let composites = 0;
+  const unique = (step: StepShape, name: string): string => {
+    names.set(step, name);
+    return name;
+  };
+  const nested = (steps: readonly StepShape[], prefix: string): void => {
+    steps.forEach((step, index) => {
+      const own = unique(
+        step,
+        `${prefix}_${index + 1}_${contextKey(bindingOf(step) ?? step.kind)}`,
+      );
+      if (isCompositeStep(step)) arms(step, own);
+    });
+  };
+  const arms = (step: StepShape, prefix: string): void => {
+    if (step.kind === 'branch') {
+      nested(step.then, `${prefix}_then`);
+      nested(step.else, `${prefix}_else`);
+    } else if (step.kind === 'parallel') {
+      for (const [index, arm] of step.branches.entries()) nested(arm, `${prefix}_arm_${index + 1}`);
+    } else if (step.kind === 'map') {
+      nested([step.step], `${prefix}_body`);
+    }
+  };
+  for (const step of pipeline.steps ?? []) {
+    if (!isCompositeStep(step)) continue;
+    composites += 1;
+    arms(step, unique(step, `_${step.kind}_${composites}`));
+  }
+  return names;
+}
+
+/** What emitting one pipeline module needs to know that is not per-step. */
+interface PipelineEmitter {
+  readonly ir: IR;
+  readonly names: ReadonlyMap<StepShape, string>;
+  readonly scopes: ReadonlyMap<StepShape, StepBinding[]>;
+  readonly types: Map<string, TypeShape>;
+  readonly eventFields: ReadonlyMap<string, TypeRef>;
+  readonly imports: StepImports;
+  readonly request: string;
+}
+
+function contextOf(emitter: PipelineEmitter, step: StepShape): ExpressionContext {
+  return {
+    types: emitter.types,
+    scope: emitter.scopes.get(step) ?? [],
+    eventFields: emitter.eventFields,
+  };
+}
+
+/** The pipeline a composite arm runs, as the callable the runtime is handed. */
+function pipelineCall(
+  steps: readonly StepShape[],
+  names: ReadonlyMap<StepShape, string>,
+  indent: string,
+): string {
+  return call(
+    'Pipeline.of',
+    steps.map((step) => stepFunctionName(step, names)),
+    indent,
+  );
+}
+
+/** A list literal of expressions, wrapped when it does not fit the line budget. */
+function expressionList(items: readonly string[], indent: string, prefixLength = 0): string {
+  if (items.length === 0) return '[]';
+  const oneLine = `[${items.join(', ')}]`;
+  // `prefixLength` is the keyword the list is assigned to (`branches=`), which sits in
+  // front of the bracket on the one-line form and is absent once the list moves to lines
+  // of its own. Measuring without it lets a list that is short against the indent alone
+  // overflow the line it is actually written on.
+  const inline = !items.some((item) => item.includes('\n'));
+  if (inline && indent.length + prefixLength + oneLine.length <= MAX_LINE) return oneLine;
+  const deeper = indent + INDENT;
+  return `[\n${items.map((item) => `${deeper}${item},`).join('\n')}\n${indent}]`;
+}
+
+/**
+ * The values a context starts with, before a pipeline's first step runs.
+ *
+ * `deps` and `event` are what a flat pipeline has always needed. A composite needs three
+ * more, and only a composite: the principal a `branch` is evaluated against, the one
+ * limiter a fan-out draws from, and the nesting depth it is at. Seeding them only when
+ * this pipeline actually has one keeps every other generated route byte-identical to what
+ * it was before this layer -- and keeps a principal out of an app that never branches,
+ * where its presence would suggest an authorization decision the app does not make.
+ *
+ * `ANONYMOUS_PRINCIPAL` is *unauthenticated* on purpose. `Principal()` defaults
+ * `authenticated` to true, so seeding a bare `Principal()` would make every
+ * `isAuthenticated()` predicate vacuously true and send every caller down `then`. A
+ * generated app has no auth layer of its own, so the closed answer is the honest one.
+ */
+function contextSeed(pipeline: PipelineShape, deps: string): [string, string][] {
+  const values: [string, string][] = [
+    [DEPS_BINDING, deps],
+    [EVENT_BINDING, EVENT_BINDING],
+  ];
+  if (!hasComposite([pipeline])) return values;
+  if (hasBranch([pipeline])) values.push([PRINCIPAL_KEY, ANONYMOUS_PRINCIPAL]);
+  if (hasFanOut([pipeline])) values.push([LIMITER_KEY, `${deps}.limiter`]);
+  values.push([DEPTH_KEY, '0']);
+  return values;
+}
+
+/**
+ * One composite step, as the callable that hands the runtime its arms.
+ *
+ * The factory call is assigned and then awaited rather than written as
+ * `await branch(...)(ctx)`: a call of a call is the one place `ruff format` disagrees
+ * with a hand-laid-out argument list, and the generated tree is compared byte for byte.
+ *
+ * The body opens no locals. Every arm is its own step function, so it opens the locals it
+ * needs; the enclosing body only passes the context through. The roots an arm reaches still
+ * have to reach the request model, and `requestPlan` walking the arms is what does that --
+ * a composite reading `event.subject` would otherwise reject a body the model had never
+ * heard of. The `referencedRoots` recursion is not the mechanism: it is total over all
+ * eight kinds, but has no live caller for a composite wrapper, which opens no locals.
+ */
+function emitCompositeSteps(emitter: PipelineEmitter, step: StepShape): string[] {
+  const { ir, names, imports } = emitter;
+  const name = require(names.get(step), 'a function name for a composite step');
+  const inner = INDENT + INDENT;
+  imports.runtime.add('Pipeline');
+  imports.runtime.add('PipelineContext');
+  imports.control.add('MAX_STEP_DEPTH');
+  const common = ['max_depth=MAX_STEP_DEPTH', `name=${pythonString(name)}`];
+  let doc: string;
+  let callee: string;
+  let args: string[];
+  const extra: string[] = [];
+
+  if (step.kind === 'branch') {
+    imports.runtime.add('branch');
+    doc =
+      "Run the arm the caller's principal selects. `when` is evaluated against the " +
+      'principal and nothing else, so the predicate answers who is asking rather than ' +
+      'what an earlier step produced.';
+    callee = 'branch';
+    args = [
+      `when=${pythonValue(step.when, inner)}`,
+      `then=${pipelineCall(step.then, names, inner)}`,
+      ...(step.else.length > 0 ? [`otherwise=${pipelineCall(step.else, names, inner)}`] : []),
+      ...common,
+    ];
+  } else if (step.kind === 'parallel') {
+    imports.runtime.add('parallel');
+    doc =
+      `Run all ${step.branches.length} arms concurrently under the deployment's single ` +
+      'concurrency cap, then merge what they bound in branch order.';
+    callee = 'parallel';
+    args = [
+      // `+ 1` is the separator `call` appends after every argument when it explodes the
+      // call, which lands on this line too: without it a list measured at exactly the
+      // width is emitted one column over.
+      `branches=${expressionList(
+        step.branches.map((arm) => pipelineCall(arm, names, inner + INDENT)),
+        inner,
+        'branches='.length + 1,
+      )}`,
+      ...common,
+    ];
+  } else if (step.kind === 'map') {
+    imports.runtime.add('map_step');
+    doc =
+      `Run the body once per item of \`${step.over}\` under the concurrency cap and bind ` +
+      `the results, in the item's own order, as \`${step.as}\`.`;
+    callee = 'map_step';
+    args = [
+      `over=${pythonString(contextKey(step.over))}`,
+      `as_=${pythonString(contextKey(step.as))}`,
+      `step=${pipelineCall([step.step], names, inner)}`,
+      ...common,
+    ];
+  } else if (step.kind === 'reduce') {
+    imports.runtime.add('reduce_step');
+    const prompt = require(promptOf(
+      ir,
+      step.prompt,
+    ), `the '${step.prompt}' prompt a reduce step names`);
+    doc =
+      `Render prompt \`${prompt.id}\` once per item of \`${step.over}\` under the ` +
+      `concurrency cap and bind the replies, in the item's own order, as \`${step.as}\`.`;
+    // A `reduce` has no step of its own to run, so it gets one: a generate step whose only
+    // input is the iteration item. Composing it from the same emitter the spec's own
+    // generate steps use is what keeps the guardrails, the structured-output path and the
+    // request settings identical between the two -- and `reduced` is the binding the
+    // runtime's `reduce` collects, in place of a name the body would have chosen.
+    const variable = require(prompt
+      .variables[0], `the single variable of the '${prompt.id}' prompt a reduce step names`).name;
+    const body: StepShape = {
+      kind: 'generate',
+      prompt: prompt.id,
+      model: step.model,
+      as: REDUCED_KEY,
+      input: { [variable]: { kind: 'reference', path: [ITERATION_ITEM] } },
+    };
+    const bodyName = `${name}_item`;
+    extra.push(
+      emitGenerateStep(ir, body, contextOf(emitter, step), imports, emitter.request, bodyName),
+    );
+    callee = 'reduce_step';
+    args = [
+      `over=${pythonString(contextKey(step.over))}`,
+      `as_=${pythonString(contextKey(step.as))}`,
+      `step=Pipeline.of(${bodyName})`,
+      ...common,
+    ];
+  } else {
+    return [];
+  }
+
+  const lines = [`async def ${name}(ctx: PipelineContext) -> PipelineContext:`];
+  lines.push(pythonDoc(doc, INDENT));
+  lines.push(callStatement('_step = ', callee, args, INDENT));
+  lines.push(`${INDENT}return await _step(ctx)`);
+  return [lines.join('\n'), ...extra];
 }
 
 /**
@@ -686,17 +998,14 @@ function emitStreamRequest(
       INDENT,
     ),
   );
-  lines.push(
-    `${INDENT}ctx = PipelineContext(values=${mapping(
-      [
-        [DEPS_BINDING, DEPS_BINDING],
-        [EVENT_BINDING, EVENT_BINDING],
-      ],
-      INDENT + INDENT,
-    )})`,
-  );
+  lines.push(contextCall(pipeline, DEPS_BINDING, INDENT, 'ctx = '));
+  if (hasComposite([pipeline])) {
+    imports.control.add('MAX_STEP_DEPTH');
+    if (hasBranch([pipeline])) imports.control.add(ANONYMOUS_PRINCIPAL);
+  }
+  const names = compositeNames(pipeline);
   for (const entry of leading) {
-    lines.push(`${INDENT}ctx = await ${stepFunctionName(entry)}(ctx)`);
+    lines.push(`${INDENT}ctx = await ${stepFunctionName(entry, names)}(ctx)`);
   }
   // No locals, and so no `localLines`. The step functions of this module are named
   // after their bindings, so a local for binding `handbook` would shadow the function
@@ -739,34 +1048,70 @@ function emitStreamRequest(
   return lines.join('\n');
 }
 
-export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
-  const types = typeTable(ir);
-  const scopes = scopesOf(pipeline, ir);
-  const request = requestModelName(pipeline.id);
-  const eventFields = eventFieldsOf(ir, pipeline);
-  const imports: StepImports = {
-    runtime: new Set<string>(),
-    schemas: new Set<string>(),
-    typing: new Set<string>(),
-    json: new Set<string>(),
-    gateway: new Set<string>(),
-    guardrails: new Set<string>(),
+/** What one pipeline module's steps are emitted against, gathered once. */
+function emitterFor(ir: IR, pipeline: PipelineShape): PipelineEmitter {
+  return {
+    ir,
+    names: compositeNames(pipeline),
+    scopes: scopeMap(pipeline, ir),
+    types: typeTable(ir),
+    eventFields: eventFieldsOf(ir, pipeline),
+    imports: {
+      runtime: new Set<string>(),
+      schemas: new Set<string>(),
+      typing: new Set<string>(),
+      json: new Set<string>(),
+      gateway: new Set<string>(),
+      guardrails: new Set<string>(),
+      control: new Set<string>(),
+    },
+    request: requestModelName(pipeline.id),
   };
+}
+
+export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
+  const emitter = emitterFor(ir, pipeline);
+  const { scopes, imports, request, names } = emitter;
   const blocks: string[] = [];
-  (pipeline.steps ?? []).forEach((step, index) => {
-    if (step.kind === 'emit') return;
-    const context: ExpressionContext = { types, scope: scopes[index] ?? [], eventFields };
-    blocks.push(
-      step.kind === 'generate'
-        ? emitGenerateStep(ir, step, context, imports, request)
-        : step.kind === 'retrieve'
-          ? emitRetrieveStep(ir, step, context, imports, request)
-          : emitToolStep(ir, step, context, imports, request),
-    );
-  });
+
+  /* Composites nest: an arm is a step list that may itself hold a composite, down to the
+   * depth the spec gate enforces. Every step in the tree becomes its own function, so the
+   * walk is recursive and children are emitted before the composite that names them --
+   * a module that referenced an arm it never defined would fail at import time. */
+  const emitSteps = (steps: readonly StepShape[]): void => {
+    for (const step of steps) {
+      if (step.kind === 'emit') continue;
+      if (isCompositeStep(step)) {
+        emitSteps(childrenOf(step));
+        blocks.push(...emitCompositeSteps(emitter, step));
+        continue;
+      }
+      const context: ExpressionContext = {
+        types: emitter.types,
+        scope: scopes.get(step) ?? [],
+        eventFields: emitter.eventFields,
+      };
+      // A nested step is defined under its position-qualified name; a top-level one keeps
+      // its binding name, which is what the name map leaves unmapped.
+      const bodyName = names.get(step);
+      blocks.push(
+        step.kind === 'generate'
+          ? emitGenerateStep(ir, step, context, imports, request, bodyName)
+          : step.kind === 'retrieve'
+            ? emitRetrieveStep(ir, step, context, imports, request, bodyName)
+            : emitToolStep(ir, step, context, imports, request, bodyName),
+      );
+    }
+  };
+  emitSteps(pipeline.steps ?? []);
   const streamedIndex = streams(ir, pipeline) ? streamedStepIndex(pipeline) : undefined;
   if (streamedIndex !== undefined) {
-    const context: ExpressionContext = { types, scope: scopes[streamedIndex] ?? [], eventFields };
+    const entry = (pipeline.steps ?? [])[streamedIndex];
+    const context: ExpressionContext = {
+      types: emitter.types,
+      scope: (entry === undefined ? undefined : scopes.get(entry)) ?? [],
+      eventFields: emitter.eventFields,
+    };
     blocks.push(emitStreamRequest(ir, pipeline, streamedIndex, context, imports, request));
   }
 
@@ -774,7 +1119,7 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
   const factory = [
     `def ${factoryName(pipeline.id)}() -> Pipeline:`,
     pythonDoc(`The \`${pipeline.id}\` pipeline, in the order the spec declares it.`, INDENT),
-    `${INDENT}return Pipeline.of(${steps.map((step) => stepFunctionName(step)).join(', ')})`,
+    `${INDENT}return Pipeline.of(${steps.map((step) => stepFunctionName(step, names)).join(', ')})`,
   ].join('\n');
 
   const stdlib: string[] = [];
@@ -794,6 +1139,9 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
         : []),
       ...(imports.guardrails.size > 0
         ? [importFrom('..guardrails', [...imports.guardrails].sort(byName))]
+        : []),
+      ...(imports.control.size > 0
+        ? [importFrom('..control', [...imports.control].sort(byName))]
         : []),
     ],
   ]);
@@ -874,7 +1222,7 @@ function responseValue(source: ResponseSource): string {
 
 export function emitRoute(ir: IR, pipeline: PipelineShape): EmittedFile {
   const types = typeTable(ir);
-  const scopes = scopesOf(pipeline, ir);
+  const scopes = scopeMap(pipeline, ir);
   const steps = pipeline.steps ?? [];
   const emitIndex = steps.findIndex((step) => step.kind === 'emit');
   const emitStep = steps[emitIndex];
@@ -882,7 +1230,7 @@ export function emitRoute(ir: IR, pipeline: PipelineShape): EmittedFile {
     ? emitStep.event
     : undefined, `an emit step for pipeline '${pipeline.id}'`);
   const plans = responsePlan(
-    scopes[emitIndex] ?? [],
+    (emitStep === undefined ? undefined : scopes.get(emitStep)) ?? [],
     eventType,
     types,
     `pipelines.${pipeline.id}.steps[${emitIndex}]`,
@@ -899,15 +1247,7 @@ export function emitRoute(ir: IR, pipeline: PipelineShape): EmittedFile {
   const run = callStatement(
     'context = await ',
     `${factoryName(pipeline.id)}().run`,
-    [
-      mapping(
-        [
-          [DEPS_BINDING, DEPS_BINDING],
-          [EVENT_BINDING, EVENT_BINDING],
-        ],
-        INDENT + INDENT + INDENT,
-      ),
-    ],
+    [mapping(contextSeed(pipeline, DEPS_BINDING), INDENT + INDENT + INDENT)],
     INDENT + INDENT,
   );
   const servesStreams = streams(ir, pipeline);
@@ -1008,6 +1348,7 @@ export function emitRoute(ir: IR, pipeline: PipelineShape): EmittedFile {
           ]),
         ],
         [
+          ...(hasBranch([pipeline]) ? [importFrom('..control', [ANONYMOUS_PRINCIPAL])] : []),
           importFrom('..deps', ['Deps', 'get_deps']),
           ...(guarded ? [importFrom('..guardrails', ['guardrail_block'])] : []),
           ...(servesStreams ? [importFrom('..sse', ['EVENT_STREAM', 'wants_event_stream'])] : []),

@@ -20,6 +20,32 @@ import { planPyFastApi } from './plan.js';
 
 /** Where the generated tree puts each artifact, so tests and the drift check agree. */
 export { businessToolPath, CONTRACTS_INIT_PATH, contractsPath } from './emit/contracts.js';
+/**
+ * The composite bounds module, and the walks over step shapes that decide what it holds.
+ *
+ * Exported rather than kept internal because the bound is emitted, not computed at run
+ * time: `control.test.ts` compares what was written into `generated/control.py` against
+ * the spec gate's own constant and against the runtime's, and that comparison is the only
+ * mechanism that can hold a number steady across a language boundary.
+ */
+export {
+  ANONYMOUS_PRINCIPAL,
+  CONCURRENCY_LIMIT,
+  CONTROL_PATH,
+  childrenOf,
+  concurrencyCap,
+  DEPTH_KEY,
+  everyStep,
+  hasBranch,
+  hasComposite,
+  hasFanOut,
+  INDEX_KEY,
+  ITEM_KEY,
+  LIMITER_KEY,
+  PRINCIPAL_KEY,
+  REDUCED_KEY,
+  RESERVED_KEYS,
+} from './emit/control.js';
 export { DEPS_PATH } from './emit/deps.js';
 export {
   baselineRelativePath,

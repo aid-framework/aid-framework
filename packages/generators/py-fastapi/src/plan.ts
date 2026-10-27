@@ -18,6 +18,7 @@ import type { IR } from '@aid/ir';
 
 import { emitAgents, hasAgents } from './emit/agents.js';
 import { emitBusinessToolSeed, emitContractsInit, emitToolContract } from './emit/contracts.js';
+import { emitControl, hasComposite } from './emit/control.js';
 import { emitDeps } from './emit/deps.js';
 import { emitEval, emitEvalsInit } from './emit/evals.js';
 import { emitGatewayInit, emitGatewayModels } from './emit/gateway.js';
@@ -63,6 +64,7 @@ export function filesFor(ir: IR): GeneratedFile[] {
     emitSchemas(ir),
     emitObservability(ir),
     emitDeps(ir),
+    ...(hasComposite(ir.pipelines) ? [emitControl(ir)] : []),
     emitGatewayModels(ir),
     emitGatewayInit(),
     ...(hasAgents(ir) ? [emitAgents(ir)] : []),

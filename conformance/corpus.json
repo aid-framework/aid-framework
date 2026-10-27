@@ -1824,6 +1824,284 @@
         "otherScopeValues": [],
         "fileWritten": true
       }
+    },
+    {
+      "id": "steps-branch-takes-then-when-the-principal-satisfies-the-policy",
+      "op": "steps.branch",
+      "description": "A branch whose principal satisfies its policy runs the then arm and binds what that arm bound.",
+      "runtimes": ["python"],
+      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
+      "input": {
+        "when": {
+          "kind": "call",
+          "name": "hasRole",
+          "args": [
+            {
+              "kind": "string",
+              "value": "billing"
+            }
+          ]
+        },
+        "principal": {
+          "roles": ["billing"],
+          "authenticated": true
+        },
+        "thenBinds": {
+          "route": "billing"
+        },
+        "elseBinds": {
+          "route": "general"
+        }
+      },
+      "expect": {
+        "ran": ["then"],
+        "bound": {
+          "route": "billing"
+        }
+      }
+    },
+    {
+      "id": "steps-branch-takes-otherwise-when-the-principal-does-not",
+      "op": "steps.branch",
+      "description": "The same branch decides for a principal without the role: the alternative runs and the then arm never does.",
+      "runtimes": ["python"],
+      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
+      "input": {
+        "when": {
+          "kind": "call",
+          "name": "hasRole",
+          "args": [
+            {
+              "kind": "string",
+              "value": "billing"
+            }
+          ]
+        },
+        "principal": {
+          "roles": [],
+          "authenticated": true
+        },
+        "thenBinds": {
+          "route": "billing"
+        },
+        "elseBinds": {
+          "route": "general"
+        }
+      },
+      "expect": {
+        "ran": ["otherwise"],
+        "bound": {
+          "route": "general"
+        }
+      }
+    },
+    {
+      "id": "steps-branch-with-no-alternative-binds-nothing",
+      "op": "steps.branch",
+      "description": "A branch with no alternative runs neither arm when the policy fails, and binds nothing rather than an empty or stale value.",
+      "runtimes": ["python"],
+      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
+      "input": {
+        "when": {
+          "kind": "call",
+          "name": "hasScope",
+          "args": [
+            {
+              "kind": "string",
+              "value": "tickets:write"
+            }
+          ]
+        },
+        "principal": {
+          "scopes": [],
+          "authenticated": true
+        },
+        "thenBinds": {
+          "route": "write"
+        }
+      },
+      "expect": {
+        "ran": [],
+        "bound": {}
+      }
+    },
+    {
+      "id": "steps-parallel-holds-the-cap-while-running-every-arm",
+      "op": "steps.parallel",
+      "description": "Three arms under a cap of two reach a ceiling of exactly two: the cap bounds the fan-out rather than merely being available to it.",
+      "runtimes": ["python"],
+      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
+      "input": {
+        "limit": 2,
+        "arms": [
+          {
+            "bind": "a"
+          },
+          {
+            "bind": "b",
+            "after": [0]
+          },
+          {
+            "bind": "c",
+            "after": [1]
+          }
+        ]
+      },
+      "expect": {
+        "highWater": 2,
+        "finished": ["a", "b", "c"],
+        "order": ["a", "b", "c"]
+      }
+    },
+    {
+      "id": "steps-parallel-keeps-input-order-when-arms-finish-in-reverse",
+      "op": "steps.parallel",
+      "description": "The declared arm order is the binding order even when every arm finishes before the one before it.",
+      "runtimes": ["python"],
+      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
+      "input": {
+        "limit": 3,
+        "arms": [
+          {
+            "bind": "a",
+            "after": [1]
+          },
+          {
+            "bind": "b",
+            "after": [2]
+          },
+          {
+            "bind": "c"
+          }
+        ]
+      },
+      "expect": {
+        "highWater": 3,
+        "finished": ["c", "b", "a"],
+        "order": ["a", "b", "c"]
+      }
+    },
+    {
+      "id": "steps-parallel-with-no-arms-binds-nothing",
+      "op": "steps.parallel",
+      "description": "A parallel with no arms runs nothing, binds nothing, and never takes a slot.",
+      "runtimes": ["python"],
+      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
+      "input": {
+        "limit": 1,
+        "arms": []
+      },
+      "expect": {
+        "highWater": 0,
+        "finished": [],
+        "order": []
+      }
+    },
+    {
+      "id": "steps-map-runs-the-body-once-per-item-in-input-order",
+      "op": "steps.map",
+      "description": "A map runs its body once per item and binds the per-item results in input order, each iteration seeing its own item and position.",
+      "runtimes": ["python"],
+      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
+      "input": {
+        "over": "items",
+        "as": "results",
+        "limit": 2,
+        "values": {
+          "items": ["alpha", "beta", "gamma"]
+        }
+      },
+      "expect": {
+        "bound": {
+          "results": [
+            {
+              "at": 0,
+              "value": "alpha"
+            },
+            {
+              "at": 1,
+              "value": "beta"
+            },
+            {
+              "at": 2,
+              "value": "gamma"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "steps-map-over-an-empty-list-binds-an-empty-list",
+      "op": "steps.map",
+      "description": "A map over an empty list runs no iteration and binds the empty list rather than binding nothing.",
+      "runtimes": ["python"],
+      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
+      "input": {
+        "over": "items",
+        "as": "results",
+        "limit": 1,
+        "values": {
+          "items": []
+        }
+      },
+      "expect": {
+        "bound": {
+          "results": []
+        }
+      }
+    },
+    {
+      "id": "steps-reduce-collects-per-item-results-in-input-order",
+      "op": "steps.reduce",
+      "description": "A reduce binds its collected results in input order even though the last item is the first to finish.",
+      "runtimes": ["python"],
+      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
+      "input": {
+        "over": "items",
+        "as": "collected",
+        "limit": 3,
+        "values": {
+          "items": ["alpha", "beta", "gamma"]
+        }
+      },
+      "expect": {
+        "bound": {
+          "collected": ["alpha", "beta", "gamma"]
+        },
+        "finished": ["gamma", "beta", "alpha"]
+      }
+    },
+    {
+      "id": "steps-depth-allows-nesting-up-to-the-bound",
+      "op": "steps.depth",
+      "description": "A nest of composites exactly at the bound runs, and the leaf observes the depth it ran at.",
+      "runtimes": ["python"],
+      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
+      "input": {
+        "levels": 4
+      },
+      "expect": {
+        "refused": false,
+        "maxDepth": 4,
+        "depth": 4,
+        "reason": null
+      }
+    },
+    {
+      "id": "steps-depth-refuses-nesting-past-the-bound",
+      "op": "steps.depth",
+      "description": "One level past the bound is refused rather than run, and the refusal names the bound.",
+      "runtimes": ["python"],
+      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
+      "input": {
+        "levels": 5
+      },
+      "expect": {
+        "refused": true,
+        "maxDepth": 4,
+        "depth": null,
+        "reason": "max-depth"
+      }
     }
   ]
 }

@@ -332,12 +332,29 @@ export function argumentString(keyword: string, text: string, indent = ''): stri
  * parenthesised piece rather than overflowing the line it shares with the prefix.
  */
 function wrappedString(prefix: string, text: string, indent: string): string {
+  // A newline in the text is escaped into `\n`, so it does not prevent the whole thing
+  // from being one literal. Checking for the newline instead of the rendered width is
+  // what made a template that fits a single line come out as `"a\n" "\n" "b\n"`, which
+  // `ruff format` then rejoins: a formatter never splits a literal, so a whole escaped
+  // text that fits must be emitted as one.
   const oneLine = `${indent}${prefix}${pythonString(text)}`;
-  if (!text.includes('\n') && oneLine.length <= MAX_LINE) return oneLine;
+  if (oneLine.length <= MAX_LINE) return oneLine;
   const inner = `${indent}${INDENT}`;
   const budget = MAX_LINE - inner.length - 3;
   const pieces: string[] = [];
   for (const line of splitLines(text)) pieces.push(...splitEscaped(line, budget));
-  const rendered = pieces.map((piece) => `${inner}${pythonString(piece)}`);
+  const literals = pieces.map((piece) => pythonString(piece));
+  // A formatter re-joins an implicit concatenation wherever it fits -- first beside the
+  // prefix, then on a continuation line -- and leaves one that fits in neither exactly as
+  // it found it. Collapsing by any other rule passes this check and is then rewritten back,
+  // which is why the width is measured against both columns and not just the inner one.
+  const beside = literals.join(' ');
+  const onPrefix = `${indent}${prefix}(${beside})`;
+  if (literals.length > 1 && onPrefix.length <= MAX_LINE) return onPrefix;
+  const joined = `${inner}${beside}`;
+  if (literals.length > 1 && joined.length <= MAX_LINE) {
+    return `${indent}${prefix}(\n${joined}\n${indent})`;
+  }
+  const rendered = literals.map((literal) => `${inner}${literal}`);
   return `${indent}${prefix}(\n${rendered.join('\n')}\n${indent})`;
 }

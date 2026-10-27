@@ -70,7 +70,23 @@ describe('spec version', () => {
       (DEFERRED_STEP_KINDS as readonly string[]).includes(kind),
     );
     expect(overlap).toEqual([]);
-    expect([...SUPPORTED_STEP_KINDS].sort()).toEqual(['emit', 'generate', 'retrieve', 'tool']);
+    expect([...SUPPORTED_STEP_KINDS].sort()).toEqual([
+      'branch',
+      'emit',
+      'generate',
+      'map',
+      'parallel',
+      'reduce',
+      'retrieve',
+      'tool',
+    ]);
+    expect([...DEFERRED_STEP_KINDS].sort()).toEqual([
+      'agent',
+      'assert',
+      'guard',
+      'human',
+      'rerank',
+    ]);
   });
 });
 
