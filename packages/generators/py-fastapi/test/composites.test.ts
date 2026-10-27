@@ -374,7 +374,9 @@ describe('the shipped example’s parallel', () => {
     expect(body).toContain('Pipeline.of(_parallel_1_arm_2_1_handbook_note)');
 
     // Both arms are reachable from the pipeline the route runs, in declared order.
-    expect(answer).toContain('Pipeline.of(customer, handbook, _parallel_1, answer)');
+    expect(answer).toContain(
+      'Pipeline.of(_guard_1, customer, handbook, _parallel_1, triage, ranked, _guard_2, answer)',
+    );
 
     // And each arm reads a binding that existed before it: the tool result and the
     // retrieval result. An arm that read only event fields would prove nothing about the

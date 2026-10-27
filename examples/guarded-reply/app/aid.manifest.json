@@ -1,0 +1,164 @@
+{
+  "files": [
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "business",
+      "path": "app/business/__init__.py",
+      "sha256": "124009a43866fc1e9817f52c32256c89e59b9b802558242129b189f70f95db76"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "business",
+      "path": "app/business/prompts/__init__.py",
+      "sha256": "94a17e1a6d3c6aa7d9ddb7f84dcacc22474dab672df7d6026ad3151fb9049b50"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "business",
+      "path": "app/business/tools/__init__.py",
+      "sha256": "065cd78a516a7d8263981c96ad711b3efb22e4acdbbf3bd8b965ba8dc7fd9bd6"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/__init__.py",
+      "sha256": "a19f91ae008ef04f92378757bef75a4a3b1b5723ff0574c433172b09ff9bcb64"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/agents.py",
+      "sha256": "60c58838a0f42463b14a987b16ce88c2fd656619890f3cae539e3d93a2aecae5"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/contracts/__init__.py",
+      "sha256": "f3f980f9434c99d472da20e51b0d481d539cf0107429eb75fcf1f301e674c792"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/deps.py",
+      "sha256": "a68a19b6d3ddea86b3fbd240c9268c6e822c78697c6aabd5ce95f89d593fbee3"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/evals/__init__.py",
+      "sha256": "488575716e04c3b2ef6df3b864465588d2c617375db0a71f4fb276ecd61759e8"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/gateway/__init__.py",
+      "sha256": "97df7e6e9549291524821f7f5d197f6cdaee9475af6a848d683c7ed4ae58988d"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/gateway/models.py",
+      "sha256": "ec7a42001c6b067316ac9ffaa3349e1e31c41a467d85ce20f20fd8b36a9b3040"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/guardrails.py",
+      "sha256": "1bc718e537a14e121b50fc88fddabfc7a060d76e2f26d3e61e468a8c884dd334"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/observability.py",
+      "sha256": "2183d881424e203058c8d246367301a4843f719c533aed5237a4d189b48238fe"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/pipelines/__init__.py",
+      "sha256": "a10b9252f1950ba8ba36a6736f2b34599b31439df3e032915d5636f654d958ce"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/pipelines/answer_message.py",
+      "sha256": "6ee5050fba29859bab404042017e170e49ad986e6eb0fd9e9654845eab9a3234"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/prompts/__init__.py",
+      "sha256": "f019c3532c4338131dd4109ac712b1af836929568b8a61cca54e2f1dd6ff0738"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/prompts/reply_to_message.py",
+      "sha256": "2aa69b035f1d0cec6eec3a0d9b46385bd592538ef9ee1bee28e5f9ebdc7e0904"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/prompts/triage_message.py",
+      "sha256": "9d8db7171ce77e5db991b74b1c0924c64645c9a86aa9d91ff4a63899b07aadc8"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/requests.py",
+      "sha256": "998c7ba84bd8927e7e97a8ad84a9e3b579d3d77101b3d54bfad9c417f56096b1"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/routes/__init__.py",
+      "sha256": "67c54fc44d408211601f5c3b1fb9faa884f79dc3f2ac6f35f9e84720fe72a5d7"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/routes/answer_message.py",
+      "sha256": "40050d50dcaba2ee9e35b515da5ecbc751160460b2e06848ab6783b66acff7ae"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/schemas.py",
+      "sha256": "538f21defde041242773ea9411874b7ce80c39b272a8f95c3d680b3a960eced6"
+    },
+    {
+      "generator": "@aid/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/tools/__init__.py",
+      "sha256": "ee0629ed6d1a52f2a10268577477d09011913b490b2a8ee7d06ea64925c71617"
+    }
+  ],
+  "generatedBy": {
+    "generator": "@aid/generator-py-fastapi",
+    "generatorVersion": "0.1.0",
+    "irVersion": "0.1.0"
+  },
+  "manifestVersion": 1
+}

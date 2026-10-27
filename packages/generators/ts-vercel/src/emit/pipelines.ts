@@ -13,16 +13,15 @@
  * emitting it would break `validatePlan` and the next `aid gen`. See the README.
  */
 
-import {
-  type GenerateStep,
-  type IR,
-  isCompositeStep,
-  type PipelineShape,
-  type StepInput,
-  type StepInputValue,
-  type StepShape,
-  type ToolStep,
-  type TypeField,
+import type {
+  GenerateStep,
+  IR,
+  PipelineShape,
+  StepInput,
+  StepInputValue,
+  StepShape,
+  ToolStep,
+  TypeField,
 } from '@aid/ir';
 import { className, literal, memberAccess, propertyKey, toSnakeCase } from '../names.js';
 import { type EmittedFile, generated, paths, pipelinePath, routePath } from './file.js';
@@ -130,8 +129,10 @@ function stepModule(
   // reads that binding directly. The validator refuses composite steps before emission
   // reaches here, so reaching this branch is a generator bug rather than a user error.
   if (step.kind === 'emit') return '';
-  if (isCompositeStep(step)) {
-    throw new Error(`the Next.js emitter has no composite step emitter for ${step.kind} (L6)`);
+  // Every other non-emitted kind — composite or leaf — is refused by the validator
+  // first, so reaching this branch is a generator bug rather than a user error.
+  if (step.kind !== 'tool' && step.kind !== 'retrieve' && step.kind !== 'generate') {
+    throw new Error(`the Next.js emitter has no step emitter for ${step.kind} (L6)`);
   }
   return step.kind === 'tool'
     ? toolStepModule(ir, pipeline, step, index, contextType)

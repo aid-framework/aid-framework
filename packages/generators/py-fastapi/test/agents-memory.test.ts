@@ -652,6 +652,12 @@ describe('the pre-P7b example', () => {
    * already named `embeddings` and `rerank` for an example that uses neither. Widening the
    * declaration therefore rewrites it for every spec, including this one, and no emitter
    * change can avoid that. Every other file in the tier is held to the old bytes.
+   *
+   * The recorded digest of `guardrails.py` was re-baselined once, by L5c, and this is the
+   * only file that layer touched here: a `guard` step runs one named declaration, so that
+   * module's id table went from private `_BY_ID` to public `BY_ID` and its docstring grew a
+   * paragraph saying why. Re-recording is deliberate rather than tolerated -- a second
+   * file moving would still fail, which is what the count below is for.
    */
   const DECLARATION_ONLY = 'app/generated/observability.py';
 

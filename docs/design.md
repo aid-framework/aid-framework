@@ -334,7 +334,6 @@ a generic schema failure:
 | `chunking.strategy: semantic` | needs an embedder-driven splitter, which is ingestion runtime |
 | `refresh.mode: incremental` and any `schedule` | needs change detection and a scheduled ingest loop |
 | rich `filters` expressions | needs a filter IR plus per-store translation |
-| a standalone `{kind: rerank}` **step** | reranking is a retriever option here; a step-level reranker needs its own binding semantics |
 
 `stores.kind` is `memory` or `pgvector`. `memory` is the only kind a required gate may depend on:
 **every gate runs offline**, so `pgvector` is declarable (and carries a required `env:` uri, which is also
@@ -351,6 +350,43 @@ Two shape decisions worth stating explicitly:
   the spec *before* codegen.
 
 Any spec that declares a retriever must carry at least one eval with a `retrieval` metric (§7.4).
+
+#### The wiring steps, as landed (L5c)
+
+`rerank`, `guard` and `agent` are leaves: they compose with `branch`/`parallel`/`map`/`reduce` but never
+open a scope, so `MAX_STEP_DEPTH` does not apply to them. Each is wiring onto a runtime surface that
+already shipped, and each one narrows the design's shape where the shipped interface is narrower:
+
+- **`rerank`** — the design's `input`/`topN`/`as` could not name a query, and `Reranker.rerank` takes
+  one (`rerank(query, items, *, top_n)`). So the step is `{ over, query, model, topN, as }`: `over`
+  names a binding that must hold a `RetrievalResult`, and `query` is a text template. It is narrowed to
+  `RetrievalResult` on purpose — the runtime reorders `RetrievedItem`s and carries their citations, so a
+  step over arbitrary JSON would have no provenance to preserve. `model` names a *reranker alias*, not a
+  chat model, and only `lexical` ships: any other alias is refused **at validation**, so no model can
+  appear to work and then raise at request time.
+- **`guard`** — `{ guardrail, stage, text }` and it binds nothing (`as` is refused). `text` is
+  stage-discriminated: a template at `input`/`output`, and a projection of a retrieval binding at
+  `retrieval`. A step binds `input`/`output`/`retrieval`; `tool-call` is refused because the agent loop
+  owns it and a step has no tool call to inspect. `block` is a 400 naming the guardrail; `escalate` and
+  `redact` are refused, because `escalate` would be a second pause mechanism and pausing belongs to
+  `agents[].humanInTheLoop`.
+- **`agent`** — `{ agent, text, as }`, and `text` is one rendered template. The step is a fresh run of
+  the declared agent: no thread is opened or resumed, and its cost and tokens land on the enclosing
+  run's `CostLedger` (`build_runtime` shares the gateway). A target that declares `humanInTheLoop` is
+  refused at validation — a pipeline cannot pause, and auto-resuming would be inventing a decision.
+
+What a `guard` step adds depends on the stage, and the honest answer is that it is often not the first
+enforcement. `input` is checked inline by every generated route, `retrieval` by every generated
+retriever as it returns each passage, and `output` by every `generate` step. A `guard` step re-checks a
+payload the route tables do not see: an agent's own prose (its thread applies only the guardrails the
+agent lists). That is the case `examples/guarded-reply` demonstrates; in `examples/support-copilot` the
+retrieval-stage step is redundant by construction, because the retriever has already inspected every
+passage the step re-checks.
+
+**`human` is retired, not deferred.** A pipeline step cannot pause, and the run that owns a checkpoint is
+the agent's, so `agents[].humanInTheLoop` is the replacement spelling. A `human` step is rejected with a
+diagnostic that names it. **`assert` remains deferred to L7b**: it is eval-time only, and there is no
+eval-time step evaluator yet.
 
 ---
 
@@ -496,18 +532,24 @@ type PipelineShape = {
 type StepShape =
   | { kind: 'retrieve'; retriever: string; query: string; as: string }  // no step-level topK: see §6.3
   | { kind: 'generate'; prompt: string; model?: string; input?: unknown; context?: string; as: string; stream?: boolean }
-  // `rerank` is reserved but NOT populated: reranking is a retriever option in
-  // Phase 1, and a standalone step needs its own binding semantics (§6.3).
-  | { kind: 'rerank';   input: string; model: string; topN: number; as: string }
-  | { kind: 'agent';    agent: string; input: unknown; as: string }
+  // The design's `input`/`topN`/`as` could not name a query, and `Reranker.rerank` takes
+  // one: `over` names the binding to reorder and `query` is the text scored against.
+  // `model` selects a reranker, not a chat model, and only `lexical` ships (§6.3).
+  | { kind: 'rerank';   over: string; query: string; model: string; topN: number; as: string }
+  // The design's `input: unknown` has no consumer: the step renders one template string.
+  | { kind: 'agent';    agent: string; text: string; as: string }
   | { kind: 'tool';     tool: string; input: unknown; as: string }
   | { kind: 'branch';   when: PolicyExpr; then: StepShape[]; else?: StepShape[] }
   | { kind: 'parallel'; branches: StepShape[][] }
   | { kind: 'map';      over: string; step: StepShape }
   | { kind: 'reduce';   over: string; prompt: string; as: string }
-  | { kind: 'guard';    guardrail: string; stage: 'input'|'output'|'retrieval'|'tool-call' }
-  | { kind: 'assert';   expr: string; message: string }        // eval-time only
-  | { kind: 'human';    prompt: string; timeout: string }
+  // Binds nothing. `text` is a template at `input`/`output` and a projection of a
+  // retrieval binding at `retrieval`; `tool-call` is refused because it is agent-scoped
+  // (§6.3, "guard steps").
+  | { kind: 'guard';    guardrail: string; stage: 'input'|'output'|'retrieval'; text: string }
+  | { kind: 'assert';   expr: string; message: string }        // eval-time only, deferred to L7b
+  // `human` is retired, not deferred: a pipeline cannot pause, and a pause belongs to the
+  // run that owns a checkpoint. `agents[].humanInTheLoop` is the replacement spelling.
   | { kind: 'emit';     event: string };
 
 type EvalShape = {

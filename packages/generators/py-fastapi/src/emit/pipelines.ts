@@ -218,6 +218,18 @@ export function stepInputs(step: StepShape): Readonly<Record<string, StepInputVa
         : {}),
     };
   }
+  // The wiring leaves carry scalar templates where a generate or tool step carries an
+  // `input` map. `over` is the one bare binding among them; a `guard` at the retrieval
+  // stage is a template holding one reference, so it needs no branch of its own.
+  if (step.kind === 'rerank') {
+    return {
+      over: { kind: 'reference', path: [step.over] },
+      query: { kind: 'template', template: step.query },
+    };
+  }
+  if (step.kind === 'guard' || step.kind === 'agent') {
+    return { text: { kind: 'template', template: step.text } };
+  }
   return step.input;
 }
 
@@ -314,6 +326,7 @@ interface StepImports {
   readonly gateway: Set<string>;
   readonly guardrails: Set<string>;
   readonly control: Set<string>;
+  readonly agents: Set<string>;
 }
 
 /**
@@ -344,7 +357,9 @@ function valueExpression(
   const body = interpolate(value.template, (name) => {
     const path = name.split('.');
     const reference = renderReference(path, root);
-    return isStringRef(typeOfPath(path, context)) ? reference : `str(${reference})`;
+    // An f-string converts through `__format__`, so the coercion is the `!s` flag rather
+    // than a nested `str(...)` call: the same text, and one expression instead of two.
+    return isStringRef(typeOfPath(path, context)) ? reference : `${reference}!s`;
   });
   return `f${pythonString(body)}`;
 }
@@ -403,8 +418,10 @@ function localLine(key: string, ref: TypeRef | undefined, imports: StepImports):
 /**
  * The locals a step body opens with.
  *
- * `deps` is always read, because every step calls the runtime through it; the rest are
- * the roots the step actually refers to, so a step body never names a value it does
+ * `deps` is read by every step that calls the runtime through it; a `guard` step reads no
+ * container at all -- it hands one declaration and one payload to the engine -- so it asks
+ * for no such local rather than opening one the generated body would never use. The rest
+ * are the roots the step actually refers to, so a step body never names a value it does
  * not use.
  */
 function localLines(
@@ -412,9 +429,12 @@ function localLines(
   context: ExpressionContext,
   imports: StepImports,
   request: string,
+  withDeps = true,
 ): string[] {
-  imports.typing.add('cast');
-  const lines = [`${DEPS_BINDING} = cast(Deps, ctx.require(${pythonString(DEPS_BINDING)}))`];
+  const lines: string[] = [];
+  if (withDeps) {
+    lines.push(`${DEPS_BINDING} = cast(Deps, ctx.require(${pythonString(DEPS_BINDING)}))`);
+  }
   for (const root of referencedRoots(step)) {
     const key = contextKey(root);
     if (key === DEPS_BINDING) continue;
@@ -425,6 +445,7 @@ function localLines(
     const binding = context.scope.find((candidate) => candidate.name === root);
     lines.push(localLine(key, binding?.type, imports));
   }
+  if (lines.length > 0) imports.typing.add('cast');
   return lines;
 }
 
@@ -702,12 +723,200 @@ function emitRetrieveStep(
   return lines.join('\n');
 }
 
+/** The engine method one guard stage calls. `tool-call` is absent: a step has no tool. */
+const GUARD_METHODS = {
+  input: 'check_input',
+  output: 'check_output',
+  retrieval: 'check_retrieval',
+} as const;
+
+type GuardShape = Extract<StepShape, { kind: 'guard' }>;
+
 /**
- * The Python function name of every step a composite nests, plus every composite step.
+ * The payload a guard step hands the engine.
+ *
+ * The engine takes a *sequence* of declarations and filters it by stage, so a step
+ * resolves the one it names through `BY_ID` into a one-element tuple. A guardrail whose
+ * `stages` omit the step's stage would otherwise be a silent no-op -- the step would
+ * appear to check something it never ran -- which is why the plan gate refuses that
+ * pairing instead of emitting it.
+ *
+ * What `text` means depends on the stage. At `input` and `output` it is a template
+ * rendered against the pipeline's bindings, and the engine reads `{"text": ...}`. At
+ * `retrieval` it names the retrieval binding whose passages are guarded, and the step
+ * projects `item.chunk.text` over its items: that stage guards the text a model would be
+ * handed, so it takes strings and not the result object.
+ */
+function guardPayload(step: GuardShape, context: ExpressionContext): string {
+  if (step.stage !== 'retrieval') {
+    return valueExpression({ kind: 'template', template: step.text }, context, false);
+  }
+  const [placeholder = ''] = templatePlaceholders(step.text);
+  return `[item.chunk.text for item in ${contextKey(placeholder)}.items]`;
+}
+
+/**
+ * A guard step: run one declared guardrail at one stage, over one payload.
+ *
+ * It binds nothing. A step that decides and passes the context on is the whole of what a
+ * pipeline does with a `block`: the engine raises, the runtime wraps that as a
+ * `PipelineError`, and the route answers 400. Nothing here inspects the verdict, because
+ * the verdict a caller may ignore is exactly the one it must not.
+ */
+function emitGuardStep(
+  step: StepShape,
+  context: ExpressionContext,
+  imports: StepImports,
+  request: string,
+  bodyName?: string,
+): string {
+  const guard = require(step.kind === 'guard' ? step : undefined, 'a guard step');
+  const method = require(guard.stage === 'tool-call'
+    ? undefined
+    : GUARD_METHODS[guard.stage], 'an emitter for a guard step at the tool-call stage');
+  const fn = bodyName ?? stepFunctionName(step);
+  imports.runtime.add('PipelineContext');
+  for (const name of ['BY_ID', 'ENGINE', 'enforce_guardrail']) imports.guardrails.add(name);
+  const lines = [`async def ${fn}(ctx: PipelineContext) -> PipelineContext:`];
+  lines.push(
+    pythonDoc(
+      `Run the \`${guard.guardrail}\` guardrail at the \`${guard.stage}\` stage, and pass ` +
+        'the context on: a guardrail that allows the payload has nothing to bind.',
+      INDENT,
+    ),
+  );
+  const locals = localLines(step, context, imports, request, false);
+  if (locals.length > 0) lines.push(...locals.map((line) => `${INDENT}${line}`), '');
+  // Bound to a name before the call at every stage: a rendered template or the retrieval
+  // projection can each run longer than the emitted code's line limit, and the payload is
+  // the part of that call a reader most needs to see whole.
+  lines.push(`${INDENT}_payload = ${guardPayload(guard, context)}`, '');
+  const check = call(
+    `ENGINE.${method}`,
+    [`(BY_ID[${pythonString(guard.guardrail)}],)`, '_payload'],
+    INDENT,
+  );
+  lines.push(callStatement('', 'enforce_guardrail', [check], INDENT));
+  lines.push(`${INDENT}return ctx`);
+  return lines.join('\n');
+}
+
+/**
+ * A rerank step: score the passages a retrieval binding holds against a query, and bind
+ * the reordered result.
+ *
+ * `rerank` returns a tuple of items, not a result, so the step rescored through
+ * `model_copy` keeps the provenance the retrieval established -- the retriever, the
+ * query, what the retrieval stage recorded -- and replaces only the order. A caller that
+ * compares `len(ranked)` to `len(handbook)` gets the truth, and a later `retrieve`-style
+ * consumer still finds `.items` where it expects it.
+ *
+ * The model selects the scorer through the container, so an app cannot run a scorer it
+ * never built and a test can hand the step a scorer of its own.
+ */
+function emitRerankStep(
+  step: StepShape,
+  context: ExpressionContext,
+  imports: StepImports,
+  request: string,
+  bodyName?: string,
+): string {
+  const rerank = require(step.kind === 'rerank' ? step : undefined, 'a rerank step');
+  const key = contextKey(rerank.as);
+  const over = contextKey(rerank.over);
+  const fn = bodyName ?? stepFunctionName(step);
+  const query = valueExpression({ kind: 'template', template: rerank.query }, context, false);
+  const topN = pythonNumber(rerank.topN);
+  imports.runtime.add('PipelineContext');
+  const lines = [`async def ${fn}(ctx: PipelineContext) -> PipelineContext:`];
+  lines.push(
+    pythonDoc(
+      `Rescore the \`${rerank.over}\` passages with the \`${rerank.model}\` reranker and ` +
+        `bind the top ${topN}, keeping the provenance the retrieval established.`,
+      INDENT,
+    ),
+  );
+  lines.push(...localLines(step, context, imports, request).map((line) => `${INDENT}${line}`));
+  lines.push('');
+  lines.push(
+    callStatement(
+      '_scored = await ',
+      `${DEPS_BINDING}.reranker(${pythonString(rerank.model)}, ${topN}).rerank`,
+      [query, `${over}.items`, `top_n=${topN}`],
+      INDENT,
+    ),
+  );
+  lines.push(`${INDENT}${key} = ${over}.model_copy(update={"items": _scored})`);
+  lines.push(`${INDENT}return ctx.with_values(${key}=${key})`);
+  return lines.join('\n');
+}
+
+/**
+ * An agent step: run one declared agent over a rendered text, and bind its answer.
+ *
+ * The run is its own: no thread is carried in and none is continued, because a pipeline
+ * step has no conversation to continue and the plan gate refuses an agent target that
+ * declares `memory`. The runtime is built over the pipeline's own gateway, so the tokens
+ * this run spends are metered by the same ledger the rest of the request draws from.
+ *
+ * A run that did not complete is not an answer. `PAUSED` cannot arrive here -- the gate
+ * refuses an agent target that can pause, so the four stages of `humanInTheLoop` stay the
+ * route's business and `escalate` never becomes a second pause -- but `MAX_STEPS` can, and
+ * binding an empty answer as though the agent had spoken would be the failure that hides.
+ */
+function emitAgentStep(
+  step: StepShape,
+  context: ExpressionContext,
+  imports: StepImports,
+  request: string,
+  bodyName?: string,
+): string {
+  const agent = require(step.kind === 'agent' ? step : undefined, 'an agent step');
+  const key = contextKey(agent.as);
+  const fn = bodyName ?? stepFunctionName(step);
+  const text = valueExpression({ kind: 'template', template: agent.text }, context, false);
+  imports.runtime.add('PipelineContext');
+  imports.agents.add('build_runtime');
+  const lines = [`async def ${fn}(ctx: PipelineContext) -> PipelineContext:`];
+  lines.push(
+    pythonDoc(
+      `Run the \`${agent.agent}\` agent over the rendered text and bind its answer.`,
+      INDENT,
+    ),
+  );
+  lines.push(...localLines(step, context, imports, request).map((line) => `${INDENT}${line}`));
+  lines.push('');
+  lines.push(
+    callStatement(
+      '_runtime = ',
+      'build_runtime',
+      [`gateway=${DEPS_BINDING}.gateway`, `tools=${DEPS_BINDING}.agent_tools`],
+      INDENT,
+    ),
+  );
+  lines.push(
+    callStatement('_outcome = await ', '_runtime.run', [pythonString(agent.agent), text], INDENT),
+  );
+  lines.push(`${INDENT}if not _outcome.completed:`);
+  lines.push(
+    `${INDENT}${INDENT}raise RuntimeError(` +
+      `f"agent ${agent.agent} did not complete: {_outcome.status}")`,
+  );
+  lines.push(`${INDENT}${key} = _outcome.answer`);
+  lines.push(`${INDENT}return ctx.with_values(${key}=${key})`);
+  return lines.join('\n');
+}
+
+/**
+ * The Python function name of every step a composite nests, plus every step that binds
+ * no name of its own.
  *
  * A `branch` and a `parallel` bind no name, so `stepFunctionName` has nothing to call
  * them after, and `Pipeline.of` refuses two steps with one name -- a pipeline holding two
- * branches would collide on the second. A nested step *does* bind a name, but two arms of
+ * branches would collide on the second. A `guard` binds nothing for the same reason a
+ * composite does not: it decides and passes the context on, it does not contribute a
+ * value, so two guards in one pipeline would both fall back to the same name and the
+ * second `def` would shadow the first. A nested step *does* bind a name, but two arms of
  * one branch may bind the same one (the validator accepts arms with identical key sets),
  * and Python's module scope is flat, so binding names alone would emit two `def escalation`
  * where the second shadows the first and both arms run it. Every nested step therefore
@@ -715,11 +924,14 @@ function emitRetrieveStep(
  *
  * The leading underscore is a spelling the validator already refuses for a user binding,
  * so these names cannot shadow one, and numbering them by position keeps the output a
- * function of the IR alone.
+ * function of the IR alone. Composites share one counter and a binding-less leaf counts
+ * among its own kind, so a pipeline that gains a `guard` renumbers nothing that already
+ * had a name.
  */
 export function compositeNames(pipeline: PipelineShape): Map<StepShape, string> {
   const names = new Map<StepShape, string>();
   let composites = 0;
+  const leaves = new Map<string, number>();
   const unique = (step: StepShape, name: string): string => {
     names.set(step, name);
     return name;
@@ -744,9 +956,18 @@ export function compositeNames(pipeline: PipelineShape): Map<StepShape, string> 
     }
   };
   for (const step of pipeline.steps ?? []) {
-    if (!isCompositeStep(step)) continue;
-    composites += 1;
-    arms(step, unique(step, `_${step.kind}_${composites}`));
+    if (step.kind === 'emit') continue;
+    if (isCompositeStep(step)) {
+      composites += 1;
+      arms(step, unique(step, `_${step.kind}_${composites}`));
+      continue;
+    }
+    if (bindingOf(step) !== undefined) continue;
+    // A binding-less leaf is numbered among its own kind, so launching one cannot move a
+    // composite's name; composites share one counter, as they always have.
+    const next = (leaves.get(step.kind) ?? 0) + 1;
+    leaves.set(step.kind, next);
+    unique(step, `_${step.kind}_${next}`);
   }
   return names;
 }
@@ -1048,6 +1269,41 @@ function emitStreamRequest(
   return lines.join('\n');
 }
 
+/**
+ * The definition of one step that is not a composite.
+ *
+ * A composite is expanded before its arms get here, and an `emit` step is the response
+ * itself and is skipped by the walk, so the remaining kinds are the leaves that bind a
+ * value: the ones that call a model, an index, a tool or an agent, and the `guard` that
+ * binds nothing. A kind that reached the default would be a step this emitter does not
+ * know, which after a clean plan check is a generator bug rather than a spec problem.
+ */
+function stepBlock(
+  ir: IR,
+  step: StepShape,
+  context: ExpressionContext,
+  imports: StepImports,
+  request: string,
+  bodyName: string | undefined,
+): string {
+  switch (step.kind) {
+    case 'generate':
+      return emitGenerateStep(ir, step, context, imports, request, bodyName);
+    case 'retrieve':
+      return emitRetrieveStep(ir, step, context, imports, request, bodyName);
+    case 'tool':
+      return emitToolStep(ir, step, context, imports, request, bodyName);
+    case 'rerank':
+      return emitRerankStep(step, context, imports, request, bodyName);
+    case 'guard':
+      return emitGuardStep(step, context, imports, request, bodyName);
+    case 'agent':
+      return emitAgentStep(step, context, imports, request, bodyName);
+    default:
+      return require<string>(undefined, `an emitter for a ${step.kind} step`);
+  }
+}
+
 /** What one pipeline module's steps are emitted against, gathered once. */
 function emitterFor(ir: IR, pipeline: PipelineShape): PipelineEmitter {
   return {
@@ -1064,6 +1320,7 @@ function emitterFor(ir: IR, pipeline: PipelineShape): PipelineEmitter {
       gateway: new Set<string>(),
       guardrails: new Set<string>(),
       control: new Set<string>(),
+      agents: new Set<string>(),
     },
     request: requestModelName(pipeline.id),
   };
@@ -1094,13 +1351,7 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
       // A nested step is defined under its position-qualified name; a top-level one keeps
       // its binding name, which is what the name map leaves unmapped.
       const bodyName = names.get(step);
-      blocks.push(
-        step.kind === 'generate'
-          ? emitGenerateStep(ir, step, context, imports, request, bodyName)
-          : step.kind === 'retrieve'
-            ? emitRetrieveStep(ir, step, context, imports, request, bodyName)
-            : emitToolStep(ir, step, context, imports, request, bodyName),
-      );
+      blocks.push(stepBlock(ir, step, context, imports, request, bodyName));
     }
   };
   emitSteps(pipeline.steps ?? []);
@@ -1142,6 +1393,9 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
         : []),
       ...(imports.control.size > 0
         ? [importFrom('..control', [...imports.control].sort(byName))]
+        : []),
+      ...(imports.agents.size > 0
+        ? [importFrom('..agents', [...imports.agents].sort(byName))]
         : []),
     ],
   ]);

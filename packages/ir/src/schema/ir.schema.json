@@ -552,6 +552,52 @@
             "model": { "$ref": "#/$defs/identifier" },
             "as": { "$ref": "#/$defs/identifier" }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Reorders the retrieval result bound by `over` against `query`. A leaf: it nests no steps.",
+          "required": ["kind", "over", "query", "model", "topN", "as"],
+          "properties": {
+            "kind": { "const": "rerank" },
+            "over": { "$ref": "#/$defs/identifier" },
+            "query": { "type": "string", "minLength": 1 },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Reranker alias matched by the runtime, not a models[] id, so it is looser than an identifier."
+            },
+            "topN": { "type": "integer", "minimum": 1 },
+            "as": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Runs one declared guardrail at one stage. Binds nothing: a `flag` is observability only.",
+          "required": ["kind", "guardrail", "stage", "text"],
+          "properties": {
+            "kind": { "const": "guard" },
+            "guardrail": { "$ref": "#/$defs/identifier" },
+            "stage": { "enum": ["input", "output", "retrieval", "tool-call"] },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Template text at input/output; a single reference to a retrieval binding at retrieval."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Runs a declared agent to completion and binds its answer. A leaf: it opens no thread and resumes nothing.",
+          "required": ["kind", "agent", "text", "as"],
+          "properties": {
+            "kind": { "const": "agent" },
+            "agent": { "$ref": "#/$defs/identifier" },
+            "text": { "type": "string", "minLength": 1 },
+            "as": { "$ref": "#/$defs/identifier" }
+          }
         }
       ]
     },

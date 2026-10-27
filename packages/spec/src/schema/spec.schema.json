@@ -780,6 +780,81 @@
         },
         {
           "type": "object",
+          "required": ["rerank"],
+          "additionalProperties": false,
+          "properties": {
+            "rerank": {
+              "description": "Reorders a retrieval result with the reranker named by `model`. The runtime's reranker takes both a query and the items, so the step names both: `over` is the retrieval binding it reorders and `query` is what it ranks against. The design doc's single `input` field could not supply both, so it is not part of this shape.",
+              "type": "object",
+              "required": ["over", "query", "model", "topN", "as"],
+              "additionalProperties": false,
+              "properties": {
+                "over": {
+                  "description": "Binding name holding the retrieval result to reorder: a retrieve step's or an earlier rerank step's `as`.",
+                  "$ref": "#/$defs/binding"
+                },
+                "query": {
+                  "description": "Mustache-style text the reranker scores against, checked for well-formedness like a prompt template.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "model": {
+                  "description": "Reranker alias matched by the runtime, not a `models[]` entry. Only the lexical reranker is implemented, so the name must contain 'lexical'.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "topN": { "type": "integer", "minimum": 1 },
+                "as": { "$ref": "#/$defs/binding" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["guard"],
+          "additionalProperties": false,
+          "properties": {
+            "guard": {
+              "description": "Runs one declared guardrail against one payload at one stage. A blocked payload stops the pipeline the same way an input-stage guardrail does on a generate step; a `flag` records a verdict and changes nothing, which is why a guard step binds no name.",
+              "type": "object",
+              "required": ["guardrail", "stage", "text"],
+              "additionalProperties": false,
+              "properties": {
+                "guardrail": { "$ref": "#/$defs/name" },
+                "stage": { "enum": ["input", "output", "retrieval", "tool-call"] },
+                "text": {
+                  "description": "Mustache-style text for the `input` and `output` stages; at the `retrieval` stage a single reference to a retrieval binding, whose passages are what the guardrail inspects.",
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["agent"],
+          "additionalProperties": false,
+          "properties": {
+            "agent": {
+              "description": "Runs a declared agent to completion and binds its answer. The step owns a fresh run of that agent, so it declares `text` (the user turn) rather than an `input` map; an agent that can pause, or that declares `memory`, is not a legal target.",
+              "type": "object",
+              "required": ["agent", "text", "as"],
+              "additionalProperties": false,
+              "properties": {
+                "agent": { "$ref": "#/$defs/name" },
+                "text": {
+                  "description": "Mustache-style text sent as the agent's user turn.",
+                  "type": "string",
+                  "minLength": 1
+                },
+                "as": { "$ref": "#/$defs/binding" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
           "required": ["emit"],
           "additionalProperties": false,
           "properties": {

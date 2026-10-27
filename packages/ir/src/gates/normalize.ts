@@ -120,7 +120,19 @@ function normalizePipeline(pipeline: PipelineShape, inherited: ObservabilityShap
 }
 
 function normalizeStep(step: StepShape): StepShape {
-  if (step.kind === 'emit' || step.kind === 'retrieve') return step;
+  // The kinds that carry no `input` map: `rerank`, `guard` and `agent` are leaves with a
+  // scalar operand each, so materializing an empty `input` on them would emit a field the
+  // IR schema forbids.
+  if (
+    step.kind === 'emit' ||
+    step.kind === 'retrieve' ||
+    step.kind === 'reduce' ||
+    step.kind === 'rerank' ||
+    step.kind === 'guard' ||
+    step.kind === 'agent'
+  ) {
+    return step;
+  }
   if (step.kind === 'branch') {
     return {
       ...step,
@@ -133,7 +145,6 @@ function normalizeStep(step: StepShape): StepShape {
     return { ...step, branches: step.branches.map((arm) => arm.map(normalizeStep)) };
   }
   if (step.kind === 'map') return { ...step, step: normalizeStep(step.step) };
-  if (step.kind === 'reduce') return step;
   return { ...step, input: step.input ?? {} };
 }
 

@@ -16,12 +16,14 @@ from .classify_ticket import CLASSIFY_TICKET
 from .customer_note import CUSTOMER_NOTE
 from .handbook_note import HANDBOOK_NOTE
 from .ticket_agent_prompt import TICKET_AGENT_PROMPT
+from .triage_ticket import TRIAGE_TICKET
 
 TEMPLATES: tuple[PromptTemplate, ...] = (
     CLASSIFY_TICKET,
     CUSTOMER_NOTE,
     HANDBOOK_NOTE,
     TICKET_AGENT_PROMPT,
+    TRIAGE_TICKET,
 )
 
 

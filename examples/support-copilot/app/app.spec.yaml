@@ -193,8 +193,9 @@ prompts:
 
       Subject: {{ subject }}
 
-      Handbook excerpts retrieved for the subject, or nothing when nothing matched.
-      {{ handbook }}
+      Handbook excerpts retrieved and reranked for the subject, or nothing when nothing
+      matched.
+      {{ ranked }}
 
       Answer with a JSON object holding exactly three fields:
         * summary: one sentence describing the customer's problem
@@ -204,12 +205,13 @@ prompts:
       subject:
         type: string
         required: true
-      # The variable the `retrieve` step's binding feeds. Its name matches that binding
-      # (`as: handbook`) because the generated call inlines the retrieved context under
-      # it, and it is `required: true` because the template interpolates it: the prompt
-      # registry rejects both an unsupplied variable and a supplied-but-unused one, so a
-      # binding the body never interpolates would raise on the first request.
-      handbook:
+      # The variable the `rerank` step's binding feeds, and the reason this prompt names
+      # the ranked set rather than the retrieved one. Its name matches that binding
+      # (`as: ranked`) because the generated call inlines the context under the variable
+      # of the same name, and it is `required: true` because the template interpolates it:
+      # the prompt registry rejects both an unsupplied variable and a supplied-but-unused
+      # one, so a binding the body never interpolates would raise on the first request.
+      ranked:
         type: string
         required: true
     output:
@@ -259,6 +261,24 @@ prompts:
 
       Look the account up before you propose a refund, refund no more than once per
       subject, and answer in one or two sentences once the refund is issued or declined.
+    output:
+      kind: text
+
+  # The intake agent's prompt, and deliberately the smallest thing that can work. Like
+  # `ticket_agent_prompt` it declares no variables: the agent runtime renders an
+  # instructions prompt with nothing to interpolate and hands the step's `text` over as
+  # the user turn. The agent step binds the answer as `triage`, which the `rerank` step
+  # then interpolates as its query -- so what the retriever scored by ticket subject gets
+  # rescored by what the ticket is asking for.
+  triage_ticket:
+    version: 1
+    model: triage
+    template: |
+      You read one line of a support ticket and say what the customer is asking for.
+
+      Say it in one sentence, in the customer's own words, and name no account and no
+      amount. This line is only ever used to search a handbook, so a wrong guess costs a
+      less relevant page and nothing else.
     output:
       kind: text
 
@@ -326,6 +346,29 @@ guardrails:
   # generate route enforces exactly the `input`-stage table, a guardrail with no `input`
   # stage is unreachable from it -- which is what makes `action: escalate` legal there and
   # illegal on any input-stage guardrail.
+  #
+  # A `guard` step is the third place: it names one guardrail and one stage and runs that
+  # guardrail's policies where the step sits. What it adds is not the same for both stages
+  # a step can name here, and the difference is worth stating rather than discovering.
+  #
+  #   * `retrieval` is already enforced with no step at all. `build_retriever` hands every
+  #     generated retriever the `retrieval` table as a constructor seam, and the runtime
+  #     checks each passage before returning it -- so a passage the caller can see has been
+  #     inspected already. The step below re-checks the *reranked* subset: the passages the
+  #     prompt is about to be told are the handbook, which is a second pass over fewer items
+  #     rather than the only one. `handbook_pii` names `retrieval` and not `input` because
+  #     the inline table would hand it the rendered prompt instead of the passages.
+  #   * `output` is enforced by nothing else, which is what makes a guard step load-bearing
+  #     there: the generated generate route calls `check_input` only, and an output stage is
+  #     inspected for an agent only when that agent names the guardrail. So a step at
+  #     `output` is the sole enforcement for the stage -- on a non-streaming deployment,
+  #     because the generator refuses an output-stage guardrail on one that streams.
+  #
+  # The `output` stage is what this app cannot have, and the deployment says why: `api`
+  # streams, and a streamed reply is gone before anything could inspect it -- the generator
+  # refuses an output-stage guardrail on a streaming deployment rather than buffer the
+  # stream and call it a stream. So no guardrail here declares `output`, and the output
+  # stage's one-enforcement case is exercised by `examples/guarded-reply` instead.
   ticket_intake:
     stages: [input]
     policies: [prompt-injection]
@@ -362,6 +405,19 @@ guardrails:
     onFail:
       message: A refund call carried something that looks like a credential, so it was held.
       log: true
+  handbook_pii:
+    # Retrieval stage only. Every generated retriever already enforces this stage, so the
+    # passages that come back from `handbook` were inspected before the pipeline saw them;
+    # the `guard` step below hands `check_retrieval` the texts of the items in the *reranked*
+    # binding, so the second pass covers the passages the classifier is about to be told are
+    # the handbook. What gets inspected is the context that would be spliced, not the query
+    # that found it.
+    stages: [retrieval]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The handbook passage matched for this ticket carries contact details.
+      log: true
 
 memory:
   # One tier, and the only kind the runtime implements today: `buffer` and `window` are
@@ -375,6 +431,25 @@ memory:
     tokenBudget: 2000
 
 agents:
+  # The one agent a pipeline step is allowed to run, and the absences are the point: no
+  # `humanInTheLoop` (a step hands back no checkpoint, and the generator refuses to open a
+  # second pause path beside it), no `memory` (a step has no thread to continue), no tool
+  # carrying `requiresConfirmation` (same pause, reached through a tool), and a priced
+  # model with no unpriced fallback. What is left is a bounded agent that answers once and
+  # holds nothing -- which is exactly what the `agent` step runs, once, per request. It
+  # also declares no `tools` at all: a one-question agent that cannot act cannot fail by
+  # acting, and `lookup_customer` has already run by the time this one is asked anything.
+  triage_agent:
+    name: Intake agent
+    instructions: triage_ticket
+    model: triage
+    # Named, not inherited, for the same reason as `refund_agent` below: a guardrail
+    # reaches an agent route only because the agent lists it. This is the same
+    # `ticket_intake` the generate route enforces, so the step-run agent is inspected by
+    # the same prompt-injection policy without a second declaration.
+    guardrails: [ticket_intake]
+    maxSteps: 2
+    maxCostBudget: 0.02
   refund_agent:
     name: Refund agent
     instructions: ticket_agent_prompt
@@ -455,6 +530,15 @@ pipelines:
         method: post
         path: /tickets/answer
     steps:
+      # A `guard` step at a stage the route already enforces inline, and it is not
+      # redundant. `INPUT_GUARDRAILS` runs at the *generate* step, so a refused ticket had
+      # already paid for the tool, the retrieve, the intake agent and two parallel arms
+      # before anyone looked at it. This step runs first: before any model call, which
+      # `tests/test_app.py` pins by asserting the provider was never called at all.
+      - guard:
+          guardrail: ticket_intake
+          stage: input
+          text: "{{ event.subject }}"
       - tool:
           tool: lookup_customer
           input:
@@ -464,14 +548,18 @@ pipelines:
       - retrieve:
           retriever: handbook
           query: "{{ event.subject }}"
-          # The binding name. It is also the prompt variable the retrieved context is
-          # inlined under, so the two are written to agree.
+          # The binding name, and not the prompt variable the classifier inlines. A
+          # `rerank` step names this binding to read what was found and binds its own name
+          # (`ranked`) for what the model reads -- the two differ because a reranked set is
+          # what the prompt interpolates.
           as: handbook
       # Two independent readings of what the request already holds, run side by side. The
       # cap comes from `deployments.api.concurrency`, the same limiter the gateway and the
       # tools take, so a fan-out cannot widen the bound the rest of the app runs under.
       # Both arms are required to run: a `parallel` that ran neither would still answer,
       # which is why the wiring is asserted rather than inferred from the response bytes.
+      # Neither arm's binding is consumed: they are there to be run, and rewiring one into
+      # the classifier would be L5b's pin rewritten, not kept.
       - parallel:
           branches:
             - - generate:
@@ -484,11 +572,40 @@ pipelines:
                   input:
                     handbook: "{{ handbook }}"
                   as: handbook_note
+      # The one agent a step may run. It answers once and holds nothing: no approval to
+      # ask for, no thread to continue. Its answer is the query for the rerank step, so a
+      # wrong guess costs a less relevant page and never a wrong answer.
+      - agent:
+          agent: triage_agent
+          text: "{{ event.subject }}"
+          as: triage
+      # Precision after the retrieve step's recall: the retriever scored pages against the
+      # ticket, this scores the same pages against what the ticket is asking for, and keeps
+      # the single best one. `topN: 1` is what makes the step falsifiable -- one passage
+      # reaches the classifier, and `tests/test_app.py` counts them.
+      - rerank:
+          over: handbook
+          query: "{{ triage }}"
+          model: lexical
+          topN: 1
+          as: ranked
+      # The retrieval stage, guarding what is about to be spliced into the prompt rather
+      # than what it was searched by. It is a second enforcement point, not the only one:
+      # `build_retriever` hands the generated retriever the same `retrieval` table, so the
+      # passages `handbook` returned were checked before this step saw them, and this pass
+      # covers the narrower reranked subset. `tests/test_app.py` pins both halves -- one
+      # test blocks inside the generated retriever, one blocks in this step with the
+      # retriever's own check stubbed out -- because a step that only looked load-bearing
+      # because a retriever happened to be wired would be a different claim.
+      - guard:
+          guardrail: handbook_pii
+          stage: retrieval
+          text: "{{ ranked }}"
       - generate:
           prompt: classify_ticket
           input:
             subject: "{{ event.subject }}"
-          context: handbook
+          context: ranked
           as: answer
       - emit:
           event: Answer

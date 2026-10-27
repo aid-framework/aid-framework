@@ -33,6 +33,7 @@ import {
   type EvalTarget,
   type GenerateStep,
   type GuardrailShape,
+  type GuardStep,
   type Idempotency,
   type IR,
   IR_VERSION,
@@ -704,6 +705,35 @@ function buildStep(
       prompt,
       model: promptModels.get(prompt) ?? '',
       as: asString(reduce.as) ?? '',
+    };
+  }
+  const rerank = asRecord(record.rerank);
+  if (rerank !== undefined) {
+    return {
+      kind: 'rerank',
+      over: asString(rerank.over) ?? '',
+      query: asString(rerank.query) ?? '',
+      model: asString(rerank.model) ?? '',
+      topN: asNumber(rerank.topN) ?? 0,
+      as: asString(rerank.as) ?? '',
+    };
+  }
+  const guard = asRecord(record.guard);
+  if (guard !== undefined) {
+    return {
+      kind: 'guard',
+      guardrail: asString(guard.guardrail) ?? '',
+      stage: (asString(guard.stage) ?? 'input') as GuardStep['stage'],
+      text: asString(guard.text) ?? '',
+    };
+  }
+  const agent = asRecord(record.agent);
+  if (agent !== undefined) {
+    return {
+      kind: 'agent',
+      agent: asString(agent.agent) ?? '',
+      text: asString(agent.text) ?? '',
+      as: asString(agent.as) ?? '',
     };
   }
   const emit = asRecord(record.emit);

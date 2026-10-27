@@ -23,7 +23,7 @@ import type { IR, RetrieverShape, Trait } from '@aid/ir';
 
 import { moduleName } from '../names.js';
 import { INDENT, pythonNumber, pythonStatement, pythonString } from '../python.js';
-import { assemble, HEADER, importBlock, importFrom } from '../template.js';
+import { assemble, dictBlock, HEADER, importBlock, importFrom } from '../template.js';
 import { contractsPath } from './contracts.js';
 import type { EmittedFile } from './file.js';
 import { GENERATED_ROOT, generated } from './file.js';
@@ -154,7 +154,7 @@ function specTable(ir: IR): string {
       `${INDENT}},`,
     ].join('\n');
   });
-  return ['_SPECS: dict[str, dict[str, Any]] = {', ...entries, '}'].join('\n');
+  return dictBlock('_SPECS: dict[str, dict[str, Any]] =', entries);
 }
 
 function buildBinding(): string {

@@ -1,0 +1,171 @@
+specVersion: "0.2"
+
+# The second example app, and it exists to pin one claim: a `guard` step is
+# load-bearing exactly where no route-level table sees the payload.
+#
+# The enforcement map, measured rather than assumed:
+#
+#   stage       enforced by
+#   input       every generated generate route, inline (`INPUT_GUARDRAILS`)
+#   output      every generated generate route, inline (`OUTPUT_GUARDRAILS`) --
+#               and refused outright on a streaming deployment
+#   retrieval   every generated retriever, per passage, during `retrieve`
+#   tool-call   an agent loop only; refused for a step
+#
+# So a guard step over a *generate* binding re-checks text the route already
+# checked. The payload the route tables never see is an **agent's** prose: the
+# loop applies the guardrails the agent lists, not the document's stage tables, so
+# a document-level `output` guardrail the agent does not list reaches nothing until
+# a step names it. That is what this pipeline does, and it is why the mutation test
+# in `tests/test_reply.py` bites: delete the emitted `check_output` call and the
+# agent's text flows on to the reply prompt instead of being refused.
+#
+# `examples/support-copilot` could not make this claim: its `api` deployment
+# streams, and the generator refuses an `output`-stage guardrail there -- a streamed
+# reply is gone before anything could inspect it.
+
+project:
+  name: guarded-reply
+  namespace: aid.examples.guardedreply
+  description: Replies to one inbound message, refusing a draft that carries contact details.
+  targets:
+    - py-fastapi
+
+types:
+  Reply:
+    kind: struct
+    fields:
+      text:
+        type: string
+        required: true
+        description: The reply the customer will read.
+
+models:
+  fast:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [json-schema, tools]
+    params:
+      temperature: 0.2
+      maxTokens: 256
+    costProfile: openai-gpt-4o-mini
+    limits:
+      maxInputTokens: 8192
+      maxOutputTokens: 256
+
+prompts:
+  # An agent's instructions prompt is the system message verbatim: the loop renders
+  # no variables, so a prompt it uses must declare none, and the `agent` step's
+  # `text` arrives as the user turn instead.
+  triage_message:
+    version: 1
+    model: fast
+    template: |
+      You summarise one inbound support message in a single sentence. You do not
+      answer it, and you do not ask it questions.
+    output:
+      kind: text
+  reply_to_message:
+    version: 1
+    model: fast
+    template: |
+      You reply to one inbound customer message for the ACME support desk.
+
+      Message: {{ message }}
+
+      The desk's triage note, which you may use: {{ note }}
+
+      Answer with a JSON object holding exactly one field:
+        * text: the reply to send, one or two sentences
+    variables:
+      message:
+        type: string
+        required: true
+      note:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: Reply
+
+agents:
+  triage_agent:
+    name: Triage agent
+    instructions: triage_message
+    model: fast
+    # `message_injection` is listed because an agent route takes caller text and the
+    # security gate requires an input guardrail for it. `reply_pii` is deliberately
+    # NOT listed: the loop applies the guardrails an agent names, so an output-stage
+    # guardrail the agent does not name is not applied anywhere -- which is what
+    # leaves the pipeline's guard step as its only enforcement.
+    guardrails: [message_injection]
+    maxSteps: 2
+    maxCostBudget: 0.02
+
+guardrails:
+  message_injection:
+    # Enforced by the agent route and by the generated generate route, both inline,
+    # whether or not any step names it. Nothing in `pipelines` refers to this one.
+    stages: [input]
+    policies: [prompt-injection]
+    action: block
+    onFail:
+      message: The message looked like an attempt to override the assistant's instructions.
+      log: true
+
+  reply_pii:
+    # `output` and nothing else. On a streaming deployment this declaration would be
+    # refused; on this non-streaming one it is legal, and the only thing that runs it
+    # over the triage agent's prose is the guard step below.
+    stages: [output]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      # A block is a decision, not an outage, so it is a 4xx and the message says
+      # which guardrail decided.
+      message: The drafted reply carried contact details, so it was not sent.
+      log: true
+
+pipelines:
+  answer_message:
+    description: Reply to one message, refusing a draft that leaks contact details.
+    trigger:
+      http:
+        method: post
+        path: /reply
+    steps:
+      # The agent's prose is the payload nothing else inspects, so the guard step
+      # below has something of its own to check.
+      - agent:
+          agent: triage_agent
+          text: "{{ event.message }}"
+          as: triage
+      # The whole reason this app exists. The named guardrail declares `output`, so
+      # every `generate` route checks its own response against it -- but no generate
+      # route produced this text, and the agent does not list the guardrail, so this
+      # call is the only one that ever sees it.
+      - guard:
+          guardrail: reply_pii
+          stage: output
+          text: "{{ triage }}"
+      # Reachable only when the guard above allowed the note. With the check deleted,
+      # the tests see this prompt asked with the contact details in `note` and the
+      # route answer 200 instead of 400.
+      - generate:
+          prompt: reply_to_message
+          input:
+            message: "{{ event.message }}"
+            note: "{{ triage }}"
+          as: reply
+      - emit:
+          event: Reply
+
+deployments:
+  api:
+    # Not streaming, on purpose: the generator refuses an output-stage guardrail on a
+    # deployment that streams, because a streamed reply is already gone by the time
+    # anything could inspect it.
+    target: container
+    streaming: false
+    secrets: [OPENAI_API_KEY]

@@ -311,6 +311,56 @@ export interface ReduceStep {
   as: string;
 }
 
+/**
+ * Reorders the retrieved items bound by `over` against `query`.
+ *
+ * The runtime's `Reranker.rerank(query, items, *, top_n)` takes both a query and the
+ * items, so the step names both rather than carrying the design's single `input`: one
+ * field could not supply a query *and* say which binding is being reordered.
+ */
+export interface RerankStep {
+  kind: 'rerank';
+  /** Binding holding the retrieval result to reorder; the referential gate types it. */
+  over: string;
+  query: string;
+  /** Reranker alias, not a `models[]` id: only the lexical reranker exists today. */
+  model: string;
+  topN: number;
+  as: string;
+}
+
+/**
+ * Runs one declared guardrail against one payload at one stage.
+ *
+ * Binds nothing: a `flag` verdict is observability only, and the actions that could
+ * change the payload are refused when the pipeline is validated.
+ */
+export interface GuardStep {
+  kind: 'guard';
+  guardrail: string;
+  stage: 'input' | 'output' | 'retrieval' | 'tool-call';
+  /**
+   * Stage-discriminated. At `input`/`output` this is template text handed to the
+   * guardrail as the payload; at `retrieval` it is a single reference to a retrieval
+   * binding, whose chunk passages are what `check_retrieval` inspects.
+   */
+  text: string;
+}
+
+/**
+ * Runs a declared agent to completion and binds its answer.
+ *
+ * The step owns a fresh run of the agent: it opens no thread and resumes nothing, so a
+ * target that can pause is refused where the pipeline is validated.
+ */
+export interface AgentStep {
+  kind: 'agent';
+  agent: string;
+  /** User turn for the run; the agent's own instructions stay with the agent. */
+  text: string;
+  as: string;
+}
+
 export type StepShape =
   | GenerateStep
   | RetrieveStep
@@ -319,7 +369,10 @@ export type StepShape =
   | BranchStep
   | ParallelStep
   | MapStep
-  | ReduceStep;
+  | ReduceStep
+  | RerankStep
+  | GuardStep
+  | AgentStep;
 
 /** The composite kinds: the four that nest other steps and so can recurse. */
 export const COMPOSITE_STEP_KINDS = ['branch', 'parallel', 'map', 'reduce'] as const;

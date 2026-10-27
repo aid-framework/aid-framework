@@ -358,9 +358,44 @@ export function dictLiteral(
   return `{\n${rendered.join('\n')}\n${indent}}`;
 }
 
+/**
+ * A dict assignment whose body is already rendered one entry per line.
+ *
+ * Empty is `{}` on the assignment's own line: `ruff format` folds an exploded but empty
+ * literal back down, so emitting `{\n}` there produces a file the format check rejects.
+ * A map is empty whenever the spec declares none of what it holds -- a document with one
+ * model and no fallbacks, or no business tools -- which a second example reaches even
+ * though the first never does.
+ */
+export function dictBlock(assignment: string, entries: readonly string[]): string {
+  if (entries.length === 0) return `${assignment} {}`;
+  return [`${assignment} {`, ...entries, '}'].join('\n');
+}
+
+/**
+ * The rank isort's `order_by_type` assigns an imported name: constants first, then classes, then
+ * functions. Without it a class whose name has an interior capital (`RerankSpec` next to
+ * `Reranker`) sorts differently here than ruff does, and the emitted file fails `I001`.
+ */
+function importRank(name: string): number {
+  if (name === name.toUpperCase()) return 0;
+  return /^[A-Z]/.test(name) ? 1 : 2;
+}
+
+/** isort's ordering: by type rank, then case-insensitively, then case-sensitively. */
+function importOrder(left: string, right: string): number {
+  const byRank = importRank(left) - importRank(right);
+  if (byRank !== 0) return byRank;
+  const foldedLeft = left.toLowerCase();
+  const foldedRight = right.toLowerCase();
+  if (foldedLeft !== foldedRight) return foldedLeft < foldedRight ? -1 : 1;
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
 /** `from x import (a, b)` when long, one line when short. */
 export function importFrom(module: string, names: readonly string[], indent = ''): string {
-  const sorted = [...new Set(names)].sort();
+  const sorted = [...new Set(names)].sort(importOrder);
   const oneLine = `from ${module} import ${sorted.join(', ')}`;
   if (indent === '' && oneLine.length <= 88) return oneLine;
   const inner = sorted.map((name) => `${indent}    ${name},`).join('\n');

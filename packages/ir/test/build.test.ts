@@ -170,13 +170,15 @@ describe('buildIR', () => {
 
   it('covers every supported step kind', () => {
     // Each family lives in the fixture that can carry it: `full.yaml` and `retrieval.yaml`
-    // hold the leaf kinds, and a composite needs a declared cap and a list to iterate, so
-    // it gets a fixture of its own. A kind supported in the spec but buildable by no
-    // fixture is a kind no test would notice being deleted.
+    // hold the leaf kinds, a composite needs a declared cap and a list to iterate so it gets
+    // a fixture of its own, and the three wiring kinds need a retriever, a guardrail and an
+    // agent to point at, so they get one too. A kind supported in the spec but buildable by
+    // no fixture is a kind no test would notice being deleted.
     const kinds = [
       ...ir.pipelines,
       ...buildFixture('retrieval.yaml').ir.pipelines,
       ...buildFixture('composite.yaml').ir.pipelines,
+      ...buildFixture('wiring.yaml').ir.pipelines,
     ].flatMap((pipeline) => stepKinds(pipeline.steps));
     expect(new Set(kinds)).toEqual(new Set<string>(SUPPORTED_STEP_KINDS));
   });

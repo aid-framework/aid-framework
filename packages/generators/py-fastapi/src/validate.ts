@@ -35,7 +35,7 @@ import {
 import { PY_FASTAPI_MANIFEST, supportsIrVersion } from './manifest.js';
 import { isRetrievalEval, judgeAlias, mapMetric } from './metrics.js';
 import { isUsableIdentifier, moduleName, providerAdapter } from './names.js';
-import { templatePlaceholders } from './placeholders.js';
+import { scanTemplate, templatePlaceholders } from './placeholders.js';
 import { streamablePipeline } from './streaming.js';
 
 /**
@@ -782,7 +782,16 @@ function checkStepTemplates(step: StepShape, path: string, problems: PlanProblem
     checkStepTemplates(step.step, `${path}.map.step`, problems);
     return;
   }
-  if (step.kind === 'emit' || step.kind === 'retrieve' || step.kind === 'reduce') return;
+  if (
+    step.kind === 'emit' ||
+    step.kind === 'retrieve' ||
+    step.kind === 'reduce' ||
+    step.kind === 'rerank' ||
+    step.kind === 'guard' ||
+    step.kind === 'agent'
+  ) {
+    return;
+  }
   for (const [key, value] of Object.entries(step.input ?? {})) {
     if (value.kind !== 'template') continue;
     const names = templatePlaceholders(value.template);
@@ -804,29 +813,36 @@ function refIsString(ref: TypeRef | undefined): boolean {
 }
 
 /**
- * Every placeholder in a retrieval query, checked against what the generated step can
- * actually resolve.
+ * Every placeholder in a scalar step template, checked against what the generated step
+ * can actually resolve.
  *
- * The query is interpolated at run time and the runtime's `PipelineContext.require`
+ * The template is interpolated at run time and the runtime's `PipelineContext.require`
  * raises for a name the step body does not hold, so a placeholder naming neither the
  * request event nor a string binding in scope would type-check, pass every byte-level
  * golden and drift test, and fail on the first request. It is refused here instead.
+ *
+ * All four scalar templates -- a retrieval query, a rerank query, `guard.text` and
+ * `agent.text` -- reach the runtime through the same `interpolate`, so they share one
+ * rule: one whole event field, or a binding that holds a string.
  */
-function checkRetrieveQuery(
-  step: StepShape & { kind: 'retrieve' },
+function checkTextTemplate(
+  text: string,
+  field: string,
+  label: string,
   path: string,
   bindings: readonly StepBinding[],
+  types: Map<string, TypeShape>,
   problems: PlanProblem[],
 ): void {
-  for (const name of templatePlaceholders(step.query)) {
+  for (const name of templatePlaceholders(text)) {
     const [root, ...rest] = name.split('.');
     if (root === 'event') {
       if (rest.length === 1) continue;
       problems.push(
         problem(
           'unsupported-placeholder',
-          `${path}.query`,
-          `a retrieval query interpolates one whole event field, so '${name}' has no single ` +
+          `${path}.${field}`,
+          `${label} interpolates one whole event field, so '${name}' has no single ` +
             'string to substitute; write the placeholder as an event field',
         ),
       );
@@ -837,24 +853,48 @@ function checkRetrieveQuery(
       problems.push(
         problem(
           'unsupported-placeholder',
-          `${path}.query`,
-          `retrieval query placeholder '${name}' names no binding in scope; the generated ` +
+          `${path}.${field}`,
+          `${label} placeholder '${name}' names no binding in scope; the generated ` +
             `step would ask the pipeline context for '${root}' and raise on the first request`,
         ),
       );
       continue;
     }
-    if (rest.length > 0 || !refIsString(binding.type)) {
-      problems.push(
-        problem(
-          'unsupported-placeholder',
-          `${path}.query`,
-          `retrieval query placeholder '${name}' resolves to binding '${binding.name}', which ` +
-            'is not a string, and a query is text',
-        ),
-      );
-    }
+    // `interpolate` hands each placeholder to the emitter, which reads `binding.field` as
+    // an attribute, so one field of a binding in scope is resolvable -- and it is resolved
+    // through the declared struct to check that what it holds is a string.
+    const resolved =
+      rest.length === 0
+        ? binding.type
+        : rest.length === 1 && binding.type?.kind === 'named'
+          ? types.get(binding.type.name)?.fields.find((candidate) => candidate.name === rest[0])
+              ?.type
+          : undefined;
+    if (refIsString(resolved)) continue;
+    problems.push(
+      problem(
+        'unsupported-placeholder',
+        `${path}.${field}`,
+        `${label} placeholder '${name}' resolves to binding '${binding.name}', which is not a ` +
+          `string${rest.length > 0 ? ` at '${rest.join('.')}'` : ''}, and this template is ` +
+          'interpolated as text',
+      ),
+    );
   }
+}
+
+/**
+ * Every placeholder in a retrieval query, checked against what the generated step can
+ * actually resolve.
+ */
+function checkRetrieveQuery(
+  step: StepShape & { kind: 'retrieve' },
+  path: string,
+  bindings: readonly StepBinding[],
+  types: Map<string, TypeShape>,
+  problems: PlanProblem[],
+): void {
+  checkTextTemplate(step.query, 'query', 'a retrieval query', path, bindings, types, problems);
 }
 
 /**
@@ -1305,9 +1345,10 @@ function checkRetrieveStep(
   step: StepShape & { kind: 'retrieve' },
   path: string,
   bindings: readonly StepBinding[],
+  types: Map<string, TypeShape>,
   problems: PlanProblem[],
 ): void {
-  checkRetrieveQuery(step, path, bindings, problems);
+  checkRetrieveQuery(step, path, bindings, types, problems);
   if (!ir.retrievers.some((entry) => entry.id === step.retriever)) {
     problems.push(
       problem(
@@ -1482,6 +1523,31 @@ export function requestPlan(ir: IR, pipeline: PipelineShape): RequestPlan {
         return;
       }
 
+      // The wiring leaves carry a scalar template rather than an `input` map. A whole
+      // `event.<field>` placeholder in one is a request field whose type the template fixes:
+      // it is interpolated as text, so the field is a string. A `guard` at the retrieval
+      // stage carries a binding reference rather than a template, so it contributes nothing.
+      if (step.kind === 'rerank' || step.kind === 'agent' || step.kind === 'guard') {
+        const templates =
+          step.kind === 'rerank'
+            ? [step.query]
+            : step.kind === 'agent'
+              ? [step.text]
+              : step.stage === 'retrieval'
+                ? []
+                : [step.text];
+        for (const template of templates) {
+          for (const name of templatePlaceholders(template)) {
+            const [root, head, ...rest] = name.split('.');
+            if (root !== 'event' || head === undefined || rest.length > 0) continue;
+            add(head, { kind: 'primitive', name: 'string', list: false }, `${path}.text`);
+          }
+        }
+        // A guard binds nothing: `flag` is observability only.
+        if (step.kind !== 'guard') bindings.push({ name: step.as, type: undefined });
+        return;
+      }
+
       const wanted = new Map<string, TypeRef>();
       if (step.kind === 'generate') {
         const prompt = prompts.get(step.prompt);
@@ -1524,7 +1590,10 @@ export function requestPlan(ir: IR, pipeline: PipelineShape): RequestPlan {
 
 /** The binding name a step introduces, or `undefined` when the step introduces none. */
 export function bindingOf(step: StepShape): string | undefined {
-  return step.kind === 'emit' || step.kind === 'branch' || step.kind === 'parallel'
+  return step.kind === 'emit' ||
+    step.kind === 'guard' ||
+    step.kind === 'branch' ||
+    step.kind === 'parallel'
     ? undefined
     : step.as;
 }
@@ -1538,6 +1607,8 @@ export function checkPipelines(ir: IR): PlanProblem[] {
   const prompts = new Map(ir.prompts.map((prompt) => [prompt.id, prompt]));
   const tools = new Map(ir.tools.map((tool) => [tool.id, tool]));
   const models = new Set(ir.models.map((model) => model.id));
+  const agents = new Map((ir.agents ?? []).map((agent) => [agent.id, agent]));
+  const guardrails = new Map((ir.guardrails ?? []).map((guardrail) => [guardrail.id, guardrail]));
   const problems: PlanProblem[] = [];
 
   for (const pipeline of ir.pipelines) {
@@ -1593,8 +1664,12 @@ export function checkPipelines(ir: IR): PlanProblem[] {
     const steps: readonly StepShape[] = pipeline.steps ?? [];
     // The bindings that hold retrieved items, so a generate step's `context` name can be
     // checked against the kind of binding that can fill it rather than only its presence.
+    // A `rerank` reorders a retrieval result and binds one, so it joins the set: a later
+    // `rerank` or a `generate.context` may name it.
     const retrieved = new Set<string>(
-      steps.flatMap((step) => (step.kind === 'retrieve' ? [step.as] : [])),
+      steps.flatMap((step) =>
+        step.kind === 'retrieve' || step.kind === 'rerank' ? [step.as] : [],
+      ),
     );
     if (steps.length === 0) {
       problems.push(problem('missing-emit', `${base}.steps`, 'a pipeline needs at least one step'));
@@ -1802,11 +1877,165 @@ export function checkPipelines(ir: IR): PlanProblem[] {
           return;
         }
         if (step.kind === 'retrieve') {
-          checkRetrieveStep(ir, step, path, bindings, problems);
+          checkRetrieveStep(ir, step, path, bindings, types, problems);
           // The binding stays untyped on purpose: a retrieval step yields items and a
           // rendered context, not a struct, so `emit/ir.ts` reports no type for it and the
           // generated call is the only thing that reads it.
           bindings.push({ name: step.as, type: undefined });
+          return;
+        }
+        if (step.kind === 'rerank') {
+          // The runtime's interface is `rerank(query, items, *, top_n)`, so the operand has
+          // two halves and the design's single `input` could only have named one of them.
+          if (!retrieved.has(step.over)) {
+            problems.push(
+              problem(
+                'unresolved-reference',
+                `${path}.over`,
+                `'${step.over}' is not a retrieval binding; a rerank reorders the items a ` +
+                  "'retrieve' -- or an earlier 'rerank' -- step binds, and takes nothing else",
+              ),
+            );
+          }
+          checkTextTemplate(step.query, 'query', 'a rerank query', path, bindings, types, problems);
+          // `reranker_for` raises `FeatureDeferredError` for any alias whose name does not
+          // say it is lexical, and the generated binding carries the alias verbatim, so a
+          // name that cannot be served is refused here rather than at the first request --
+          // the rule `checkRetrieverDeclaration` already applies to `retriever.rerank.model`.
+          if (!step.model.toLowerCase().includes('lexical')) {
+            problems.push(
+              problem(
+                'unsupported-param',
+                `${path}.model`,
+                `the runtime's only reranker is lexical, so '${step.model}' cannot be served; ` +
+                  "name it 'lexical' until another reranker ships",
+              ),
+            );
+          }
+          // Unannotated on purpose, like a retrieval binding: a rerank yields ranked items
+          // and a rendered context, not a struct, so nothing reads it as a declared type.
+          bindings.push({ name: step.as, type: undefined });
+          return;
+        }
+        if (step.kind === 'guard') {
+          const guardrail = guardrails.get(step.guardrail);
+          if (guardrail === undefined) {
+            problems.push(
+              problem(
+                'unresolved-reference',
+                `${path}.guardrail`,
+                `guardrail '${step.guardrail}' is not declared`,
+              ),
+            );
+            return;
+          }
+          if (!guardrail.stages.includes(step.stage)) {
+            problems.push(
+              problem(
+                'unsupported-guardrail',
+                `${path}.guardrail`,
+                `guardrail '${guardrail.id}' declares no '${step.stage}' stage, so the step ` +
+                  'would run it against a stage the spec never named for it',
+              ),
+            );
+          }
+          // A pipeline step has three observable outcomes and no fourth: carry on, raise, or
+          // say nothing. `escalate` needs a checkpoint a step cannot return (and would make a
+          // pipeline a second pause mechanism beside `agents[].humanInTheLoop`); `redact`
+          // rewrites a payload the step binds nothing back to. Both are refused rather than
+          // downgraded to `flag`.
+          if (guardrail.action === 'escalate' || guardrail.action === 'redact') {
+            problems.push(
+              problem(
+                'unsupported-param',
+                `${path}.guardrail`,
+                `guardrail '${guardrail.id}' acts with '${guardrail.action}', which a pipeline ` +
+                  "step cannot serve: 'escalate' needs a checkpoint, and 'redact' has no " +
+                  'binding to write the masked payload back to',
+              ),
+            );
+          }
+          if (step.stage === 'tool-call') {
+            problems.push(
+              problem(
+                'unsupported-param',
+                `${path}.stage`,
+                "a guard step names the payload it inspects, and the 'tool-call' stage has " +
+                  'none to name: gate the call in an agent, whose loop owns the calls',
+              ),
+            );
+          } else if (step.stage === 'retrieval') {
+            // `check_retrieval` takes the chunk passages, so the operand is a projection of a
+            // retrieval binding rather than a template: the text has to be that binding, alone,
+            // because anything else is author text the emitted projection would silently drop.
+            const parts = scanTemplate(step.text);
+            const named =
+              parts.length === 1 && parts[0]?.kind === 'placeholder' ? parts[0] : undefined;
+            if (named === undefined || !retrieved.has(named.name)) {
+              problems.push(
+                problem(
+                  'unsupported-param',
+                  `${path}.text`,
+                  "a 'retrieval' guard inspects the chunk passages of exactly one retrieval " +
+                    `binding, so its text is just {{ ${named?.name ?? 'that binding'} }}; ` +
+                    `got '${step.text}'`,
+                ),
+              );
+            }
+          } else {
+            checkTextTemplate(step.text, 'text', 'guard text', path, bindings, types, problems);
+          }
+          // A guard binds nothing: `flag` is observability only, and the two actions that
+          // could change the payload are refused above.
+          return;
+        }
+        if (step.kind === 'agent') {
+          const target = agents.get(step.agent);
+          if (target === undefined) {
+            problems.push(
+              problem(
+                'unresolved-reference',
+                `${path}.agent`,
+                `agent '${step.agent}' is not declared`,
+              ),
+            );
+            return;
+          }
+          // `AgentRuntime.run` returns `PAUSED` with a checkpoint its caller has to carry,
+          // and a step's result is a value in the pipeline context, not a route. Every
+          // source of a pause is refused here (`agentCanPause` names all three), so a
+          // pipeline never stops for a reason it cannot report.
+          if (agentCanPause(ir, target)) {
+            problems.push(
+              problem(
+                'unsupported-param',
+                `${path}.agent`,
+                `agent '${target.id}' can end a run in PAUSED -- it declares a ` +
+                  '`humanInTheLoop`, calls a tool that requires confirmation, or carries an ' +
+                  'escalating guardrail -- and a step has no checkpoint to return; run it ' +
+                  'through `/agents/{agent_id}/run` instead',
+              ),
+            );
+          }
+          // `run` keys memory by `memory_key or agent.id` and a step passes neither, so a
+          // memory-bearing target would share one thread across every request.
+          if (target.memory.length > 0) {
+            problems.push(
+              problem(
+                'unsupported-param',
+                `${path}.agent`,
+                `agent '${target.id}' declares memory, and a step opens no thread: the runtime ` +
+                  "would key it by the agent's own id, so every request would read the one " +
+                  'before it',
+              ),
+            );
+          }
+          checkTextTemplate(step.text, 'text', 'agent text', path, bindings, types, problems);
+          // The run's answer is the whole of what crosses back, so the binding is a string.
+          bindings.push({
+            name: step.as,
+            type: { kind: 'primitive', name: 'string', list: false },
+          });
           return;
         }
         const prompt = prompts.get(step.prompt);

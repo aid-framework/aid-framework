@@ -91,23 +91,28 @@ describe('detect against this repository', () => {
     const [runtime] = shipped;
     expect(runtime?.registry).toBe('pypi');
     expect(runtime?.name).toBe('aid-runtime-python');
-    // The example declares the same version and must still not ship. There are two of them
-    // now, and they are refused for two different reasons -- the Python example is outside
-    // the workspace, the TypeScript one is a workspace member marked `private` -- so this
-    // asserts the set rather than whichever example the scan happened to reach first.
+    // The examples declare the same version and must still not ship. There are three of
+    // them now, and they are refused for two different reasons -- both Python examples sit
+    // outside the workspace, the TypeScript one is a workspace member marked `private` --
+    // so this asserts the set rather than whichever example the scan happened to reach
+    // first.
     const exampleCandidates = detection.candidates.filter((candidate) =>
       candidate.path.startsWith('examples/'),
     );
     expect(exampleCandidates.map((candidate) => candidate.path).sort()).toEqual([
+      'examples/guarded-reply/pyproject.toml',
       'examples/support-copilot-ts/package.json',
       'examples/support-copilot/pyproject.toml',
     ]);
     expect(exampleCandidates.filter((candidate) => candidate.status === 'publishable')).toEqual([]);
-    expect(
-      exampleCandidates.find(
-        (candidate) => candidate.path === 'examples/support-copilot/pyproject.toml',
-      )?.status,
-    ).toBe('outside-workspace');
+    for (const path of [
+      'examples/guarded-reply/pyproject.toml',
+      'examples/support-copilot/pyproject.toml',
+    ]) {
+      expect(exampleCandidates.find((candidate) => candidate.path === path)?.status).toBe(
+        'outside-workspace',
+      );
+    }
   });
 
   it('never publishes the 0.0.0 workspace placeholder, even when it matches', () => {
