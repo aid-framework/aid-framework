@@ -1135,7 +1135,7 @@
       "id": "agent-step-exhaustion",
       "op": "agent.steps",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L2 ships the native Python engine only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "An agent that keeps calling tools stops at maxSteps and produces no answer; the step ceiling is a stop condition, not an error and not a retry.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1187,7 +1187,7 @@
       "id": "agent-budget-hard-fail",
       "op": "agent.budget",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L2 ships the native Python engine only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "Decision D1: a breached cost ceiling is a hard failure, not a truncated run. With no onBudgetExhausted declaration the agent does not degrade, so the run raises rather than answering from a cheaper model.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1210,7 +1210,7 @@
       "id": "agent-transfer-moves-control",
       "op": "agent.transfer",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L2 ships the native Python engine only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "handoffs is transfer of control. The control tool is named transfer_to_<agent>; calling it means the caller never answers again and the target inherits the conversation, produces the final answer and extends the path.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1265,7 +1265,7 @@
       "id": "agent-delegate-returns-control",
       "op": "agent.delegate",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L2 ships the native Python engine only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "delegates is delegation, not transfer. The control tool is named delegate_to_<agent>; the delegate gets an isolated context and its answer arrives back as one observation, so the caller still produces the final answer and the path does not grow.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1329,7 +1329,7 @@
       "id": "agent-memory-scope",
       "op": "agent.memory",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L2 ships the native Python engine only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "A user-scoped memory is visible to the next run in the same thread and invisible to another thread, and the model's own prompt is where that difference is observable. The keys are thread ids, not sessions.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1354,7 +1354,7 @@
       "id": "guardrail-input-block",
       "op": "agent.guardrail",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L3 ships the guardrails engine in the native Python runtime only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "The input stage blocks before the model is called: an injected instruction in the user's turn stops the run, and the error names the guardrail and the stage that stopped it.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1393,7 +1393,7 @@
       "id": "guardrail-output-redact",
       "op": "agent.guardrail",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L3 ships the guardrails engine in the native Python runtime only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "The output stage redacts the field the guardrail names: the answer ships with the email masked, not withheld, and the run still completes.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1432,7 +1432,7 @@
       "id": "guardrail-input-flag",
       "op": "agent.guardrail",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L3 ships the guardrails engine in the native Python runtime only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "A flag does not stop anything: the run completes with the answer the model produced and the match is recorded on the result, which is what the flag is for.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1471,7 +1471,7 @@
       "id": "guardrail-input-escalate",
       "op": "agent.guardrail",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L3 ships the guardrails engine in the native Python runtime only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "An escalate pauses the run for a person instead of failing it: the status is paused, not an error, and the checkpoint the caller needs is on the result.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1510,7 +1510,7 @@
       "id": "guardrail-tool-call-block",
       "op": "agent.guardrail",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L3 ships the guardrails engine in the native Python runtime only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "The tool-call stage runs over the arguments before the handler body: a credential in an argument blocks the call, and the block is attributed to the tool-call stage.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1557,7 +1557,7 @@
       "id": "agent-engine-native-explicit",
       "op": "agent.engine",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L4 chooses the agent backend inside the Python runtime only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "Naming the native engine explicitly changes nothing: it is the default, the loop runs, and the run reports the same shape an agent that named no engine reports.",
       "input": {
         "models": [
@@ -1612,7 +1612,7 @@
       "id": "agent-engine-unknown-refused",
       "op": "agent.engine",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L4 chooses the agent backend inside the Python runtime only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "engine selects the backend, so an unrecognised value is a configuration error rather than a run: an ignored field would make the IR claim a backend the runtime is not executing.",
       "input": {
         "models": [
@@ -1654,7 +1654,7 @@
       "id": "agent-engine-transfer-refused",
       "op": "agent.engine",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L4 chooses the agent backend inside the Python runtime only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "handoffs is transfer, and Deep Agents has only subagents, which delegate and return. The engine refuses by name instead of degrading the transfer into a delegate that would change who authors the final answer.",
       "input": {
         "models": [
@@ -1708,7 +1708,7 @@
       "id": "agent-engine-version-mismatch-refused",
       "op": "agent.engine",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. L4 chooses the agent backend inside the Python runtime only, so this case has no TypeScript handler to run against yet.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "A deepagents agent must name the release this runtime was built against. A declared version the runtime is not pinned to fails closed, which is the comparison the IR gate's demand for a pinned engineVersion exists to make possible.",
       "input": {
         "models": [
@@ -1752,7 +1752,7 @@
       "id": "agent-resume-across-json",
       "op": "agent.resume",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. P7b emits the resume route for the Python target, so this case is the parity target for the TypeScript impl that has to answer the same questions.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "A run stops at a tool that requires confirmation, the checkpoint survives a JSON round trip, and the approved run continues from the same step. The confirmation is declared on the tool rather than in a policy, which is the source P7b's route predicate has to notice without a humanInTheLoop.",
       "input": {
         "models": [
@@ -1812,7 +1812,7 @@
       "id": "memory-file-store-survives-a-second-instance",
       "op": "memory.store",
       "runtimes": ["python"],
-      "reason": "The TypeScript agent runtime is L6 of the Phase 2 plan. P7b is what makes a file-backed tier reachable from an emitted document, so the case is scoped to the runtime that can serve it.",
+      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "A file-backed tier is durable: values appended through one store are read back through a second store on the same path, and a different scope sees none of them. InProcessMemoryStore is already covered by agent-memory-scope; durability is the property that distinguishes this backend.",
       "input": {
         "scope": "user",
@@ -1829,8 +1829,6 @@
       "id": "steps-branch-takes-then-when-the-principal-satisfies-the-policy",
       "op": "steps.branch",
       "description": "A branch whose principal satisfies its policy runs the then arm and binds what that arm bound.",
-      "runtimes": ["python"],
-      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
       "input": {
         "when": {
           "kind": "call",
@@ -1864,8 +1862,6 @@
       "id": "steps-branch-takes-otherwise-when-the-principal-does-not",
       "op": "steps.branch",
       "description": "The same branch decides for a principal without the role: the alternative runs and the then arm never does.",
-      "runtimes": ["python"],
-      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
       "input": {
         "when": {
           "kind": "call",
@@ -1899,8 +1895,6 @@
       "id": "steps-branch-with-no-alternative-binds-nothing",
       "op": "steps.branch",
       "description": "A branch with no alternative runs neither arm when the policy fails, and binds nothing rather than an empty or stale value.",
-      "runtimes": ["python"],
-      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
       "input": {
         "when": {
           "kind": "call",
@@ -1929,8 +1923,6 @@
       "id": "steps-parallel-holds-the-cap-while-running-every-arm",
       "op": "steps.parallel",
       "description": "Three arms under a cap of two reach a ceiling of exactly two: the cap bounds the fan-out rather than merely being available to it.",
-      "runtimes": ["python"],
-      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
       "input": {
         "limit": 2,
         "arms": [
@@ -1957,8 +1949,6 @@
       "id": "steps-parallel-keeps-input-order-when-arms-finish-in-reverse",
       "op": "steps.parallel",
       "description": "The declared arm order is the binding order even when every arm finishes before the one before it.",
-      "runtimes": ["python"],
-      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
       "input": {
         "limit": 3,
         "arms": [
@@ -1985,8 +1975,6 @@
       "id": "steps-parallel-with-no-arms-binds-nothing",
       "op": "steps.parallel",
       "description": "A parallel with no arms runs nothing, binds nothing, and never takes a slot.",
-      "runtimes": ["python"],
-      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
       "input": {
         "limit": 1,
         "arms": []
@@ -2001,8 +1989,6 @@
       "id": "steps-map-runs-the-body-once-per-item-in-input-order",
       "op": "steps.map",
       "description": "A map runs its body once per item and binds the per-item results in input order, each iteration seeing its own item and position.",
-      "runtimes": ["python"],
-      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
       "input": {
         "over": "items",
         "as": "results",
@@ -2034,8 +2020,6 @@
       "id": "steps-map-over-an-empty-list-binds-an-empty-list",
       "op": "steps.map",
       "description": "A map over an empty list runs no iteration and binds the empty list rather than binding nothing.",
-      "runtimes": ["python"],
-      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
       "input": {
         "over": "items",
         "as": "results",
@@ -2054,8 +2038,6 @@
       "id": "steps-reduce-collects-per-item-results-in-input-order",
       "op": "steps.reduce",
       "description": "A reduce binds its collected results in input order even though the last item is the first to finish.",
-      "runtimes": ["python"],
-      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
       "input": {
         "over": "items",
         "as": "collected",
@@ -2075,8 +2057,6 @@
       "id": "steps-depth-allows-nesting-up-to-the-bound",
       "op": "steps.depth",
       "description": "A nest of composites exactly at the bound runs, and the leaf observes the depth it ran at.",
-      "runtimes": ["python"],
-      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
       "input": {
         "levels": 4
       },
@@ -2091,8 +2071,6 @@
       "id": "steps-depth-refuses-nesting-past-the-bound",
       "op": "steps.depth",
       "description": "One level past the bound is refused rather than run, and the refusal names the bound.",
-      "runtimes": ["python"],
-      "reason": "L5b implements the composite step family in the Python runtime. The TypeScript runtime has no branch/parallel/map/reduce to drive yet -- that is L6 of the Phase 2 plan -- so every steps.* case is scoped to the runtime that implements the family.",
       "input": {
         "levels": 5
       },
@@ -2108,7 +2086,7 @@
       "op": "steps.rerank",
       "description": "A rerank step with topN 2 keeps the two best-covering passages in the reranker's order, re-ranks them from 1, and leaves the binding's own query and retriever alone -- the step reads the query but does not own it.",
       "runtimes": ["python"],
-      "reason": "L5c wires rerank/guard/agent into the Python generator and runtime. The TypeScript runtime has no step kinds to drive at all until L6 of the Phase 2 plan, so every steps.* case is scoped to the runtime that implements them.",
+      "reason": "L6c ports the rerank/guard/agent step drivers to the TypeScript runtime. The composite step family became cross-runtime in L6a; these three still wait on the drivers, which read a reranked binding, drive a guardrail stage and run an agent as a step. Until they land the case is scoped to the runtime that implements them.",
       "input": {
         "over": "handbook",
         "as": "ranked",
@@ -2139,7 +2117,7 @@
       "op": "steps.guard",
       "description": "A retrieval-stage guard is handed the texts of the items in the binding, not the query, so a contact detail that exists only in a passage is refused -- the projection is the whole point of the stage, and a step that checked the query would allow this.",
       "runtimes": ["python"],
-      "reason": "L5c wires rerank/guard/agent into the Python generator and runtime. The TypeScript runtime has no step kinds to drive at all until L6 of the Phase 2 plan, so every steps.* case is scoped to the runtime that implements them.",
+      "reason": "L6c ports the rerank/guard/agent step drivers to the TypeScript runtime. The composite step family became cross-runtime in L6a; these three still wait on the drivers, which read a reranked binding, drive a guardrail stage and run an agent as a step. Until they land the case is scoped to the runtime that implements them.",
       "input": {
         "stage": "retrieval",
         "retriever": "handbook",
@@ -2170,7 +2148,7 @@
       "op": "steps.agent",
       "description": "An agent step builds its runtime over the enclosing gateway, so the call it makes is recorded on that gateway's ledger: a step that brought its own ledger would spend outside the pipeline's budget while looking identical from outside.",
       "runtimes": ["python"],
-      "reason": "L5c wires rerank/guard/agent into the Python generator and runtime. The TypeScript runtime has no step kinds to drive at all until L6 of the Phase 2 plan, so every steps.* case is scoped to the runtime that implements them.",
+      "reason": "L6c ports the rerank/guard/agent step drivers to the TypeScript runtime. The composite step family became cross-runtime in L6a; these three still wait on the drivers, which read a reranked binding, drive a guardrail stage and run an agent as a step. Until they land the case is scoped to the runtime that implements them.",
       "input": {
         "models": [
           {

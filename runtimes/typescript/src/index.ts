@@ -24,6 +24,22 @@
  * pass them otherwise.
  */
 
+export { ConcurrencyLimiter, holdsSlot } from './concurrency.js';
+export type { CompositeStep } from './control.js';
+export {
+  branch,
+  DEPTH_KEY,
+  INDEX_KEY,
+  ITEM_KEY,
+  LIMITER_KEY,
+  MAX_STEP_DEPTH,
+  mapStep,
+  PRINCIPAL_KEY,
+  parallel,
+  REDUCED_KEY,
+  RESERVED_KEYS,
+  reduceStep,
+} from './control.js';
 export {
   Budget,
   CostLedger,
@@ -41,6 +57,7 @@ export {
   FeatureDeferredError,
   GateConfigurationError,
   PipelineError,
+  PolicyEvaluationError,
   PromptNotFoundError,
   PromptRenderError,
   ProviderError,
@@ -92,6 +109,14 @@ export type { AliasEntry, CallHook, ModelGatewayOptions } from './gateway.js';
 export { estimateUsage, ModelGateway } from './gateway.js';
 export type { NamedStep, Step, StepResult } from './pipeline.js';
 export { Pipeline, PipelineContext, STEPS_KEY, StopPipeline } from './pipeline.js';
+export type { PolicyNode } from './policy.js';
+export {
+  evaluatePolicy,
+  POLICY_BUILTIN_ARITY,
+  POLICY_BUILTINS,
+  Principal,
+  policySource,
+} from './policy.js';
 export { Example, PromptRegistry, PromptTemplate, RenderedPrompt } from './prompts.js';
 export type { Provider } from './providers/base.js';
 export { supports } from './providers/base.js';
