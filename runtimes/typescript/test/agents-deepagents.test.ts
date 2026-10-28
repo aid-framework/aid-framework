@@ -32,7 +32,9 @@ import {
   installedDeepagentsVersion,
   Principal,
   ScriptedTurn,
+  ToolPermissionError,
 } from '../src/index.js';
+import { FakeProvider } from '../src/providers/fake.js';
 import {
   agentDef,
   build,
@@ -40,6 +42,7 @@ import {
   document,
   guardrailDef,
   modelDef,
+  PROVIDER,
   promptDef,
   recordingTool,
   solo,
@@ -212,15 +215,25 @@ describe('every model call goes through the gateway', () => {
     expect(harness.provider.calls).toHaveLength(1);
   });
 
-  it('still falls back inside the harness', async () => {
+  it('still falls back inside the harness when the primary model fails', async () => {
+    const provider = new FakeProvider({
+      name: PROVIDER,
+      script: [ScriptedTurn.answer('done')],
+      failWith: ['upstream 503'],
+    });
     const harness = build(
       gated({
         models: [modelDef('cheap', { fallbacks: ['strong'] }), modelDef('strong')],
       }),
-      { provider: undefined, script: [ScriptedTurn.answer('done')] },
+      { provider },
     );
-    await harness.runtime.run('solo', PROMPT);
-    expect(harness.aliasesCharged()).toEqual(['cheap']);
+
+    const result = await harness.runtime.run('solo', PROMPT);
+
+    // A measured fallback: the primary really failed, and the run completed on the
+    // fallback alias rather than surfacing the provider error.
+    expect(result.status).toBe('completed');
+    expect(harness.aliasesCharged()).toContain('strong');
   });
 
   it('stops the harness on a budget breach', async () => {
@@ -447,6 +460,50 @@ describe('delegation', () => {
     const result = await harness.runtime.run('front', PROMPT);
 
     expect(result.status).toBe('completed');
+    expect(recorder.calls).toBe(1);
+  });
+
+  it(`gives the delegate its own grant rather than the caller's`, async () => {
+    const { tool, recorder } = recordingTool();
+    const harness = build(
+      document({
+        models: [modelDef('cheap', { cost: CHEAP_COST })],
+        prompts: [promptDef('front', 'front'), promptDef('worker', 'worker')],
+        tools: [toolDef('search', 'search', { sideEffects: 'read' })],
+        agents: [
+          agentDef('front', {
+            prompt: 'front',
+            engine: 'deepagents',
+            engineVersion: '1.16.0',
+            delegates: ['worker'],
+            tools: [],
+          }),
+          agentDef('worker', {
+            prompt: 'worker',
+            engine: 'deepagents',
+            engineVersion: '1.16.0',
+            tools: ['search'],
+          }),
+        ],
+      }),
+      {
+        tools: [tool],
+        script: [
+          ScriptedTurn.tool('task', { description: 'find the order', subagent_type: 'worker' }),
+          ScriptedTurn.tool('search', { query: 'order' }),
+          ScriptedTurn.answer('worker done'),
+          ScriptedTurn.tool('search', { query: 'the caller holds no grant' }),
+          ScriptedTurn.answer('front done'),
+        ],
+      },
+    );
+
+    const run = harness.runtime.run('front', PROMPT);
+
+    // The caller's attempt is refused by the grant, not silently allowed.
+    await expect(run).rejects.toThrow(ToolPermissionError);
+    // The delegate's call ran through our executor; the caller, which declares no tools,
+    // could not reach the same tool. One execution, not two.
     expect(recorder.calls).toBe(1);
   });
 
