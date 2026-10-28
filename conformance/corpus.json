@@ -1134,8 +1134,6 @@
     {
       "id": "agent-step-exhaustion",
       "op": "agent.steps",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "An agent that keeps calling tools stops at maxSteps and produces no answer; the step ceiling is a stop condition, not an error and not a retry.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1186,8 +1184,6 @@
     {
       "id": "agent-budget-hard-fail",
       "op": "agent.budget",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "Decision D1: a breached cost ceiling is a hard failure, not a truncated run. With no onBudgetExhausted declaration the agent does not degrade, so the run raises rather than answering from a cheaper model.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1209,8 +1205,6 @@
     {
       "id": "agent-transfer-moves-control",
       "op": "agent.transfer",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "handoffs is transfer of control. The control tool is named transfer_to_<agent>; calling it means the caller never answers again and the target inherits the conversation, produces the final answer and extends the path.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1264,8 +1258,6 @@
     {
       "id": "agent-delegate-returns-control",
       "op": "agent.delegate",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "delegates is delegation, not transfer. The control tool is named delegate_to_<agent>; the delegate gets an isolated context and its answer arrives back as one observation, so the caller still produces the final answer and the path does not grow.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1328,8 +1320,6 @@
     {
       "id": "agent-memory-scope",
       "op": "agent.memory",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "A user-scoped memory is visible to the next run in the same thread and invisible to another thread, and the model's own prompt is where that difference is observable. The keys are thread ids, not sessions.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1353,8 +1343,6 @@
     {
       "id": "guardrail-input-block",
       "op": "agent.guardrail",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "The input stage blocks before the model is called: an injected instruction in the user's turn stops the run, and the error names the guardrail and the stage that stopped it.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1392,8 +1380,6 @@
     {
       "id": "guardrail-output-redact",
       "op": "agent.guardrail",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "The output stage redacts the field the guardrail names: the answer ships with the email masked, not withheld, and the run still completes.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1431,8 +1417,6 @@
     {
       "id": "guardrail-input-flag",
       "op": "agent.guardrail",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "A flag does not stop anything: the run completes with the answer the model produced and the match is recorded on the result, which is what the flag is for.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1470,8 +1454,6 @@
     {
       "id": "guardrail-input-escalate",
       "op": "agent.guardrail",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "An escalate pauses the run for a person instead of failing it: the status is paused, not an error, and the checkpoint the caller needs is on the result.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1509,8 +1491,6 @@
     {
       "id": "guardrail-tool-call-block",
       "op": "agent.guardrail",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "The tool-call stage runs over the arguments before the handler body: a credential in an argument blocks the call, and the block is attributed to the tool-call stage.",
       "input": {
         "models": [{ "id": "cheap", "inputPer1kUsd": 0.00015, "outputPer1kUsd": 0.0006 }],
@@ -1556,8 +1536,6 @@
     {
       "id": "agent-engine-native-explicit",
       "op": "agent.engine",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "Naming the native engine explicitly changes nothing: it is the default, the loop runs, and the run reports the same shape an agent that named no engine reports.",
       "input": {
         "models": [
@@ -1611,8 +1589,6 @@
     {
       "id": "agent-engine-unknown-refused",
       "op": "agent.engine",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "engine selects the backend, so an unrecognised value is a configuration error rather than a run: an ignored field would make the IR claim a backend the runtime is not executing.",
       "input": {
         "models": [
@@ -1653,8 +1629,6 @@
     {
       "id": "agent-engine-transfer-refused",
       "op": "agent.engine",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "handoffs is transfer, and Deep Agents has only subagents, which delegate and return. The engine refuses by name instead of degrading the transfer into a delegate that would change who authors the final answer.",
       "input": {
         "models": [
@@ -1707,8 +1681,6 @@
     {
       "id": "agent-engine-version-mismatch-refused",
       "op": "agent.engine",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "A deepagents agent must name the release this runtime was built against. A declared version the runtime is not pinned to fails closed, which is the comparison the IR gate's demand for a pinned engineVersion exists to make possible.",
       "input": {
         "models": [
@@ -1751,8 +1723,6 @@
     {
       "id": "agent-resume-across-json",
       "op": "agent.resume",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "A run stops at a tool that requires confirmation, the checkpoint survives a JSON round trip, and the approved run continues from the same step. The confirmation is declared on the tool rather than in a policy, which is the source P7b's route predicate has to notice without a humanInTheLoop.",
       "input": {
         "models": [
@@ -1811,8 +1781,6 @@
     {
       "id": "memory-file-store-survives-a-second-instance",
       "op": "memory.store",
-      "runtimes": ["python"],
-      "reason": "L6b ports the agent loop, the guardrails engine and the memory stores to the TypeScript runtime. L2-L4 and P7b ship them in the Python runtime only, so until L6b lands the TypeScript runtime has no agent to drive and the case stays scoped to the runtime that implements it.",
       "description": "A file-backed tier is durable: values appended through one store are read back through a second store on the same path, and a different scope sees none of them. InProcessMemoryStore is already covered by agent-memory-scope; durability is the property that distinguishes this backend.",
       "input": {
         "scope": "user",

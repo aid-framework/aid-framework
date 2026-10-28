@@ -176,6 +176,155 @@ export class PipelineError extends AidRuntimeError {}
  */
 export class PolicyEvaluationError extends AidRuntimeError {}
 
+/**
+ * A guardrail stopped the run before (or after) the guarded effect.
+ *
+ * Raised by the `block` action, and by any guardrail the engine cannot evaluate. An
+ * undecidable policy is a block, never an allow: the failure mode this class exists to
+ * prevent is a check that quietly returns "no violation" because its input did not
+ * match what it expected.
+ */
+export class GuardrailBlockedError extends AidRuntimeError {
+  readonly guardrail: string;
+  readonly stage: string;
+  readonly reason: string;
+
+  constructor(guardrail: string, stage: string, reason: string) {
+    super(`guardrail ${repr(guardrail)} blocked the ${stage} stage: ${reason}`);
+    this.guardrail = guardrail;
+    this.stage = stage;
+    this.reason = reason;
+  }
+}
+
+/**
+ * An agent asked for a tool it was not granted, or one its auth policy denies.
+ *
+ * Raised before the handler body runs. The check is deliberately not a tool result: a
+ * model can repair a bad argument, but it cannot repair a missing grant, so the caller
+ * is the party that has to fix this.
+ */
+export class ToolPermissionError extends AidRuntimeError {
+  readonly agent: string;
+  readonly tool: string;
+  readonly reason: string;
+
+  constructor(agent: string, tool: string, reason: string) {
+    super(`agent ${repr(agent)} may not call tool ${repr(tool)}: ${reason}`);
+    this.agent = agent;
+    this.tool = tool;
+    this.reason = reason;
+  }
+}
+
+/**
+ * A transfer chain revisited an agent that already held control.
+ *
+ * `agents/handoff-cycles` rejects this at build time; the runtime refuses it again
+ * rather than trusting that every caller came through the gate.
+ */
+export class AgentTransferCycleError extends AidRuntimeError {
+  readonly path: readonly string[];
+
+  constructor(path: readonly string[]) {
+    super(`transfer cycle: ${path.join(' -> ')}`);
+    this.path = [...path];
+  }
+}
+
+/**
+ * A budget was crossed and there is no cheaper alias left to route to.
+ *
+ * `ir/agents-budget-degrade` rejects this at build time for declared specs; this is
+ * the run-time counterpart for a hand-built IR.
+ */
+export class AgentBudgetDegradedError extends AidRuntimeError {}
+
+/**
+ * An agent asked for `handoffs` on an engine that has no transfer primitive.
+ *
+ * Deep Agents has `subagents` -- delegation that *returns* -- and no transfer: control
+ * never moves, the caller always resumes and always authors the final answer. Emulating
+ * transfer with a delegate would change who answers, so the engine refuses instead of
+ * silently degrading `handoffs` into a delegate.
+ */
+/**
+ * `['a', 'b']`, the shape Python's `{list(...)}` puts in a message. `repr` from
+ * `internal/json` quotes one string; a diagnostic that names a set of targets needs the
+ * bracket as well.
+ */
+function listRepr(values: readonly string[]): string {
+  return `[${values.map((value) => repr(value)).join(', ')}]`;
+}
+
+export class AgentHandoffUnsupportedError extends AidRuntimeError {
+  readonly agent: string;
+  readonly targets: readonly string[];
+  readonly engine: string;
+
+  constructor(agent: string, targets: readonly string[], engine: string) {
+    super(
+      `agent ${repr(agent)} declares handoffs ${listRepr([...targets])} but runs on the ` +
+        `${repr(engine)} engine, which has no transfer primitive; transfer is native-only, ` +
+        'and delegation (delegates) is the deepagents equivalent',
+    );
+    this.agent = agent;
+    this.targets = [...targets];
+    this.engine = engine;
+  }
+}
+
+/** Base for the refusals that belong to the optional `deepagents` backend. */
+export class DeepAgentsEngineError extends AidRuntimeError {}
+
+/**
+ * `engineVersion` does not match the release this runtime is pinned to.
+ *
+ * The mismatch fires in both directions -- a declared version this runtime is not built
+ * for, and a runtime that cannot find the declaration at all.
+ */
+export class DeepAgentsVersionMismatchError extends DeepAgentsEngineError {
+  readonly agent: string;
+  readonly declared: string;
+  readonly pinned: string;
+
+  constructor(agent: string, declared: string, pinned: string) {
+    const detail =
+      declared === ''
+        ? 'the IR declares no engineVersion'
+        : `the IR declares engineVersion ${repr(declared)}`;
+    super(
+      `agent ${repr(agent)}: ${detail}, but this runtime is pinned to deepagents==${pinned}; ` +
+        `set engineVersion to ${repr(pinned)} or install the runtime that matches`,
+    );
+    this.agent = agent;
+    this.declared = declared;
+    this.pinned = pinned;
+  }
+}
+
+/**
+ * The `deepagents` optional extra is not installed.
+ *
+ * A named error rather than an import failure because the fix is an install
+ * instruction the caller can act on, and because an agent silently falling back to the
+ * native loop would leave `engine` in the IR meaning nothing.
+ */
+export class DeepAgentsUnavailableError extends DeepAgentsEngineError {
+  readonly extra: string;
+  readonly distribution: string;
+
+  constructor(extra: string, distribution: string) {
+    super(
+      "this agent runs on the 'deepagents' engine, but the " +
+        `${repr(distribution)} package is not installed; install the extra with: ` +
+        `pip install '${extra}'`,
+    );
+    this.extra = extra;
+    this.distribution = distribution;
+  }
+}
+
 /** An eval run could not be completed. */
 // biome-ignore lint/suspicious/noShadowRestrictedNames: the framework's own error name, matching the Python runtime's public surface
 export class EvalError extends AidRuntimeError {}

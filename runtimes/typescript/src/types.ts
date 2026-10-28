@@ -11,7 +11,7 @@
 import { canonicalJson, roundTo, sha256Hex } from './internal/json.js';
 
 /** Who authored a message. */
-export type Role = 'system' | 'user' | 'assistant';
+export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
 /** Why a generation stopped. */
 export type FinishReason = 'stop' | 'length' | 'tool-calls' | 'content-filter' | 'error';
@@ -29,10 +29,29 @@ export type Capability =
 export class Message {
   readonly role: Role;
   readonly content: string;
+  /**
+   * `toolCalls` on an assistant turn and `toolCallId` on a tool turn are what make a
+   * multi-step tool loop replayable: without them the next request would carry an
+   * observation the provider cannot attribute to the call that produced it.
+   */
+  readonly toolCalls: readonly ToolCall[];
+  readonly toolCallId: string | undefined;
+  readonly name: string | undefined;
 
-  constructor(role: Role, content: string) {
+  constructor(
+    role: Role,
+    content: string,
+    init: {
+      readonly toolCalls?: readonly ToolCall[];
+      readonly toolCallId?: string;
+      readonly name?: string;
+    } = {},
+  ) {
     this.role = role;
     this.content = content;
+    this.toolCalls = [...(init.toolCalls ?? [])];
+    this.toolCallId = init.toolCallId;
+    this.name = init.name;
   }
 
   static system(content: string): Message {
@@ -47,8 +66,28 @@ export class Message {
     return new Message('assistant', content);
   }
 
-  toJSON(): { role: Role; content: string } {
-    return { role: this.role, content: this.content };
+  static assistantToolCalls(content: string, toolCalls: readonly ToolCall[]): Message {
+    return new Message('assistant', content, { toolCalls });
+  }
+
+  static tool(callId: string, content: string, options: { readonly name?: string } = {}): Message {
+    return new Message('tool', content, { toolCallId: callId, name: options.name });
+  }
+
+  toJSON(): {
+    role: Role;
+    content: string;
+    toolCalls?: readonly ToolCall[];
+    toolCallId?: string;
+    name?: string;
+  } {
+    return {
+      role: this.role,
+      content: this.content,
+      ...(this.toolCalls.length > 0 ? { toolCalls: this.toolCalls } : {}),
+      ...(this.toolCallId === undefined ? {} : { toolCallId: this.toolCallId }),
+      ...(this.name === undefined ? {} : { name: this.name }),
+    };
   }
 }
 

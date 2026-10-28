@@ -31,18 +31,68 @@ import {
   type Capability,
   type CompletionRequest,
   CompletionResponse,
+  type FinishReason,
   type ModelSpec,
   TokenUsage,
+  ToolCall,
 } from '../types.js';
 import type { Provider } from './base.js';
 
 /** A responder sees the request and its call index, and returns the model's text. */
 export type Responder = (request: CompletionRequest, index: number) => string;
 
+/**
+ * One scripted model turn: some text, some tool calls, or both.
+ *
+ * `calls` is `(name, arguments)` pairs rather than `ToolCall` because a script should not
+ * have to invent unique call ids. The provider derives `call_<turn>_<position>` from the
+ * turn's position in the script, so two turns calling the same tool still produce
+ * distinguishable ids.
+ */
+export class ScriptedTurn {
+  readonly text: string;
+  readonly calls: readonly (readonly [string, Readonly<Record<string, unknown>>])[];
+
+  private constructor(
+    text: string,
+    calls: readonly (readonly [string, Readonly<Record<string, unknown>>])[],
+  ) {
+    this.text = text;
+    this.calls = calls;
+  }
+
+  static answer(text: string): ScriptedTurn {
+    return new ScriptedTurn(text, []);
+  }
+
+  static tool(name: string, arguments_: Readonly<Record<string, unknown>> = {}): ScriptedTurn {
+    return new ScriptedTurn('', [[name, { ...arguments_ }]]);
+  }
+
+  static tools(
+    ...calls: readonly (readonly [string, Readonly<Record<string, unknown>>])[]
+  ): ScriptedTurn {
+    return new ScriptedTurn('', calls);
+  }
+
+  get finishReason(): FinishReason {
+    return this.calls.length > 0 ? 'tool-calls' : 'stop';
+  }
+
+  toolCalls(turn: number): ToolCall[] {
+    return this.calls.map(
+      ([name, arguments_], position) =>
+        new ToolCall({ id: `call_${turn}_${position}`, name, arguments: { ...arguments_ } }),
+    );
+  }
+}
+
 export interface FakeProviderOptions {
   readonly responder?: Responder;
   /** Maps the *user message* to the ideal response. */
   readonly answers?: Readonly<Record<string, string>>;
+  /** One turn per successive call; once exhausted the provider behaves normally. */
+  readonly script?: readonly ScriptedTurn[];
   readonly accuracy?: number;
   readonly seed?: number;
   readonly name?: string;
@@ -56,12 +106,14 @@ export interface FakeProviderOptions {
 export class FakeProvider implements Provider {
   private readonly _responder: Responder | undefined;
   private readonly _answers: ReadonlyMap<string, string>;
+  private readonly _script: readonly ScriptedTurn[];
   private readonly _accuracy: number;
   private readonly _seed: number;
   private readonly _name: string;
   private readonly _failures: string[];
   private readonly _tokensPerChar: number;
   private readonly _overheadTokens: number;
+  private _served = 0;
 
   /** Every request this provider has seen, in order. */
   readonly calls: CompletionRequest[] = [];
@@ -73,6 +125,9 @@ export class FakeProvider implements Provider {
     }
     this._responder = options.responder;
     this._answers = new Map(Object.entries(options.answers ?? {}));
+    // A script is consumed one turn per call, then the provider behaves normally -- so a
+    // scripted loop that overshoots its script is visible rather than silently answered.
+    this._script = [...(options.script ?? [])];
     this._accuracy = accuracy;
     this._seed = options.seed ?? 0;
     this._name = options.name ?? 'fake';
@@ -96,13 +151,30 @@ export class FakeProvider implements Provider {
     const failure = this._failures.shift();
     if (failure !== undefined) throw new ProviderError(failure);
 
+    const inputTokens = this.countTokens(promptText(request));
+    const turn = this._served < this._script.length ? this._script[this._served] : undefined;
+    if (turn !== undefined) {
+      this._served += 1;
+      return new CompletionResponse({
+        text: turn.text,
+        model: model.name,
+        provider: this._name,
+        usage: new TokenUsage({
+          inputTokens,
+          outputTokens: this.countTokens(turn.text),
+        }),
+        toolCalls: turn.toolCalls(this._served - 1),
+        finishReason: turn.finishReason,
+      });
+    }
+
     const text = this.respondTo(request, index);
     return new CompletionResponse({
       text,
       model: model.name,
       provider: this._name,
       usage: new TokenUsage({
-        inputTokens: this.countTokens(promptText(request)),
+        inputTokens,
         outputTokens: this.countTokens(text),
       }),
       finishReason: 'stop',
