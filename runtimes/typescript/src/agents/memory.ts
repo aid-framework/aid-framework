@@ -93,7 +93,7 @@ export class FileMemoryStore implements MemoryStore {
     readonly key: string;
   }): Promise<readonly string[]> {
     const data = await this.#load();
-    return [...(data[options.scope]?.[options.key] ?? [])];
+    return [...(data.get(options.scope)?.get(options.key) ?? [])];
   }
 
   async append(options: {
@@ -103,26 +103,35 @@ export class FileMemoryStore implements MemoryStore {
   }): Promise<void> {
     const next = this.#queue.then(async () => {
       const data = await this.#load();
-      let scope = data[options.scope];
+      let scope = data.get(options.scope);
       if (scope === undefined) {
-        scope = {};
-        data[options.scope] = scope;
+        scope = new Map();
+        data.set(options.scope, scope);
       }
-      const values = scope[options.key] ?? [];
+      const values = scope.get(options.key) ?? [];
       values.push(options.value);
-      scope[options.key] = values;
+      scope.set(options.key, values);
       await this.#save(data);
     });
     this.#queue = next.catch(() => undefined);
     await next;
   }
 
-  async #load(): Promise<Record<string, Record<string, string[]>>> {
+  /**
+   * Scopes and keys are read into `Map`s rather than into an object.
+   *
+   * A scope name comes from the caller and a key name from the caller, and both are
+   * written back verbatim. On a plain object a scope of `__proto__` does not create an
+   * entry: it resolves to `Object.prototype`, so the next write lands on the prototype
+   * every object in the process inherits from. `Map` has no inherited keys, so a scope
+   * named `__proto__` is an ordinary scope here.
+   */
+  async #load(): Promise<Map<string, Map<string, string[]>>> {
     let raw: string;
     try {
       raw = await readFile(this.path, 'utf8');
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Map();
       throw new ConfigurationError(`memory store ${this.path} is unreadable: ${String(error)}`);
     }
     let parsed: unknown;
@@ -134,27 +143,30 @@ export class FileMemoryStore implements MemoryStore {
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       throw new ConfigurationError(`memory store ${this.path} is not a JSON object`);
     }
-    const data: Record<string, Record<string, string[]>> = {};
+    const data = new Map<string, Map<string, string[]>>();
     for (const [scope, keys] of Object.entries(parsed as Record<string, unknown>)) {
       if (typeof keys !== 'object' || keys === null || Array.isArray(keys)) continue;
-      const resolved: Record<string, string[]> = {};
+      const resolved = new Map<string, string[]>();
       for (const [key, values] of Object.entries(keys as Record<string, unknown>)) {
         if (!Array.isArray(values)) continue;
-        resolved[key] = values.map((value) => String(value));
+        resolved.set(
+          key,
+          values.map((value) => String(value)),
+        );
       }
-      data[scope] = resolved;
+      data.set(scope, resolved);
     }
     return data;
   }
 
-  async #save(data: Record<string, Record<string, string[]>>): Promise<void> {
+  async #save(data: ReadonlyMap<string, ReadonlyMap<string, readonly string[]>>): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
     const temporary = join(
       dirname(this.path),
       `.${this.path.split(/[\\/]/).pop() ?? 'memory'}.${process.pid}.${Date.now()}.tmp`,
     );
     try {
-      await writeFile(temporary, canonicalJson(data), 'utf8');
+      await writeFile(temporary, serialize(data), 'utf8');
       await rename(temporary, this.path);
     } catch (error) {
       await unlink(temporary).catch(() => undefined);
@@ -163,16 +175,27 @@ export class FileMemoryStore implements MemoryStore {
   }
 }
 
-/** `json.dump(..., sort_keys=True, separators=(",", ":"))`, byte for byte. */
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
-  if (typeof value === 'object' && value !== null) {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== undefined)
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
-    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(',')}}`;
-  }
-  return JSON.stringify(value);
+/**
+ * `json.dump(data, sort_keys=True, separators=(",", ":"))`, byte for byte.
+ *
+ * Built from the sorted scope and key names rather than from an object so that no caller
+ * string is ever used as a property name (see `#load`).
+ */
+function serialize(data: ReadonlyMap<string, ReadonlyMap<string, readonly string[]>>): string {
+  const scopes = [...data.keys()].sort(compare);
+  const body = scopes.map((scope) => {
+    const keys = [...(data.get(scope)?.keys() ?? [])].sort(compare);
+    const entries = keys.map((key) => {
+      const values = data.get(scope)?.get(key) ?? [];
+      return `${JSON.stringify(key)}:${JSON.stringify(values)}`;
+    });
+    return `${JSON.stringify(scope)}:{${entries.join(',')}}`;
+  });
+  return `{${body.join(',')}}`;
+}
+
+function compare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function storageKey(options: { readonly scope: string; readonly key: string }): string {
