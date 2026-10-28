@@ -20,6 +20,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import {
   ACTION_BLOCK,
   ACTION_REDACT,
+  type AgentCheckpoint,
   type AgentDefinition,
   BudgetExceededError,
   checkEngine,
@@ -584,5 +585,43 @@ describe('human in the loop', () => {
     expect(paused.status).toBe('paused');
     expect(recorder.calls).toBe(0);
     expect(paused.approval?.calls.map((call) => call.name)).toEqual(['search']);
+
+    const resumed = await harness.runtime.resume(paused.checkpoint as AgentCheckpoint, 'approve', {
+      principal: new Principal({ roles: ['admin'] }),
+    });
+
+    // A pause is a question, not a decision: the tool runs only once a person says so.
+    expect(resumed.status).toBe('completed');
+    expect(recorder.queries).toEqual(['order']);
+  });
+
+  it('never runs a rejected tool call', async () => {
+    const { tool, recorder } = recordingTool();
+    const harness = build(
+      gated({
+        toolSpecs: [toolDef('search', 'search')],
+        tools: ['search'],
+        hitl: { when: ADMIN, channel: 'ops' },
+      }),
+      {
+        tools: [tool],
+        script: [
+          ScriptedTurn.tool('search', { query: 'order' }),
+          ScriptedTurn.answer('understood'),
+        ],
+      },
+    );
+
+    const paused = await harness.runtime.run('solo', PROMPT, {
+      principal: new Principal({ roles: ['admin'] }),
+    });
+    expect(paused.status).toBe('paused');
+
+    const resumed = await harness.runtime.resume(paused.checkpoint as AgentCheckpoint, 'reject', {
+      principal: new Principal({ roles: ['admin'] }),
+    });
+
+    expect(recorder.calls).toBe(0);
+    expect(resumed.status).toBe('completed');
   });
 });
