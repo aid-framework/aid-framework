@@ -13,6 +13,7 @@
  * failing, because a schema written for a newer draft must not reject every call.
  */
 
+import type { ConcurrencyLimiter } from './concurrency.js';
 import { ConfigurationError, ToolExecutionError, ToolNotFoundError } from './errors.js';
 import { dumpsSorted, repr } from './internal/json.js';
 import { type ToolCall, ToolDefinition, ToolResult } from './types.js';
@@ -162,9 +163,14 @@ export function validateArguments(schema: ToolParameters, args: unknown): string
 export class ToolExecutor {
   private readonly _tools = new Map<string, Tool>();
   private readonly _strict: boolean;
+  private readonly _limiter: ConcurrencyLimiter | undefined;
 
-  constructor(tools: Iterable<Tool> = [], options: { readonly strict?: boolean } = {}) {
+  constructor(
+    tools: Iterable<Tool> = [],
+    options: { readonly strict?: boolean; readonly limiter?: ConcurrencyLimiter } = {},
+  ) {
     this._strict = options.strict ?? false;
+    this._limiter = options.limiter;
     for (const tool of tools) this.register(tool);
   }
 
@@ -200,6 +206,13 @@ export class ToolExecutor {
    * a model can fix by trying again with the same name.
    */
   async execute(call: ToolCall): Promise<ToolResult> {
+    // When a limiter is shared with the gateway, the call holds one slot for its whole
+    // duration, released on success, handler error, or cancellation.
+    if (this._limiter === undefined) return this.dispatch(call);
+    return this._limiter.run(() => this.dispatch(call));
+  }
+
+  private async dispatch(call: ToolCall): Promise<ToolResult> {
     const tool = this.require(call.name);
     const problems = validateArguments(tool.definition.parameters as ToolParameters, call.args);
     if (problems.length > 0) {

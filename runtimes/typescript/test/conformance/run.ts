@@ -35,6 +35,7 @@ import type {
   GateResult,
   Provider,
   RankedId,
+  Step,
   StructuredOutput,
 } from '../../dist/index.js';
 import {
@@ -43,26 +44,43 @@ import {
   Budget,
   BudgetExceededError,
   bm25Scores,
+  branch,
   CapabilityMismatchError,
+  ConcurrencyLimiter,
   CostLedger,
   CostProfile,
+  DEPTH_KEY,
   EvalBaseline,
   EvalRun,
   estimateCostUsd,
   fuse,
+  INDEX_KEY,
+  ITEM_KEY,
   LedgerEntry,
+  LIMITER_KEY,
   lexicalRanking,
   lexicalScore,
+  MAX_STEP_DEPTH,
   MetricBaseline,
   MetricRun,
   ModelGateway,
   ModelSpec,
+  mapStep,
+  Pipeline,
+  PipelineContext,
+  PRINCIPAL_KEY,
+  Principal,
   PromptNotFoundError,
   PromptRegistry,
   PromptRenderError,
   PromptTemplate,
+  parallel,
   parseStructured,
+  REDUCED_KEY,
+  RESERVED_KEYS,
+  reduceStep,
   runStructured,
+  STEPS_KEY,
   StructuredOutputError,
   similarity,
   Threshold,
@@ -601,6 +619,235 @@ function evalZCritical(input: Json): Json {
   };
 }
 
+// --- composite steps ------------------------------------------------------------
+//
+// Transcribed from `runtimes/python/tests/conformance/test_conformance.py`. The verdicts
+// were already pinned against the reference runtime, so a difference here is a real
+// semantic difference in the port rather than a corpus edit.
+
+/** The names a composite owns plus `steps`; nothing here is a binding it produced. */
+const PLUMBING: ReadonlySet<string> = new Set([...RESERVED_KEYS, STEPS_KEY]);
+
+/** The caller a `steps.branch` case decides for, spelled the way a route seeds it. */
+function principalOf(data: Json): Principal {
+  const spec = asRecord(data.principal ?? {}, 'principal');
+  return new Principal({
+    roles: asStrings(spec.roles ?? [], 'principal.roles'),
+    scopes: asStrings(spec.scopes ?? [], 'principal.scopes'),
+    authenticated: spec.authenticated === undefined ? true : Boolean(spec.authenticated),
+  });
+}
+
+/** The context an emitted route hands a composite: the case's values, then the two the
+ * application owns. */
+function seeded(data: Json, limiter: ConcurrencyLimiter): PipelineContext {
+  const values: Record<string, unknown> = {
+    ...asRecord(data.values ?? {}, 'values'),
+  };
+  values[LIMITER_KEY] = limiter;
+  values[PRINCIPAL_KEY] = principalOf(data);
+  return new PipelineContext(values);
+}
+
+/**
+ * What the composite bound, in the order it bound it.
+ *
+ * The case's own seeded values are excluded too: they are what the composite read, not
+ * what it produced, so a verdict cannot be satisfied by echoing its input.
+ */
+function bound(context: PipelineContext, data: Json): Json {
+  const seededNames = new Set(Object.keys(asRecord(data.values ?? {}, 'values')));
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(context.values)) {
+    if (!PLUMBING.has(key) && !seededNames.has(key)) out[key] = value;
+  }
+  return out;
+}
+
+function namedStep(name: string, body: Step): Step {
+  Object.defineProperty(body, 'name', { value: name, configurable: true });
+  return body;
+}
+
+function at<T>(items: readonly T[], index: number, what: string): T {
+  const item = items[index];
+  if (item === undefined) throw new TypeError(`${what} ${index} is out of range`);
+  return item;
+}
+
+/**
+ * One `branch`: which arm the principal selected, and what that arm bound.
+ *
+ * A case that declares no alternative is how "neither arm ran" is observed, and the
+ * composite binds nothing at all in that case rather than an empty or stale value.
+ */
+async function stepsBranch(input: Json): Promise<Json> {
+  const ran: string[] = [];
+  const arm = (which: string, binds: Json): Pipeline =>
+    Pipeline.of(
+      namedStep(which, (current) => {
+        ran.push(which);
+        return current.withValues({ ...binds });
+      }),
+    );
+
+  const alternative = input.elseBinds;
+  const composite = branch({
+    when: asRecord(input.when, 'when'),
+    // biome-ignore lint/suspicious/noThenProperty: the branch shape names its taken arm `then`.
+    then: arm('then', asRecord(input.thenBinds ?? {}, 'thenBinds')),
+    ...(alternative === undefined || alternative === null
+      ? {}
+      : { otherwise: arm('otherwise', asRecord(alternative, 'otherwise')) }),
+  });
+  const result = await Pipeline.of(composite).run(seeded(input, new ConcurrencyLimiter(1)));
+  return { ran, bound: bound(result, input) };
+}
+
+/**
+ * One `parallel`: the ceiling the arms observed, the order they ended in, and the order
+ * their bindings reached the context.
+ *
+ * `after` names the arms an arm waits for, so the reverse-completion case is decided by
+ * the corpus instead of by how a machine happens to schedule tasks: the arms really do
+ * finish last-declared first, and the merge order is still declaration order.
+ * `highWater` is the most arms that ever held a slot at once, which is the only evidence
+ * the cap was applied rather than merely passed.
+ */
+async function stepsParallel(input: Json): Promise<Json> {
+  const specs = asArray(input.arms, 'arms').map((arm, index) => asRecord(arm, `arms[${index}]`));
+  const inFlight = { now: 0, high: 0 };
+  const finished: string[] = [];
+  const done = specs.map(() => {
+    let open!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    return { promise, open };
+  });
+
+  const arms = specs.map((spec, index) => {
+    const name = asString(spec.bind, 'arm.bind');
+    const after = spec.after === undefined ? [] : asNumbers(spec.after, 'arm.after');
+    return Pipeline.of(
+      namedStep(name, async (current) => {
+        // Counted from the moment the arm holds a slot, which is before it waits: an arm
+        // waiting on a sibling is still one of the arms the cap is holding, so counting
+        // only the post-wait region would report a ceiling of one.
+        inFlight.now += 1;
+        inFlight.high = Math.max(inFlight.high, inFlight.now);
+        for (const waitFor of after) await at(done, waitFor, 'arm.after').promise;
+        // Yield while holding the slot, so a second arm can take another one and the
+        // ceiling is some value above one rather than an artefact of not trying.
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
+        inFlight.now -= 1;
+        finished.push(name);
+        at(done, index, 'arm').open();
+        return current.withValues({ [name]: name });
+      }),
+    );
+  });
+
+  const composite = parallel({ branches: arms });
+  const result = await Pipeline.of(composite).run(
+    seeded(input, new ConcurrencyLimiter(asInt(input.limit, 'limit'))),
+  );
+  return {
+    highWater: inFlight.high,
+    finished,
+    order: Object.keys(bound(result, input)),
+  };
+}
+
+/**
+ * One `map`: the per-item bindings in input order, with the position each ran at.
+ *
+ * The body binds `at` and `value` from the two keys the composite writes, so the verdict
+ * shows both that every item ran once and which position it believed it had.
+ */
+async function stepsMap(input: Json): Promise<Json> {
+  const observe = namedStep('observe', (current) =>
+    current.withValues({ at: current.require(INDEX_KEY), value: current.require(ITEM_KEY) }),
+  );
+  const composite = mapStep({
+    over: asString(input.over, 'over'),
+    as: asString(input.as, 'as'),
+    step: Pipeline.of(observe),
+  });
+  const result = await Pipeline.of(composite).run(
+    seeded(input, new ConcurrencyLimiter(asInt(input.limit, 'limit'))),
+  );
+  return { bound: bound(result, input) };
+}
+
+/**
+ * One `reduce`: the collected per-item results in input order.
+ *
+ * Each iteration yields a number of times that decreases with its position, so the last
+ * item ends first and the collected list is still read in input order. `finished` reports
+ * the order the iterations actually ended in, so a runtime that collected in completion
+ * order fails instead of passing by luck.
+ */
+async function stepsReduce(input: Json): Promise<Json> {
+  const over = asString(input.over, 'over');
+  const finished: unknown[] = [];
+  const collect = namedStep('collect', async (current) => {
+    const index = asInt(current.require(INDEX_KEY), 'index');
+    const item = current.require(ITEM_KEY);
+    const count = asArray(current.require(over), over).length;
+    for (let turn = 0; turn < count - index; turn += 1) {
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+    }
+    finished.push(item);
+    return current.withValues({ [REDUCED_KEY]: item });
+  });
+  const composite = reduceStep({
+    over,
+    as: asString(input.as, 'as'),
+    step: Pipeline.of(collect),
+  });
+  const result = await Pipeline.of(composite).run(
+    seeded(input, new ConcurrencyLimiter(asInt(input.limit, 'limit'))),
+  );
+  return { bound: bound(result, input), finished };
+}
+
+/**
+ * How deep a nest a runtime allows before it refuses the next level.
+ *
+ * The nest is one `parallel` per level and the leaf is not a composite at all, so the
+ * bound is the family's rather than one kind's: every composite charges the same `depth`
+ * key. A refusal is reported as an outcome because refusing is the contract -- a nest
+ * past the bound that ran anyway would be the failure.
+ */
+async function stepsDepth(input: Json): Promise<Json> {
+  const levels = asInt(input.levels, 'levels');
+  const reached: { depth: number | null } = { depth: null };
+  const leaf = namedStep('leaf', (current) => {
+    reached.depth = asInt(current.get(DEPTH_KEY, 0), 'depth');
+    return current;
+  });
+
+  let nested = Pipeline.of(leaf);
+  for (let level = 0; level < levels; level += 1) {
+    nested = Pipeline.of(parallel({ branches: [nested] }));
+  }
+  try {
+    await nested.run(seeded(input, new ConcurrencyLimiter(1)));
+  } catch (error) {
+    const reason =
+      error instanceof Error && error.message.includes('nested deeper than')
+        ? 'max-depth'
+        : 'other';
+    return { refused: true, maxDepth: MAX_STEP_DEPTH, depth: null, reason };
+  }
+  return { refused: false, maxDepth: MAX_STEP_DEPTH, depth: reached.depth, reason: null };
+}
+
 const OPS: Readonly<Record<string, Handler>> = {
   'alias.resolve': aliasResolve,
   'alias.unknown': aliasUnknown,
@@ -620,6 +867,11 @@ const OPS: Readonly<Record<string, Handler>> = {
   'eval.z-critical': evalZCritical,
   'eval.gate': evalGate,
   'eval.gate-summary': evalGateSummary,
+  'steps.branch': stepsBranch,
+  'steps.parallel': stepsParallel,
+  'steps.map': stepsMap,
+  'steps.reduce': stepsReduce,
+  'steps.depth': stepsDepth,
 };
 
 // --- verdicts -------------------------------------------------------------------

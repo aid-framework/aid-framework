@@ -1101,7 +1101,7 @@ agree with its own runtime rather than with the other one.
 | `runtimes/typescript/test/conformance/run.ts` | TypeScript consumer, and the comparator. Prints `corpus:` and `typescript: N/M`. |
 | `.github/workflows/ci.yml` (`conformance`) | Runs both, then diffs the two verdict sets. |
 
-Six semantics are pinned bit for bit wherever they are numeric, all of them behaviour both runtimes
+Seven semantics are pinned bit for bit wherever they are numeric, all of them behaviour both runtimes
 already implement — the suite adds no runtime features:
 
 - **alias resolution** — a pinned alias to its concrete model, plus the closed failure modes.
@@ -1110,6 +1110,16 @@ already implement — the suite adds no runtime features:
 - **structured-output repair** — the repair loop's prompts and its terminal error.
 - **retrieval ranking** — BM25, lexical rerank, and RRF scores against a fixed vector fixture.
 - **eval-gate math** — `z_critical`, the baseline comparison, and the four rationale branches.
+- **composite steps** — the arm a `branch` selects from a principal, the ceiling a `parallel`
+  observes and the input-order merge it keeps when arms finish in reverse, the per-item bindings
+  a `map` produces, the collection order a `reduce` preserves, and the depth bound all four share.
+
+A case a runtime does not implement yet is scoped to the runtime that does, and the scope must carry
+a reason naming the layer that lifts it: `runtimes: ["python"], reason: "..."`. A scope without a
+reason fails both runners, so a gap is always visible rather than implied by silence. At present the
+scoped cases are the agent loop, the guardrails engine and the memory stores, waiting on **L6b**, and
+the `rerank`/`guard`/`agent` wiring steps, waiting on the **L6c** step drivers. Scope is never a way
+to skip a case a runtime claims.
 
 Each runner resolves the corpus path itself and prints what it resolved, and the job fails unless the
 two resolved paths are identical and the case count each runtime reports equals the count the corpus

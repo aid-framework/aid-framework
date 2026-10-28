@@ -166,6 +166,16 @@ export class ToolExecutionError extends AidRuntimeError {}
 /** A pipeline step failed or the pipeline was wired incorrectly. */
 export class PipelineError extends AidRuntimeError {}
 
+/**
+ * A policy could not be evaluated to a boolean.
+ *
+ * Separate from {@link PipelineError} because it is raised from the evaluator, not from
+ * a step's wiring: an unknown builtin or a non-boolean operand is a malformed policy,
+ * and for a human-in-the-loop gate "could not decide" must never degrade into "do not
+ * ask".
+ */
+export class PolicyEvaluationError extends AidRuntimeError {}
+
 /** An eval run could not be completed. */
 // biome-ignore lint/suspicious/noShadowRestrictedNames: the framework's own error name, matching the Python runtime's public surface
 export class EvalError extends AidRuntimeError {}

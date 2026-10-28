@@ -14,6 +14,7 @@
  *    ledger.
  */
 
+import type { ConcurrencyLimiter } from './concurrency.js';
 import { type Budget, CostLedger, estimatePromptCostUsd, type LedgerEntry } from './cost.js';
 import {
   BudgetExceededError,
@@ -54,6 +55,14 @@ export interface ModelGatewayOptions {
   readonly budget?: Budget;
   readonly onCall?: readonly CallHook[];
   readonly tracerName?: string;
+  /**
+   * The application's single limiter, from `deployments.concurrency`.
+   *
+   * A gateway constructed without one is unbounded, which keeps plain request/response
+   * usage free of concurrency surprises. Sharing the instance with the tool executor is
+   * what makes "one limiter, not two" true.
+   */
+  readonly limiter?: ConcurrencyLimiter;
 }
 
 /** Resolves aliases to pinned models and executes calls within a budget. */
@@ -64,6 +73,7 @@ export class ModelGateway {
   private readonly _budget: Budget | undefined;
   private readonly _hooks: readonly CallHook[];
   private readonly _tracerName: string;
+  private readonly _limiter: ConcurrencyLimiter | undefined;
 
   constructor(options: ModelGatewayOptions) {
     const providers = new Map(Object.entries(options.providers));
@@ -92,6 +102,7 @@ export class ModelGateway {
     this._budget = options.budget;
     this._hooks = options.onCall ?? [];
     this._tracerName = options.tracerName ?? 'aid_runtime';
+    this._limiter = options.limiter;
   }
 
   /** The pinned aliases, sorted. */
@@ -217,18 +228,20 @@ export class ModelGateway {
       tracerName: this._tracerName,
     };
 
-    const { response, cost } = await withLlmSpan(spanOptions, async (handle) => {
-      const answered = await provider.complete(request, spec);
-      const priced = spec.cost.costUsd(answered.usage);
-      recordUsage(handle.span, answered.usage.inputTokens, answered.usage.outputTokens);
-      recordCost(handle.span, priced);
-      handle.span.setAttribute(ATTRIBUTES.responseModel, answered.model);
-      handle.span.setAttribute(ATTRIBUTES.responseFinishReasons, [answered.finishReason]);
-      if (attempted.length > 1) {
-        handle.span.setAttribute(ATTRIBUTES.attempts, [...attempted]);
-      }
-      return { response: answered, cost: priced };
-    });
+    const { response, cost } = await this.limit(() =>
+      withLlmSpan(spanOptions, async (handle) => {
+        const answered = await provider.complete(request, spec);
+        const priced = spec.cost.costUsd(answered.usage);
+        recordUsage(handle.span, answered.usage.inputTokens, answered.usage.outputTokens);
+        recordCost(handle.span, priced);
+        handle.span.setAttribute(ATTRIBUTES.responseModel, answered.model);
+        handle.span.setAttribute(ATTRIBUTES.responseFinishReasons, [answered.finishReason]);
+        if (attempted.length > 1) {
+          handle.span.setAttribute(ATTRIBUTES.attempts, [...attempted]);
+        }
+        return { response: answered, cost: priced };
+      }),
+    );
 
     const entry = {
       alias: pinned.alias,
@@ -246,6 +259,18 @@ export class ModelGateway {
       costUsd: cost,
       attempts: [...attempted],
     });
+  }
+
+  /**
+   * Acquire the shared concurrency slot around one provider call.
+   *
+   * The slot wraps the call, not the surrounding bookkeeping, so a cache hit or a
+   * refused call never consumes one, and the slot is released on completion and on
+   * failure alike.
+   */
+  private async limit<T>(body: () => Promise<T>): Promise<T> {
+    if (this._limiter === undefined) return body();
+    return this._limiter.run(body);
   }
 
   /**
