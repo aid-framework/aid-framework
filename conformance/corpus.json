@@ -2053,8 +2053,6 @@
       "id": "steps-rerank-narrows-the-binding-it-reads-and-keeps-its-provenance",
       "op": "steps.rerank",
       "description": "A rerank step with topN 2 keeps the two best-covering passages in the reranker's order, re-ranks them from 1, and leaves the binding's own query and retriever alone -- the step reads the query but does not own it.",
-      "runtimes": ["python"],
-      "reason": "L6c ports the rerank/guard/agent step drivers to the TypeScript runtime. The composite step family became cross-runtime in L6a; these three still wait on the drivers, which read a reranked binding, drive a guardrail stage and run an agent as a step. Until they land the case is scoped to the runtime that implements them.",
       "input": {
         "over": "handbook",
         "as": "ranked",
@@ -2084,8 +2082,6 @@
       "id": "steps-guard-inspects-the-passages-a-retrieval-step-would-splice",
       "op": "steps.guard",
       "description": "A retrieval-stage guard is handed the texts of the items in the binding, not the query, so a contact detail that exists only in a passage is refused -- the projection is the whole point of the stage, and a step that checked the query would allow this.",
-      "runtimes": ["python"],
-      "reason": "L6c ports the rerank/guard/agent step drivers to the TypeScript runtime. The composite step family became cross-runtime in L6a; these three still wait on the drivers, which read a reranked binding, drive a guardrail stage and run an agent as a step. Until they land the case is scoped to the runtime that implements them.",
       "input": {
         "stage": "retrieval",
         "retriever": "handbook",
@@ -2115,8 +2111,6 @@
       "id": "steps-agent-charges-the-enclosing-runs-ledger",
       "op": "steps.agent",
       "description": "An agent step builds its runtime over the enclosing gateway, so the call it makes is recorded on that gateway's ledger: a step that brought its own ledger would spend outside the pipeline's budget while looking identical from outside.",
-      "runtimes": ["python"],
-      "reason": "L6c ports the rerank/guard/agent step drivers to the TypeScript runtime. The composite step family became cross-runtime in L6a; these three still wait on the drivers, which read a reranked binding, drive a guardrail stage and run an agent as a step. Until they land the case is scoped to the runtime that implements them.",
       "input": {
         "models": [
           {

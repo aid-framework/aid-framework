@@ -34,6 +34,8 @@ import type {
   Capability,
   DistanceMetric,
   GateResult,
+  GuardrailDefinition,
+  GuardrailVerdict,
   Provider,
   RankedId,
   Step,
@@ -41,6 +43,8 @@ import type {
   ToolParameters,
 } from '../../dist/index.js';
 import {
+  ACTION_BLOCK,
+  ACTION_ESCALATE,
   AgentHandoffUnsupportedError,
   AgentRuntime,
   AidRuntimeError,
@@ -50,6 +54,7 @@ import {
   bm25Scores,
   branch,
   CapabilityMismatchError,
+  Chunk,
   ConcurrencyLimiter,
   ConfigurationError,
   CostLedger,
@@ -57,6 +62,7 @@ import {
   checkpointFromJson,
   checkpointsEqual,
   checkpointToJson,
+  cite,
   DEPTH_KEY,
   DeepAgentsUnavailableError,
   DeepAgentsVersionMismatchError,
@@ -65,8 +71,10 @@ import {
   estimateCostUsd,
   FakeProvider,
   FileMemoryStore,
+  fromIr,
   fuse,
   GuardrailBlockedError,
+  GuardrailEngine,
   INDEX_KEY,
   InProcessMemoryStore,
   ITEM_KEY,
@@ -93,8 +101,12 @@ import {
   pendingApprovalFrom,
   REDUCED_KEY,
   RESERVED_KEYS,
+  RerankSpec,
+  RetrievalResult,
+  RetrievedItem,
   type RunResult,
   reduceStep,
+  rerankerFor,
   runStructured,
   ScriptedTurn,
   STEPS_KEY,
@@ -867,6 +879,150 @@ async function stepsDepth(input: Json): Promise<Json> {
   return { refused: false, maxDepth: MAX_STEP_DEPTH, depth: reached.depth, reason: null };
 }
 
+/**
+ * The binding the wiring steps read, shaped like a `retrieve` result.
+ *
+ * Position is both the chunk index and the incoming rank, so a case can state the order
+ * the step was handed and the order it produced without inventing a third vocabulary for
+ * either. The scores are placeholders: a `rerank` recomputes them, and a `guard` never
+ * reads them.
+ */
+function retrievalBinding(data: Json): RetrievalResult {
+  const items = asStrings(data.items, 'items').map((text, position) => {
+    const chunk = new Chunk({
+      chunkId: `chunk-${position}`,
+      docId: 'handbook',
+      uri: 'handbook.md',
+      index: position,
+      start: 0,
+      end: text.length,
+      text,
+    });
+    return new RetrievedItem({ chunk, score: 1, rank: position + 1, citation: cite(chunk) });
+  });
+  return new RetrievalResult({
+    retriever: maybeString(data.retriever, 'handbook'),
+    query: maybeString(data.seedQuery, ''),
+    items,
+  });
+}
+
+/** The one named guardrail the step resolves, out of the case's compact fixture. */
+function guardrailDefinition(data: Json): GuardrailDefinition {
+  const entry = asRecord(data.guardrail, 'guardrail');
+  const onFail = asRecord(entry.onFail ?? {}, 'guardrail.onFail');
+  return {
+    id: asString(entry.id, 'guardrail.id'),
+    stages: asStrings(entry.stages, 'guardrail.stages'),
+    policies: asStrings(entry.policies, 'guardrail.policies'),
+    action: asString(entry.action, 'guardrail.action'),
+    redact: asStrings(entry.redact ?? [], 'guardrail.redact'),
+    tools: asStrings(entry.tools ?? [], 'guardrail.tools'),
+    message: maybeString(onFail.message, ''),
+    fallbackPrompt:
+      onFail.fallbackPrompt === undefined
+        ? undefined
+        : asString(onFail.fallbackPrompt, 'guardrail.onFail.fallbackPrompt'),
+    log: onFail.log === true,
+  };
+}
+
+/**
+ * One `rerank` step: the binding it rebinds, re-ordered and cut to `topN`.
+ *
+ * The step rewrites the *items* of the binding it reads and leaves every other field
+ * alone, so the verdict reports the whole binding. `items`/`ranks` prove the reranker
+ * decided the order and the ceiling held; `query`/`retriever` prove the step rebound the
+ * binding it read rather than fabricating an unrelated one. The case's step query
+ * deliberately differs from the seeded one, so a step that wrote its own query into the
+ * binding fails here instead of passing quietly.
+ */
+async function stepsRerank(input: Json): Promise<Json> {
+  const over = asString(input.over, 'over');
+  const boundAs = asString(input.as, 'as');
+  const topN = asInt(input.topN, 'topN');
+  const query = asString(input.query, 'query');
+  const model = asString(input.model, 'model');
+  const values: Record<string, unknown> = { ...asRecord(input.values ?? {}, 'values') };
+  values[over] = retrievalBinding(input);
+
+  const run: Step = async (current) => {
+    const reranker = rerankerFor(new RerankSpec({ model, topN }));
+    if (reranker === null) throw new ConfigurationError('a declared rerank model must resolve');
+    // The binding owns its query and retriever; `query` above is only the reranker's
+    // argument, so the rebound result copies provenance from what was read.
+    const seededResult = current.require(over) as RetrievalResult;
+    const scored = await reranker.rerank(query, seededResult.items, { topN });
+    return current.withValues({
+      [boundAs]: new RetrievalResult({
+        retriever: seededResult.retriever,
+        query: seededResult.query,
+        items: scored,
+      }),
+    });
+  };
+
+  const context = seeded({ values, principal: input.principal ?? {} }, new ConcurrencyLimiter(1));
+  const bound_ = (await Pipeline.of(run).run(context)).require(boundAs) as RetrievalResult;
+  return {
+    bound: boundAs,
+    items: bound_.items.map((item) => item.chunk.text),
+    ranks: bound_.items.map((item) => item.rank),
+    query: bound_.query,
+    retriever: bound_.retriever,
+  };
+}
+
+/**
+ * The actions that stop a pipeline. `escalate` stops like a `block` because a route has
+ * no checkpoint to resume a question from -- the emitted step treats both the same way,
+ * and this mirrors it.
+ */
+const STOPPING_ACTIONS: ReadonlySet<string> = new Set([ACTION_BLOCK, ACTION_ESCALATE]);
+
+/**
+ * One `guard` step: the payload its stage is handed, and what the engine decided.
+ *
+ * The payload is the stage's, not the case's. `input` and `output` hand the rendered
+ * text; `retrieval` hands the *texts of the items in the binding* -- the passages a
+ * prompt would splice -- which is exactly the projection the emitted step makes. The
+ * case's contact detail lives in a passage and nowhere else, so a step that inspected
+ * the query instead of the context would pass here, which is why this case is the one
+ * that pins the projection.
+ *
+ * A stopping action is reported as an error rather than a verdict: the emitted step
+ * raises, so a refusal is the contract and a run that continued would be the failure.
+ */
+async function stepsGuard(input: Json): Promise<Json> {
+  const stage = asString(input.stage, 'stage');
+  const definition = guardrailDefinition(input);
+  const engine = new GuardrailEngine(new Map([[definition.id, definition]]));
+  let payload: string[] | string;
+  let verdict: GuardrailVerdict;
+  if (stage === 'retrieval') {
+    payload = retrievalBinding(input).items.map((item) => item.chunk.text);
+    verdict = engine.checkRetrieval([definition], payload);
+  } else if (stage === 'input' || stage === 'output') {
+    payload = asString(input.text, 'text');
+    verdict =
+      stage === 'input'
+        ? engine.checkInput([definition], payload)
+        : engine.checkOutput([definition], payload);
+  } else {
+    throw new ConfigurationError(`the guard step has no ${JSON.stringify(stage)} stage`);
+  }
+  const deciding = verdict.deciding;
+  if (deciding !== undefined && STOPPING_ACTIONS.has(deciding.action)) {
+    return { error: 'guardrail-blocked', guardrail: deciding.guardrail, stage: deciding.stage };
+  }
+  return {
+    stage: verdict.stage,
+    payload,
+    fired: verdict.records.map((record) => record.guardrail),
+    action: verdict.action ?? null,
+  };
+}
+
 // --- agents, guardrails, memory ----------------------------------------------------
 //
 // Transcribed from the Python handlers in
@@ -1207,6 +1363,38 @@ async function memoryStore(input: Json): Promise<Json> {
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+/**
+ * One `agent` step: what it bound, and where its spend landed.
+ *
+ * The runtime is built over the *enclosing* gateway, the way the emitted step builds it
+ * over `deps.gateway`, so the tokens the agent spends have to appear on that gateway's
+ * ledger: `charged` is the whole budget claim in one field. `AgentRuntime.fromIr` would
+ * build a gateway of its own, which reports `charged: false` and escapes a pipeline
+ * budget while still looking like it has one -- so the spec is resolved here and the
+ * gateway is constructed once, outside the runtime.
+ */
+async function stepsAgent(input: Json): Promise<Json> {
+  const spec = fromIr(agentDocument(input));
+  const provider = new FakeProvider({
+    name: AGENT_PROVIDER,
+    script: asArray(input.script ?? [], 'script').map(scriptedTurn),
+  });
+  const gateway = new ModelGateway({
+    providers: { [AGENT_PROVIDER]: provider },
+    aliases: Object.fromEntries(spec.models),
+  });
+  const runtime = new AgentRuntime(spec, gateway, { tools: [] });
+  const result = await runtime.run(asString(input.agent, 'agent'), asString(input.text, 'text'));
+  const spent = gateway.ledger;
+  return {
+    status: result.status,
+    answer: result.answer,
+    calls: provider.calls.length,
+    charged: spent.entries.length === provider.calls.length && spent.totalTokens > 0,
+  };
+}
+
 const OPS: Readonly<Record<string, Handler>> = {
   'alias.resolve': aliasResolve,
   'alias.unknown': aliasUnknown,
@@ -1231,6 +1419,9 @@ const OPS: Readonly<Record<string, Handler>> = {
   'steps.map': stepsMap,
   'steps.reduce': stepsReduce,
   'steps.depth': stepsDepth,
+  'steps.rerank': stepsRerank,
+  'steps.guard': stepsGuard,
+  'steps.agent': stepsAgent,
   'agent.steps': agentLoop,
   'agent.budget': agentLoop,
   'agent.transfer': agentLoop,
