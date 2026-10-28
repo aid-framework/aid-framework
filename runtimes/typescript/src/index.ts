@@ -58,6 +58,7 @@ export {
   CapabilityMismatchError,
   ConfigurationError,
   DeepAgentsEngineError,
+  DeepAgentsMaxStepsError,
   DeepAgentsUnavailableError,
   DeepAgentsVersionMismatchError,
   EvalError,

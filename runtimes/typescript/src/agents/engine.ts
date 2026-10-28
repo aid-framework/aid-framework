@@ -12,20 +12,30 @@
  * {@link checkEngine} compares the IR's `engineVersion` against *this* constant, not
  * against whatever package happens to be importable.
  *
+ * **Per-runtime pins.** The npm harness and the Python harness do not share version
+ * numbers: this runtime pins `deepagents@1.16.0`, the Python runtime pins
+ * `deepagents==0.7.32`. One `engineVersion` therefore cannot satisfy both, and it is not
+ * asked to. Each runtime compares the declaration against its own pin, so a spec versioned
+ * for Python is refused here with {@link DeepAgentsVersionMismatchError} -- honestly, at
+ * the seam that would have to run it -- rather than being waved through on a major-version
+ * match. Accepting any installed release would recreate exactly the silent-drift hole the
+ * pin exists to close.
+ *
  * **Fail closed, in one place.** Every reason a `deepagents` agent cannot run -- unknown
- * engine, transfer declared, mismatched pin, missing extra -- is raised from
+ * engine, transfer declared, mismatched pin, missing package -- is raised from
  * {@link checkEngine}. Putting them together means there is one function to read to know
  * whether an engine is supported, and no second path that could grow a silent fallback to
  * the native loop. A runtime that quietly ran a `deepagents` agent on the native engine
  * would leave `engine` in the IR meaning nothing at all.
  *
- * **The TypeScript runtime ships no Deep Agents backend.** This port keeps the seam, the
- * pin and all four refusals, because they are what the conformance corpus measures; it
- * deliberately does not port the harness itself, so every `deepagents` agent that survives
- * the pin check fails here with {@link DeepAgentsUnavailableError}. That is a capability
- * deviation from the Python runtime and is recorded as such rather than papered over with a
- * native fallback.
+ * **The backend.** This runtime runs `deepagents` agents through the real npm harness; see
+ * `./deep_agents.ts`. The harness is an optional peer dependency, because an application
+ * that never names `engine: deepagents` should not install a LangChain tree. That makes
+ * {@link installedDeepagentsVersion} load-bearing: it is what turns "the package is absent"
+ * into {@link DeepAgentsUnavailableError} instead of an unresolvable import.
  */
+
+import { createRequire } from 'node:module';
 
 import {
   AgentHandoffUnsupportedError,
@@ -46,37 +56,88 @@ export const DEEPAGENTS = 'deepagents';
 export const ENGINES: ReadonlySet<string> = new Set([NATIVE, DEEPAGENTS]);
 
 /**
- * The one authoritative pin. Measured from PyPI and mirrored in the Python runtime's
- * `pyproject.toml` `deepagents` extra; compared against the IR's `engineVersion` at run
- * time.
+ * The one authoritative pin. Measured from the npm registry and mirrored in this
+ * package's `peerDependenciesMeta`; compared against the IR's `engineVersion` at run time.
  */
-export const DEEPAGENTS_PIN = '0.7.32';
+export const DEEPAGENTS_PIN = '1.16.0';
 
-/** The optional extra that installs the harness. */
-export const DEEPAGENTS_EXTRA = 'aid-runtime-python[deepagents]';
+/**
+ * The harness and every required peer, at the exact releases this runtime was measured
+ * against. `deepagents@1.16.0` declares each of these as a peer, so an application that
+ * opts into the backend has to satisfy all of them; spelling them out means the install
+ * instruction in the error message is the one that was actually tested.
+ */
+export const DEEPAGENTS_PEERS: readonly string[] = [
+  'deepagents@1.16.0',
+  'langchain@1.5.10',
+  '@langchain/core@1.2.14',
+  '@langchain/langgraph@1.5.3',
+  '@langchain/langgraph-sdk@1.12.8',
+  '@langchain/langgraph-checkpoint@1.2.1',
+  'langsmith@0.9.0',
+];
 
-/** The distribution the extra installs. */
+/** The optional peer set that installs the harness, as one `npm install` argument list. */
+export const DEEPAGENTS_EXTRA = DEEPAGENTS_PEERS.join(' ');
+
+/** The distribution the peers install. */
 export const DEEPAGENTS_DISTRIBUTION = 'deepagents';
 
 /**
- * The installed `deepagents` version, or `undefined` when the extra is absent.
+ * How {@link installedDeepagentsVersion} finds the harness.
  *
- * Always `undefined` here: this runtime has no Deep Agents backend to detect. The function
- * exists so the availability refusal is a distinct, testable branch in the same position
- * Python puts it, rather than a check this port silently dropped.
+ * A seam rather than a bare import so the absent-harness branch is reachable in a test that
+ * has the package installed -- the alternative is uninstalling it, which no hermetic test
+ * can do. It is also what the native-default test observes to prove the runtime never goes
+ * looking for the harness at all when the engine is `native`.
  */
-export function installedDeepagentsVersion(): string | undefined {
-  return undefined;
+export type VersionDetector = () => string | undefined;
+
+const requireFromHere = createRequire(import.meta.url);
+
+/**
+ * Read the installed harness version from its own manifest.
+ *
+ * `deepagents/package.json` rather than the module entry point: the manifest is not behind
+ * an `exports` guard, and reading it means detection never loads 3 MB of LangChain just to
+ * answer a version question.
+ */
+function readInstalledVersion(): string | undefined {
+  let manifest: unknown;
+  try {
+    manifest = requireFromHere('deepagents/package.json');
+  } catch {
+    return undefined;
+  }
+  if (typeof manifest !== 'object' || manifest === null) return undefined;
+  const version = (manifest as { version?: unknown }).version;
+  return typeof version === 'string' ? version : undefined;
+}
+
+/**
+ * The installed `deepagents` version, or `undefined` when the package is absent.
+ *
+ * `detect` exists so a test can exercise the absent branch without uninstalling anything;
+ * production callers pass nothing.
+ */
+export function installedDeepagentsVersion(
+  detect: VersionDetector = readInstalledVersion,
+): string | undefined {
+  return detect();
 }
 
 /**
  * Validate this agent's engine, or raise the reason it cannot run.
  *
- * Returns the validated engine name. `native` always passes; `deepagents` passes only when
- * it declares no handoffs, pins `engineVersion` to the version this runtime is built for,
- * and the extra is actually installed.
+ * Returns the validated engine name. `native` always passes, and passes *before* any
+ * version detection: an agent that does not opt in must never pay for, or even look for,
+ * the harness. `deepagents` passes only when it declares no handoffs, pins
+ * `engineVersion` to the version this runtime is built for, and the package is installed.
  */
-export function checkEngine(agent: AgentDefinition): string {
+export function checkEngine(
+  agent: AgentDefinition,
+  detect: VersionDetector = readInstalledVersion,
+): string {
   if (agent.engine === NATIVE) return NATIVE;
   if (agent.engine !== DEEPAGENTS) {
     throw new ConfigurationError(
@@ -93,7 +154,7 @@ export function checkEngine(agent: AgentDefinition): string {
   if (agent.engineVersion !== DEEPAGENTS_PIN) {
     throw new DeepAgentsVersionMismatchError(agent.id, agent.engineVersion, DEEPAGENTS_PIN);
   }
-  if (installedDeepagentsVersion() === undefined) {
+  if (detect() === undefined) {
     throw new DeepAgentsUnavailableError(DEEPAGENTS_EXTRA, DEEPAGENTS_DISTRIBUTION);
   }
   return DEEPAGENTS;

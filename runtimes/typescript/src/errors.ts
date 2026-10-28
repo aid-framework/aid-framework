@@ -317,11 +317,34 @@ export class DeepAgentsUnavailableError extends DeepAgentsEngineError {
   constructor(extra: string, distribution: string) {
     super(
       "this agent runs on the 'deepagents' engine, but the " +
-        `${repr(distribution)} package is not installed; install the extra with: ` +
-        `pip install '${extra}'`,
+        `${repr(distribution)} package is not installed; install the optional peer set ` +
+        `with: npm install ${extra}`,
     );
     this.extra = extra;
     this.distribution = distribution;
+  }
+}
+
+/**
+ * The harness asked for one model call more than `maxSteps` allows.
+ *
+ * The harness has its own limiter, and when it trips it appends a synthetic
+ * "model call limits exceeded" answer and *completes* -- reporting an exhausted agent as a
+ * success. So the adapter counts calls itself and raises this instead, from inside
+ * {@link GatewayChatModel}, before the over-budget call reaches the gateway. Parity is with
+ * the native loop's `max-steps` status, not with the harness's synthetic answer.
+ */
+export class DeepAgentsMaxStepsError extends DeepAgentsEngineError {
+  readonly alias: string;
+  readonly maxSteps: number;
+
+  constructor(alias: string, maxSteps: number) {
+    super(
+      `the deepagents harness requested model call ${maxSteps + 1} on alias ${repr(alias)}, ` +
+        `exceeding maxSteps ${maxSteps}; the run is exhausted`,
+    );
+    this.alias = alias;
+    this.maxSteps = maxSteps;
   }
 }
 
