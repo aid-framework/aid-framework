@@ -24,6 +24,7 @@
  * pass them otherwise.
  */
 
+export * from './agents/index.js';
 export { ConcurrencyLimiter, holdsSlot } from './concurrency.js';
 export type { CompositeStep } from './control.js';
 export {
@@ -49,13 +50,20 @@ export {
   SpendSummary,
 } from './cost.js';
 export {
+  AgentBudgetDegradedError,
+  AgentHandoffUnsupportedError,
+  AgentTransferCycleError,
   AidRuntimeError,
   BudgetExceededError,
   CapabilityMismatchError,
   ConfigurationError,
+  DeepAgentsEngineError,
+  DeepAgentsUnavailableError,
+  DeepAgentsVersionMismatchError,
   EvalError,
   FeatureDeferredError,
   GateConfigurationError,
+  GuardrailBlockedError,
   PipelineError,
   PolicyEvaluationError,
   PromptNotFoundError,
@@ -66,6 +74,7 @@ export {
   ToolArgumentError,
   ToolExecutionError,
   ToolNotFoundError,
+  ToolPermissionError,
   UnknownModelAliasError,
 } from './errors.js';
 export type { EvalCaseInit } from './evals/dataset.js';
@@ -121,7 +130,7 @@ export { Example, PromptRegistry, PromptTemplate, RenderedPrompt } from './promp
 export type { Provider } from './providers/base.js';
 export { supports } from './providers/base.js';
 export type { FakeProviderOptions, Responder } from './providers/fake.js';
-export { FakeProvider } from './providers/fake.js';
+export { FakeProvider, ScriptedTurn } from './providers/fake.js';
 export type { FetchLike, OpenAICompatibleOptions } from './providers/http.js';
 export { DEFAULT_BASE_URL, OpenAICompatibleProvider } from './providers/http.js';
 export type { Chunker, MarkerGroups } from './retrieval/chunking.js';

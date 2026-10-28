@@ -24,7 +24,8 @@
  * is the only thing a bare `node` process can load. Run `pnpm build` first.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,8 +38,11 @@ import type {
   RankedId,
   Step,
   StructuredOutput,
+  ToolParameters,
 } from '../../dist/index.js';
 import {
+  AgentHandoffUnsupportedError,
+  AgentRuntime,
   AidRuntimeError,
   BaselineGate,
   Budget,
@@ -47,14 +51,24 @@ import {
   branch,
   CapabilityMismatchError,
   ConcurrencyLimiter,
+  ConfigurationError,
   CostLedger,
   CostProfile,
+  checkpointFromJson,
+  checkpointsEqual,
+  checkpointToJson,
   DEPTH_KEY,
+  DeepAgentsUnavailableError,
+  DeepAgentsVersionMismatchError,
   EvalBaseline,
   EvalRun,
   estimateCostUsd,
+  FakeProvider,
+  FileMemoryStore,
   fuse,
+  GuardrailBlockedError,
   INDEX_KEY,
+  InProcessMemoryStore,
   ITEM_KEY,
   LedgerEntry,
   LIMITER_KEY,
@@ -76,15 +90,20 @@ import {
   PromptTemplate,
   parallel,
   parseStructured,
+  pendingApprovalFrom,
   REDUCED_KEY,
   RESERVED_KEYS,
+  type RunResult,
   reduceStep,
   runStructured,
+  ScriptedTurn,
   STEPS_KEY,
   StructuredOutputError,
   similarity,
   Threshold,
   TokenUsage,
+  Tool,
+  ToolPermissionError,
   UnknownModelAliasError,
   zCritical,
 } from '../../dist/index.js';
@@ -848,6 +867,346 @@ async function stepsDepth(input: Json): Promise<Json> {
   return { refused: false, maxDepth: MAX_STEP_DEPTH, depth: reached.depth, reason: null };
 }
 
+// --- agents, guardrails, memory ----------------------------------------------------
+//
+// Transcribed from the Python handlers in
+// `runtimes/python/tests/conformance/test_conformance.py`. The corpus spells an agent
+// fixture compactly; these handlers expand it into the IR document the spec layer emits,
+// so the cases drive the same `fromIr` a generated app does rather than a test-only
+// constructor. What a run reached is then reduced to the questions the corpus asks, so a
+// verdict never carries a runtime class name.
+
+/** The only provider the agent fixtures name, so a scripted turn is unambiguous. */
+const AGENT_PROVIDER = 'fake';
+const AGENT_CONTEXT = 128_000;
+
+/** The parameter schema every fixture tool shares; no agent case inspects arguments. */
+const QUERY_SCHEMA: ToolParameters = {
+  type: 'object',
+  properties: { query: { type: 'string' } },
+  additionalProperties: false,
+};
+
+/** The agent fields the corpus may set, copied through when the fixture names them. */
+const AGENT_FIELDS = [
+  'maxCostBudget',
+  'maxTokensBudget',
+  'onBudgetExhausted',
+  'engineVersion',
+] as const;
+
+function maybeString(value: unknown, fallback: string): string {
+  return value === undefined ? fallback : asString(value, 'field');
+}
+
+/**
+ * Expand the corpus's compact agent fixture into an emitted IR document.
+ *
+ * The corpus spells money per thousand tokens, like its alias cases do; the IR spells it
+ * per million. Converting here keeps one vocabulary in the corpus and one in the IR
+ * instead of a third somewhere between them.
+ */
+function agentDocument(data: Json): Json {
+  const models = asArray(data.models ?? [], 'models').map((raw, index) => {
+    const entry = asRecord(raw, `models[${index}]`);
+    const id = asString(entry.id, 'models[].id');
+    return {
+      id,
+      modelId: `${id}-1`,
+      provider: AGENT_PROVIDER,
+      capabilities: ['tool-calling'],
+      limits: { contextTokens: AGENT_CONTEXT, maxOutputTokens: 4096 },
+      costProfile: {
+        inputPerMTok: asNumber(entry.inputPer1kUsd ?? 0, 'models[].inputPer1kUsd') * 1000,
+        outputPerMTok: asNumber(entry.outputPer1kUsd ?? 0, 'models[].outputPer1kUsd') * 1000,
+      },
+      fallbacks: asStrings(entry.fallbacks ?? [], 'models[].fallbacks'),
+    };
+  });
+  const prompts = asArray(data.prompts ?? [], 'prompts').map((raw, index) => {
+    const entry = asRecord(raw, `prompts[${index}]`);
+    return {
+      id: asString(entry.id, 'prompts[].id'),
+      version: 1,
+      template: asString(entry.template, 'prompts[].template'),
+      variables: {},
+    };
+  });
+  const tools = asArray(data.tools ?? [], 'tools').map((raw, index) => {
+    const entry = asRecord(raw, `tools[${index}]`);
+    const name = asString(entry.name, 'tools[].name');
+    return {
+      id: asString(entry.id, 'tools[].id'),
+      name,
+      description: maybeString(entry.description, `${name} tool`),
+      requiresConfirmation: entry.requiresConfirmation === true,
+      sideEffects: 'read',
+    };
+  });
+  const agents = asArray(data.agents ?? [], 'agents').map((raw, index) => {
+    const entry = asRecord(raw, `agents[${index}]`);
+    const id = asString(entry.id, 'agents[].id');
+    const agent: Json = {
+      id,
+      name: maybeString(entry.name, id),
+      instructions: asString(entry.instructions, 'agents[].instructions'),
+      model: asString(entry.model, 'agents[].model'),
+      maxSteps: asInt(entry.maxSteps, 'agents[].maxSteps'),
+      tools: asStrings(entry.tools ?? [], 'agents[].tools'),
+      handoffs: asStrings(entry.handoffs ?? [], 'agents[].handoffs'),
+      delegates: asStrings(entry.delegates ?? [], 'agents[].delegates'),
+      memory: asStrings(entry.memory ?? [], 'agents[].memory'),
+      guardrails: asStrings(entry.guardrails ?? [], 'agents[].guardrails'),
+      engine: maybeString(entry.engine, 'native'),
+    };
+    for (const field of AGENT_FIELDS) {
+      if (entry[field] !== undefined) agent[field] = entry[field];
+    }
+    return agent;
+  });
+  const copied = (field: string): Json[] =>
+    asArray(data[field] ?? [], field).map((raw, index) => ({
+      ...asRecord(raw, `${field}[${index}]`),
+    }));
+  return {
+    version: '0.2.0',
+    models,
+    prompts,
+    tools,
+    memory: copied('memory'),
+    guardrails: copied('guardrails'),
+    agents,
+  };
+}
+
+/** One scripted model turn, in the shape the corpus spells one. */
+function scriptedTurn(raw: unknown): ScriptedTurn {
+  const step = asRecord(raw, 'script[]');
+  if (step.tools !== undefined) {
+    const pairs = asArray(step.tools, 'script[].tools').map((item, index) => {
+      const pair = asArray(item, `script[].tools[${index}]`);
+      return [
+        asString(at(pair, 0, 'script[].tools'), 'script[].tools[].name'),
+        asRecord(at(pair, 1, 'script[].tools'), 'script[].tools[].arguments'),
+      ] as const;
+    });
+    return ScriptedTurn.tools(...pairs);
+  }
+  if (step.tool !== undefined) {
+    return ScriptedTurn.tool(
+      asString(step.tool, 'script[].tool'),
+      asRecord(step.arguments ?? {}, 'script[].arguments'),
+    );
+  }
+  return ScriptedTurn.answer(maybeString(step.text, ''));
+}
+
+/** A runtime over the case's fixture, plus the provider whose calls are the evidence. */
+function agentRuntime(data: Json): { runtime: AgentRuntime; provider: FakeProvider } {
+  const provider = new FakeProvider({
+    name: AGENT_PROVIDER,
+    script: asArray(data.script ?? [], 'script').map(scriptedTurn),
+  });
+  const tools = asArray(data.tools ?? [], 'tools').map((raw, index) => {
+    const entry = asRecord(raw, `tools[${index}]`);
+    const name = asString(entry.name, 'tools[].name');
+    return Tool.of({
+      name,
+      handler: (args) => `${name}:${typeof args.query === 'string' ? args.query : ''}`,
+      description: maybeString(entry.description, `${name} tool`),
+      parameters: QUERY_SCHEMA,
+    });
+  });
+  const runtime = AgentRuntime.fromIr(agentDocument(data), {
+    providers: { [AGENT_PROVIDER]: provider },
+    tools,
+    memoryStore: new InProcessMemoryStore(),
+  });
+  return { runtime, provider };
+}
+
+/**
+ * What a run reached, in the terms the corpus asks about.
+ *
+ * `finalAgent` is the whole transfer/delegate distinction in one field: the agent that
+ * produced the answer. `path` says how control got there, and `degraded` is where the
+ * alias ladder stepped down.
+ */
+function agentVerdict(result: RunResult): Json {
+  return {
+    status: result.status,
+    finalAgent: result.agentId,
+    answer: result.answer,
+    path: [...result.path],
+    steps: result.steps.map((step) => ({
+      agent: step.agentId,
+      kind: step.kind,
+      alias: step.alias,
+      tools: [...step.toolNames],
+      target: step.target ?? null,
+      degradedFrom: step.degradedFrom ?? null,
+    })),
+    degraded: result.degraded.map((pair) => [pair[0], pair[1]]),
+  };
+}
+
+/** The agent a case names, or the `solo` fixture every one of them declares. */
+function agentNamed(data: Json): string {
+  return maybeString(data.agent, 'solo');
+}
+
+/**
+ * One run of one agent, to whatever stop condition it reaches.
+ *
+ * `agent.steps` and `agent.budget` are the same run reduced the same way: the difference
+ * the corpus asks about is whether the loop stopped at its ceiling or threw, and the
+ * thrown case is the one a verdict names rather than propagates.
+ */
+async function agentLoop(input: Json): Promise<Json> {
+  const { runtime } = agentRuntime(input);
+  try {
+    return agentVerdict(await runtime.run(agentNamed(input), asString(input.question, 'question')));
+  } catch (error) {
+    // D1's default: a breached ceiling is a hard failure, not a status.
+    if (error instanceof BudgetExceededError) return { error: 'budget-exceeded' };
+    throw error;
+  }
+}
+
+/**
+ * One guarded run, reduced to what the guardrails did to it.
+ *
+ * A `block` is an exception by design, so it is reported as an `error` like a breached
+ * budget is; a `flag` and a `redact` are ordinary runs, and their verdict has to show up
+ * in the answer or in `guardrails` or they are not observable.
+ */
+async function agentGuardrail(input: Json): Promise<Json> {
+  const { runtime } = agentRuntime(input);
+  try {
+    const result = await runtime.run(agentNamed(input), asString(input.question, 'question'));
+    return {
+      status: result.status,
+      answer: result.answer,
+      guardrails: result.guardrails.map((record) => ({
+        guardrail: record.guardrail,
+        stage: record.stage,
+        action: record.action,
+      })),
+    };
+  } catch (error) {
+    if (error instanceof GuardrailBlockedError) {
+      return { error: 'guardrail-blocked', guardrail: error.guardrail, stage: error.stage };
+    }
+    if (error instanceof ToolPermissionError) {
+      return { error: 'tool-permission', tool: error.tool };
+    }
+    throw error;
+  }
+}
+
+/** Repeated runs against named memory keys, observed by what the model saw. */
+async function agentMemory(input: Json): Promise<Json> {
+  const { runtime, provider } = agentRuntime(input);
+  const answers: string[] = [];
+  for (const key of asStrings(input.memoryKeys, 'memoryKeys')) {
+    const result = await runtime.run(agentNamed(input), asString(input.question, 'question'), {
+      memoryKey: key,
+    });
+    answers.push(result.answer);
+  }
+  return { answers, messagesPerRun: provider.calls.map((request) => request.messages.length) };
+}
+
+/**
+ * Which backend an `engine` selection resolves to, or why the seam refuses.
+ *
+ * Every refusal reported here is decided by `checkEngine` before a backend is reached,
+ * so the verdict does not depend on what the deployment happens to have installed:
+ * transfer is native-only, and a `deepagents` agent must name the release this runtime
+ * was built against. The clause order is the refusal order, which is why a `deepagents`
+ * handoff reports `handoff-unsupported` rather than a version mismatch.
+ */
+async function agentEngine(input: Json): Promise<Json> {
+  const { runtime } = agentRuntime(input);
+  const agent = agentNamed(input);
+  try {
+    return agentVerdict(await runtime.run(agent, asString(input.question, 'question')));
+  } catch (error) {
+    if (error instanceof AgentHandoffUnsupportedError) {
+      return { error: 'handoff-unsupported', agent: error.agent, engine: error.engine };
+    }
+    if (error instanceof DeepAgentsVersionMismatchError) {
+      return { error: 'version-mismatch', agent: error.agent, declared: error.declared };
+    }
+    if (error instanceof DeepAgentsUnavailableError) {
+      return { error: 'engine-unavailable', agent };
+    }
+    if (error instanceof ConfigurationError) return { error: 'unknown-engine', agent };
+    throw error;
+  }
+}
+
+/**
+ * A paused run carried across a serialisation boundary, then resumed.
+ *
+ * This is the shape the generated `/resume` route relies on: the run stops at a
+ * confirming tool or an escalating guardrail, the caller receives the checkpoint as
+ * JSON, and `resume` accepts that JSON back. The round trip goes through
+ * `JSON.stringify` rather than through the codec alone, because that is the boundary an
+ * emitted route actually crosses -- and a field the wire form silently dropped would
+ * make every resumed run start from the wrong step.
+ */
+async function agentResume(input: Json): Promise<Json> {
+  const { runtime } = agentRuntime(input);
+  const paused = await runtime.run(agentNamed(input), asString(input.question, 'question'));
+  const checkpoint = paused.checkpoint;
+  if (checkpoint === undefined) return { error: 'did-not-pause', status: paused.status };
+  const wire: unknown = JSON.parse(JSON.stringify(checkpointToJson(checkpoint)));
+  const restored = checkpointFromJson(asRecord(wire, 'checkpoint wire'));
+  const answer = maybeString(input.decision, 'approve');
+  if (answer !== 'approve' && answer !== 'reject') {
+    throw new TypeError(`corpus field decision is neither approve nor reject: ${answer}`);
+  }
+  const resumed = await runtime.resume(restored, answer);
+  const approval = pendingApprovalFrom(checkpoint);
+  return {
+    pausedStatus: paused.status,
+    channel: approval.channel,
+    askTools: approval.calls.map((call) => call.name),
+    wireRoundTrip: checkpointsEqual(restored, checkpoint),
+    status: resumed.status,
+    answer: resumed.answer,
+  };
+}
+
+/**
+ * A file-backed tier read back through a second store on the same path.
+ *
+ * `InProcessMemoryStore` is covered by `agent.memory`; this is the other backend the
+ * emitted document can name, and the difference that matters is durability. A second
+ * instance is what a second request -- or a restarted process -- is, so reading through
+ * one is the property and not an implementation detail.
+ */
+async function memoryStore(input: Json): Promise<Json> {
+  const scope = asString(input.scope, 'scope');
+  const key = asString(input.key, 'key');
+  const directory = mkdtempSync(join(tmpdir(), 'aid-memory-'));
+  try {
+    const path = join(directory, 'memory.json');
+    const writer = new FileMemoryStore(path);
+    for (const value of asStrings(input.values, 'values')) {
+      await writer.append({ scope, key, value });
+    }
+    const reader = new FileMemoryStore(path);
+    return {
+      values: await reader.read({ scope, key }),
+      otherScopeValues: await reader.read({ scope: 'nobody', key }),
+      fileWritten: existsSync(path),
+    };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
 const OPS: Readonly<Record<string, Handler>> = {
   'alias.resolve': aliasResolve,
   'alias.unknown': aliasUnknown,
@@ -872,6 +1231,15 @@ const OPS: Readonly<Record<string, Handler>> = {
   'steps.map': stepsMap,
   'steps.reduce': stepsReduce,
   'steps.depth': stepsDepth,
+  'agent.steps': agentLoop,
+  'agent.budget': agentLoop,
+  'agent.transfer': agentLoop,
+  'agent.delegate': agentLoop,
+  'agent.guardrail': agentGuardrail,
+  'agent.memory': agentMemory,
+  'agent.engine': agentEngine,
+  'agent.resume': agentResume,
+  'memory.store': memoryStore,
 };
 
 // --- verdicts -------------------------------------------------------------------

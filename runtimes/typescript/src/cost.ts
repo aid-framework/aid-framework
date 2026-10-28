@@ -102,6 +102,17 @@ export function estimateCostUsd(spec: ModelSpec, usage: TokenUsage): number {
 }
 
 /**
+ * The runtime's token estimate for a text: four characters per token.
+ *
+ * The same approximation `estimatePromptCostUsd` uses, exposed because agent memory has to
+ * agree with it: a transcript trimmed against one estimate and priced against another would
+ * report a budget it did not honour.
+ */
+export function estimateTokens(text: string): number {
+  return (text.length + 3) >> 2;
+}
+
+/**
  * Rough pre-flight price for a prompt, used to fail before spending.
  *
  * Four characters per token is the usual English approximation. It is deliberately
@@ -109,7 +120,7 @@ export function estimateCostUsd(spec: ModelSpec, usage: TokenUsage): number {
  * offline estimate and an offline charge cannot disagree about what a text costs.
  */
 export function estimatePromptCostUsd(spec: ModelSpec, text: string): number {
-  return spec.cost.costUsd(new TokenUsage({ inputTokens: (text.length + 3) >> 2 }));
+  return spec.cost.costUsd(new TokenUsage({ inputTokens: estimateTokens(text) }));
 }
 
 /**

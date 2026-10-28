@@ -129,10 +129,26 @@ export class OpenAICompatibleProvider implements Provider {
   private payload(request: CompletionRequest, model: ModelSpec): Record<string, unknown> {
     const payload: Record<string, unknown> = {
       model: model.name,
-      messages: request.messages.map((message) => ({
-        role: message.role,
-        content: message.content,
-      })),
+      messages: request.messages.map((message) => {
+        const wire: Record<string, unknown> = {
+          role: message.role,
+          content: message.content,
+        };
+        // A tool turn the provider cannot attribute to its call is unusable, and an
+        // assistant turn that asked for tools must carry those calls back or the loop
+        // replays an observation with no caller.
+        const toolCalls = message.toolCalls ?? [];
+        if (toolCalls.length > 0) {
+          wire.tool_calls = toolCalls.map((call) => ({
+            id: call.id,
+            type: 'function',
+            function: { name: call.name, arguments: JSON.stringify(call.args) },
+          }));
+        }
+        if (message.toolCallId !== undefined) wire.tool_call_id = message.toolCallId;
+        if (message.name !== undefined) wire.name = message.name;
+        return wire;
+      }),
     };
     if (request.temperature !== undefined) payload.temperature = request.temperature;
     const requested = request.maxOutputTokens ?? model.maxOutputTokens;

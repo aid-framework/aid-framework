@@ -202,6 +202,35 @@ export class ModelGateway {
     }
   }
 
+  /**
+   * What this request's prompt would cost on top of what is already spent.
+   *
+   * Public because a routing decision needs the same number the preflight enforces: an
+   * agent stepping down a price ladder asks whether the *cheaper* alias fits before
+   * switching, and a second estimator would let the two disagree about the same ceiling.
+   */
+  projectedCostUsd(alias: string, request: CompletionRequest): number {
+    const pinned = this.resolve(alias);
+    let projected = this._ledger.costUsd;
+    for (const message of request.messages) {
+      projected += estimatePromptCostUsd(pinned.model, message.content);
+    }
+    return projected;
+  }
+
+  /**
+   * Whether this request still fits the budget. A question, never a charge.
+   *
+   * An unset ceiling always fits -- there is nothing to exceed. An *already* exceeded
+   * budget does not fit whatever the prompt, which is what makes a degraded agent stop
+   * rather than step down for every remaining step.
+   */
+  fits(alias: string, request: CompletionRequest, budget: Budget | undefined): boolean {
+    if (budget === undefined || budget.maxUsd === undefined) return true;
+    if (this._ledger.costUsd > budget.maxUsd) return false;
+    return this.projectedCostUsd(alias, request) <= budget.maxUsd;
+  }
+
   private async attempt(
     pinned: PinnedModel,
     request: CompletionRequest,
@@ -282,10 +311,7 @@ export class ModelGateway {
    */
   private preflight(pinned: PinnedModel, request: CompletionRequest, budget: Budget): void {
     if (budget.maxUsd === undefined) return;
-    let projected = this._ledger.costUsd;
-    for (const message of request.messages) {
-      projected += estimatePromptCostUsd(pinned.model, message.content);
-    }
+    const projected = this.projectedCostUsd(pinned.alias, request);
     if (projected > budget.maxUsd) {
       throw new BudgetExceededError(budget.scope, budget.maxUsd, projected);
     }
