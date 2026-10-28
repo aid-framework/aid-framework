@@ -38,6 +38,7 @@ import {
 
 const QUESTION = 'Refund this order.';
 const ADDRESS = 'ada@example.com';
+const TOXIC = 'you should die';
 const ADMIN = new Principal({ roles: ['admin'] });
 const VIEWER = new Principal({ roles: ['viewer'] });
 
@@ -199,6 +200,21 @@ describe('guardrails inside the loop', () => {
     expect(result.status).toBe('completed');
     expect(recorder.queries).toEqual(['find [REDACTED:pii-detect]']);
     expect(result.guardrails.map((record) => record.action)).toEqual(['redact']);
+  });
+
+  it('blocks an answer the output stage refuses, after the model wrote it', async () => {
+    const doc = solo({
+      guardrailSpecs: [guardrailDef('g-out', { stages: ['output'], policies: ['toxicity'] })],
+    });
+    const harness = build(doc, { script: [ScriptedTurn.answer(TOXIC)] });
+
+    const error = await refusal(harness.runtime.run('solo', QUESTION, { principal: ADMIN }));
+
+    expect(error).toBeInstanceOf(GuardrailBlockedError);
+    expect(error.message).toMatch(/guardrail 'g-out' blocked the output stage/);
+    // The model was asked exactly once. "Raised" alone would also pass for a check that
+    // ran before the completion call, which would block a prompt instead of an answer.
+    expect(harness.provider.calls.length).toBe(1);
   });
 
   it('pauses on an escalating tool call and runs it on approval', async () => {
