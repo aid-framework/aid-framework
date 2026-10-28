@@ -1,8 +1,10 @@
 /**
  * The agent engine: IR, guardrails, memory, and the loop.
  *
- * Mirrors the Python package's `aid_runtime.agents`, minus the `deepagents` backend
- * (decision D-6) and agent-span tracing (decision D-7).
+ * Mirrors the Python package's `aid_runtime.agents`. Both engines are here: the native
+ * loop, and the opt-in `deepagents` backend that runs the harness at the pinned release
+ * behind our gateway, guardrails and tool executor. Agent-span tracing is still decision
+ * D-7.
  */
 
 export {

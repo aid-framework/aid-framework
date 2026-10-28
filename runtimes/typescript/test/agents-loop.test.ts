@@ -11,6 +11,7 @@ import {
   CapabilityMismatchError,
   ConfigurationError,
   DEEPAGENTS_PIN,
+  DeepAgentsVersionMismatchError,
   FakeProvider,
   IMPLEMENTED_MEMORY_KINDS,
   Principal,
@@ -222,13 +223,16 @@ describe('AgentRuntime', () => {
     await expect(harness.runtime.run('solo', 'go')).rejects.toThrow(CapabilityMismatchError);
   });
 
-  it('never falls back to native for a deepagents agent', async () => {
+  it('refuses a deepagents agent whose pin does not match instead of running it natively', async () => {
+    // The engine seam's whole purpose: a `deepagents` agent is never served by the native
+    // loop. When the declared release is not the pinned one, the run is refused before a
+    // single model call, so a mismatch can never look like a successful native run.
     const provider = new FakeProvider({ name: PROVIDER, script: [ScriptedTurn.answer('nope')] });
-    const harness = build(solo({ engine: 'deepagents', engineVersion: DEEPAGENTS_PIN }), {
+    const harness = build(solo({ engine: 'deepagents', engineVersion: `${DEEPAGENTS_PIN}-not` }), {
       provider,
     });
 
-    await expect(harness.runtime.run('solo', 'go')).rejects.toThrow(/deepagents/i);
+    await expect(harness.runtime.run('solo', 'go')).rejects.toThrow(DeepAgentsVersionMismatchError);
     expect(provider.calls).toHaveLength(0);
   });
 

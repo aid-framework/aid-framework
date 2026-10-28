@@ -24,6 +24,7 @@ import {
   ToolCall,
   ToolDefinition,
 } from '../types.js';
+import type { DeepAgentsHost } from './deep_agents.js';
 import { checkEngine, DEEPAGENTS } from './engine.js';
 import {
   ACTION_BLOCK,
@@ -121,10 +122,10 @@ const SIDE_EFFECTING: ReadonlySet<string> = new Set(['write', 'destructive']);
 const REJECTED = 'rejected by the human approver';
 
 /** A step record while the loop is still deciding what the step did. */
-type StepDraft = { -readonly [K in keyof StepRecord]: StepRecord[K] };
+export type StepDraft = { -readonly [K in keyof StepRecord]: StepRecord[K] };
 
 /** The memory context one agent turn resolved, and what it measured. */
-interface MemoryState {
+export interface MemoryState {
   thread: ThreadMemory | undefined;
   context: string;
   scopes: readonly string[];
@@ -133,7 +134,7 @@ interface MemoryState {
 }
 
 /** One agent's turn in progress: its own transcript, budget anchors, and steps. */
-interface Frame {
+export interface Frame {
   agent: AgentDefinition;
   messages: Message[];
   alias: string;
@@ -157,7 +158,7 @@ interface Frame {
 }
 
 /** What a frame decided, before the run's totals are stamped on it. */
-interface Outcome {
+export interface Outcome {
   status: RunStatus;
   agentId: string;
   answer: string;
@@ -167,7 +168,7 @@ interface Outcome {
   guardrails: readonly GuardrailRecord[];
 }
 
-function outcomeOf(init: {
+export function outcomeOf(init: {
   status: RunStatus;
   agentId: string;
   answer?: string;
@@ -419,11 +420,12 @@ export class AgentRuntime {
   /**
    * Drive the frame on the engine its agent declared.
    *
-   * The native loop is the default. `deepagents` is not ported to this runtime (decision
-   * D-6): `check_engine` refuses a `deepagents` agent whose declared version is not the
-   * pinned release, and once the version matches this method reports the missing extra as
-   * `DeepAgentsUnavailableError` rather than running the agent on the native loop. An
-   * agent silently downgraded would leave `engine` in the IR meaning nothing.
+   * The native loop is the default and the only engine loaded eagerly. `deepagents` is
+   * imported here, on demand: the harness is an optional peer dependency, so a static import
+   * would make this package unloadable for every application that never opts in. The caller
+   * has already run `checkEngine`, which is what turns an absent harness into
+   * `DeepAgentsUnavailableError` -- so this import is reached only when the packages are
+   * installed at the pinned releases.
    */
   async #runEngine(
     frame: Frame,
@@ -434,12 +436,48 @@ export class AgentRuntime {
     },
   ): Promise<Outcome> {
     if (frame.agent.engine === DEEPAGENTS) {
-      throw new ConfigurationError(
-        `agent ${JSON.stringify(frame.agent.id)} declares engine 'deepagents', which this runtime ` +
-          'does not implement; decision D-6 keeps the seam and its refusals, not the backend',
+      const { DeepAgentsEngine } = await import('./deep_agents.js');
+      return new DeepAgentsEngine(this.#deepAgentsHost()).drive(
+        frame,
+        options.budget,
+        options.principal,
+        options.memoryKey,
       );
     }
     return this.#runLoop(frame, options);
+  }
+
+  /**
+   * The narrow surface the Deep Agents backend is allowed to reach.
+   *
+   * A closure built inside the class, because the loop's state lives behind ECMAScript
+   * `#private` fields that a sibling module could not read. Passing exactly these fifteen
+   * operations keeps the backend on the same accounting, authorization, guardrail and
+   * memory paths as the native loop instead of giving it a second implementation of each.
+   */
+  #deepAgentsHost(): DeepAgentsHost {
+    return {
+      gateway: this.#gateway,
+      agent: (agentId) => this.#spec.agent(agentId),
+      systemPrompt: (agent) => this.#spec.systemPrompt(agent),
+      fallbacksFor: (alias) => this.#spec.fallbacksFor(alias),
+      budgetFor: (frame) => this.#budgetFor(frame),
+      toolDefinitions: (agent) => this.#toolDefinitions(agent),
+      toolNameFor: (toolId, agent) =>
+        this.#requireTool(toolId, `agent ${JSON.stringify(agent.id)}`).name,
+      toolRequiresConfirmation: (name) =>
+        this.#toolsByName.get(name)?.requiresConfirmation === true,
+      needsApproval: (agent, calls, principal) => this.#needsApproval(agent, calls, principal),
+      authorize: (agent, call, principal) => this.#authorize(agent, call, principal),
+      observe: (agent, calls, principal) => this.#observe(agent, calls, principal),
+      checkpoint: (frame, calls, memoryKey) => this.#checkpoint(frame, calls, memoryKey),
+      guardrailInput: (frame, memoryKey) => this.#guardrailText('input', frame, memoryKey, true),
+      guardrailAnswer: (frame, text, memoryKey) => this.#guardrailAnswer(frame, text, memoryKey),
+      guardrailToolCalls: (frame, calls, memoryKey) =>
+        this.#guardrailToolCalls(frame, calls, memoryKey),
+      remember: (agent, answer, memoryKey) => this.#remember(agent, answer, memoryKey),
+      outcome: (status, frame, answer) => this.#outcome(status, frame, answer),
+    };
   }
 
   async #runLoop(
