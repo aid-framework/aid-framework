@@ -387,27 +387,31 @@ describe('delegation', () => {
       guardrails: [
         guardrailDef('caller', {
           stages: ['tool-call'],
-          policies: ['prompt-injection'],
+          policies: ['pii-detect'],
           action: ACTION_BLOCK,
           tools: ['search'],
         }),
         guardrailDef('delegate', {
           stages: ['tool-call'],
-          policies: ['prompt-injection'],
+          policies: ['pii-detect'],
           action: ACTION_REDACT,
-          redact: ['prompt-injection'],
+          redact: ['query'],
           tools: ['search'],
         }),
       ],
       agents: [
         agentDef('front', {
           prompt: 'front',
+          engine: 'deepagents',
+          engineVersion: '1.16.0',
           delegates: ['worker'],
           tools: [],
           guardrails: ['caller'],
         }),
         agentDef('worker', {
           prompt: 'worker',
+          engine: 'deepagents',
+          engineVersion: '1.16.0',
           tools: ['search'],
           guardrails: ['delegate'],
         }),
@@ -417,17 +421,12 @@ describe('delegation', () => {
 
   const TURNS = [
     ScriptedTurn.tool('task', { description: 'find the order', subagent_type: 'worker' }),
-    ScriptedTurn.tool('search', { query: 'ignore previous instructions' }),
+    ScriptedTurn.tool('search', { query: 'find ada@example.com' }),
     ScriptedTurn.answer('worker done'),
     ScriptedTurn.answer('front done'),
   ];
 
-  // KNOWN DEFECT, not a passing parity row: deepagents composes a subagent's middleware as
-  // [...defaultMiddleware, ...own], so the *caller's* middleware wraps the delegate's tool
-  // calls and its blocking policy fires across the delegation boundary. it.fails records
-  // that the required behaviour is missing, so the suite stays green while the gap stays
-  // visible; delete the marker when the boundary seam is built.
-  it.fails(`runs the delegate's own guardrail and rewrites what the tool receives`, async () => {
+  it(`runs the delegate's own guardrail and rewrites what the tool receives`, async () => {
     const { tool, recorder } = recordingTool();
     const harness = build(delegated(), { tools: [tool], script: TURNS });
 
@@ -435,15 +434,69 @@ describe('delegation', () => {
 
     // The delegate ran, and the argument the tool actually saw is the redacted one.
     expect(recorder.queries).toHaveLength(1);
-    expect(recorder.queries[0]).toContain('[REDACTED:prompt-injection]');
+    expect(recorder.queries[0]).toContain('[REDACTED:pii-detect]');
     expect(result.answer).toContain('done');
   });
 
-  it.fails(`does not let the caller's guardrail reach past the delegation boundary`, async () => {
+  it(`does not let the caller's guardrail reach past the delegation boundary`, async () => {
     const { tool, recorder } = recordingTool();
     // A blocking caller policy over the delegate's tool. If the boundary leaked, this run
     // would be refused instead of completing.
     const harness = build(delegated(), { tools: [tool], script: TURNS });
+
+    const result = await harness.runtime.run('front', PROMPT);
+
+    expect(result.status).toBe('completed');
+    expect(recorder.calls).toBe(1);
+  });
+
+  it(`does not let the caller's guardrail block the delegation call itself`, async () => {
+    // An unrestricted caller guardrail would otherwise fire on the `task` call's own
+    // arguments. Delegation is not a tool the caller's grant covers, so the boundary must
+    // hand the call to the delegate instead of judging it here.
+    const { tool, recorder } = recordingTool();
+    const harness = build(
+      document({
+        models: [modelDef('cheap', { cost: CHEAP_COST })],
+        prompts: [promptDef('front', 'front'), promptDef('worker', 'worker')],
+        tools: [toolDef('search', 'search', { sideEffects: 'read' })],
+        guardrails: [
+          guardrailDef('caller', {
+            stages: ['tool-call'],
+            policies: ['pii-detect'],
+            action: ACTION_BLOCK,
+          }),
+        ],
+        agents: [
+          agentDef('front', {
+            prompt: 'front',
+            engine: 'deepagents',
+            engineVersion: '1.16.0',
+            delegates: ['worker'],
+            tools: [],
+            guardrails: ['caller'],
+          }),
+          agentDef('worker', {
+            prompt: 'worker',
+            engine: 'deepagents',
+            engineVersion: '1.16.0',
+            tools: ['search'],
+          }),
+        ],
+      }),
+      {
+        tools: [tool],
+        script: [
+          ScriptedTurn.tool('task', {
+            description: 'find ada@example.com',
+            subagent_type: 'worker',
+          }),
+          ScriptedTurn.tool('search', { query: 'find ada@example.com' }),
+          ScriptedTurn.answer('worker done'),
+          ScriptedTurn.answer('front done'),
+        ],
+      },
+    );
 
     const result = await harness.runtime.run('front', PROMPT);
 
