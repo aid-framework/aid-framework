@@ -249,12 +249,13 @@ describe('Pipeline', () => {
   });
 
   it('aborts on any other error, naming the step and the real cause', async () => {
+    const original = new TypeError('kaboom');
     const pipeline = new Pipeline([
       ['a', () => ({})],
       [
         'explode',
         () => {
-          throw new TypeError('kaboom');
+          throw original;
         },
       ],
       ['never', () => ({})],
@@ -264,7 +265,21 @@ describe('Pipeline', () => {
 
     expect(error).toBeInstanceOf(PipelineError);
     expect(error.message).toBe("step 'explode' failed: kaboom");
+    expect(error.cause).toBe(original);
     expect(error.name).toBe('PipelineError');
+  });
+
+  it('keeps the cause by identity when a step rejects asynchronously', async () => {
+    const original = new RangeError('no slots left');
+    const pipeline = new Pipeline([['book', () => Promise.reject(original)]]);
+
+    const error = await failure(pipeline.run());
+
+    expect(error).toBeInstanceOf(PipelineError);
+    // Pinned byte for byte: the pipeline coordinate repr-quoted, then the original
+    // message, so a change to either half is a test failure rather than a silent drift.
+    expect(error.message).toBe("step 'book' failed: no slots left");
+    expect(error.cause).toBe(original);
   });
 
   it('propagates a thrown non-Error without losing the run', async () => {

@@ -380,8 +380,8 @@ async function main() {
     await assertRegeneratedAppAnswers(regenerated);
     await assertOutputGuardrailRefuses(regenerated);
     log(
-      '==> ok: ts-vercel regeneration is byte-identical, the regenerated app runs every ' +
-        'construct, and its output guardrail refuses',
+      '==> ok: ts-vercel regeneration is byte-identical, the regenerated app runs 9 of ' +
+        '11 step kinds, and its output guardrail refuses',
     );
   } finally {
     rmSync(workRoot, { recursive: true, force: true });
