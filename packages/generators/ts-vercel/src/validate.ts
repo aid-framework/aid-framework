@@ -10,18 +10,23 @@
  * one that was never written.
  */
 import {
+  type BranchStep,
   type EmitStep,
   type EvalShape,
   type GenerateStep,
   type IR,
   isCompositeStep,
   isRequiredCapability,
+  type MapStep,
   type MetricShape,
   type ModelCapability,
+  type ParallelStep,
   type PipelineShape,
   type PrimitiveType,
   type PromptShape,
+  type ReduceStep,
   type RetrieveStep,
+  type StepShape,
   type ToolShape,
   type ToolStep,
   type TypeRef,
@@ -59,7 +64,8 @@ export type PlanProblemCode =
   | 'retriever-filters-unsupported'
   | 'eval-target-unresolved'
   | 'eval-metric-unsupported'
-  | 'eval-dataset-unsupported';
+  | 'eval-dataset-unsupported'
+  | 'deployment-unsupported';
 
 export interface PlanProblem {
   readonly code: PlanProblemCode;
@@ -67,8 +73,14 @@ export interface PlanProblem {
   readonly message: string;
 }
 
-/** Collections the IR can hold but no Phase 1 target emits. */
-export const UNSUPPORTED_COLLECTIONS = ['agents', 'deployments', 'guardrails', 'memory'] as const;
+/**
+ * Collections the IR can hold but this target still drops.
+ *
+ * `deployments` is *not* here: the concurrency cap it declares is what the emitted
+ * `control.ts` seeds into the pipeline context, so the collection is emitted even though
+ * nothing else in it reaches code. See `checkDeployments` for the part that is refused.
+ */
+export const UNSUPPORTED_COLLECTIONS = ['agents', 'guardrails', 'memory'] as const;
 
 /** Names a pipeline step may not bind, because the runtime already owns them. */
 export const RESERVED_BINDINGS = ['context', 'deps', 'event', 'response', 'steps'] as const;
@@ -139,6 +151,40 @@ export function checkCollections(ir: IR): PlanProblem[] {
           'collection-unsupported',
           key,
           `${key} is not implemented in Phase 1, so ${count} entr${count === 1 ? 'y' : 'ies'} would be dropped`,
+        ),
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * `deployments`: only the concurrency cap is emitted, and only what the host can honour.
+ *
+ * The route handler this target emits answers with one buffered body, so a deployment
+ * asking for streaming is refused rather than emitted as something that only looks
+ * streamed. `secrets` needs no check: the adapters read a declared secret by name from
+ * the environment, so the declaration is documentation, not an artifact to emit.
+ */
+export function checkDeployments(ir: IR): PlanProblem[] {
+  const problems: PlanProblem[] = [];
+  for (const deployment of ir.deployments) {
+    const at = `deployments.${deployment.id}`;
+    if (deployment.streaming) {
+      problems.push(
+        problem(
+          'deployment-unsupported',
+          at,
+          'streaming needs a streaming host; the emitted route answers with one buffered body',
+        ),
+      );
+    }
+    if (deployment.concurrency !== undefined && deployment.concurrency < 1) {
+      problems.push(
+        problem(
+          'deployment-unsupported',
+          `${at}.concurrency`,
+          `concurrency is the cap the emitter passes to the runtime's limiter, so it must be at least 1, got ${deployment.concurrency}`,
         ),
       );
     }
@@ -481,13 +527,26 @@ export function checkPipelines(ir: IR): PlanProblem[] {
   return problems;
 }
 
-/** One reason for every kind this target cannot emit, so the gap is named in one place. */
-function unemittedStep(kind: string, at: string): PlanProblem {
+/**
+ * One reason for every kind this target cannot emit, so the gap is named in one place.
+ *
+ * Exported because the emitter raises the identical diagnostic when it is reached without
+ * the validator having run -- see D-4. The message names the target rather than a layer,
+ * so a CLI can print it without the reader knowing the roadmap.
+ */
+export function stepUnsupported(kind: string, at: string): PlanProblem {
   return problem(
     'step-unsupported',
     at,
-    `step kind ${kind} has no Next.js emitter yet (it lands with L6); the Python target emits it today`,
+    `the Next.js target has no emitter for step kind ${kind}; remove the step or generate the Python target`,
   );
+}
+
+/** The declarations a step list is checked against, passed down into nested lists. */
+interface StepDeclarations {
+  readonly tools: ReadonlySet<string>;
+  readonly prompts: ReadonlyMap<string, PromptShape>;
+  readonly retrievers: ReadonlySet<string>;
 }
 
 function checkPipelineShape(
@@ -507,50 +566,124 @@ function checkPipelineShape(
       ),
     );
   }
-  const bound = new Set<string>();
-  for (const [index, step] of pipeline.steps.entries()) {
-    const stepAt = `${at}.steps.${index}`;
+  const declarations = { tools, prompts, retrievers };
+  problems.push(...checkSteps(pipeline.steps, `${at}.steps`, declarations, new Set<string>()));
+  return problems;
+}
+
+/**
+ * One step list, checked end to end, recursing into the composites.
+ *
+ * `at` is the path of the list (not of the step), so a nested list extends the same shape
+ * the emitter uses: `pipelines.<id>.steps.2.then.0` names the first step of the third
+ * step's `then` arm both here and in the emitted diagnostic.
+ */
+function checkSteps(
+  steps: readonly StepShape[],
+  at: string,
+  declarations: StepDeclarations,
+  bound: Set<string>,
+): PlanProblem[] {
+  const problems: PlanProblem[] = [];
+  const bind = (name: string, stepAt: string): void => {
+    if ((RESERVED_BINDINGS as readonly string[]).includes(name)) {
+      problems.push(
+        problem('reference-unresolved', stepAt, `binding ${name} collides with a runtime name`),
+      );
+    }
+    if (bound.has(name)) {
+      problems.push(problem('reference-unresolved', stepAt, `binding ${name} is already bound`));
+    }
+    bound.add(name);
+  };
+  for (const [index, step] of steps.entries()) {
+    const stepAt = `${at}.${index}`;
     if (isCompositeStep(step)) {
-      problems.push(unemittedStep(step.kind, stepAt));
+      problems.push(...checkComposite(step, stepAt, declarations, bound));
+      // `map` and `reduce` bind their result; `branch` and `parallel` bind only inside an
+      // arm, and which arm ran is not knowable at generation time, so a later step may
+      // not read those. Not adding them is what makes that a refusal rather than a
+      // reference the emitted route resolves to `undefined`.
+      if (step.kind === 'map' || step.kind === 'reduce') bind(step.as, stepAt);
       continue;
     }
     // `rerank`, `guard` and `agent` are leaves, not composites, but they are just as
-    // unemitted: the Python target generates them and the Next.js target refuses them
-    // with the same reason, so the gap is named rather than silently emitted as nothing.
+    // unemitted: the Python target generates them and this one refuses them with the same
+    // reason, so the gap is named rather than silently emitted as nothing.
     if (step.kind === 'rerank' || step.kind === 'guard' || step.kind === 'agent') {
-      problems.push(unemittedStep(step.kind, stepAt));
+      problems.push(stepUnsupported(step.kind, stepAt));
       continue;
     }
-    problems.push(...checkStepShape(step, stepAt, tools, prompts, retrievers, bound));
-    if (step.kind !== 'emit') {
-      if ((RESERVED_BINDINGS as readonly string[]).includes(step.as)) {
-        problems.push(
-          problem(
-            'reference-unresolved',
-            stepAt,
-            `binding ${step.as} collides with a runtime name`,
-          ),
-        );
-      }
-      if (bound.has(step.as)) {
-        problems.push(
-          problem('reference-unresolved', stepAt, `binding ${step.as} is already bound`),
-        );
-      }
-      bound.add(step.as);
-    }
+    problems.push(...checkStepShape(step, stepAt, declarations, bound));
+    if (step.kind !== 'emit') bind(step.as, stepAt);
   }
   return problems;
+}
+
+/**
+ * A composite's arms, each checked against the bindings that exist *before* the composite.
+ *
+ * The fresh `Set` per arm is what keeps a `branch` from letting its `then` arm see what its
+ * `else` arm bound: at run time exactly one of them executes, so a spec that depends on
+ * both is a bug the generator can see and the runtime could not.
+ */
+function checkComposite(
+  step: BranchStep | ParallelStep | MapStep | ReduceStep,
+  at: string,
+  declarations: StepDeclarations,
+  bound: ReadonlySet<string>,
+): PlanProblem[] {
+  const problems: PlanProblem[] = [];
+  if (step.kind === 'branch') {
+    problems.push(...checkSteps(step.then, `${at}.then`, declarations, new Set(bound)));
+    problems.push(...checkSteps(step.else, `${at}.else`, declarations, new Set(bound)));
+  } else if (step.kind === 'parallel') {
+    for (const [arm, steps] of step.branches.entries()) {
+      problems.push(...checkSteps(steps, `${at}.arm.${arm}`, declarations, new Set(bound)));
+    }
+  } else if (step.kind === 'map') {
+    problems.push(...checkSteps([step.step], `${at}.step`, declarations, new Set(bound)));
+  } else {
+    const prompt = declarations.prompts.get(step.prompt);
+    if (prompt !== undefined && prompt.variables.length > 1) {
+      problems.push(
+        problem(
+          'step-unsupported',
+          at,
+          `a reduce prompt takes exactly one variable -- the iteration item -- but ${step.prompt} declares ${prompt.variables.length}`,
+        ),
+      );
+    }
+    problems.push(...checkSteps([reduceBody(step)], `${at}.item`, declarations, new Set(bound)));
+  }
+  return problems;
+}
+
+/**
+ * The `generate` a `reduce` body is checked as, mirrored from the emitter.
+ *
+ * Duplicated rather than shared for the same reason `retrievalEvalHasRetriever` is: the
+ * validator has to refuse what the emitter could only render wrongly, so it cannot call
+ * the code it is guarding. A drift here shows up as a `reduce` whose body prompt is
+ * missing a variable, which is refused rather than emitted with an unbound input.
+ */
+function reduceBody(step: ReduceStep): GenerateStep {
+  return {
+    kind: 'generate',
+    prompt: step.prompt,
+    model: step.model,
+    as: 'reduced',
+    input: { item: { kind: 'reference', path: ['item'] } },
+  };
 }
 
 function checkStepShape(
   step: GenerateStep | RetrieveStep | ToolStep | EmitStep,
   at: string,
-  tools: ReadonlySet<string>,
-  prompts: ReadonlyMap<string, PromptShape>,
-  retrievers: ReadonlySet<string>,
+  declarations: StepDeclarations,
   bound: ReadonlySet<string>,
 ): PlanProblem[] {
+  const { tools, prompts, retrievers } = declarations;
   const problems: PlanProblem[] = [];
   if (step.kind === 'tool') {
     if (!tools.has(step.tool)) {
@@ -659,6 +792,7 @@ export function checkPlan(ir: IR): PlanProblem[] {
     ...checkIrVersion(ir),
     ...checkTarget(ir),
     ...checkCollections(ir),
+    ...checkDeployments(ir),
     ...checkObservability(ir),
     ...checkRuntime(ir),
     ...checkTypes(ir),

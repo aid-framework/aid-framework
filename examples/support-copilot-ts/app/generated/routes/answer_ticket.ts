@@ -2,6 +2,7 @@
 // Owned by the generator: regenerate with `aid gen`. See aid.manifest.json.
 
 import { type PipelineContext, PipelineError } from '@aid/runtime';
+import { seeded } from '../control.js';
 import { answerTicketPipeline } from '../pipelines/answer_ticket.js';
 import { AnswerTicketRequest } from '../requests.js';
 import type { Answer } from '../schemas.js';
@@ -36,7 +37,7 @@ export async function handleAnswerTicket(request: RouteRequest): Promise<RouteRe
   }
   let context: PipelineContext;
   try {
-    context = await answerTicketPipeline().run({ event: parsed.data });
+    context = await answerTicketPipeline().run(seeded(parsed.data));
   } catch (error) {
     if (error instanceof PipelineError) {
       return { status: 502, body: { error: error.message } };

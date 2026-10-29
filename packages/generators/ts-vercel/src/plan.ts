@@ -20,6 +20,7 @@ import {
   emitEvalsIndex,
   emitGeneratedIndex,
 } from './emit/business.js';
+import { emitControl } from './emit/control.js';
 import type { EmittedFile } from './emit/file.js';
 import {
   emitDeps,
@@ -60,6 +61,7 @@ function collect(ir: IR): EmittedFile[] {
 
   files.push(emitObservability(ir));
   files.push(emitDeps(ir));
+  files.push(emitControl(ir));
   files.push(emitGatewayModels(ir));
   files.push(emitGatewayIndex(ir));
 

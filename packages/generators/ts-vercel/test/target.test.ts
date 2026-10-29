@@ -25,7 +25,7 @@ import {
 } from '@aid/generator-sdk';
 import { IR_VERSION } from '@aid/ir';
 import { describe, expect, it } from 'vitest';
-
+import { emitPipelineModule } from '../src/emit/pipelines.js';
 import {
   checkPlan,
   MANIFEST_PATH,
@@ -35,6 +35,7 @@ import {
   TS_VERCEL_MANIFEST,
   TS_VERCEL_MANIFEST_INPUT,
   TS_VERCEL_TARGET,
+  TsVercelPlanError,
   tsVercelGenerator,
 } from '../src/index.js';
 import { example, examplePlan, REPO_ROOT, readTree } from './helpers.js';
@@ -444,8 +445,23 @@ describe('the fail-closed plan', () => {
     expect(problems.map((problem) => problem.code)).toEqual(['step-unsupported']);
     const [first] = problems;
     expect(first?.message).toContain(kind);
-    expect(first?.message).toContain('L6');
-    expect(() => planTsVercel(ir)).toThrow(/step-unsupported/);
+    // The refusal has to be a message a user can act on: the kind, and the target that
+    // *does* emit it. An internal milestone tag in that message is the bug D-4 carried,
+    // so its absence is asserted rather than assumed.
+    expect(first?.message).toContain('Python target');
+    expect(first?.message).not.toContain('L6');
+    const thrown = (() => {
+      try {
+        planTsVercel(ir);
+        return null;
+      } catch (error) {
+        return error;
+      }
+    })();
+    expect(thrown).toBeInstanceOf(TsVercelPlanError);
+    expect((thrown as TsVercelPlanError).problems.map((problem) => problem.code)).toEqual([
+      'step-unsupported',
+    ]);
   }
 
   it('refuses a rerank step, which the Python target emits today', () => {
@@ -489,10 +505,50 @@ describe('the fail-closed plan', () => {
     );
   });
 
-  it('still refuses a composite, so the leaf refusal did not replace that branch', () => {
-    // The three leaves above were added beside the composite check, not in place of it.
-    // Without this, narrowing `isCompositeStep` to nothing would leave the three leaf
-    // tests passing and composites silently emitted as no code at all.
-    expectRefused(withFirstStep({ kind: 'parallel', branches: [[]] }), 'parallel');
+  it('reports an unemittable step kind as a finding, not an internal error (D-4)', () => {
+    // `assert` is the one kind an IR can carry that this target does not emit, and the
+    // validator defers it to its own layer, so the emitter's backstop is reachable only
+    // by calling the emitter directly. Before D-4 that backstop threw a bare `Error`,
+    // which reached a caller as a crash with no code and no path; the point of this test
+    // is that the same `step-unsupported` diagnostic the validator produces comes back
+    // out of the emitter, carrying the location. Restore the bare `Error` and the
+    // `instanceof` below is what reddens.
+    const ir = withFirstStep({ kind: 'assert', condition: 'true' });
+    const pipeline = ir.pipelines[0];
+    if (pipeline === undefined) throw new Error('the example has no pipeline');
+
+    let thrown: unknown;
+    try {
+      emitPipelineModule(ir, pipeline);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(TsVercelPlanError);
+    const problems = (thrown as TsVercelPlanError).problems;
+    expect(problems.map((problem) => problem.code)).toEqual(['step-unsupported']);
+    expect(problems[0]?.message).toContain('assert');
+    // The emitter's location is the same one the validator reports, so a user who sees
+    // either can find the step.
+    expect(problems[0]?.path).toBe(`pipelines.${pipeline.id}.steps.0`);
+  });
+
+  it('emits a composite rather than refusing it', () => {
+    // The three leaves above are still refused, because their emitters are a later
+    // layer. The four composites are not. Without this test, narrowing the composite
+    // branch to nothing would leave the leaf refusals passing while composites were
+    // emitted as no code at all.
+    const ir = withFirstStep({
+      kind: 'parallel',
+      branches: [[{ kind: 'retrieve', over: 'handbook', query: 'subject', topK: 1, as: 'docs' }]],
+    });
+
+    expect(checkPlan(ir).map((problem) => problem.code)).not.toContain('step-unsupported');
+
+    const pipeline = ir.pipelines[0];
+    if (pipeline === undefined) throw new Error('the example has no pipeline');
+    const file = emitPipelineModule(ir, pipeline);
+    expect(file.content).toContain('parallel({');
+    expect(file.content).toContain('MAX_STEP_DEPTH');
   });
 });

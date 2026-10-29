@@ -46,6 +46,13 @@
       "generator": "@aid/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
+      "path": "app/generated/control.ts",
+      "sha256": "901b36bcd23c4eae1b4c5f29e77b5fabae7e2199491f7b1e1d1bf46246a1b78f"
+    },
+    {
+      "generator": "@aid/generator-ts-vercel",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
       "path": "app/generated/deps.ts",
       "sha256": "60860b09b98c567f40831baf6422c7c4d8142a5842d201f0493a92c630357bfc"
     },
@@ -166,7 +173,7 @@
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/routes/answer_ticket.ts",
-      "sha256": "819cd87b71dbdc9e89f177a04eafc36868aafb790ea430c20564b167d6db62f9"
+      "sha256": "63ef9b94427332980f1e903315eb9a4bc81352c229e97869a3091ae5c1e72e77"
     },
     {
       "generator": "@aid/generator-ts-vercel",
