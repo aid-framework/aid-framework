@@ -72,14 +72,14 @@ describe('regenerating over the committed example', () => {
 
     expect(report.created).toEqual([]);
     expect(report.updated).toEqual([]);
-    expect(report.unchanged).toHaveLength(24);
+    expect(report.unchanged).toHaveLength(31);
     expect(report.kept).toHaveLength(4);
     expect(report.drifted).toEqual([]);
     expect(report.stale).toEqual([]);
     expect(report.pruned).toEqual([]);
     expect(report.diagnostics).toEqual([]);
     expect(hasDrift(report)).toBe(false);
-    expect(formatRegenerationSummary(report)).toBe('0 created, 0 updated, 24 unchanged, 4 kept');
+    expect(formatRegenerationSummary(report)).toBe('0 created, 0 updated, 31 unchanged, 4 kept');
   });
 
   it('leaves every file of both tiers byte for byte as it was', () => {
@@ -210,7 +210,7 @@ describe('drift', () => {
     });
     expect(report.drifted[0]?.recordedSha256).toBeUndefined();
     expect(report.diagnostics[0]?.message).toContain('not recorded in the manifest');
-    expect(report.unchanged).toHaveLength(23);
+    expect(report.unchanged).toHaveLength(30);
   });
 
   it('can check for drift without writing anything', () => {

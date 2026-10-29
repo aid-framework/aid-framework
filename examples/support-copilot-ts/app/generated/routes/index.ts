@@ -2,3 +2,5 @@
 // Owned by the generator: regenerate with `aid gen`. See aid.manifest.json.
 
 export { handleAnswerTicket, ROUTE as ANSWER_TICKET_ROUTE } from './answer_ticket.js';
+
+export { handleTriage, ROUTE as TRIAGE_ROUTE } from './triage.js';

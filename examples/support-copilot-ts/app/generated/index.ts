@@ -11,4 +11,4 @@ export { buildPrompts } from './prompts/index.js';
 export * from './requests.js';
 export * from './routes/index.js';
 export * from './schemas.js';
-export { buildExecutor } from './tools/index.js';
+export { buildExecutor, buildTools } from './tools/index.js';

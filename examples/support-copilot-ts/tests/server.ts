@@ -11,11 +11,25 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 
 import { setDeps } from '../app/generated/deps.js';
 import { handleAnswerTicket, ROUTE } from '../app/generated/routes/answer_ticket.js';
+import { handleTriage, ROUTE as TRIAGE_ROUTE } from '../app/generated/routes/triage.js';
 import { buildExecutor } from '../app/generated/tools/index.js';
 import { fakeDeps } from './fake_gateway.js';
 
 /** Set to `1` to make `lookup_customer` fail, which must surface as a 502. */
 const BROKEN_TOOL = process.env.AID_EXAMPLE_BROKEN_TOOL === '1';
+
+/**
+ * Set to `1` to make the model answer with an address, which must surface as a 400 from the
+ * emitted output guardrail rather than as a 200 carrying the address.
+ */
+const LEAKY_OUTPUT = process.env.AID_EXAMPLE_LEAKY_OUTPUT === '1';
+
+/** The answer the leaky switch returns: schema-valid, and blocked by `pii-detect`. */
+const LEAKY_ANSWER = JSON.stringify({
+  category: 'billing',
+  confidence: 0.9,
+  summary: 'Reply to ada@example.com about the duplicate charge.',
+});
 
 function reply(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { 'content-type': 'application/json' });
@@ -40,13 +54,20 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     reply(response, result.status, result.body);
     return;
   }
+  if (request.method === TRIAGE_ROUTE.method && path === TRIAGE_ROUTE.path) {
+    const body = await bodyOf(request);
+    const result = await handleTriage({ json: async () => JSON.parse(body) as unknown });
+    reply(response, result.status, result.body);
+    return;
+  }
   reply(response, 404, { error: `no route for ${request.method ?? 'GET'} ${path ?? '/'}` });
 }
 
 function main(): void {
   setDeps(
-    fakeDeps(
-      BROKEN_TOOL
+    fakeDeps({
+      ...(LEAKY_OUTPUT ? { answers: { 'charged twice': LEAKY_ANSWER } } : {}),
+      ...(BROKEN_TOOL
         ? {
             tools: buildExecutor({
               lookup_customer: async () => {
@@ -54,8 +75,8 @@ function main(): void {
               },
             }),
           }
-        : {},
-    ),
+        : {}),
+    }),
   );
   const server = createServer((request, response) => {
     void handle(request, response);

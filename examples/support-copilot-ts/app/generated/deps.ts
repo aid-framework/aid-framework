@@ -6,17 +6,20 @@ import {
   type ModelGateway,
   type PromptRegistry,
   type Retriever,
-  type ToolExecutor,
+  type Tool,
+  ToolExecutor,
 } from '@aid/runtime';
 import { buildGateway } from './gateway/index.js';
 import { buildPrompts } from './prompts/index.js';
 import { buildRetrievers } from './retrieval/index.js';
-import { buildExecutor } from './tools/index.js';
+import { buildTools } from './tools/index.js';
 
 export interface BuildDepsOptions {
   readonly gateway?: ModelGateway;
   readonly prompts?: PromptRegistry;
   readonly tools?: ToolExecutor;
+  /** The same adapters `tools` wraps; the agent loop needs them by value. */
+  readonly toolList?: readonly Tool[];
   readonly retrievers?: ReadonlyMap<string, Retriever>;
 }
 
@@ -28,12 +31,14 @@ export class Deps {
   readonly gateway: ModelGateway;
   readonly prompts: PromptRegistry;
   readonly tools: ToolExecutor;
+  readonly toolList: readonly Tool[];
   private readonly _retrievers: ReadonlyMap<string, Retriever>;
 
   constructor(init: Required<BuildDepsOptions>) {
     this.gateway = init.gateway;
     this.prompts = init.prompts;
     this.tools = init.tools;
+    this.toolList = init.toolList;
     this._retrievers = init.retrievers;
   }
 
@@ -51,10 +56,12 @@ let singleton: Deps | undefined;
 
 /** Build a fresh `Deps`; every seam defaults to the generated wiring. */
 export function buildDeps(options: BuildDepsOptions = {}): Deps {
+  const toolList = options.toolList ?? buildTools();
   return new Deps({
     gateway: options.gateway ?? buildGateway(),
     prompts: options.prompts ?? buildPrompts(),
-    tools: options.tools ?? buildExecutor(),
+    tools: options.tools ?? new ToolExecutor(toolList),
+    toolList,
     retrievers: options.retrievers ?? buildRetrievers(),
   });
 }

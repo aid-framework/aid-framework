@@ -25,12 +25,14 @@ export const IDEAL_ANSWERS: Readonly<Record<string, string>> = {
 export interface FakeProviderOptions {
   readonly accuracy?: number;
   readonly seed?: number;
+  /** Replaces the canned answers entirely; used to make one prompt answer with PII. */
+  readonly answers?: Readonly<Record<string, string>>;
 }
 
 /** A deterministic provider that answers the three canned prompts above. */
 export function fakeProvider(options: FakeProviderOptions = {}): FakeProvider {
   return new FakeProvider({
-    answers: IDEAL_ANSWERS,
+    answers: options.answers ?? IDEAL_ANSWERS,
     accuracy: options.accuracy ?? 1.0,
     seed: options.seed ?? 0,
   });
@@ -48,7 +50,11 @@ export interface FakeDepsOptions extends FakeProviderOptions {
  * `BuildDepsOptions`, and an explicit `undefined` would be a different thing.
  */
 export function fakeDeps(options: FakeDepsOptions = {}): Deps {
-  const provider = fakeProvider({ accuracy: options.accuracy ?? 1.0, seed: options.seed ?? 0 });
+  const provider = fakeProvider({
+    accuracy: options.accuracy ?? 1.0,
+    seed: options.seed ?? 0,
+    ...(options.answers === undefined ? {} : { answers: options.answers }),
+  });
   const overrides: {
     tools?: ToolExecutor;
     retrievers?: ReadonlyMap<string, Retriever>;

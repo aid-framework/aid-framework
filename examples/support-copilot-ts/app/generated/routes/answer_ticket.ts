@@ -2,6 +2,8 @@
 // Owned by the generator: regenerate with `aid gen`. See aid.manifest.json.
 
 import { type PipelineContext, PipelineError } from '@aid/runtime';
+import { seeded } from '../control.js';
+import { guardrailBlock } from '../guardrails.js';
 import { answerTicketPipeline } from '../pipelines/answer_ticket.js';
 import { AnswerTicketRequest } from '../requests.js';
 import type { Answer } from '../schemas.js';
@@ -20,8 +22,9 @@ export interface RouteResponse {
 }
 
 /**
- * Run the pipeline for one request. The body is validated before the pipeline runs,
- * and a pipeline failure is a 502: the request was well formed, the run was not.
+ * Run the pipeline for one request. The body is validated before the pipeline runs;
+ * a guardrail that refuses the request is a 400, and any other pipeline failure is a
+ * 502 -- the request was well formed, the run was not.
  */
 export async function handleAnswerTicket(request: RouteRequest): Promise<RouteResponse> {
   let payload: unknown;
@@ -36,8 +39,15 @@ export async function handleAnswerTicket(request: RouteRequest): Promise<RouteRe
   }
   let context: PipelineContext;
   try {
-    context = await answerTicketPipeline().run({ event: parsed.data });
+    context = await answerTicketPipeline().run(seeded(parsed.data));
   } catch (error) {
+    const block = guardrailBlock(error);
+    if (block !== undefined) {
+      return {
+        status: 400,
+        body: { error: block.message, guardrail: block.guardrail, stage: block.stage },
+      };
+    }
     if (error instanceof PipelineError) {
       return { status: 502, body: { error: error.message } };
     }

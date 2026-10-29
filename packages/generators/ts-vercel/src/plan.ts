@@ -11,6 +11,7 @@
 import type { GeneratedFile, Plan } from '@aid/generator-sdk';
 import { sortByPath } from '@aid/generator-sdk';
 import type { IR } from '@aid/ir';
+import { emitAgents } from './emit/agents.js';
 import {
   emitBusinessIndex,
   emitBusinessPromptsIndex,
@@ -20,7 +21,9 @@ import {
   emitEvalsIndex,
   emitGeneratedIndex,
 } from './emit/business.js';
+import { emitControl } from './emit/control.js';
 import type { EmittedFile } from './emit/file.js';
+import { emitGuardrails } from './emit/guardrails.js';
 import {
   emitDeps,
   emitGatewayIndex,
@@ -60,6 +63,10 @@ function collect(ir: IR): EmittedFile[] {
 
   files.push(emitObservability(ir));
   files.push(emitDeps(ir));
+  files.push(emitControl(ir));
+  files.push(emitGuardrails(ir));
+  const agents = emitAgents(ir);
+  if (agents !== undefined) files.push(agents);
   files.push(emitGatewayModels(ir));
   files.push(emitGatewayIndex(ir));
 

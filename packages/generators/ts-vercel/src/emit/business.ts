@@ -391,7 +391,7 @@ export function emitGeneratedIndex(ir: IR): EmittedFile {
     { from: './requests.js', names: undefined },
     { from: './routes/index.js', names: undefined },
     { from: './schemas.js', names: undefined },
-    { from: './tools/index.js', names: ['buildExecutor'] },
+    { from: './tools/index.js', names: ['buildExecutor', 'buildTools'] },
   ];
   const lines = [
     '/** The generated surface of this application, as one import. */',

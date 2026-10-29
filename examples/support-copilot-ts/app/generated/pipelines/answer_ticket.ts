@@ -14,6 +14,7 @@ import {
 } from '@aid/runtime';
 import { getDeps } from '../deps.js';
 import { FALLBACKS } from '../gateway/models.js';
+import { ENGINE, enforceGuardrail, INPUT_GUARDRAILS, OUTPUT_GUARDRAILS } from '../guardrails.js';
 import type { AnswerTicketRequest } from '../requests.js';
 import { Answer, Customer } from '../schemas.js';
 
@@ -52,15 +53,16 @@ export const answerTicketAnswerStep: Step = async (context) => {
     handbook: (context.require('handbook') as RetrievalResult).context,
     subject: event.subject,
   });
+  const verdict = enforceGuardrail(ENGINE.checkInput(INPUT_GUARDRAILS, rendered.text));
   const call = async (text: string): Promise<string> => {
     const result = await deps.gateway.generate(
       'fast',
       new CompletionRequest({ messages: [Message.user(text)] }),
       { fallbacks: FALLBACKS.fast ?? [] },
     );
-    return result.text;
+    return enforceGuardrail(ENGINE.checkOutput(OUTPUT_GUARDRAILS, result.text)).text;
   };
-  const answer = await runStructured(call, ANSWER_OUTPUT, rendered.text);
+  const answer = await runStructured(call, ANSWER_OUTPUT, verdict.text);
   return context.withValues({ answer: answer });
 };
 

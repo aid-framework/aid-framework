@@ -68,7 +68,7 @@ export function renderDiagnostics(diagnostics: readonly SpecDiagnostic[]): strin
 function requireNoErrors(stage: string, diagnostics: readonly SpecDiagnostic[]): void {
   const errors = diagnostics.filter((diagnostic) => diagnostic.severity === 'error');
   if (errors.length === 0) return;
-  throw new Error(stage + ':\n' + renderDiagnostics(errors));
+  throw new Error(`${stage}:\n${renderDiagnostics(errors)}`);
 }
 
 export interface ExampleBuild {
@@ -76,8 +76,8 @@ export interface ExampleBuild {
   plan: Plan;
 }
 
-/** Spec text to a plan, through the same checks and gates the CLI will run. */
-export function buildForSpecText(text: string, file = EXAMPLE_SPEC_PATH): ExampleBuild {
+/** Spec text to an IR, through the same checks and gates the CLI will run. */
+export function irForSpecText(text: string, file = EXAMPLE_SPEC_PATH): IR {
   const spec = checkSpecText(text, { file });
   requireNoErrors('the spec did not pass the spec checks', spec.diagnostics);
   if (spec.value === undefined) {
@@ -95,6 +95,12 @@ export function buildForSpecText(text: string, file = EXAMPLE_SPEC_PATH): Exampl
   });
   requireNoErrors('the IR did not pass the build gates', gates.diagnostics);
 
+  return ir;
+}
+
+/** Spec text to a plan, through the same checks and gates the CLI will run. */
+export function buildForSpecText(text: string, file = EXAMPLE_SPEC_PATH): ExampleBuild {
+  const ir = irForSpecText(text, file);
   return { ir, plan: planTsVercel(ir) };
 }
 

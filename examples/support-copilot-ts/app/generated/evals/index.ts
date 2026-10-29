@@ -14,3 +14,10 @@ export {
   gate as handbookQualityGate,
   sample as sampleHandbookQuality,
 } from './handbook_quality.js';
+
+export {
+  dataset as triageQualityDataset,
+  evaluate as evaluateTriageQuality,
+  gate as triageQualityGate,
+  sample as sampleTriageQuality,
+} from './triage_quality.js';

@@ -2,8 +2,8 @@
  * End-to-end check for the TypeScript target: the shipped `aid` binary, the committed
  * bytes, and a real socket.
  *
- * This is the `spot-check` counterpart to `scripts/e2e-example.mjs` and makes the same
- * three separable claims for `examples/support-copilot-ts`, each failing on its own:
+ * This is the `spot-check` counterpart to `scripts/e2e-example.mjs` and makes four
+ * separable claims for `examples/support-copilot-ts`, each failing on its own:
  *
  *   1. Regenerating the committed example in place changes nothing -- not the generated
  *      code, not `aid.manifest.json`, and not the hand-edited business files the generator
@@ -15,7 +15,12 @@
  *   3. The committed handler, compiled by the example's own `tsconfig.json` from the
  *      regenerated copy, boots and answers `POST /tickets/answer` with 200 over a real
  *      socket. A 200 is only reachable if the route, the pipeline, the business tool and
- *      the model gateway all wired up.
+ *      the model gateway all wired up. `POST /tickets/triage` must also answer 200: that is
+ *      the pipeline carrying every construct the emitter emits, so it is what separates "the
+ *      emitted calls typecheck" from "the emitted calls run".
+ *   4. The same booted host, with the model switched to answer with an address, refuses
+ *      `POST /tickets/answer` with a 400 naming the `inbound` output guardrail. That is the
+ *      emitted `checkOutput` and the route's block arm, end to end.
  *
  * Two departures from the Python harness, both forced:
  *
@@ -27,7 +32,8 @@
  * own test suite uses. Nothing here fakes the regeneration, which is the part under test.
  *
  * The TypeScript target has no bytecode to import ahead of its source, so claim 3 compiles
- * the regenerated copy first. `dist` and `node_modules` are compiled locally: the copy gets
+ * the regenerated copy first and claim 4 reuses that build. `dist` and `node_modules` are
+ * compiled locally: the copy gets
  * a link to the committed example's installed dependencies, and `tsc` runs with the
  * project's own settings, so a compile failure is a real failure.
  *
@@ -239,14 +245,13 @@ function waitForExit(child, timeoutMs) {
 }
 
 /**
- * Claim 3: the regenerated app compiles, boots and answers over a real socket.
+ * Boot the regenerated app's host, run `body` against it, and stop it again.
  *
  * @param {string} directory
+ * @param {Record<string, string>} environment
+ * @param {(post: (path: string, payload: unknown) => Promise<{ status: number, body: string }>) => Promise<void>} body
  */
-async function assertRegeneratedAppAnswers(directory) {
-  log('==> compiling and booting the regenerated app, then sending a real request');
-  compile(directory);
-
+async function withBootedServer(directory, environment, body) {
   const entry = join(directory, 'dist', 'tests', 'server.js');
   require(existsSync(entry), `the regenerated app has no server entry at ${entry}`);
 
@@ -255,6 +260,7 @@ async function assertRegeneratedAppAnswers(directory) {
   // the module path cannot be the one that answers.
   const child = spawn(process.execPath, [entry], {
     cwd: directory,
+    env: { ...process.env, ...environment },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -281,20 +287,16 @@ async function assertRegeneratedAppAnswers(directory) {
 
     const match = listening.exec(output);
     require(match !== null, `could not read a port from:\n${output}`);
-    const url = `http://127.0.0.1:${match[1]}/tickets/answer`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(REQUEST),
-    });
+    const origin = `http://127.0.0.1:${match[1]}`;
 
-    const body = await response.text();
-    require(response.status === 200, `POST ${url} answered ${response.status}: ${body}`);
-    const answer = JSON.parse(body);
-    require(answer.category ===
-      'billing', `the answer was not the one the pipeline produced: ${body}`);
-    require(typeof answer.summary === 'string' && answer.summary !== '', `empty summary: ${body}`);
-    log(`    POST /tickets/answer -> 200 ${body}`);
+    await body(async (path, payload) => {
+      const response = await fetch(`${origin}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      return { status: response.status, body: await response.text() };
+    });
   } finally {
     child.kill('SIGTERM');
     if (!(await waitForExit(child, 10_000))) {
@@ -302,6 +304,67 @@ async function assertRegeneratedAppAnswers(directory) {
       await waitForExit(child, 5_000);
     }
   }
+}
+
+/**
+ * Claim 3: the regenerated app compiles, boots and answers over a real socket.
+ *
+ * Two routes, not one: `/tickets/answer` is the pipeline the previous layers already pinned,
+ * and `/tickets/triage` is the one that reaches every construct the emitter emits -- a tool
+ * step, a retrieval, a rerank, a guarded generate, a guard step, both arms of a branch, a
+ * parallel pair and an agent loop. A 200 on `triage` is the only evidence that the emitted
+ * calls are wired to a runtime that can run them; a compile only proves the shapes agree.
+ *
+ * @param {string} directory
+ */
+async function assertRegeneratedAppAnswers(directory) {
+  log('==> compiling and booting the regenerated app, then sending real requests');
+  compile(directory);
+
+  await withBootedServer(directory, {}, async (post) => {
+    const answer = await post('/tickets/answer', REQUEST);
+    require(answer.status ===
+      200, `POST /tickets/answer answered ${answer.status}: ${answer.body}`);
+    const parsed = JSON.parse(answer.body);
+    require(parsed.category ===
+      'billing', `the answer was not the one the pipeline produced: ${answer.body}`);
+    require(typeof parsed.summary === 'string' &&
+      parsed.summary !== '', `empty summary: ${answer.body}`);
+    log(`    POST /tickets/answer -> 200 ${answer.body}`);
+
+    const triaged = await post('/tickets/triage', REQUEST);
+    require(triaged.status ===
+      200, `POST /tickets/triage answered ${triaged.status}: ${triaged.body}`);
+    const triage = JSON.parse(triaged.body);
+    // The last binding is the `agent` step's answer, so a non-empty note is evidence the
+    // loop ran after the composites rather than the pipeline stopping early.
+    require(typeof triage.answer === 'string' &&
+      triage.answer !== '', `the all-kinds pipeline bound no agent answer: ${triaged.body}`);
+    log(`    POST /tickets/triage -> 200 ${triaged.body}`);
+  });
+}
+
+/**
+ * Claim 4: the emitted output guardrail refuses over the same socket.
+ *
+ * The model is switched to answer with an address, which is what `guardrails.inbound`
+ * declares `pii-detect`/`block` over at the `output` stage. A 400 naming `inbound` is
+ * reachable only if the emitted `generate` step still calls `checkOutput` *and* the runtime
+ * keeps the block reachable from the route's `catch`; delete the call, or drop the cause
+ * chain, and this answers 200 with the address in it.
+ *
+ * @param {string} directory
+ */
+async function assertOutputGuardrailRefuses(directory) {
+  log('==> booting the app with a leaking model and sending a real request');
+  await withBootedServer(directory, { AID_EXAMPLE_LEAKY_OUTPUT: '1' }, async (post) => {
+    const result = await post('/tickets/answer', REQUEST);
+    require(result.status === 400, `a leaking answer answered ${result.status}: ${result.body}`);
+    const body = JSON.parse(result.body);
+    require(body.guardrail === 'inbound' &&
+      body.stage === 'output', `the refusal did not name the output guardrail: ${result.body}`);
+    log(`    POST /tickets/answer -> 400 ${result.body}`);
+  });
 }
 
 async function main() {
@@ -315,7 +378,11 @@ async function main() {
     assertTargetRegenerationIsANoOp(regenerated);
     assertSpecAloneReproducesGeneratedCode(join(workRoot, 'fresh'));
     await assertRegeneratedAppAnswers(regenerated);
-    log('==> ok: ts-vercel regeneration is byte-identical and the regenerated app runs');
+    await assertOutputGuardrailRefuses(regenerated);
+    log(
+      '==> ok: ts-vercel regeneration is byte-identical, the regenerated app runs 9 of ' +
+        '11 step kinds, and its output guardrail refuses',
+    );
   } finally {
     rmSync(workRoot, { recursive: true, force: true });
   }

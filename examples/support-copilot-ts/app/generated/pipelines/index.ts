@@ -2,3 +2,5 @@
 // Owned by the generator: regenerate with `aid gen`. See aid.manifest.json.
 
 export { answerTicketPipeline } from './answer_ticket.js';
+
+export { triagePipeline } from './triage.js';
