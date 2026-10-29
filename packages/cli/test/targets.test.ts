@@ -187,17 +187,44 @@ describe('the agent sections, before any target sees them', () => {
 });
 
 describe('the agent sections, when a target is asked to build them', () => {
-  it('rejects ts-vercel for both, and lets py-fastapi build the spec', () => {
+  it('builds the spec for both targets, which now declare both capabilities', () => {
     const ir = lowerAgentSpec();
     const gated = runGates(ir, { targetCapabilities: targetCapabilities() });
 
+    expect(gated.ok).toBe(true);
+    expect(gated.diagnostics.filter((entry) => entry.code === 'ir/capability-missing')).toEqual([]);
+  });
+
+  it('declares them per target, which is what the empty rejection above rests on', () => {
+    // The claim is per target, not symmetric, and both directions are asserted: a
+    // capability that silently moved between targets would keep "somebody declares it"
+    // green, so each target's own list is what this pins.
+    const declared = targetCapabilities();
+
+    expect(declared['py-fastapi']).toContain('agents');
+    expect(declared['py-fastapi']).toContain('guardrails');
+    expect(declared['ts-vercel']).toContain('agents');
+    expect(declared['ts-vercel']).toContain('guardrails');
+  });
+
+  it('rejects by name when a target withholds them, two for two', () => {
+    // Withholding them from the override map is how the refusal stays attributable now
+    // that both real targets declare both: the gate, the message and the count are the
+    // same code path a real gap would take, and the count is asserted rather than the
+    // target so a third rejection cannot hide inside a passing test.
+    const ir = lowerAgentSpec();
+    const granted = targetCapabilities();
+    const withheld = {
+      ...granted,
+      'ts-vercel': (granted['ts-vercel'] ?? []).filter(
+        (capability) => capability !== 'agents' && capability !== 'guardrails',
+      ),
+    };
+
+    const gated = runGates(ir, { targetCapabilities: withheld });
+
     expect(gated.ok).toBe(false);
     const rejections = gated.diagnostics.filter((entry) => entry.code === 'ir/capability-missing');
-    // Two, not three or four: `guardrails` moved from undeclared to declared on
-    // `py-fastapi` in P7a, and `agents` moved in P7b, so that target now builds this
-    // spec and every rejection that is left names `ts-vercel`, which declares neither
-    // (L6). The count is asserted rather than the target because a third rejection
-    // would mean some other capability had quietly become required by the same spec.
     expect(rejections).toHaveLength(2);
     expect(rejections.map((entry) => entry.message)).toEqual([
       'the capability gate rejected target "ts-vercel": the IR requires "agents", which this target does not declare',
@@ -205,33 +232,25 @@ describe('the agent sections, when a target is asked to build them', () => {
     ]);
     expect(rejections.every((entry) => entry.severity === 'error')).toBe(true);
     // `ok` is false because one target of the set refused, so `aid gen --target
-    // py-fastapi` is the only way to emit this spec; the diagnostic names the target so
-    // the refusal is attributable rather than a blanket "cannot build".
+    // py-fastapi` is the only way to emit this spec under that map; the diagnostic names
+    // the target so the refusal is attributable rather than a blanket "cannot build".
     expect(rejections.every((entry) => entry.message.includes('ts-vercel'))).toBe(true);
   });
 
-  it('rejects them because of the declaration and not for some other reason', () => {
-    const declared = targetCapabilities();
-    // The claim is per target, not symmetric, and both directions are asserted: "nobody
-    // declares `agents`" would have stayed green while py-fastapi silently lost the
-    // capability, and "somebody declares it" would stay green if the grant moved.
-    expect(declared['py-fastapi']).toContain('agents');
-    expect(declared['ts-vercel']).not.toContain('agents');
-    expect(declared['py-fastapi']).toContain('guardrails');
-    expect(declared['ts-vercel']).not.toContain('guardrails');
-  });
-
-  it('flips to ok when the remaining target declares both, and one short is one rejection', () => {
+  it('flips to ok when the withholding target declares both, and one short is one rejection', () => {
     // The positive control. If the gate refused for any reason other than the missing
     // declaration, granting the declaration would not flip the result -- and if the gate
-    // were quietly a no-op, this control would be indistinguishable from the rejection.
+    // were quietly a no-op, this control would be indistinguishable from the refusal.
     const ir = lowerAgentSpec();
     const granted = targetCapabilities();
+    const withoutBoth = (granted['ts-vercel'] ?? []).filter(
+      (capability) => capability !== 'agents' && capability !== 'guardrails',
+    );
 
     const partial = runGates(ir, {
       targetCapabilities: {
         ...granted,
-        'ts-vercel': [...(granted['ts-vercel'] ?? []), 'guardrails'],
+        'ts-vercel': [...withoutBoth, 'guardrails'],
       },
     });
     expect(partial.diagnostics.filter((entry) => entry.code === 'ir/capability-missing')).toEqual([
@@ -242,10 +261,7 @@ describe('the agent sections, when a target is asked to build them', () => {
     ]);
 
     const full = runGates(ir, {
-      targetCapabilities: {
-        ...granted,
-        'ts-vercel': [...(granted['ts-vercel'] ?? []), 'agents', 'guardrails'],
-      },
+      targetCapabilities: { ...granted, 'ts-vercel': [...withoutBoth, 'agents', 'guardrails'] },
     });
     expect(full.ok).toBe(true);
     expect(full.diagnostics.filter((entry) => entry.code === 'ir/capability-missing')).toEqual([]);

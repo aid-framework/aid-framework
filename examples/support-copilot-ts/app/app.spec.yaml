@@ -1,15 +1,18 @@
-specVersion: "0.1"
+specVersion: "0.2"
 
-# The same application as `examples/support-copilot`, declared for the second target.
+# The second target of the same application as `examples/support-copilot`.
 #
-# The two examples differ by *target*, not by domain: the spec below is the py-fastapi
-# example's spec with one line changed (`project.targets`). That is the point of keeping
-# both -- the same IR, compiled by two generators, is what makes their goldens
-# comparable and what keeps the shared contract honest.
+# The two examples differ by *target*, not by domain: the types, the models and their
+# fallback, the retriever over the same two-document corpus, the prompt, the business tool
+# and both evals are the same declarations. That is the point of keeping both -- the same
+# IR, compiled by two generators, is what makes their goldens comparable and what keeps
+# the shared contract honest.
 #
-# What stays identical: the types, the models and their fallback, the retriever over the
-# same two-document corpus, the prompt, the business tool, both evals, and the HTTP
-# route's method and path.
+# They differ in how far each target has been carried, and this file records that rather
+# than hiding it: it is `specVersion: "0.2"` because this is the target that emits the 0.2
+# sections. `guardrails`, `memory`, `agents` and `deployments` are all declared here and
+# all emitted; the py example has no counterpart for them yet. Where the two share a
+# construct the declaration is the same line for line.
 #
 # What changes is only what the target requires:
 #   * `targets: [ts-vercel]` -- the registry entry that compiles this spec.
@@ -71,6 +74,20 @@ types:
         required: true
         minimum: 0
         maximum: 1
+  # The shape the triage pipeline emits. A second type rather than a field on `Answer`,
+  # because the two routes answer different questions: `answer_ticket` classifies one
+  # ticket, `triage` reports what it did with it.
+  Triage:
+    kind: struct
+    fields:
+      summary:
+        type: string
+        required: true
+        description: The classification the pipeline settled on.
+      note:
+        type: string
+        required: true
+        description: The agent's one-line note about the ticket.
 
 models:
   fast:
@@ -93,6 +110,12 @@ models:
     provider: fake
     modelId: fake-deterministic-1
     capabilities: [json-schema, tools]
+    # A stand-in is still priced. The native agent loop enforces `maxCostBudget`, and
+    # `fromIr` refuses a model whose closure resolves no cost profile -- "a budget cannot
+    # be enforced against an unpriced model" -- so the fake provider carries the rate of
+    # the model it stands in for. It is reachable from the agent through `fast`'s
+    # fallback, which is what makes it part of the set the agent route parses.
+    costProfile: openai-gpt-4o-mini
   # Retrieval is wired with the same discipline: a deterministic fake embedder, so the
   # whole path -- chunk, embed, index, search, cite -- runs in CI with no network and no
   # key. The `embeddings` capability is what makes this model an embedding model; the IR
@@ -180,6 +203,50 @@ prompts:
     output:
       kind: structured
       schema: Answer
+  # The agent's system message. It declares no variables because the agent loop never
+  # renders any: `fromIr` reads the template verbatim, so a `{{ name }}` here would reach
+  # the model as braces. The validator refuses that rather than emitting it.
+  triage_instructions:
+    version: 1
+    model: fast
+    template: |
+      You are the ACME support desk's triage assistant. Read the classified ticket and
+      write one sentence a human agent can act on. Do not repeat the summary verbatim.
+    output:
+      kind: text
+
+# The collection the runtime executes and this target now emits. `input` is required by
+# the security gate because caller text reaches a prompt on an HTTP `generate` route;
+# `output` is what makes the generate step emit its output check, and it is the stage the
+# `guard` step below names.
+guardrails:
+  inbound:
+    stages: [input, output]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The request was refused by a guardrail.
+      log: true
+
+# A thread-scoped buffer: the agent's conversation, bounded by tokens rather than by
+# turns. `summarizeModel`, `ttl` and `backend` are refused at plan time because the
+# runtime implements none of them, and a declaration nothing honours is a lie.
+memory:
+  triage_thread:
+    kind: buffer
+    scope: thread
+    tokenBudget: 2048
+
+agents:
+  triage_agent:
+    name: Triage
+    instructions: triage_instructions
+    model: fast
+    tools: [lookup_customer]
+    guardrails: [inbound]
+    memory: [triage_thread]
+    maxSteps: 3
+    maxCostBudget: 0.05
 
 tools:
   lookup_customer:
@@ -233,6 +300,22 @@ evals:
       ci: true
       maxRegression: 0.05
       samples: 5
+  # The triage route is served over HTTP, so the coverage gate wants a gate eval aimed at
+  # it. It shares the classifier's metric because it answers the same question; what is
+  # different is the schema the run must satisfy.
+  triage_quality:
+    description: Whether the triage pipeline answers with a well-formed triage report.
+    target: pipeline:triage
+    dataset:
+      source: file
+      uri: evals/triage_quality.json
+    metrics:
+      - kind: json-schema
+        schema: Triage
+    gate:
+      ci: true
+      maxRegression: 0.05
+      samples: 5
 
 pipelines:
   answer_ticket:
@@ -262,3 +345,94 @@ pipelines:
           as: answer
       - emit:
           event: Answer
+
+  # Every step kind this target emits, in one runnable pipeline. It exists to be executed,
+  # not read: `scripts/e2e-example-ts.mjs` posts to it, so an emitter that produced code
+  # which compiled but did not run would fail there rather than only in a unit test.
+  triage:
+    description: Classify a ticket, fold the handbook evidence, and have an agent note it.
+    trigger:
+      http:
+        method: post
+        path: /tickets/triage
+    steps:
+      - tool:
+          tool: lookup_customer
+          input:
+            subject: "{{ event.subject }}"
+            body: "{{ event.body }}"
+          as: customer
+      - retrieve:
+          retriever: handbook
+          query: "{{ event.subject }}"
+          as: handbook
+      # `rerank` binds a shorter, reordered list. The runtime matches "lexical" against
+      # the model alias, which is why `lexical` is declared with that name.
+      - rerank:
+          over: handbook
+          query: "{{ event.subject }}"
+          model: lexical
+          topN: 3
+          as: ranked
+      - generate:
+          prompt: classify_ticket
+          input:
+            subject: "{{ event.subject }}"
+          context: handbook
+          as: answer
+      # A single named guardrail at one stage, as opposed to the stage-wide tables the
+      # route runs: the `guard` step is how a pipeline checks one declaration in place.
+      - guard:
+          guardrail: inbound
+          stage: output
+          text: "{{ answer.summary }}"
+      - branch:
+          when: 'hasRole("admin")'
+          then:
+            - generate:
+                prompt: classify_ticket
+                input:
+                  subject: "{{ event.subject }}"
+                context: handbook
+                as: escalated
+          else:
+            - generate:
+                prompt: classify_ticket
+                input:
+                  subject: "{{ event.subject }}"
+                context: handbook
+                as: escalated
+      - parallel:
+          branches:
+            - - generate:
+                  prompt: classify_ticket
+                  input:
+                    subject: "{{ event.subject }}"
+                  context: handbook
+                  as: left
+            - - generate:
+                  prompt: classify_ticket
+                  input:
+                    subject: "{{ event.subject }}"
+                  context: handbook
+                  as: right
+      # `map` and `reduce` are absent on purpose. Both iterate `over`, a *binding name*,
+      # and this language has no construct that binds a list: `tool` and `generate` bind a
+      # declared struct, `retrieve`/`rerank` bind a retrieval result, `agent` binds a
+      # string, and `event` is the request object. The runtime's composites are exercised
+      # by the conformance corpus, which seeds the list directly, but a spec-derived app
+      # cannot reach them today. The emitter emits both anyway; see the PR body.
+      - agent:
+          agent: triage_agent
+          text: "{{ answer.summary }}"
+          as: note
+      - emit:
+          event: Triage
+
+# `concurrency` is a gate on the composites: without a cap the emitted fan-out would be
+# unbounded, so the planner refuses a composite rather than guessing a limit.
+deployments:
+  api:
+    target: container
+    concurrency: 4
+    secrets: []

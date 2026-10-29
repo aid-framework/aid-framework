@@ -47,6 +47,7 @@ export function controlModule(ir: IR): string {
   const imports = importStatement('@aid/runtime', [
     { name: 'ConcurrencyLimiter', type: false },
     { name: 'LIMITER_KEY', type: false },
+    { name: 'PipelineContext', type: true },
     { name: 'PRINCIPAL_KEY', type: false },
     { name: 'Principal', type: false },
   ]);
@@ -69,6 +70,20 @@ export function controlModule(ir: IR): string {
     ' * false instead of unanswered -- both are answers a spec may branch on.',
     ' */',
     'const PRINCIPAL = new Principal();',
+    '',
+    '/**',
+    ' * The principal this run is seeded with.',
+    ' *',
+    ' * An `agent` step passes this to the agent loop, so an agent sees the same caller the',
+    ' * pipeline around it branched on: its guardrails, its `humanInTheLoop` predicate and',
+    ' * its memory key all price against one principal rather than two that happen to agree',
+    ' * today. Falls back to the seeded default when a caller replaced the context, which is',
+    ' * the same fallback the loop applies to an absent `principal`.',
+    ' */',
+    'export function principalOf(context: PipelineContext): Principal {',
+    '  const found = context.get(PRINCIPAL_KEY);',
+    '  return found instanceof Principal ? found : PRINCIPAL;',
+    '}',
   ].join('\n');
   const seeded = [
     '/**',

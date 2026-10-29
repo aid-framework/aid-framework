@@ -10,8 +10,8 @@ import { repr } from './internal/json.js';
 
 /** Base class for every error raised by this library. */
 export class AidRuntimeError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = new.target.name;
   }
 }

@@ -4,8 +4,9 @@
 import { PromptRegistry } from '@aid/runtime';
 import { OVERRIDES } from '../../business/prompts/index.js';
 import { CLASSIFY_TICKET } from './classify_ticket.js';
+import { TRIAGE_INSTRUCTIONS } from './triage_instructions.js';
 
-const TEMPLATES = [CLASSIFY_TICKET];
+const TEMPLATES = [CLASSIFY_TICKET, TRIAGE_INSTRUCTIONS];
 
 /** The generated templates, with any business override layered on top. */
 export function buildPrompts(): PromptRegistry {

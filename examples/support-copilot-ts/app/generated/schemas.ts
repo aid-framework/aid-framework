@@ -26,3 +26,10 @@ export const Ticket = z.object({
 });
 
 export type Ticket = z.infer<typeof Ticket>;
+
+export const Triage = z.object({
+  note: z.string(),
+  summary: z.string(),
+});
+
+export type Triage = z.infer<typeof Triage>;

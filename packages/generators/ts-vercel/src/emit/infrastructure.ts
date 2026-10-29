@@ -15,9 +15,11 @@ import {
   providerAdapter,
   stringLiteral,
 } from '../names.js';
+import { hasAgents } from './agents.js';
 import { type EmittedFile, generated, paths } from './file.js';
 import {
   type Entry,
+  type ImportName,
   importStatement,
   lines,
   localExportStatement,
@@ -171,14 +173,20 @@ export function emitGatewayIndex(ir: IR): EmittedFile {
 
 export function emitDeps(ir: IR): EmittedFile {
   const hasRetrieval = ir.retrievers.length > 0;
+  const withAgents = hasAgents(ir);
+  const runtimeImports: ImportName[] = [
+    { name: 'ConfigurationError', type: false },
+    { name: 'ModelGateway', type: true },
+    { name: 'PromptRegistry', type: true },
+    { name: 'Retriever', type: true },
+    // The agent loop takes `Tool` objects, not the executor, so when this app declares an
+    // agent the executor is built *from* the list rather than beside it: one adapter set
+    // with two views, so an agent and a `tool` step cannot execute different objects.
+    { name: 'ToolExecutor', type: !withAgents },
+  ];
+  if (withAgents) runtimeImports.push({ name: 'Tool', type: true });
   const header = [
-    importStatement(RUNTIME, [
-      { name: 'ConfigurationError', type: false },
-      { name: 'ModelGateway', type: true },
-      { name: 'PromptRegistry', type: true },
-      { name: 'Retriever', type: true },
-      { name: 'ToolExecutor', type: true },
-    ]),
+    importStatement(RUNTIME, runtimeImports),
     importStatement('./gateway/index.js', [{ name: 'buildGateway', type: false }]),
     importStatement('./prompts/index.js', [{ name: 'buildPrompts', type: false }]),
   ];
@@ -187,13 +195,19 @@ export function emitDeps(ir: IR): EmittedFile {
       importStatement('./retrieval/index.js', [{ name: 'buildRetrievers', type: false }]),
     );
   }
-  header.push(importStatement('./tools/index.js', [{ name: 'buildExecutor', type: false }]));
+  header.push(
+    importStatement('./tools/index.js', [
+      withAgents ? { name: 'buildTools', type: false } : { name: 'buildExecutor', type: false },
+    ]),
+  );
 
   const body = lines(
     'export interface BuildDepsOptions {',
     '  readonly gateway?: ModelGateway;',
     '  readonly prompts?: PromptRegistry;',
     '  readonly tools?: ToolExecutor;',
+    withAgents && '  /** The same adapters `tools` wraps; the agent loop needs them by value. */',
+    withAgents && '  readonly toolList?: readonly Tool[];',
     hasRetrieval && '  readonly retrievers?: ReadonlyMap<string, Retriever>;',
     '}',
     '',
@@ -205,12 +219,14 @@ export function emitDeps(ir: IR): EmittedFile {
     '  readonly gateway: ModelGateway;',
     '  readonly prompts: PromptRegistry;',
     '  readonly tools: ToolExecutor;',
+    withAgents && '  readonly toolList: readonly Tool[];',
     hasRetrieval && '  private readonly _retrievers: ReadonlyMap<string, Retriever>;',
     '',
     '  constructor(init: Required<BuildDepsOptions>) {',
     '    this.gateway = init.gateway;',
     '    this.prompts = init.prompts;',
     '    this.tools = init.tools;',
+    withAgents && '    this.toolList = init.toolList;',
     hasRetrieval && '    this._retrievers = init.retrievers;',
     '  }',
     hasRetrieval && [
@@ -231,10 +247,14 @@ export function emitDeps(ir: IR): EmittedFile {
     '',
     '/** Build a fresh `Deps`; every seam defaults to the generated wiring. */',
     'export function buildDeps(options: BuildDepsOptions = {}): Deps {',
+    withAgents && '  const toolList = options.toolList ?? buildTools();',
     '  return new Deps({',
     '    gateway: options.gateway ?? buildGateway(),',
     '    prompts: options.prompts ?? buildPrompts(),',
-    '    tools: options.tools ?? buildExecutor(),',
+    withAgents
+      ? '    tools: options.tools ?? new ToolExecutor(toolList),'
+      : '    tools: options.tools ?? buildExecutor(),',
+    withAgents && '    toolList,',
     hasRetrieval && '    retrievers: options.retrievers ?? buildRetrievers(),',
     '  });',
     '}',
@@ -309,6 +329,9 @@ const TARGET_WIRED = [
   'otel',
   'embeddings',
   'rerank',
+  'guardrails',
+  'agents',
+  'cursor-memory',
 ] as const;
 
 function wireable(capability: string): boolean {

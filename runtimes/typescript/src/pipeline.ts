@@ -182,7 +182,9 @@ export class Pipeline {
               return { stopped: true };
             }
             recordException(span, error);
-            throw new PipelineError(`step ${repr(name)} failed: ${messageOf(error)}`);
+            throw new PipelineError(`step ${repr(name)} failed: ${messageOf(error)}`, {
+              cause: error,
+            });
           }
         },
       );

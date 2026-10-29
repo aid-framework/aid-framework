@@ -31,7 +31,22 @@ export const TS_VERCEL_TARGET = 'ts-vercel';
  * The capabilities this generator honours end to end. Each one has an emitter that
  * binds it to a runtime surface: HTTP triggers become route handlers, `json-schema`
  * becomes zod schemas, `tool-calling` becomes `Tool`/`ToolExecutor`, `otel` becomes
- * traced gateway calls, and `embeddings`/`rerank` become retriever bindings.
+ * traced gateway calls, `embeddings`/`rerank` become retriever bindings, `guardrails`
+ * becomes `GuardrailEngine` calls on the stages a route can reach, and `agents`/
+ * `cursor-memory` become the `AgentRuntime` loop and its memory tiers.
+ *
+ * `guardrails`, `agents` and `cursor-memory` are declared since L6d, and the
+ * declaration carries the same promise as the rows above: there is an emitter
+ * (`./emit/guardrails.ts`, `./emit/agents.ts`), the TypeScript runtime implements the
+ * engine and the loop, and the committed example exercises all three end to end.
+ * `cursor-memory` is the IR's capability for a declared memory tier -- there is no
+ * `memory` capability -- so a spec that declares memory derives `cursor-memory`.
+ *
+ * Before L6d this list stopped at `rerank` and `./validate.ts` rejected any spec that
+ * mentioned the three collections. It still rejects the parts of each collection the
+ * runtime cannot honour (four memory kinds, `ttl`, `redact`, a non-`in-process`
+ * backend, three guardrail policies with no detector, a non-native engine), so a
+ * declaration here is not a claim that every field is expressible.
  */
 export const TS_VERCEL_CAPABILITIES = [
   'http-trigger',
@@ -40,6 +55,9 @@ export const TS_VERCEL_CAPABILITIES = [
   'otel',
   'embeddings',
   'rerank',
+  'guardrails',
+  'agents',
+  'cursor-memory',
 ] as const;
 
 export const TS_VERCEL_MANIFEST_INPUT: GeneratorManifestInput = {

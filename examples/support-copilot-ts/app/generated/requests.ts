@@ -9,3 +9,10 @@ export const AnswerTicketRequest = z.object({
 });
 
 export type AnswerTicketRequest = z.infer<typeof AnswerTicketRequest>;
+
+export const TriageRequest = z.object({
+  body: z.string(),
+  subject: z.string(),
+});
+
+export type TriageRequest = z.infer<typeof TriageRequest>;

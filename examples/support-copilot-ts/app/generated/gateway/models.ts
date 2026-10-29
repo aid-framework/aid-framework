@@ -47,7 +47,7 @@ export const ALIASES: Readonly<Record<string, ModelSpec>> = {
   offline: new ModelSpec({
     name: 'fake-deterministic-1',
     provider: 'fake',
-    cost: new CostProfile({ inputPer1kUsd: 0, outputPer1kUsd: 0 }),
+    cost: new CostProfile({ inputPer1kUsd: 0.00015, outputPer1kUsd: 0.0006 }),
     contextWindow: 128000,
     maxOutputTokens: 1024,
     capabilities: ['structured-output', 'tool-calling'] as const,

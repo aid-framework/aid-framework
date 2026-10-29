@@ -92,7 +92,17 @@ describe('the declaration', () => {
       target: 'ts-vercel',
       version: '0.1.0',
       irRange: TS_VERCEL_MANIFEST.irRange,
-      capabilities: ['embeddings', 'http-trigger', 'json-schema', 'otel', 'rerank', 'tool-calling'],
+      capabilities: [
+        'agents',
+        'cursor-memory',
+        'embeddings',
+        'guardrails',
+        'http-trigger',
+        'json-schema',
+        'otel',
+        'rerank',
+        'tool-calling',
+      ],
       emitsAgainst: { structuredOutput: 'zod', tracing: 'otel-genai' },
       output: { root: 'app', generatedDir: 'generated', businessDir: 'business' },
     });
@@ -170,7 +180,10 @@ describe('the capability discipline', () => {
     // literal array is what makes a dropped or invented capability fail rather than
     // pass a length check.
     expect(TS_VERCEL_MANIFEST.capabilities).toEqual([
+      'agents',
+      'cursor-memory',
       'embeddings',
+      'guardrails',
       'http-trigger',
       'json-schema',
       'otel',
@@ -232,7 +245,7 @@ describe('the IR contract', () => {
     // the text keeps the assertion honest -- a genuine read anywhere, or a second string
     // that looks like one, changes this and fails.
     expect(offenders).toEqual([
-      "src/emit/infrastructure.ts:100: '  const apiKey = process.env[apiKeyEnv];',",
+      "src/emit/infrastructure.ts:102: '  const apiKey = process.env[apiKeyEnv];',",
     ]);
 
     expect(sources.map(([path]) => path)).toContain('index.ts');
@@ -430,7 +443,13 @@ describe('the fail-closed plan', () => {
     expect(checkPlan(ir).map((problem) => problem.code)).toContain('eval-metric-unsupported');
   });
 
-  /** The example's IR with `step` first in the pipeline, which is enough to be refused. */
+  /**
+   * The example's IR with `step` first in the pipeline, which is enough to be refused.
+   *
+   * The step is spliced in as a bare record because these tests build IR a spec cannot:
+   * `assert` is a kind the spec validator refuses at both targets, so the only way to
+   * reach the emitter's backstop is to hand it an IR that never went through a spec.
+   */
   function withFirstStep(step: Record<string, unknown>) {
     return mutated((copy) => {
       const pipeline = copy.pipelines[0];
@@ -438,72 +457,6 @@ describe('the fail-closed plan', () => {
       (pipeline.steps as unknown[]).unshift(step);
     });
   }
-
-  /** The refusal names the kind, says which target emits it, and stops the plan. */
-  function expectRefused(ir: ReturnType<typeof example>['ir'], kind: string): void {
-    const problems = checkPlan(ir);
-    expect(problems.map((problem) => problem.code)).toEqual(['step-unsupported']);
-    const [first] = problems;
-    expect(first?.message).toContain(kind);
-    // The refusal has to be a message a user can act on: the kind, and the target that
-    // *does* emit it. An internal milestone tag in that message is the bug D-4 carried,
-    // so its absence is asserted rather than assumed.
-    expect(first?.message).toContain('Python target');
-    expect(first?.message).not.toContain('L6');
-    const thrown = (() => {
-      try {
-        planTsVercel(ir);
-        return null;
-      } catch (error) {
-        return error;
-      }
-    })();
-    expect(thrown).toBeInstanceOf(TsVercelPlanError);
-    expect((thrown as TsVercelPlanError).problems.map((problem) => problem.code)).toEqual([
-      'step-unsupported',
-    ]);
-  }
-
-  it('refuses a rerank step, which the Python target emits today', () => {
-    // `rerank` is a leaf, not a composite, so the composite branch cannot cover it: it
-    // reaches the same refusal through its own check. A target that emitted nothing for
-    // it would produce a pipeline that silently skipped the step.
-    expectRefused(
-      withFirstStep({
-        kind: 'rerank',
-        over: 'handbook',
-        query: 'subject',
-        model: 'lexical',
-        topN: 1,
-        as: 'ranked',
-      }),
-      'rerank',
-    );
-  });
-
-  it('refuses a guard step, which the Python target emits today', () => {
-    expectRefused(
-      withFirstStep({
-        kind: 'guard',
-        guardrail: 'handbook_pii',
-        stage: 'retrieval',
-        text: '{{ handbook }}',
-      }),
-      'guard',
-    );
-  });
-
-  it('refuses an agent step, which the Python target emits today', () => {
-    expectRefused(
-      withFirstStep({
-        kind: 'agent',
-        agent: 'triage_agent',
-        text: 'subject',
-        as: 'triage',
-      }),
-      'agent',
-    );
-  });
 
   it('reports an unemittable step kind as a finding, not an internal error (D-4)', () => {
     // `assert` is the one kind an IR can carry that this target does not emit, and the
@@ -528,16 +481,21 @@ describe('the fail-closed plan', () => {
     const problems = (thrown as TsVercelPlanError).problems;
     expect(problems.map((problem) => problem.code)).toEqual(['step-unsupported']);
     expect(problems[0]?.message).toContain('assert');
+    // The refusal has to be a message a user can act on: the kind, and the target that
+    // *does* emit it. An internal milestone tag in that message is the bug D-4 carried,
+    // so its absence is asserted rather than assumed.
+    expect(problems[0]?.message).toContain('Python target');
+    expect(problems[0]?.message).not.toContain('L6');
     // The emitter's location is the same one the validator reports, so a user who sees
     // either can find the step.
     expect(problems[0]?.path).toBe(`pipelines.${pipeline.id}.steps.0`);
   });
 
   it('emits a composite rather than refusing it', () => {
-    // The three leaves above are still refused, because their emitters are a later
-    // layer. The four composites are not. Without this test, narrowing the composite
-    // branch to nothing would leave the leaf refusals passing while composites were
-    // emitted as no code at all.
+    // Every supported, non-deferred kind now has an emitter, so this test no longer has
+    // refused siblings to contrast with. What it still pins is that a composite reaches
+    // the runtime helper rather than being emitted as no code at all -- remove the
+    // `parallel` arm and this reddens while the per-kind leaf tests stay green.
     const ir = withFirstStep({
       kind: 'parallel',
       branches: [[{ kind: 'retrieve', over: 'handbook', query: 'subject', topK: 1, as: 'docs' }]],

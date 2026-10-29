@@ -11,8 +11,8 @@ export interface BuildExecutorOptions {
   readonly lookup_customer?: LookupCustomerHandler;
 }
 
-/** Build the executor with every IR tool bound to an implementation. */
-export function buildExecutor(options: BuildExecutorOptions = {}): ToolExecutor {
+/** Build the adapters with every IR tool bound to an implementation. */
+export function buildTools(options: BuildExecutorOptions = {}): Tool[] {
   const adapters: Tool[] = [];
   const LookupCustomerImplementation =
     options.lookup_customer ??
@@ -21,5 +21,10 @@ export function buildExecutor(options: BuildExecutorOptions = {}): ToolExecutor 
     throw new ConfigurationError('no implementation is registered for lookup_customer');
   }
   adapters.push(asLookupCustomer(LookupCustomerImplementation));
-  return new ToolExecutor(adapters);
+  return adapters;
+}
+
+/** Build the executor over those adapters. */
+export function buildExecutor(options: BuildExecutorOptions = {}): ToolExecutor {
+  return new ToolExecutor(buildTools(options));
 }

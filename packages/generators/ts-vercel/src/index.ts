@@ -50,7 +50,6 @@ export {
   checkPlan,
   declaredCapabilities,
   RESERVED_BINDINGS,
-  UNSUPPORTED_COLLECTIONS,
 } from './validate.js';
 export {
   APP_ROOT,

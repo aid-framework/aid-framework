@@ -22,9 +22,14 @@ import { buildForSpecText, fileMap } from './helpers.js';
  * A spec whose only interesting part is its step list.
  *
  * `handbook` is bound by a `retrieve` rather than by a `generate` so that `map` and
- * `reduce` have a list to iterate while no top-level `generate` exists to trip the
- * input-guardrail gate. The retriever is inline rather than shared with the example
- * because a fixture that reached into the example's spec would move whenever it did.
+ * `reduce` have a *bound name* to iterate while no top-level `generate` exists to trip the
+ * input-guardrail gate. The plan checks that the name is bound, not what it holds, so this
+ * reaches the emitter; the runtime is what insists on an array. No construct in the spec
+ * language binds one -- `over` is a binding name, `event` is always an object, and nothing
+ * carries a list between steps -- so the emitted `mapStep`/`reduceStep` calls below are
+ * proved here and reachable only from an IR, not from a spec. The retriever is inline
+ * rather than shared with the example because a fixture that reached into the example's
+ * spec would move whenever it did.
  */
 function specWith(steps: string): string {
   return `specVersion: "0.2"
@@ -118,7 +123,7 @@ function moduleFor(steps: string): string {
   return content;
 }
 
-/** A `retrieve` that binds the list every `map`/`reduce` case iterates. */
+/** A `retrieve` that binds the name every `map`/`reduce` case iterates. */
 const RETRIEVE = `      - retrieve:
           retriever: handbook
           query: "{{ event.subject }}"
@@ -248,6 +253,23 @@ describe('the map composite', () => {
     expect(text).toContain("    as: 'mapped',");
     expect(text).toContain("    step: new Pipeline([['each', demoStep1Step0EachStep]]),");
     expect(text).toContain('maxDepth: MAX_STEP_DEPTH,');
+  });
+
+  it('is emitted for a binding the plan does not type, because the runtime is the checker', () => {
+    // What this pins: the emitter hands `over` to the helper as a name and the plan is
+    // satisfied by *binding*, not by shape. `handbook` here is a `RetrievalResult`, which
+    // `itemsOf` rejects at run time, and the module still emits cleanly -- so the gap is
+    // in the spec language (nothing binds a list), not in the emitter, and it must be
+    // stated rather than papered over by a plan-time shape check the IR cannot supply.
+    const text = moduleFor(MAP);
+
+    expect(text).toContain("    over: 'handbook',");
+    expect(text).not.toContain("over: context.require('handbook')");
+    // The iteratee is a nested `Pipeline` keyed by the plan's own step name, and the
+    // runtime seeds the item and index under its own keys inside `mapStep` -- so the
+    // emitter never spells either one, and never needs to know the element type.
+    expect(text).toContain("step: new Pipeline([['each', demoStep1Step0EachStep]]),");
+    expect(text).not.toContain('ITEM_KEY');
   });
 });
 

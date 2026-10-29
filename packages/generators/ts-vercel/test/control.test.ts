@@ -20,6 +20,7 @@ import { buildForSpecText, example } from './helpers.js';
 
 /** A spec whose only interesting part is its `deployments` block. */
 function specWithDeployments(deployments: string): string {
+  const block = deployments === '' ? '' : `\ndeployments:\n${deployments}`;
   return `specVersion: "0.2"
 
 project:
@@ -27,10 +28,7 @@ project:
   namespace: aid.demo
   targets:
     - ts-vercel
-
-deployments:
-${deployments}
-`;
+${block}`;
 }
 
 /** A spec with two deployments, so `Math.min` and the refusals both have something to read. */
@@ -70,9 +68,11 @@ describe('the concurrency cap', () => {
   it('is one when the spec declares no deployment', () => {
     // The smallest cap any deployment declares, and one when none does: a composite must
     // still be given a limiter, and one is the only bound that assumes nothing about the
-    // platform the spec never named.
-    expect(example().ir.deployments).toEqual([]);
-    expect(concurrencyLimit(example().ir)).toBe(1);
+    // platform the spec never named. The spec is built here rather than taken from the
+    // example, because the example declares a deployment for its own composites.
+    const ir = buildForSpecText(specWithDeployments('')).ir;
+    expect(ir.deployments).toEqual([]);
+    expect(concurrencyLimit(ir)).toBe(1);
   });
 
   it('is the smallest declared cap, not the first', () => {
@@ -132,9 +132,17 @@ describe('the emitted module', () => {
     expect(module).toContain('LIMITER_KEY');
     expect(module).toContain('PRINCIPAL_KEY');
     expect(module).toContain('new ConcurrencyLimiter(CONCURRENCY_LIMIT)');
-    expect(module).toContain(
-      "import { ConcurrencyLimiter, LIMITER_KEY, PRINCIPAL_KEY, Principal } from '@aid/runtime';",
-    );
+    // Named, not line-wrapped: `principalOf` takes a `PipelineContext`, so the import is
+    // one name longer than it was and the single-line form no longer fits. Asserting the
+    // three names plus the type keeps the pin on the module's agreement with the runtime
+    // rather than on the formatter's wrapping.
+    const [runtimeImport] = module.split('\n\n').filter((block) => block.includes('@aid/runtime'));
+    expect(runtimeImport).toContain('ConcurrencyLimiter');
+    expect(runtimeImport).toContain('LIMITER_KEY');
+    expect(runtimeImport).toContain('PRINCIPAL_KEY');
+    expect(runtimeImport).toContain('Principal');
+    expect(runtimeImport).toContain('type PipelineContext');
+    expect(module).toContain('export function principalOf(context: PipelineContext): Principal {');
   });
 
   it('carries the declared cap into the constant the limiter is built from', () => {

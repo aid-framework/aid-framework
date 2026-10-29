@@ -11,7 +11,7 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const expected = 7;
+const expected = 10;
 const root = fileURLToPath(new URL('..', import.meta.url));
 const entry = fileURLToPath(new URL('../dist/tests/app.test.js', import.meta.url));
 
