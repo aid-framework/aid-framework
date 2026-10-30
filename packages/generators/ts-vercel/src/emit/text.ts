@@ -125,7 +125,13 @@ export function objectLiteral(entries: readonly Entry[], indent: string): string
 export function arrayLiteral(items: readonly string[], indent: string): string {
   if (items.length === 0) return '[]';
   const inline = `[${items.join(', ')}]`;
-  if (fits(indent, inline)) return inline;
+  // An array of two or more objects is always one item per line, even when the inline
+  // form fits: `biome` expands it that way, measured on both a top-level array of two
+  // inline objects and the same array as a property of a multi-line object, and keeps a
+  // one-element array inline. Emitting the inline form there is a `biome ci` failure in
+  // the consumer's project rather than a matter of taste.
+  const expandedObjects = items.length > 1 && items.every((item) => item.startsWith('{'));
+  if (!expandedObjects && fits(indent, inline)) return inline;
   return ['[', ...items.map((item) => `${indent}  ${item},`), `${indent}]`].join('\n');
 }
 

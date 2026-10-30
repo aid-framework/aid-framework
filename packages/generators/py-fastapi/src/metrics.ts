@@ -1,12 +1,12 @@
 /**
  * The IR's eval metric vocabulary mapped onto the runtime's metrics.
  *
- * The mapping is deliberately partial. Of the IR's eight kinds, six reach a runtime
- * metric here; the other two are *rejected* rather than silently dropped, because a
+ * The mapping is deliberately partial. Of the IR's nine kinds, six reach a runtime
+ * metric here; the other three are *rejected* rather than silently dropped, because a
  * metric that is declared but not measured makes a baseline report a passing gate over
  * an unmeasured claim, which is worse than refusing to generate -- and each rejection
- * carries the reason it cannot be measured. `tool-trace` and `latency` have no runtime
- * implementation in Phase 0.
+ * carries the reason it cannot be measured. `tool-trace`, `cost`, and `latency` have no
+ * runtime implementation in Phase 0.
  *
  * `retrieval` is measured, but not by the prediction-per-case harness: the runtime scores
  * a ranked, cited retrieved set with `RetrievalGate` over the family `retrieval_metrics`
@@ -134,6 +134,17 @@ export function mapMetric(metric: MetricShape): MetricMapping {
         name: 'retrieval',
         deterministic: true,
         expression: 'retrieval_metrics()',
+      };
+    case 'assert':
+      return {
+        measured: true,
+        name: 'assert',
+        deterministic: true,
+        // The parsed AST lives in a module-level constant (`ASSERT_EXPR`), so the
+        // predicate travels as data and the generated eval needs no parser of its own
+        // and cannot drift from the one that validated it. Hoisting it also keeps the
+        // emission a single short line whatever the expression's depth.
+        expression: `AssertMetric(expr=ASSERT_EXPR, message=${pythonString(metric.message)})`,
       };
   }
 }

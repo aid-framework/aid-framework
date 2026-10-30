@@ -28,6 +28,8 @@ export const DIAGNOSTIC_CODES = {
   malformedTemplate: 'spec/malformed-template',
   duplicateBinding: 'spec/duplicate-binding',
   metricUnavailableInCi: 'spec/metric-unavailable-in-ci',
+  metricAssertNeedsFloor: 'spec/metric-assert-needs-floor',
+  metricAssertDuplicate: 'spec/metric-assert-duplicate',
   stepNestingTooDeep: 'spec/step-nesting-too-deep',
   nestedEmitStep: 'spec/nested-emit-step',
   fanoutWithoutConcurrency: 'spec/fanout-without-concurrency',

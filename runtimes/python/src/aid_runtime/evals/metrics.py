@@ -17,9 +17,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aid_runtime.errors import EvalError
 from aid_runtime.evals.dataset import EvalCase
+from aid_runtime.evals.predicate import evaluate_predicate
 from aid_runtime.structured import run_structured
 
 __all__ = [
+    "AssertMetric",
     "ExactMatch",
     "JsonSchemaValid",
     "JudgeVerdict",
@@ -162,6 +164,43 @@ class JsonSchemaValid:
             score=1.0 if not problems else 0.0,
             passed=not problems,
             detail="; ".join(problems),
+        )
+
+
+class AssertMetric:
+    """Whether a declared predicate holds for the case and its prediction.
+
+    The condition arrives as the IR's predicate AST -- the very tree the spec
+    layer parsed and checked -- so this metric needs no parser and cannot
+    disagree with the one that accepted the spec. A prediction that makes the
+    predicate false scores 0.0 and reports the spec's own ``message`` verbatim,
+    because the point of letting the author write the message is that a failure
+    quotes them.
+
+    A predicate that cannot be decided raises instead of scoring. See
+    ``aid_runtime.evals.predicate`` for why that distinction is load-bearing.
+    """
+
+    def __init__(self, *, expr: Any, message: str, name: str = "assert") -> None:
+        self._expr = expr
+        self._message = message
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def deterministic(self) -> bool:
+        return True
+
+    async def score(self, case: EvalCase, prediction: str) -> MetricResult:
+        ok = evaluate_predicate(self._expr, case=case, prediction=prediction)
+        return MetricResult(
+            metric=self.name,
+            score=1.0 if ok else 0.0,
+            passed=ok,
+            detail="" if ok else self._message,
         )
 
 

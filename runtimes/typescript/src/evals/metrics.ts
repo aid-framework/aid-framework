@@ -13,6 +13,7 @@ import { EvalError } from '../errors.js';
 import { repr } from '../internal/json.js';
 import { runStructured, structuredOutput } from '../structured.js';
 import type { EvalCase } from './dataset.js';
+import { evaluatePredicate, type PredicateNode } from './predicate.js';
 
 /** One metric's verdict on one prediction. */
 export class MetricResult {
@@ -296,6 +297,45 @@ export class JsonSchemaValid implements Metric {
       score: problems.length === 0 ? 1.0 : 0.0,
       passed: problems.length === 0,
       detail: problems.join('; '),
+    });
+  }
+}
+
+/**
+ * Whether a declared predicate holds for the case and its prediction.
+ *
+ * The condition arrives as the IR's predicate AST -- the very tree the spec layer
+ * parsed and checked -- so this metric needs no parser and cannot disagree with the
+ * one that accepted the spec. A prediction that makes the predicate false scores 0.0
+ * and reports the spec's own `message` verbatim, because the point of letting the
+ * author write the message is that a failure quotes them.
+ *
+ * A predicate that cannot be decided throws instead of scoring. See `predicate.ts`
+ * for why that distinction is load-bearing.
+ */
+export class AssertMetric implements Metric {
+  readonly name: string;
+  readonly deterministic = true;
+  readonly expr: PredicateNode;
+  readonly message: string;
+
+  constructor(init: {
+    readonly expr: PredicateNode;
+    readonly message: string;
+    readonly name?: string;
+  }) {
+    this.name = init.name ?? 'assert';
+    this.expr = init.expr;
+    this.message = init.message;
+  }
+
+  async score(entry: EvalCase, prediction: string): Promise<MetricResult> {
+    const ok = evaluatePredicate(this.expr, { entry, prediction });
+    return new MetricResult({
+      metric: this.name,
+      score: ok ? 1.0 : 0.0,
+      passed: ok,
+      detail: ok ? '' : this.message,
     });
   }
 }

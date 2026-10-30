@@ -1,0 +1,20 @@
+specVersion: "0.1"
+
+project:
+  name: probe
+
+evals:
+  answer_shape:
+    target: pipeline:probe
+    dataset:
+      source: file
+      uri: evals/answer_shape.jsonl
+    metrics:
+      - kind: assert
+        expr: "prediction != ''"
+        message: the answer must not be empty
+      - kind: assert
+        expr: "length(prediction) < 4000"
+        message: the answer must stay within the reply budget
+    gate:
+      minMean: 1

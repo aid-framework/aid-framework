@@ -28,7 +28,7 @@ import {
   usesJudge,
 } from '../metrics.js';
 import { className, moduleName } from '../names.js';
-import { INDENT, MAX_LINE, pythonNumber, pythonString } from '../python.js';
+import { INDENT, MAX_LINE, pythonNumber, pythonStatement, pythonString } from '../python.js';
 import {
   assemble,
   HEADER,
@@ -333,6 +333,17 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
     (name): name is string => name !== undefined,
   );
 
+  // The asserted predicate is hoisted to a module constant rather than embedded in the
+  // `AssertMetric(...)` call: the AST nests, and an inline literal would put a formatter
+  // into the business of re-deciding where the call breaks. `pythonStatement` renders it
+  // exactly as `ruff format` would, and the metric expression stays one short line. The
+  // spec allows at most one assert per eval, so the fixed name is unambiguous.
+  const asserted = evaluation.metrics.find((metric) => metric.kind === 'assert');
+  const assertConstant =
+    asserted === undefined || asserted.kind !== 'assert'
+      ? undefined
+      : pythonStatement('ASSERT_EXPR = ', asserted.expr);
+
   const constants = [
     `EVAL_ID = ${pythonString(evaluation.id)}`,
     `MODEL = ${pythonString(model)}`,
@@ -350,11 +361,17 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
       : `JSON_SCHEMA = json.dumps(${className(schema.name)}.model_json_schema())`,
     `DATASET_PATH = ${pathExpression(datasetRelativePath(evaluation.dataset.uri ?? ''))}`,
     `BASELINE_PATH = ${pathExpression(baselineRelativePath(evaluation.id))}`,
+    assertConstant,
   ].filter((line): line is string => line !== undefined);
 
-  const thresholds = inline.map(
-    (binding) => `Threshold(metric=${pythonString(binding.name)}, max_regression=MAX_REGRESSION)`,
-  );
+  const thresholds = inline.map((binding) => {
+    // A floor belongs to the metric it floors: an `assert` metric is only meaningful
+    // when every case passes, so its threshold carries the declared floor and the
+    // runtime checks that floor before it looks at the regression delta.
+    const floor = binding.name === 'assert' ? evaluation.gate.minMean : undefined;
+    const minMean = floor === undefined ? '' : `, min_mean=${pythonNumber(floor)}`;
+    return `Threshold(metric=${pythonString(binding.name)}, max_regression=MAX_REGRESSION${minMean})`;
+  });
 
   return generated(
     evalModulePath(evaluation.id),

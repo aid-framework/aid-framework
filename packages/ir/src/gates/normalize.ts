@@ -157,6 +157,7 @@ function normalizeEval(evalShape: EvalShape): EvalShape {
       ci: evalShape.gate.ci,
       maxRegression: evalShape.gate.maxRegression ?? DEFAULT_EVAL_MAX_REGRESSION,
       samples: evalShape.gate.samples ?? DEFAULT_EVAL_SAMPLES,
+      ...(evalShape.gate.minMean === undefined ? {} : { minMean: evalShape.gate.minMean }),
     },
     traits: evalShape.traits ?? [],
   };

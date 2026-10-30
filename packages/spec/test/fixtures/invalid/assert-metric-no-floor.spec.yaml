@@ -1,0 +1,18 @@
+specVersion: "0.1"
+
+project:
+  name: probe
+
+evals:
+  answer_shape:
+    target: pipeline:probe
+    dataset:
+      source: file
+      uri: evals/answer_shape.jsonl
+    metrics:
+      - kind: assert
+        expr: "prediction != ''"
+        message: the answer must not be empty
+    gate:
+      ci: true
+      maxRegression: 0.05

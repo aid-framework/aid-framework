@@ -1,0 +1,35 @@
+specVersion: "0.1"
+
+project:
+  name: support-desk
+  namespace: acme.support
+
+evals:
+  answer_shape:
+    target: pipeline:handle_ticket
+    dataset:
+      source: file
+      uri: datasets/answers.jsonl
+    metrics:
+      - kind: exact
+        field: text
+      - kind: assert
+        expr: "prediction != '' and contains(prediction, 'refund') and length(case.metadata.severity) < 8"
+        message: the answer must mention the refund policy in a short reply
+    gate:
+      ci: true
+      maxRegression: 0.05
+      samples: 3
+      minMean: 1
+
+  triage_quality:
+    target: pipeline:handle_ticket
+    dataset:
+      source: file
+      uri: datasets/triage.jsonl
+    metrics:
+      - kind: json-schema
+        schema: RefundResult
+    gate:
+      ci: true
+      maxRegression: 0.1

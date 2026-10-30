@@ -16,6 +16,7 @@ import {
 import { catalogCostProfile, catalogModel } from './catalog/index.js';
 import type { IrDiagnostic } from './diagnostics.js';
 import { parsePolicyExpr } from './policy/index.js';
+import { parsePredicateExpr } from './predicate/index.js';
 import {
   AGENT_ENGINES,
   AGENT_ON_BUDGET_EXHAUSTED,
@@ -995,7 +996,7 @@ function buildEvals(raw: unknown, context: BuildContext): EvalShape[] {
   return sortedKeys(record).map((id) => {
     const entry = asRecord(record[id]) ?? {};
     const metrics = asArray(entry.metrics)
-      .map((metric) => buildMetric(metric, context))
+      .map((metric, index) => buildMetric(metric, context, ['evals', id, 'metrics', index]))
       .filter((metric): metric is MetricShape => metric !== undefined);
     const gate = asRecord(entry.gate) ?? {};
     const dataset = asRecord(entry.dataset) ?? {};
@@ -1019,6 +1020,10 @@ function buildEvals(raw: unknown, context: BuildContext): EvalShape[] {
       },
       traits: [],
     };
+    // Written only when declared, so every eval that predates `minMean` serializes
+    // byte-identically.
+    const minMean = asNumber(gate.minMean);
+    if (minMean !== undefined) evalShape.gate.minMean = minMean;
     if (budgets.length > 0) evalShape.costBudget = Math.min(...budgets);
     if (latencies.length > 0) evalShape.latencyBudgetP95Ms = Math.min(...latencies);
     return evalShape;
@@ -1040,7 +1045,11 @@ export function buildEvalTarget(raw: unknown): EvalTarget {
   return { kind, id, qualified, valid: true };
 }
 
-function buildMetric(raw: unknown, context: BuildContext): MetricShape | undefined {
+function buildMetric(
+  raw: unknown,
+  context: BuildContext,
+  path: readonly (string | number)[],
+): MetricShape | undefined {
   const record = asRecord(raw) ?? {};
   const kind = asString(record.kind);
   const field = asString(record.field);
@@ -1087,6 +1096,19 @@ function buildMetric(raw: unknown, context: BuildContext): MetricShape | undefin
       if (model !== undefined) metric.model = model;
       if (threshold !== undefined) metric.threshold = threshold;
       return metric;
+    }
+    case 'assert': {
+      const message = asString(record.message);
+      if (message === undefined) return undefined;
+      const parsed = parsePredicateExpr(asString(record.expr) ?? '', {
+        path: [...path, 'expr'],
+        file: context.file,
+      });
+      context.diagnostics.push(...parsed.diagnostics);
+      // An unparsable predicate is already an error diagnostic; dropping the metric
+      // keeps the IR closed, and the caller treats the diagnostics as the failure.
+      if (parsed.ast.kind === 'invalid') return undefined;
+      return { kind: 'assert', expr: parsed.ast, message };
     }
     default:
       return undefined;

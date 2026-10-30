@@ -2147,6 +2147,287 @@
         "calls": 1,
         "charged": true
       }
+    },
+    {
+      "id": "eval-assert-passes",
+      "op": "eval.assert",
+      "description": "A predicate that holds scores 1.0 and carries no detail; the spec's message is reserved for a real failure.",
+      "input": {
+        "ast": {
+          "kind": "call",
+          "name": "contains",
+          "args": [
+            {
+              "kind": "path",
+              "path": "prediction"
+            },
+            {
+              "kind": "string",
+              "value": "refund"
+            }
+          ]
+        },
+        "message": "must mention the refund",
+        "case": {
+          "id": "reply-1",
+          "input": "my card was charged twice"
+        },
+        "prediction": "Your refund is on the way."
+      },
+      "expect": {
+        "metric": "assert",
+        "score": 1.0,
+        "passed": true,
+        "detail": ""
+      }
+    },
+    {
+      "id": "eval-assert-fails-carries-message",
+      "op": "eval.assert",
+      "description": "A predicate that does not hold scores 0.0 and reports the spec's own message verbatim, because the author wrote it to be quoted.",
+      "input": {
+        "ast": {
+          "kind": "call",
+          "name": "contains",
+          "args": [
+            {
+              "kind": "path",
+              "path": "prediction"
+            },
+            {
+              "kind": "string",
+              "value": "refund"
+            }
+          ]
+        },
+        "message": "must mention the refund",
+        "case": {
+          "id": "reply-2",
+          "input": "my card was charged twice"
+        },
+        "prediction": "Your request was denied."
+      },
+      "expect": {
+        "metric": "assert",
+        "score": 0.0,
+        "passed": false,
+        "detail": "must mention the refund"
+      }
+    },
+    {
+      "id": "eval-assert-unbound-metadata-raises",
+      "op": "eval.assert",
+      "description": "A metadata key the case does not carry raises instead of reading as false: a typo must not silently make every case fail.",
+      "input": {
+        "ast": {
+          "kind": "comparison",
+          "op": "==",
+          "left": {
+            "kind": "path",
+            "path": "case.metadata",
+            "name": "tier"
+          },
+          "right": {
+            "kind": "string",
+            "value": "gold"
+          }
+        },
+        "message": "gold customers only",
+        "case": {
+          "id": "reply-3",
+          "input": "hello"
+        },
+        "prediction": "Hi."
+      },
+      "expect": {
+        "error": {
+          "kind": "eval",
+          "message": "unbound case.metadata key 'tier'"
+        }
+      }
+    },
+    {
+      "id": "eval-assert-type-mismatch-raises",
+      "op": "eval.assert",
+      "description": "Comparing a string to a number raises. Equality is not silently undefined across types, and a boolean is never admitted as the number 1.",
+      "input": {
+        "ast": {
+          "kind": "comparison",
+          "op": "==",
+          "left": {
+            "kind": "path",
+            "path": "prediction"
+          },
+          "right": {
+            "kind": "number",
+            "value": 3
+          }
+        },
+        "message": "never reached",
+        "case": {
+          "id": "reply-4",
+          "input": "hello"
+        },
+        "prediction": "Hi."
+      },
+      "expect": {
+        "error": {
+          "kind": "eval",
+          "message": "type mismatch: cannot apply '==' to string and number"
+        }
+      }
+    },
+    {
+      "id": "eval-assert-non-boolean-raises",
+      "op": "eval.assert",
+      "description": "The whole predicate must be boolean. A bare path is a string, and scoring it would turn a string into a truthiness verdict.",
+      "input": {
+        "ast": {
+          "kind": "path",
+          "path": "prediction"
+        },
+        "message": "never reached",
+        "case": {
+          "id": "reply-5",
+          "input": "hello"
+        },
+        "prediction": "Hi."
+      },
+      "expect": {
+        "error": {
+          "kind": "eval",
+          "message": "predicate expected a boolean, got string"
+        }
+      }
+    },
+    {
+      "id": "eval-assert-no-short-circuit",
+      "op": "eval.assert",
+      "description": "Both sides of a conjunction are evaluated even when the left is already false, so a misconfigured operand surfaces instead of being masked.",
+      "input": {
+        "ast": {
+          "kind": "and",
+          "left": {
+            "kind": "boolean",
+            "value": false
+          },
+          "right": {
+            "kind": "path",
+            "path": "case.metadata",
+            "name": "typo"
+          }
+        },
+        "message": "never reached",
+        "case": {
+          "id": "reply-6",
+          "input": "hello"
+        },
+        "prediction": "Hi."
+      },
+      "expect": {
+        "error": {
+          "kind": "eval",
+          "message": "unbound case.metadata key 'typo'"
+        }
+      }
+    },
+    {
+      "id": "eval-assert-length-ordering",
+      "op": "eval.assert",
+      "description": "Ordering compares numbers, so a length() result can be bounded inclusively. Both runtimes must normalize integer literals and lengths the same way for this to agree.",
+      "input": {
+        "ast": {
+          "kind": "comparison",
+          "op": ">=",
+          "left": {
+            "kind": "call",
+            "name": "length",
+            "args": [
+              {
+                "kind": "path",
+                "path": "prediction"
+              }
+            ]
+          },
+          "right": {
+            "kind": "number",
+            "value": 3
+          }
+        },
+        "message": "answer is too short",
+        "case": {
+          "id": "reply-7",
+          "input": "hello"
+        },
+        "prediction": "Hi."
+      },
+      "expect": {
+        "metric": "assert",
+        "score": 1.0,
+        "passed": true,
+        "detail": ""
+      }
+    },
+    {
+      "id": "eval-gate-min-mean-floor-beats-regression-allowance",
+      "op": "eval.gate",
+      "description": "A 0/1 metric cannot be compared only by delta: here the mean improved on the baseline and would pass the regression allowance, and the absolute floor is what fails it.",
+      "input": {
+        "thresholds": [
+          {
+            "metric": "assert",
+            "minMean": 1.0,
+            "maxRegression": 0.05,
+            "alpha": 0.05
+          }
+        ],
+        "run": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "runs": 3,
+          "metrics": [
+            {
+              "metric": "assert",
+              "values": [1.0, 1.0, 0.9]
+            }
+          ]
+        },
+        "baseline": {
+          "dataset": "support-replies",
+          "datasetVersion": "1.0",
+          "model": "gpt-4o-2024-08-06",
+          "metrics": [
+            {
+              "metric": "assert",
+              "runs": 5,
+              "mean": 0.96,
+              "stdev": 0.02
+            }
+          ]
+        }
+      },
+      "expect": {
+        "passed": false,
+        "dataset": "support-replies",
+        "datasetVersion": "1.0",
+        "runs": 3,
+        "varying": true,
+        "results": [
+          {
+            "metric": "assert",
+            "passed": false,
+            "currentMean": 0.966667,
+            "currentStdev": 0.057735,
+            "baselineMean": 0.96,
+            "baselineStdev": 0.02,
+            "delta": -0.006667,
+            "z": -0.193167,
+            "alpha": 0.05,
+            "maxRegression": 0.05,
+            "rationale": "assert: mean 0.9667 is below the absolute floor 1.0000 (baseline 0.9600)"
+          }
+        ]
+      }
     }
   ]
 }
