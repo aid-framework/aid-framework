@@ -96,6 +96,7 @@ export {
 } from './evals/gate.js';
 export type { JudgeCall, Metric } from './evals/metrics.js';
 export {
+  AssertMetric,
   defaultMetrics,
   ExactMatch,
   JsonSchemaValid,

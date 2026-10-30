@@ -663,6 +663,97 @@
         "uri": { "type": "string" }
       }
     },
+    "predicate": {
+      "description": "A parsed PredicateExpr AST. Recursive and closed. There is no `invalid` arm: a build that cannot parse the predicate fails instead of emitting a node no evaluator could score.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path"],
+          "properties": {
+            "kind": { "const": "path" },
+            "path": { "enum": ["prediction", "case.id"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path", "name"],
+          "properties": {
+            "kind": { "const": "path" },
+            "path": { "const": "case.metadata" },
+            "name": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "string" },
+            "value": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "number" },
+            "value": { "type": "number" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "boolean" },
+            "value": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "args"],
+          "properties": {
+            "kind": { "const": "call" },
+            "name": { "enum": ["contains", "startswith", "endswith", "length"] },
+            "args": { "type": "array", "items": { "$ref": "#/$defs/predicate" } }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "op", "left", "right"],
+          "properties": {
+            "kind": { "const": "comparison" },
+            "op": { "enum": ["==", "!=", "<=", ">=", "<", ">"] },
+            "left": { "$ref": "#/$defs/predicate" },
+            "right": { "$ref": "#/$defs/predicate" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "left", "right"],
+          "properties": {
+            "kind": { "enum": ["and", "or"] },
+            "left": { "$ref": "#/$defs/predicate" },
+            "right": { "$ref": "#/$defs/predicate" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "operand"],
+          "properties": {
+            "kind": { "const": "not" },
+            "operand": { "$ref": "#/$defs/predicate" }
+          }
+        }
+      ]
+    },
     "metric": {
       "oneOf": [
         {
@@ -742,6 +833,16 @@
             "expectDocs": { "type": "array", "items": { "type": "string" } },
             "k": { "type": "integer", "minimum": 1 }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "expr", "message"],
+          "properties": {
+            "kind": { "const": "assert" },
+            "expr": { "$ref": "#/$defs/predicate" },
+            "message": { "type": "string", "minLength": 1 }
+          }
         }
       ]
     },
@@ -752,7 +853,13 @@
       "properties": {
         "ci": { "type": "boolean" },
         "maxRegression": { "type": "number", "minimum": 0 },
-        "samples": { "type": "integer", "minimum": 1 }
+        "samples": { "type": "integer", "minimum": 1 },
+        "minMean": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Absolute floor on the mean of every metric, checked before the maxRegression delta. An eval carrying an assert must declare 1.0, since a false assertion is not sampling noise."
+        }
       }
     },
     "eval": {

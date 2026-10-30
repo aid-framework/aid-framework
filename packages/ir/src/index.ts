@@ -116,6 +116,41 @@ export {
   tokenize,
   tokenText,
 } from './policy/index.js';
+export type {
+  OrderingOperator,
+  PredicateBuiltin,
+  PredicateCall,
+  PredicateCaseId,
+  PredicateComparison,
+  PredicateContext,
+  PredicateExpr,
+  PredicateInvalid,
+  PredicateLexResult,
+  PredicateLogical,
+  PredicateMetadata,
+  PredicateNode,
+  PredicateNot,
+  PredicateOperator,
+  PredicateParseResult,
+  PredicatePath,
+  PredicatePathRoot,
+  PredicatePrediction,
+  PredicateToken,
+  PredicateTokenType,
+} from './predicate/index.js';
+export {
+  formatPredicateExpr,
+  isOrderingOperator,
+  isPredicateBuiltin,
+  ORDERING_OPERATORS,
+  PREDICATE_BUILTIN_ARITY,
+  PREDICATE_BUILTINS,
+  PREDICATE_OPERATORS,
+  PREDICATE_PATHS,
+  parsePredicateExpr,
+  predicateIsBoolean,
+  tokenizePredicate,
+} from './predicate/index.js';
 export { CANONICAL_INDENT, canonicalJson, serializeIR } from './serialize.js';
 export type {
   AgentEngine,

@@ -63,6 +63,16 @@ export const IR_DIAGNOSTIC_CODES = {
   policyArity: 'ir/policy-arity',
   policyArgumentType: 'ir/policy-argument-type',
   policyExpected: 'ir/policy-expected',
+  predicateEmpty: 'ir/predicate-empty',
+  predicateSyntax: 'ir/predicate-syntax',
+  predicateUnknownBuiltin: 'ir/predicate-unknown-builtin',
+  predicateUnknownPath: 'ir/predicate-unknown-path',
+  predicateUnterminatedString: 'ir/predicate-unterminated-string',
+  predicateUnclosedParen: 'ir/predicate-unclosed-paren',
+  predicateTrailingToken: 'ir/predicate-trailing-token',
+  predicateArity: 'ir/predicate-arity',
+  predicateExpected: 'ir/predicate-expected',
+  predicateNotBoolean: 'ir/predicate-not-boolean',
 } as const;
 
 export type IrDiagnosticCode = (typeof IR_DIAGNOSTIC_CODES)[keyof typeof IR_DIAGNOSTIC_CODES];

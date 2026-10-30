@@ -16,6 +16,7 @@
 
 import type { ModelCapability, RequiredCapability } from './capabilities.js';
 import type { PolicyExpr } from './policy/index.js';
+import type { PredicateNode } from './predicate/index.js';
 
 /** IR format version. Semver, independent of the spec's `specVersion`. */
 export const IR_VERSION = '0.1.0';
@@ -441,12 +442,20 @@ export type MetricShape =
   | { kind: 'cost'; max: number }
   | { kind: 'latency'; maxMs: number }
   | { kind: 'llm-judge'; rubric: string; field?: string; model?: string; threshold?: number }
-  | { kind: 'retrieval'; expectDocs: string[]; k: number };
+  | { kind: 'retrieval'; expectDocs: string[]; k: number }
+  | { kind: 'assert'; expr: PredicateNode; message: string };
 
 export interface EvalGate {
   ci: boolean;
   maxRegression: number;
   samples: number;
+  /**
+   * Absolute floor on every metric's mean, checked before the maxRegression delta.
+   *
+   * Absent unless the spec declared it, so an eval that does not carry one serializes
+   * exactly as it did before this property existed.
+   */
+  minMean?: number;
 }
 
 export interface EvalShape {

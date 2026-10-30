@@ -16,6 +16,7 @@ from aid_runtime.evals.gate import (
     z_critical,
 )
 from aid_runtime.evals.metrics import (
+    AssertMetric,
     ExactMatch,
     JsonSchemaValid,
     JudgeVerdict,
@@ -38,6 +39,7 @@ from aid_runtime.evals.runner import (
 )
 
 __all__ = [
+    "AssertMetric",
     "BaselineGate",
     "CaseOutcome",
     "Dataset",
