@@ -48,6 +48,7 @@ import {
   AgentHandoffUnsupportedError,
   AgentRuntime,
   AidRuntimeError,
+  AssertMetric,
   BaselineGate,
   Budget,
   BudgetExceededError,
@@ -67,6 +68,7 @@ import {
   DeepAgentsUnavailableError,
   DeepAgentsVersionMismatchError,
   EvalBaseline,
+  EvalCase,
   EvalRun,
   estimateCostUsd,
   FakeProvider,
@@ -105,6 +107,7 @@ import {
   RetrievalResult,
   RetrievedItem,
   type RunResult,
+  EvalError as RuntimeEvalError,
   reduceStep,
   rerankerFor,
   runStructured,
@@ -309,6 +312,7 @@ const ERROR_KINDS: readonly (readonly [ErrorClass, string])[] = [
   [PromptNotFoundError, 'prompt-not-found'],
   [PromptRenderError, 'prompt-render'],
   [StructuredOutputError, 'structured-output'],
+  [RuntimeEvalError, 'eval'],
 ];
 
 function errorOf(thrown: unknown): Json {
@@ -648,6 +652,36 @@ function evalZCritical(input: Json): Json {
   return {
     values: asNumbers(input.alphas, 'alphas').map((alpha) => ({ alpha, z: zCritical(alpha) })),
   };
+}
+
+/**
+ * Score one case with the `assert` metric.
+ *
+ * The predicate arrives as the IR's own AST, so the corpus pins that both runtimes read
+ * the same tree the same way -- including the trees that must raise rather than score.
+ */
+async function evalAssert(input: Json): Promise<Json> {
+  const entry = asRecord(input.case, 'case');
+  const metric = new AssertMetric({
+    expr: input.ast as ConstructorParameters<typeof AssertMetric>[0]['expr'],
+    message: asString(input.message, 'message'),
+  });
+  const scored = new EvalCase({
+    id: asString(entry.id, 'case.id'),
+    input: asString(entry.input, 'case.input'),
+    metadata: entry.metadata as Readonly<Record<string, string>> | undefined,
+  });
+  try {
+    const result = await metric.score(scored, asString(input.prediction, 'prediction'));
+    return {
+      metric: result.metric,
+      score: result.score,
+      passed: result.passed,
+      detail: result.detail,
+    };
+  } catch (thrown) {
+    return { error: errorOf(thrown) };
+  }
 }
 
 // --- composite steps ------------------------------------------------------------
@@ -1414,6 +1448,7 @@ const OPS: Readonly<Record<string, Handler>> = {
   'eval.z-critical': evalZCritical,
   'eval.gate': evalGate,
   'eval.gate-summary': evalGateSummary,
+  'eval.assert': evalAssert,
   'steps.branch': stepsBranch,
   'steps.parallel': stepsParallel,
   'steps.map': stepsMap,

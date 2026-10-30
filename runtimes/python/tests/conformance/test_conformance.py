@@ -61,6 +61,8 @@ from aid_runtime import (
     DeepAgentsVersionMismatchError,
     DistanceMetric,
     EvalBaseline,
+    EvalCase,
+    EvalError,
     EvalRun,
     FakeProvider,
     FileMemoryStore,
@@ -107,6 +109,7 @@ from aid_runtime import (
 )
 from aid_runtime.agents import GuardrailDefinition, GuardrailEngine
 from aid_runtime.agents.ir import from_ir
+from aid_runtime.evals import AssertMetric
 
 #: ``tests/conformance/test_conformance.py`` is four levels below the repository root.
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -163,6 +166,7 @@ _ERROR_KINDS: tuple[tuple[type[BaseException], str], ...] = (
     (PromptNotFoundError, "prompt-not-found"),
     (PromptRenderError, "prompt-render"),
     (StructuredOutputError, "structured-output"),
+    (EvalError, "eval"),
 )
 
 
@@ -454,6 +458,40 @@ def _eval_gate_summary(data: Mapping[str, Any]) -> dict[str, Any]:
 
 def _eval_z(data: Mapping[str, Any]) -> dict[str, Any]:
     return {"values": [{"alpha": a, "z": z_critical(float(a))} for a in data["alphas"]]}
+
+
+def _assert_case(payload: Mapping[str, Any]) -> EvalCase:
+    return EvalCase(
+        id=payload["id"],
+        input=payload["input"],
+        expected=payload.get("expected"),
+        metadata=dict(payload.get("metadata") or {}),
+    )
+
+
+def _eval_assert(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Score one case with the ``assert`` metric.
+
+    The predicate arrives as the IR's own AST, which is the whole point: the corpus pins
+    that the two runtimes agree about what a given tree means, and that a tree that
+    cannot be decided raises rather than scoring. A pass is 1.0 with no detail; a fail is
+    0.0 carrying the spec's message verbatim.
+    """
+
+    metric = AssertMetric(expr=data["ast"], message=data["message"])
+    case = _assert_case(data["case"])
+
+    try:
+        result = asyncio.run(metric.score(case, data["prediction"]))
+    except AidRuntimeError as exc:
+        return {"error": _error(exc)}
+
+    return {
+        "metric": result.metric,
+        "score": result.score,
+        "passed": result.passed,
+        "detail": result.detail,
+    }
 
 
 # --- scoping ----------------------------------------------------------------------
@@ -1200,6 +1238,7 @@ _OPS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     "eval.z-critical": _eval_z,
     "eval.gate": _eval_gate,
     "eval.gate-summary": _eval_gate_summary,
+    "eval.assert": _eval_assert,
     "agent.steps": _agent_loop,
     "agent.budget": _agent_loop,
     "agent.transfer": _agent_loop,
