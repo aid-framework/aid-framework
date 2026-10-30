@@ -423,7 +423,7 @@ def test_the_module_docstring_names_every_reserved_key() -> None:
     of drift a reader trusts instead of checking. Both halves are asserted: every
     member is named in backticks, and the count word agrees with the set.
     """
-    import aid_runtime.control as control
+    from aid_runtime import control
 
     docstring = control.__doc__ or ""
     for key in control.RESERVED_KEYS:
