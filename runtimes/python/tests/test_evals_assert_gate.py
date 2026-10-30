@@ -11,13 +11,17 @@ excuse a regression, but it may never excuse a false assertion.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
+from pydantic import ValidationError
 
 from aid_runtime import (
     BaselineGate,
     EvalBaseline,
     EvalCase,
     EvalRun,
+    GateResult,
     MetricBaseline,
     MetricRun,
     Threshold,
@@ -46,12 +50,12 @@ def _baseline(*values: float) -> EvalBaseline:
     )
 
 
-def _gate(**kwargs) -> BaselineGate:
+def _gate(**kwargs: Any) -> BaselineGate:
     return BaselineGate([Threshold(metric="assert", **kwargs)], metrics=())
 
 
 class TestTheFloorBeatsTheAllowance:
-    def test_a_false_assertion_fails_even_when_the_delta_is_within_max_regression(self):
+    def test_a_false_assertion_fails_even_when_the_delta_is_within_max_regression(self) -> None:
         # One case of four fails: the mean drops by 0.25, which a 0.5 allowance would
         # wave through. The floor is what makes the assertion mean anything.
         result = _gate(max_regression=0.5, min_mean=1.0).evaluate(
@@ -60,7 +64,7 @@ class TestTheFloorBeatsTheAllowance:
         assert result.passed is False
         assert result.results[0].metric == "assert"
 
-    def test_the_failure_says_floor_and_not_regression(self):
+    def test_the_failure_says_floor_and_not_regression(self) -> None:
         result = _gate(max_regression=0.5, min_mean=1.0).evaluate(
             _run(1.0, 1.0, 1.0, 0.0), _baseline(1.0, 1.0, 1.0, 1.0)
         )
@@ -68,7 +72,7 @@ class TestTheFloorBeatsTheAllowance:
         assert "absolute floor" in rationale
         assert "max_regression" not in rationale
 
-    def test_a_false_assertion_fails_even_when_noise_would_explain_the_drop(self):
+    def test_a_false_assertion_fails_even_when_noise_would_explain_the_drop(self) -> None:
         # A 0/1 metric on a small sample has a standard error wide enough that the
         # z-test alone cannot call this a regression. The floor does not care.
         result = _gate(max_regression=1.0, min_mean=1.0, alpha=0.05).evaluate(
@@ -77,14 +81,14 @@ class TestTheFloorBeatsTheAllowance:
         assert result.passed is False
         assert "absolute floor" in result.results[0].rationale
 
-    def test_every_case_passing_passes(self):
+    def test_every_case_passing_passes(self) -> None:
         result = _gate(max_regression=0.05, min_mean=1.0).evaluate(
             _run(1.0, 1.0, 1.0, 1.0), _baseline(1.0, 1.0, 1.0, 1.0)
         )
         assert result.passed is True
         assert result.results[0].current_mean == 1.0
 
-    def test_the_floor_is_the_whole_verdict_when_no_baseline_improves_on_it(self):
+    def test_the_floor_is_the_whole_verdict_when_no_baseline_improves_on_it(self) -> None:
         # A baseline that was itself below the floor is refused too: the floor is
         # absolute, not relative to what was accepted last time.
         result = _gate(max_regression=0.05, min_mean=1.0).evaluate(
@@ -92,7 +96,7 @@ class TestTheFloorBeatsTheAllowance:
         )
         assert result.passed is False
 
-    def test_without_a_floor_the_same_run_passes(self):
+    def test_without_a_floor_the_same_run_passes(self) -> None:
         # The distinguishing row: identical distributions, floor removed. If this
         # passed too the floor would be inert, and the first test would be passing
         # for some other reason.
@@ -101,8 +105,8 @@ class TestTheFloorBeatsTheAllowance:
         )
         assert result.passed is True
 
-    def test_the_floor_is_validated_to_the_unit_interval(self):
-        with pytest.raises(Exception):
+    def test_the_floor_is_validated_to_the_unit_interval(self) -> None:
+        with pytest.raises(ValidationError, match="min_mean"):
             Threshold(metric="assert", min_mean=1.5)
 
 
@@ -128,7 +132,7 @@ def _dataset() -> Dataset:
     )
 
 
-async def _score(replies: dict[str, str]):
+async def _score(replies: dict[str, str]) -> EvalRun:
     """One evaluation run over the real metric, with scripted predictions."""
 
     async def runner(case: EvalCase) -> str:
@@ -142,7 +146,7 @@ async def _score(replies: dict[str, str]):
     )
 
 
-def _exit_code(result) -> int:
+def _exit_code(result: GateResult) -> int:
     """What the generated module's ``main()`` returns for this verdict.
 
     The generated entrypoint is ``return 1 if result.failures() else 0``; spelling it
@@ -162,7 +166,7 @@ class TestAFalseAssertionReachesTheExitCode:
     gate, and read the same ``failures()`` the generated ``main()`` reads.
     """
 
-    async def test_a_false_assertion_on_passing_baseline_exits_non_zero(self):
+    async def test_a_false_assertion_on_passing_baseline_exits_non_zero(self) -> None:
         measured = await _score({"a": "a refund is on the way", "b": "we cannot help"})
         baseline = EvalBaseline(
             dataset="answers",
@@ -179,7 +183,7 @@ class TestAFalseAssertionReachesTheExitCode:
         assert result.passed is False
         assert _exit_code(result) == 1
 
-    async def test_every_case_passing_exits_zero(self):
+    async def test_every_case_passing_exits_zero(self) -> None:
         measured = await _score(
             {"a": "a refund is on the way", "b": "we cannot help, no refund possible"}
         )
@@ -201,7 +205,7 @@ class TestAFalseAssertionReachesTheExitCode:
         assert result.passed is True
         assert _exit_code(result) == 0
 
-    async def test_the_failure_detail_is_the_declared_message(self):
+    async def test_the_failure_detail_is_the_declared_message(self) -> None:
         measured = await _score({"a": "a refund is on the way", "b": "we cannot help"})
 
         # The run records the metric's mean; the per-case detail is what a reader sees,

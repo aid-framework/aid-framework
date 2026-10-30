@@ -95,8 +95,9 @@ def _value(node: Any, *, case: EvalCase, prediction: str) -> PredicateValue:
             left = _boolean(node, "left", case=case, prediction=prediction)
             right = _boolean(node, "right", case=case, prediction=prediction)
             return left or right
-        case _:
-            raise EvalError(f"unknown predicate node {kind!r}")
+    # Deliberately outside the match, so an unknown kind is a raise rather than a
+    # fall-through that would return None and read as falsy.
+    raise EvalError(f"unknown predicate node {kind!r}")
 
 
 def _literal(node: dict[str, Any], wanted: str) -> str:
@@ -176,9 +177,12 @@ def _compare(node: dict[str, Any], *, case: EvalCase, prediction: str) -> bool:
     left = _value(node.get("left"), case=case, prediction=prediction)
     right = _value(node.get("right"), case=case, prediction=prediction)
     if op in _ORDERING:
-        if isinstance(left, bool) or isinstance(right, bool) or not isinstance(
-            left, (int, float)
-        ) or not isinstance(right, (int, float)):
+        if (
+            isinstance(left, bool)
+            or isinstance(right, bool)
+            or not isinstance(left, (int, float))
+            or not isinstance(right, (int, float))
+        ):
             raise EvalError(
                 f"ordering comparison {op!r} requires two numbers, "
                 f"got {type_name(left)} and {type_name(right)}"
