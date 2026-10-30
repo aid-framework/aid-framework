@@ -788,6 +788,19 @@ This records the decision the Phase 2 plan listed as an open question (evaluatio
 Both halves are pinned: a test swaps the declaration order of two guardrails and asserts the deciding
 record changes, while another asserts a `block` keeps winning wherever it is declared.
 
+**Only `block` is exempt.** `escalate`, `redact` and `flag` are comparable with one another, so
+declaration order alone decides between them: a `flag` declared before an `escalate` flags and does not
+escalate, and a `flag` declared before a `redact` does not mask the payload. Redaction is not an
+independent pass over every firing guardrail — it runs only when the deciding action is `redact` — so a
+`redact` that loses to a `flag` leaves the matched text in place. That consequence is intended: an
+unconditional redaction pass would let a guardrail rewrite a payload under an action the author did not
+select, and would make the deciding action describe one rule rather than the verdict. The losing record
+is still collected, so an operator can see which declaration decided and which merely fired.
+
+Both consequences are pinned beside the ordering tests: swapping `flag` and `escalate` changes which one
+decides, and a `redact` declared after a `flag` leaves the payload untouched where the same `redact`
+declared first masks it.
+
 #### Tool permissioning
 
 `ToolShape` already carried `sideEffects`, `requiresConfirmation` and `auth`. L3 makes them binding at

@@ -416,6 +416,59 @@ def test_declaration_order_decides_between_comparable_actions() -> None:
     assert [record.guardrail for record in verdict.records] == ["g-first", "g-second"]
 
 
+def test_an_escalate_before_a_flag_decides_because_they_are_comparable() -> None:
+    """The converse order, so "flag beats escalate" cannot be read as a hidden rank.
+
+    ``test_declaration_order_decides_between_comparable_actions`` pins flag-then-
+    escalate landing on the flag. Read alone, that is also consistent with ``flag``
+    outranking ``escalate`` the way ``block`` outranks both. Swapping the two
+    declarations settles it: neither outranks the other, order does, and only
+    ``block`` is exempt from it.
+    """
+    escalate = definition(
+        "g-escalate", stages=("input",), policies=("jailbreak",), action="escalate"
+    )
+    flag = definition("g-flag", stages=("input",), policies=("prompt-injection",), action="flag")
+
+    both = f"{INJECTION}. Also: {JAILBREAK}"
+    escalate_first = run_stage("input", (escalate, flag), both)
+    flag_first = run_stage("input", (flag, escalate), both)
+
+    assert escalate_first.action == "escalate"
+    assert escalate_first.deciding is not None
+    assert escalate_first.deciding.guardrail == "g-escalate"
+    assert [record.guardrail for record in escalate_first.records] == ["g-escalate", "g-flag"]
+    assert flag_first.action == "flag"
+
+
+def test_a_flag_before_a_redact_leaves_the_payload_unredacted() -> None:
+    """A ``redact`` that fired but lost does not mask: redaction follows the winner.
+
+    This is the consequence of ordering that a reader is most likely to assume
+    away -- "the redact guardrail fired, so the PII was removed". It was not: the
+    payload still carries the address. Declaring the same two guardrails the other
+    way round masks it, so the untouched payload is the order's doing and not a
+    guardrail that never matched.
+    """
+    flag = definition("g-flag", stages=("output",), policies=("pii-redact",), action="flag")
+    redact = definition(
+        "g-redact",
+        stages=("output",),
+        policies=("pii-redact",),
+        action="redact",
+        redact=("text",),
+    )
+
+    flagged = run_stage("output", (flag, redact), PII)
+    redacted = run_stage("output", (redact, flag), PII)
+
+    assert flagged.action == "flag"
+    assert flagged.text == PII
+    assert [record.action for record in flagged.records] == ["flag", "redact"]
+    assert redacted.action == "redact"
+    assert "ada@example.com" not in redacted.text
+
+
 def test_a_flag_leaves_the_payload_and_the_run_alone() -> None:
     """``flag`` records, it does not stop and it does not rewrite.
 
