@@ -85,10 +85,11 @@ describe('spec version', () => {
       'retrieve',
       'tool',
     ]);
-    // Exactly the one genuinely pending kind, so the phase-exit criterion ("the
-    // deferred list is empty") stays reachable. A retired kind belongs in
-    // `RETIRED_STEP_KINDS`, where re-adding it is a real change rather than a no-op.
-    expect([...DEFERRED_STEP_KINDS]).toEqual(['assert']);
+    // The phase-exit criterion itself: nothing is pending. L7b gave the last entry,
+    // `assert`, real semantics in the eval layer, so re-adding any kind here -- and
+    // `assert` specifically, which now has a metric arm -- is a regression, not a
+    // no-op. A retired kind belongs in `RETIRED_STEP_KINDS` instead.
+    expect([...DEFERRED_STEP_KINDS]).toEqual([]);
     expect(retired.sort()).toEqual(['human']);
   });
 });
@@ -133,6 +134,14 @@ describe('valid fixtures', () => {
  */
 const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
   'section-below-version.spec.yaml': { code: DIAGNOSTIC_CODES.notSupported, path: ['agents'] },
+  'assert-metric-no-floor.spec.yaml': {
+    code: DIAGNOSTIC_CODES.metricAssertNeedsFloor,
+    path: ['evals', 'answer_shape', 'gate'],
+  },
+  'assert-metric-duplicate.spec.yaml': {
+    code: DIAGNOSTIC_CODES.metricAssertDuplicate,
+    path: ['evals', 'answer_shape', 'metrics', 1],
+  },
   'deferred-step.spec.yaml': {
     code: DIAGNOSTIC_CODES.unsupportedStep,
     path: ['pipelines', 'probe', 'steps', 0],
@@ -268,10 +277,17 @@ describe('retired step kinds', () => {
     expect(result.diagnostics[0]?.hint).toContain('agents[].humanInTheLoop');
   });
 
-  it('does not confuse a deferred kind with a retired one', () => {
+  it('does not confuse an eval-only kind with a retired one', () => {
+    // `assert` is a metric kind, never a pipeline step. The document is still refused,
+    // now by the generic "exactly one of ..." path, which is the branch that carries no
+    // replacement hint -- so this pins the absence of a `hint` as well as the message.
+    // Falsifiable: drop the step-level kind check and the schema's closed `oneOf` arm
+    // rejects the same document, but with a hint-free schema error instead of this
+    // message, so the message assertion is what keeps the two apart.
     const result = checkSpecText(readFixture('invalid/deferred-step.spec.yaml'));
-    expect(result.diagnostics[0]?.message).toContain('not implemented yet');
-    expect(result.diagnostics[0]?.hint).not.toContain('humanInTheLoop');
+    expect(codes(result.diagnostics)).toEqual([DIAGNOSTIC_CODES.unsupportedStep]);
+    expect(result.diagnostics[0]?.message).toContain('step must contain exactly one of');
+    expect(result.diagnostics[0]?.hint).toBeUndefined();
   });
 
   it('validates an agent that declares the replacement pause', () => {
@@ -288,6 +304,53 @@ describe('retired step kinds', () => {
       },
     });
     expect(diagnostics).toEqual([]);
+  });
+});
+
+describe('assert metric', () => {
+  it('accepts an assert metric that declares the floor it needs', () => {
+    const result = checkSpecText(readFixture('valid/assert-metric.spec.yaml'));
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('refuses an assert metric without `gate.minMean: 1`', () => {
+    const result = checkSpecText(readFixture('invalid/assert-metric-no-floor.spec.yaml'));
+    expect(codes(result.diagnostics)).toEqual([DIAGNOSTIC_CODES.metricAssertNeedsFloor]);
+    // The message says why, because the fix is not obvious: the regression allowance
+    // is the reason the floor is mandatory for a 0/1 metric.
+    expect(result.diagnostics[0]?.message).toContain('minMean: 1');
+    expect(result.diagnostics[0]?.hint).toContain('maxRegression');
+  });
+
+  it('refuses a second assert metric in the same eval', () => {
+    const result = checkSpecText(readFixture('invalid/assert-metric-duplicate.spec.yaml'));
+    expect(codes(result.diagnostics)).toEqual([DIAGNOSTIC_CODES.metricAssertDuplicate]);
+    expect(result.diagnostics[0]?.message).toContain('at most one');
+  });
+
+  it('does not require a floor for an eval without an assert metric', () => {
+    // The rule is scoped to the metric, not to evals: a regression-based metric keeps
+    // working with no floor at all, which is what every pre-L7b eval looks like.
+    expect(
+      validateSpec({
+        specVersion: '0.1',
+        project: { name: 'p' },
+        evals: {
+          q: {
+            target: 'pipeline:p',
+            dataset: { source: 'file', uri: 'e.jsonl' },
+            metrics: [{ kind: 'exact', field: 'text' }],
+            gate: { ci: true },
+          },
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it('rejects the step spelling as well as the metric spelling', () => {
+    // One construct, one spelling: the metric arm exists, the step arm must not.
+    const result = checkSpecText(readFixture('invalid/deferred-step.spec.yaml'));
+    expect(codes(result.diagnostics)).toEqual([DIAGNOSTIC_CODES.unsupportedStep]);
   });
 });
 

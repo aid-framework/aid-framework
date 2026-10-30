@@ -577,6 +577,12 @@
               "minimum": 1,
               "maximum": 100,
               "default": 5
+            },
+            "minMean": {
+              "description": "Absolute floor: the eval fails whenever the mean score falls below this value, regardless of maxRegression. A 0/1 metric (such as `assert`) needs it, because the regression allowance can otherwise absorb a drop it must never absorb. Required to be 1 when an `assert` metric is present.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             }
           }
         },
@@ -682,6 +688,27 @@
               "items": { "type": "string", "minLength": 1 }
             },
             "k": { "type": "integer", "minimum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "expr", "message"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "description": "Deterministic and offline: a closed predicate evaluated against the prediction and the case, so unlike llm-judge it is allowed under gate.ci. Needs `gate.minMean: 1.0`, which a spec-local rule enforces.",
+              "const": "assert"
+            },
+            "expr": {
+              "description": "A PredicateExpr over `prediction`, `case.id` and `case.metadata.<name>`. Closed grammar: no eval, no regex.",
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "description": "The failure detail, verbatim. Required: it is the whole value of a failing assertion.",
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       ]

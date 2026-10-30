@@ -385,8 +385,18 @@ passage the step re-checks.
 
 **`human` is retired, not deferred.** A pipeline step cannot pause, and the run that owns a checkpoint is
 the agent's, so `agents[].humanInTheLoop` is the replacement spelling. A `human` step is rejected with a
-diagnostic that names it. **`assert` remains deferred to L7b**: it is eval-time only, and there is no
-eval-time step evaluator yet.
+diagnostic that names it.
+
+**`assert` is eval-time only, and now implemented there.** It is not a step kind and never becomes one:
+a predicate that fails a single prediction is a measurement, not a control-flow decision, so it lives
+in `evals.<id>.metrics[]` as `{ kind: 'assert'; expr: string; message: string }`. The expression is
+compiled by the IR into a closed predicate AST — the same arrangement as `PolicyExpr`, and for the same
+reason: an assertion is not `eval`, and a spec never contains code. It reads only `prediction`,
+`case.id`, and `case.metadata.<name>`, calls only `contains`, `startswith`, `endswith`, and `length`,
+and admits `==`, `!=`, and numeric ordering. A name the case does not bind raises rather than reading as
+false, because a typo that silently failed every case would be the exact failure mode this project
+exists to prevent. The list of deferred step kinds is therefore empty, and
+`packages/spec/test/phase-exit.test.ts` is what keeps it empty.
 
 ---
 
@@ -547,7 +557,9 @@ type StepShape =
   // retrieval binding at `retrieval`; `tool-call` is refused because it is agent-scoped
   // (§6.3, "guard steps").
   | { kind: 'guard';    guardrail: string; stage: 'input'|'output'|'retrieval'; text: string }
-  | { kind: 'assert';   expr: string; message: string }        // eval-time only, deferred to L7b
+  // `assert` is *not* a step shape, though the original design sketched it here. A
+  // predicate that fails one prediction is a measurement, not a control-flow decision,
+  // so it is a `Metric` below; naming it as a pipeline step is refused.
   // `human` is retired, not deferred: a pipeline cannot pause, and a pause belongs to the
   // run that owns a checkpoint. `agents[].humanInTheLoop` is the replacement spelling.
   | { kind: 'emit';     event: string };
@@ -559,7 +571,7 @@ type EvalShape = {
              generator?: { count: number; model: string } };
   metrics: Metric[];
   thresholds: { pass: number; warn: number };
-  gate: { ci: boolean; maxRegression: number };   // max allowed drop vs. baseline
+  gate: { ci: boolean; maxRegression: number; minMean?: number };  // max allowed drop vs. baseline, plus an absolute floor
   costBudget?: number;
   latencyBudgetP95Ms?: number;
   traits: Trait[];
@@ -574,7 +586,11 @@ type Metric =
   | { kind: 'tool-trace'; expect: string[]; order?: 'strict'|'any' }
   | { kind: 'retrieval'; expectDocs: string[]; k: number }
   | { kind: 'cost'; max: number }
-  | { kind: 'latency'; p95Ms: number };
+  | { kind: 'latency'; p95Ms: number }
+  // A closed predicate over the prediction and its case; see §6.3. `message` is quoted
+  // verbatim in the failure detail, and an eval carrying one must declare
+  // `gate.minMean: 1`, because a 0/1 metric cannot be judged by delta alone.
+  | { kind: 'assert'; expr: string; message: string };
 
 type GuardrailShape = {
   id: string;

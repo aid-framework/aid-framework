@@ -1,0 +1,21 @@
+specVersion: "0.1"
+
+project:
+  name: probe
+
+evals:
+  answer_shape:
+    target: pipeline:probe
+    dataset:
+      source: file
+      uri: evals/answer_shape.jsonl
+    metrics:
+      - kind: exact
+        field: text
+      - kind: assert
+        expr: "prediction != '' and contains(prediction, 'refund')"
+        message: the answer must mention the refund policy
+    gate:
+      ci: true
+      maxRegression: 0.05
+      minMean: 1

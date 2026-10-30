@@ -86,13 +86,17 @@ export const SUPPORTED_STEP_KINDS = [
 ] as const;
 
 /**
- * Pipeline step kinds the design doc describes for a later phase.
+ * Pipeline step kinds the design doc once described for a later phase.
  *
- * `assert` is the only one left: the design marks it eval-time only, so it is not a
- * pipeline step until the eval layer lands. When it does, this list empties -- that is
- * the phase-exit criterion, which is why a retired kind must never be parked here.
+ * Empty, and that is the point: the last entry, `assert`, is eval-time only and now
+ * lives in the eval layer as a metric kind (`evals.<id>.metrics[].kind: assert`).
+ * The phase-exit criterion was "this list is empty"; it is met, and it is pinned by
+ * `test/phase-exit.test.ts` so it cannot silently regress. A new pipeline step kind
+ * belongs in `SUPPORTED_STEP_KINDS`; a removed one belongs in `RETIRED_STEP_KINDS`
+ * with the spelling that replaces it. Neither case belongs here, and re-adding
+ * `assert` on top of its metric arm would give one construct two spellings.
  */
-export const DEFERRED_STEP_KINDS = ['assert'] as const;
+export const DEFERRED_STEP_KINDS = [] as const;
 
 /**
  * Pipeline step kinds that were removed rather than deferred, and the spelling that
@@ -474,7 +478,6 @@ function stepDiagnostics(
   diagnostics: Diagnostic[],
   reported: Set<string>,
 ): void {
-  const deferred = new Set<string>(DEFERRED_STEP_KINDS);
   const supported = new Set<string>(SUPPORTED_STEP_KINDS);
   const pipelines = asRecord(spec.pipelines);
 
@@ -488,9 +491,9 @@ function stepDiagnostics(
     walkSteps(steps, ['pipelines', pipelineName, 'steps'], 0, ({ body, path, depth }) => {
       const keys = Object.keys(body);
 
-      // A retired kind is checked before the deferred list and before the unknown-kind
-      // fallback: the point of retiring `human` is that a document using it is told the
-      // replacement, which the generic "exactly one of ..." error cannot say.
+      // A retired kind is checked before the unknown-kind fallback: the point of
+      // retiring `human` is that a document using it is told the replacement, which
+      // the generic "exactly one of ..." error cannot say.
       const retiredKey = keys.find((key) => retiredStepReplacement(key) !== undefined);
       if (retiredKey !== undefined) {
         diagnostics.push(
@@ -499,20 +502,6 @@ function stepDiagnostics(
             message: `pipeline step '${retiredKey}' was retired and is no longer part of the language`,
             path,
             hint: `use ${retiredStepReplacement(retiredKey)} instead (the \`agent.humanInTheLoop\` option): a pause belongs to an agent, not to a pipeline step`,
-          }),
-        );
-        reported.add(JSON.stringify(path));
-        return;
-      }
-
-      const deferredKey = keys.find((key) => deferred.has(key));
-      if (deferredKey !== undefined) {
-        diagnostics.push(
-          errorDiagnostic({
-            code: DIAGNOSTIC_CODES.unsupportedStep,
-            message: `pipeline step '${deferredKey}' is not implemented yet`,
-            path,
-            hint: `supported steps are ${SUPPORTED_STEP_KINDS.join(', ')}`,
           }),
         );
         reported.add(JSON.stringify(path));
@@ -1031,11 +1020,61 @@ function metricDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnosti
 }
 
 /**
+ * The `assert` metric's two spec-local rules.
+ *
+ * Kept out of `metricDiagnostics` on purpose: that rule is scoped to `gate.ci`, and
+ * these two are not. A false assertion that a non-CI eval merely reports is still a
+ * broken declaration -- the duplicate would also silently collapse in the generated
+ * gate, which keys metrics by name.
+ */
+function assertMetricDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnostic[]): void {
+  const evals = asRecord(spec.evals);
+
+  for (const [name, evalNode] of Object.entries(evals)) {
+    const node = asRecord(evalNode);
+    if (!Array.isArray(node.metrics)) {
+      continue;
+    }
+
+    const indices = node.metrics
+      .map((metric, index) => ({ metric: asRecord(metric), index }))
+      .filter((entry) => entry.metric.kind === 'assert');
+    if (indices.length === 0) {
+      continue;
+    }
+
+    if (indices.length > 1) {
+      const first = indices[0] as { index: number };
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.metricAssertDuplicate,
+          message: `eval '${name}': ${indices.length} assert metrics are declared, but an eval may declare at most one`,
+          path: ['evals', name, 'metrics', indices[1]?.index ?? first.index],
+          hint: 'every assert metric is named `assert` at runtime, so a second one overwrites the first; combine the conditions with `and` instead',
+        }),
+      );
+    }
+
+    const gate = asRecord(node.gate);
+    if (gate.minMean !== 1) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.metricAssertNeedsFloor,
+          message: `eval '${name}': an assert metric needs \`gate.minMean: 1\`, because a 0/1 metric's only honest gate is an absolute floor`,
+          path: ['evals', name, 'gate'],
+          hint: 'the regression allowance (`maxRegression`) can absorb a single failing case, so without the floor a false assertion can still pass the gate; set `gate.minMean: 1` or drop the assert metric',
+        }),
+      );
+    }
+  }
+}
+
+/**
  * Sub-features reserved *inside* a section spec v0.1 does implement. `DEFERRED_SECTIONS`
- * and `DEFERRED_STEP_KINDS` can only speak about a whole section or a whole step kind,
- * so a key that exists but is not served needs its own rule here. The schema keeps the
- * design doc's enum, so a spec can be written against the final spelling today and be
- * told which phase serves it, instead of having the key silently ignored.
+ * can only speak about a whole section, so a key that exists but is not served needs its
+ * own rule here. The schema keeps the design doc's enum, so a spec can be written
+ * against the final spelling today and be told which phase serves it, instead of having
+ * the key silently ignored.
  */
 function retrievalDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnostic[]): void {
   const retrievers = asRecord(spec.retrievers);
@@ -1156,6 +1195,7 @@ export function validateSpec(value: unknown, options: ValidateOptions = {}): Dia
   templateDiagnostics(spec, diagnostics);
   bindingDiagnostics(spec, diagnostics);
   metricDiagnostics(spec, diagnostics);
+  assertMetricDiagnostics(spec, diagnostics);
   retrievalDiagnostics(spec, diagnostics);
 
   return withPositions(diagnostics, options);
