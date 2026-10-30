@@ -22,15 +22,17 @@ import {
 } from './file.js';
 import {
   arrayLiteral,
+  type Entry,
   exportStatement,
   fits,
   importStatement,
   moduleText,
+  objectLiteral,
   seedText,
   sortStatements,
 } from './text.js';
 
-function metricExpression(metric: MetricShape): string {
+function metricExpression(metric: MetricShape, indent = ''): string {
   switch (metric.kind) {
     case 'exact':
       return `new ExactMatch({ name: ${literal('exact')} })`;
@@ -38,9 +40,49 @@ function metricExpression(metric: MetricShape): string {
       return `new NormalizedContains({ name: ${literal('contains')} })`;
     case 'json-schema':
       return `new JsonSchemaValid({ name: ${literal('json-schema')} })`;
+    case 'assert': {
+      // The parsed predicate lives in a module-level `ASSERT_EXPR` constant, so it
+      // travels as data and the generated eval needs no parser of its own and cannot
+      // disagree with the one that validated the spec. Hoisting it also keeps the
+      // emission one short line whatever the expression's depth.
+      const entries: Entry[] = [
+        ['name', literal('assert')],
+        ['expr', 'ASSERT_EXPR'],
+        ['message', literal(metric.message)],
+      ];
+      const inline = `new AssertMetric(${objectLiteral(entries, '')})`;
+      // The declared message is prose of unbounded length, so the element is the one
+      // thing in `metrics()` that can exceed the width on its own; the object spreads
+      // over lines exactly as `biome` spreads it when that happens.
+      return fits(indent, inline) ? inline : `new AssertMetric(${objectLiteral(entries, indent)})`;
+    }
     default:
       return 'unsupportedMetric';
   }
+}
+
+/**
+ * A JSON literal that breaks across lines when it does not fit.
+ *
+ * `literal` renders one line always, and a predicate AST nests three or four objects
+ * deep, so reusing it here would emit lines past the formatter's width. Rendered at
+ * indent `''` from a `const`, the continuation lines land exactly where `biome` puts
+ * them, which is what keeps the generated file format-clean in CI.
+ */
+function jsonLiteral(value: unknown, indent: string): string {
+  if (Array.isArray(value)) {
+    return arrayLiteral(
+      value.map((item) => jsonLiteral(item, `${indent}  `)),
+      indent,
+    );
+  }
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, item]): [string, string] => [propertyKey(key), jsonLiteral(item, `${indent}  `)]);
+    return objectLiteral(entries, indent);
+  }
+  return literal(value);
 }
 
 /** The retriever a retrieval eval samples: the eval's own pipeline, else the only one. */
@@ -81,23 +123,41 @@ function datasetBody(evalShape: EvalShape): string[] {
 
 function gateBody(evalShape: EvalShape, metrics: readonly string[]): string[] {
   const maxRegression = literal(evalShape.gate.maxRegression);
+  // A floor belongs to the metric it floors. An `assert` metric is only meaningful when
+  // every case passes, so it carries the declared floor and the runtime checks that floor
+  // before it looks at the regression delta -- a tolerance cannot excuse a false assertion.
+  const floor = evalShape.gate.minMean;
+  const extra = floor === undefined ? '' : ', minMean: floors[metric]';
   const list = arrayLiteral(
     metrics.map((metric) => literal(metric)),
     '  ',
   );
-  const inline = `  const thresholds = ${list}.map((metric) => new Threshold({ metric, maxRegression: ${maxRegression} }));`;
+  const inline = `  const thresholds = ${list}.map((metric) => new Threshold({ metric, maxRegression: ${maxRegression}${extra} }));`;
   return [
     '/**',
-    ' * The gate the spec asks for: one absolute-free threshold per emitted metric, each',
-    ' * allowing the declared regression. `minMean` stays unset because the spec carries no',
-    ' * floor, and a floor the spec did not ask for would fail a run for the wrong reason.',
+    // A spec with no declared floor emits the prose it always emitted, so the shipped
+    // example stays byte for byte what it was.
+    ...(floor === undefined
+      ? [
+          ' * The gate the spec asks for: one absolute-free threshold per emitted metric, each',
+          ' * allowing the declared regression. `minMean` stays unset because the spec carries no',
+          ' * floor, and a floor the spec did not ask for would fail a run for the wrong reason.',
+        ]
+      : [
+          ' * The gate the spec asks for: one threshold per emitted metric, each allowing the',
+          ' * declared regression. `minMean` is set only for the metric the spec floored, and a',
+          ' * floor the spec did not ask for would fail a run for the wrong reason.',
+        ]),
     ' */',
     'export function gate(): BaselineGate {',
+    ...(floor === undefined
+      ? []
+      : [`  const floors: Record<string, number> = { assert: ${literal(floor)} };`]),
     ...(fits('', inline)
       ? [inline]
       : [
           `  const thresholds = ${list}.map(`,
-          `    (metric) => new Threshold({ metric, maxRegression: ${maxRegression} }),`,
+          `    (metric) => new Threshold({ metric, maxRegression: ${maxRegression}${extra} }),`,
           '  );',
         ]),
     '  return new BaselineGate(thresholds, { metrics: metrics() });',
@@ -115,6 +175,7 @@ function plainEvalImports(
 ): { name: string; type: boolean }[] {
   const names = metrics.map((metric) => metric.kind);
   return [
+    ...(names.includes('assert') ? [{ name: 'AssertMetric', type: false }] : []),
     { name: 'BaselineGate', type: false },
     ...(evalShape.dataset.uri === undefined ? [{ name: 'ConfigurationError', type: false }] : []),
     { name: 'Dataset', type: false },
@@ -134,6 +195,7 @@ function plainEvalImports(
 function plainEvalModule(evalShape: EvalShape): string {
   const metrics = evalShape.metrics.filter((metric) => metric.kind !== 'retrieval');
   const names = metrics.map((metric) => metric.kind);
+  const asserted = metrics.find((metric) => metric.kind === 'assert');
   const header = [
     importStatement('@aid/runtime', plainEvalImports(evalShape, metrics)),
     importStatement('../gateway/index.js', [{ name: 'buildGateway', type: false }]),
@@ -141,9 +203,25 @@ function plainEvalModule(evalShape: EvalShape): string {
   const body = [
     ...datasetBody(evalShape),
     '',
+    ...(asserted === undefined || asserted.kind !== 'assert'
+      ? []
+      : [
+          '/**',
+          ' * The asserted predicate. The IR parsed and checked it, so the generated eval',
+          ' * carries it as data: no expression string is ever evaluated here.',
+          ' */',
+          `const ASSERT_EXPR = ${jsonLiteral(asserted.expr, '')};`,
+          '',
+        ]),
     '/** The metrics the spec asks for, in declaration order. */',
     'export function metrics(): readonly Metric[] {',
-    `  return [${metrics.map(metricExpression).join(', ')}];`,
+    ...(() => {
+      const items = metrics.map((metric) => metricExpression(metric, '    '));
+      const inline = `  return [${items.join(', ')}];`;
+      return fits('', inline)
+        ? [inline]
+        : ['  return [', ...items.map((item) => `    ${item},`), '  ];'];
+    })(),
     '}',
     '',
     ...gateBody(evalShape, names),

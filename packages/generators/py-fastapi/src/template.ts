@@ -11,7 +11,7 @@
 import { generatedBanner, normalizeText } from '@aid/generator-sdk';
 
 import { GENERATOR_NAME, GENERATOR_VERSION } from './manifest.js';
-import { collapseWhitespace, MAX_LINE } from './python.js';
+import { collapseWhitespace, INDENT, MAX_LINE } from './python.js';
 
 /** The ownership banner every generated file carries, as one comment block. */
 export function banner(): string {
@@ -341,11 +341,77 @@ export function tupleLiteral(
   suffix = '',
 ): string {
   if (values.length === 0) return '()';
-  if (values.length === 1) return `(${values[0] ?? ''},)`;
+  if (values.length === 1) {
+    const [only = ''] = values;
+    const oneLine = `(${only},)`;
+    if (indent.length + prefix.length + oneLine.length + suffix.length <= MAX_LINE) return oneLine;
+    // Too wide as a one-element tuple, so the *entry* folds while the tuple stays flat:
+    // ruff cannot explode the tuple (see above), so it expands the call instead.
+    return `(\n${foldedEntry(only, `${indent}${INDENT}`)}\n${indent})`;
+  }
   const oneLine = `(${values.join(', ')})`;
   if (indent.length + prefix.length + oneLine.length + suffix.length <= MAX_LINE) return oneLine;
-  const inner = values.map((value) => `${indent}    ${value},`).join('\n');
+  const inner = values.map((value) => foldedEntry(value, `${indent}${INDENT}`)).join('\n');
   return `(\n${inner}\n${indent})`;
+}
+
+/**
+ * The top-level arguments of a single-line call, or `undefined` when `element` is not one.
+ *
+ * "Top level" means outside every bracket and string literal, so a comma inside a nested
+ * list or inside a message does not split an argument in two.
+ */
+function callArguments(element: string): { callee: string; args: string[] } | undefined {
+  const open = element.indexOf('(');
+  if (open <= 0 || !element.endsWith(')')) return undefined;
+  const args: string[] = [];
+  let depth = 0;
+  let quote: string | undefined;
+  let start = open + 1;
+  for (let index = open; index < element.length; index += 1) {
+    const char = element[index];
+    if (quote !== undefined) {
+      if (char === '\\') index += 1;
+      else if (char === quote) quote = undefined;
+      continue;
+    }
+    if (char === '"' || char === "'") quote = char;
+    else if (char === '(' || char === '[' || char === '{') depth += 1;
+    else if (char === ')' || char === ']' || char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        const last = element.slice(start, index).trim();
+        if (last.length > 0) args.push(last);
+        break;
+      }
+    } else if (char === ',' && depth === 1) {
+      args.push(element.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  return { callee: element.slice(0, open), args };
+}
+
+/**
+ * One entry of an expanded tuple.
+ *
+ * An entry that fits is emitted as-is. One that does not, and that is a single call, is
+ * folded the way `ruff format` folds it: the call's arguments move inside the call's own
+ * parentheses, staying together on one line while that line fits and one per line when it
+ * does not. Without this an entry longer than the width -- an `AssertMetric(...)` carrying
+ * an author's message, which is prose of unbounded length -- emits a line `ruff format
+ * --check` rejects. The flat form is untouched by construction, so every literal emitted
+ * before this existed keeps its bytes.
+ */
+function foldedEntry(element: string, indent: string): string {
+  if (indent.length + element.length + 1 <= MAX_LINE) return `${indent}${element},`;
+  const call = callArguments(element);
+  if (call === undefined) return `${indent}${element},`;
+  const inner = `${indent}${INDENT}`;
+  const joined = `${inner}${call.args.join(', ')}`;
+  const body =
+    joined.length <= MAX_LINE ? joined : call.args.map((arg) => `${inner}${arg},`).join('\n');
+  return `${indent}${call.callee}(\n${body}\n${indent}),`;
 }
 
 /** A dict literal, or `{}` when empty. */

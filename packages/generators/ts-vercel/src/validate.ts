@@ -127,6 +127,7 @@ const SUPPORTED_METRICS: ReadonlySet<MetricShape['kind']> = new Set<MetricShape[
   'retrieval',
   'exact',
   'contains',
+  'assert',
 ]);
 
 export function problem(code: PlanProblemCode, path: string, message: string): PlanProblem {
