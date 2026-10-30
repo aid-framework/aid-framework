@@ -5,10 +5,12 @@ Each factory here returns an ordinary :data:`~aid_runtime.pipeline.Step`, so a
 composite composes with the flat steps by the same rule and replays unchanged on
 the streaming route, which inlines the pipeline instead of driving it step by step.
 
-Four context keys are reserved for the family, and no step may bind a name equal to
-one of them: ``principal``, ``limiter``, ``item``, ``index`` and ``depth``. The
-first two are seeded by the application, the rest are written and removed by the
-composites themselves, so an inner step can read ``item`` without a matching
+Six context keys are reserved for the family, and no step may bind a name equal to
+one of them: ``principal``, ``limiter``, ``item``, ``index``, ``reduced`` and
+``depth``. The first two are seeded by the application; the rest belong to the
+composites -- ``item``, ``index`` and ``depth`` are written and removed around a
+fan-out, while ``reduced`` is the binding a ``reduce`` body must produce for the
+composite to collect -- so an inner step can read ``item`` without a matching
 binding leaking to a later sibling.
 
 Two bounds are enforced here and both fail the run rather than degrade it:

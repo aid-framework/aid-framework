@@ -10,6 +10,7 @@ completion order would fail rather than happen to match.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -408,11 +409,30 @@ async def test_a_finished_composite_leaves_no_depth_behind() -> None:
     assert result.get("steps") == ("_parallel",)
 
 
-def test_reserved_keys_are_the_five_the_family_owns() -> None:
+def test_reserved_keys_are_the_six_the_family_owns() -> None:
     from aid_runtime import RESERVED_KEYS
 
     assert frozenset({"principal", "limiter", "item", "index", "depth", "reduced"}) == RESERVED_KEYS
     assert isinstance(RESERVED_KEYS, frozenset)
+
+
+def test_the_module_docstring_names_every_reserved_key() -> None:
+    """The prose and ``RESERVED_KEYS`` are the same list, so a key added to one reaches both.
+
+    This docstring said "four", listed five and the set held six, which is the kind
+    of drift a reader trusts instead of checking. Both halves are asserted: every
+    member is named in backticks, and the count word agrees with the set.
+    """
+    from aid_runtime import control
+
+    docstring = control.__doc__ or ""
+    for key in control.RESERVED_KEYS:
+        assert f"``{key}``" in docstring, key
+
+    spelled = {"Three": 3, "Four": 4, "Five": 5, "Six": 6, "Seven": 7, "Eight": 8}
+    claimed = re.search(r"\b(" + "|".join(spelled) + r") context keys\b", docstring)
+    assert claimed is not None
+    assert spelled[claimed.group(1)] == len(control.RESERVED_KEYS)
 
 
 def test_max_step_depth_matches_the_spec_constant() -> None:

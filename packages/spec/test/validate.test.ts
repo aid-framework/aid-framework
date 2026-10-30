@@ -314,6 +314,37 @@ describe('document-level shape', () => {
   });
 });
 
+describe('model capabilities', () => {
+  // The IR narrows these strings to the model vocabulary, so this enum is the only
+  // place an unknown capability is caught. It is closed to the four DSL spellings, and
+  // all four survive the mapping into that vocabulary (`tools` becomes `tool-calling`),
+  // so the IR's filter is unreachable from validated spec text.
+  const SPELLINGS = ['json-schema', 'tools', 'streaming', 'embeddings'];
+
+  function capabilitiesDiagnostics(capabilities: unknown[]): readonly Diagnostic[] {
+    return validateSpec({
+      specVersion: '0.2',
+      project: { name: 'p' },
+      models: { m: { provider: 'fake', modelId: 'fake-1', capabilities } },
+    });
+  }
+
+  it.each(SPELLINGS)('admits the %s spelling', (capability) => {
+    expect(capabilitiesDiagnostics([capability])).toEqual([]);
+  });
+
+  it('refuses a capability outside the enum, naming every spelling it admits', () => {
+    const diagnostics = capabilitiesDiagnostics(['hologram']);
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['models.m.capabilities[0]']);
+    expect(diagnostics[0]?.message).toContain('must be one of');
+    for (const spelling of SPELLINGS) {
+      expect(diagnostics[0]?.message).toContain(`"${spelling}"`);
+    }
+  });
+});
+
 describe('rule-level unit tests', () => {
   it('distinguishes a deferred section from a misspelled one', () => {
     const deferred = validateSpec({ specVersion: '0.1', project: { name: 'p' }, agents: {} });

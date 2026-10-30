@@ -456,12 +456,21 @@ def _action(guardrail: GuardrailDefinition) -> GuardrailAction:
 
 
 def _decide(records: Sequence[GuardrailRecord]) -> GuardrailRecord | None:
-    """The deciding record: the first ``block``, else the first record.
+    """The deciding record: the first ``block``, else the first record declared.
 
     ``block`` outranks declaration order deliberately. Ordering is about which of
     two *comparable* actions wins, and "stop the run" is not comparable to "let it
     continue with a note"; if declaration order could overrule a block, an author
     could neuter a strict guardrail by declaring a permissive one first.
+
+    Only ``block`` is exempt. ``escalate``, ``redact`` and ``flag`` are comparable
+    with one another, so declaration order alone decides between them: a ``flag``
+    declared before an ``escalate`` flags and does not escalate, and a ``flag``
+    declared before a ``redact`` does not mask the payload -- ``_redact`` runs only
+    when the deciding action is ``redact``. That is intended: an unconditional
+    redaction pass would let a guardrail rewrite a payload under an action the
+    author did not select. The loser is still recorded, so a caller can see which
+    declaration decided and which merely fired.
     """
     for record in records:
         if record.action == ACTION_BLOCK:
