@@ -354,6 +354,40 @@ describe('buildIR with a sparse value', () => {
   });
 });
 
+describe('model capabilities from an unvalidated value', () => {
+  // `buildIR` takes `unknown` and promises `ModelCapability[]`, so a caller that does not
+  // run `checkSpecText` first gets a drop rather than a lie about the type. The spec's
+  // `capabilities` enum is closed to four spellings that all survive the mapping, so no
+  // spec-derived caller can reach this filter; these tests are the only way to.
+  function capabilitiesOf(capabilities: string[]): { kept: string[]; codes: string[] } {
+    const built = buildIR({
+      specVersion: '0.2',
+      project: { name: 'x' },
+      models: { m: { provider: 'fake', modelId: 'fake-1', capabilities } },
+    });
+    return {
+      kept: built.ir.models[0]?.capabilities ?? [],
+      codes: built.diagnostics.map((diagnostic) => diagnostic.code),
+    };
+  }
+
+  it('drops a capability the model vocabulary cannot express, without a diagnostic', () => {
+    expect(capabilitiesOf(['hologram', 'tools'])).toEqual({
+      kept: ['tool-calling'],
+      codes: [],
+    });
+  });
+
+  it('keeps every capability the spec enum can spell', () => {
+    expect(capabilitiesOf(['json-schema', 'tools', 'streaming', 'embeddings']).kept).toEqual([
+      'json-schema',
+      'tool-calling',
+      'streaming',
+      'embeddings',
+    ]);
+  });
+});
+
 describe('provider surface', () => {
   it('accepts Phase 0 providers and keeps the union wider', () => {
     expect(PROVIDERS).toContain('openai');

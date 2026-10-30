@@ -256,6 +256,11 @@ function buildModels(raw: unknown): ModelShape[] {
       provider: asProvider(entry.provider),
       modelId,
       capabilities: asStringArray(entry.capabilities)
+        // The spec's `capabilities` enum is closed to four spellings that all map onto the
+        // model vocabulary, so no spec-derived caller reaches this filter: `checkSpecText`
+        // rejects anything else first, and `lowerSpec` returns before calling `buildIR`.
+        // It stays because `buildIR` takes `unknown` and promises `ModelCapability[]`, so a
+        // caller that skips validation gets a silent drop rather than a mistyped IR.
         .map(mapSpecCapability)
         .filter(isModelCapability),
       params: buildParams(entry.params),
