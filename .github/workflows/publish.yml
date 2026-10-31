@@ -36,15 +36,27 @@
 # publishers are registered on the registries, not in this repository --
 #
 #   * npm, once per package: Settings -> Trusted Publisher -> GitHub Actions, with repository
-#     `aid-framework/aid-framework`, workflow `publish.yml`, and Environment left blank.
-#   * PyPI: Publishing -> add a *pending* publisher for `aid-runtime-python` with the same
-#     three values. A pending publisher is what creates the project on the first upload.
+#     `aid-framework/aid-framework`, workflow `publish.yml`, and Environment `npmjs-publish`.
+#   * PyPI: Publishing -> a publisher for `aid-runtime-python` with the same three values. A
+#     *pending* publisher is what creates the project on the first upload.
 #
-# There is deliberately no `environment:` key on either publish job. Both registries match
-# the Environment field of the trusted-publisher registration against the job, so blank on
-# the registry has to mean blank here. Adding one later is a two-registry change: the moment
-# a job claims an environment, every upload fails until the npm trusted publisher and the
-# PyPI publisher are both edited to name it. Absent, not merely unset, is the point.
+# Both publish jobs target a GitHub environment, and the two names are part of that contract:
+#
+#   * `publish-npm` runs in `npmjs-publish` -- npm's trusted-publisher record must name it.
+#   * `publish-pypi` runs in `pypi-publish` -- PyPI's publisher record must name it.
+#
+# This is mandatory, not cosmetic. Both registries compare the OIDC token's `environment`
+# claim against the Environment field on their own publisher record, and GitHub emits that
+# claim only when the job targets an environment. A blank or mismatched value fails the
+# upload after a run that is otherwise green. Renaming either environment is therefore a
+# two-sided edit: change it here and on the matching registry record in the same step.
+#
+# The detect job has no environment. Only the two jobs that talk to a registry do, so a
+# protected environment can hold the upload without also gating detection.
+#
+# Protection rules are allowed and expected. A `npmjs-publish` or `pypi-publish` environment
+# with required reviewers or a wait timer pauses that publish job for approval; nothing in
+# this file assumes the job starts as soon as detection finishes.
 #
 # Bootstrap asymmetry, on the record: npm's trusted-publisher UI exists only for a package
 # that already exists, so each of the seven npm packages needs one initial publish by some
@@ -80,10 +92,10 @@ permissions:
   #
   # NOTE: this grant is only effective when the caller allows it. Permissions can be kept or
   # reduced across `workflow_call`, never raised, so a calling job that does not itself grant
-  # `id-token: write` leaves the publish jobs without an OIDC identity. `release.yml` currently
-  # declares `contents: read` and nothing else, which means the automatic path cannot mint a
-  # token until that job grants `id-token: write`. The preflight step below detects this and
-  # names the fix rather than letting it surface as a 401 from the registry.
+  # `id-token: write` leaves the publish jobs without an OIDC identity. `release.yml`'s publish
+  # job grants `id-token: write` for exactly that reason, and a new caller has to do the same.
+  # The preflight step below detects a caller that does not and names the fix rather than
+  # letting it surface as a 401 from the registry.
   id-token: write
 
 concurrency:
@@ -167,6 +179,10 @@ jobs:
     # Job-level on purpose: when nothing is publishable, this job reports Skipped rather than
     # a green run that published nothing or a red run with nothing wrong.
     if: needs.detect.outputs.publishable == 'true' && vars.AID_PUBLISH_ENABLED == 'true'
+    # Putting this claim in the OIDC token is what makes npm accept the upload: the registry
+    # compares it against the Environment field on its trusted-publisher record, so this name
+    # and the one registered on npm must be the same string.
+    environment: npmjs-publish
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -285,6 +301,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     if: needs.detect.outputs.publishable == 'true' && vars.AID_PUBLISH_ENABLED == 'true'
+    # PyPI's publisher record must name this same environment, or the upload is rejected
+    # after the build has already succeeded.
+    environment: pypi-publish
     steps:
       - name: Checkout
         uses: actions/checkout@v7
