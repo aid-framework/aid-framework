@@ -31,7 +31,7 @@ features:
     details: The output is ordinary FastAPI or Next.js code beside a small runtime library. There is no server to run and no request proxy - delete the framework and the tree still boots.
 ---
 
-## Pre-alpha, and it says so
+## What ships today
 
 Every package here is published — seven on npm
 (`@aid-framework/cli`, `@aid-framework/spec`, `@aid-framework/ir`,
@@ -41,9 +41,10 @@ Every package here is published — seven on npm
 v0.3, and the two generator targets cover the surface this repository tests.
 
 What that means in practice: the spec surface, the IR and the two generators are
-implemented and pinned by a conformance suite (73 cases over 40 operations), but the
-project is pre-1.0 and the CLI has commands that are specified and not yet built. The
-[CLI reference](reference/cli.md) lists them separately rather than implying they work.
+implemented and pinned by a conformance suite (73 cases over 40 operations). The project
+is pre-1.0, so a minor release may still change an interface, and the CLI has commands
+that are specified and not yet built. The [CLI reference](reference/cli.md) lists them
+separately rather than implying they work.
 
 ## The shape of it
 

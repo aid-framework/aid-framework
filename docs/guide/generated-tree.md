@@ -117,10 +117,9 @@ modules beside it appear once `evals` is declared.
 Two things to read carefully.
 
 **`generatorVersion` is `0.1.0`, not the package version.** The generator plugin declares its own
-version in its manifest, independent of the npm package that ships it. At the time of writing
-the packages are at 0.1.39 and this field still says 0.1.0 - that is the plugin's contract
-version, not a stale install. Use `irVersion` to reason about IR compatibility and
-`manifestVersion` to reason about the manifest's own shape.
+version in its manifest, independent of the npm package that ships it. This field stays at 0.1.0
+across package releases - it is the plugin's contract version, not a stale install. Use `irVersion`
+to reason about IR compatibility and `manifestVersion` to reason about the manifest's own shape.
 
 **There is no spec hash.** Drift is computed per file from `sha256` against what is on disk, so
 a spec change that does not alter a file leaves it `unchanged`. That is what makes regeneration
