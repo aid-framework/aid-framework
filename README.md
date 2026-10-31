@@ -1,5 +1,16 @@
 # AID Framework
 
+**npm:**
+[![spec](https://img.shields.io/npm/v/@aid-framework/spec?label=spec&logo=npm&color=cb3837)](https://www.npmjs.com/package/@aid-framework/spec)
+[![ir](https://img.shields.io/npm/v/@aid-framework/ir?label=ir&logo=npm&color=cb3837)](https://www.npmjs.com/package/@aid-framework/ir)
+[![generator-sdk](https://img.shields.io/npm/v/@aid-framework/generator-sdk?label=generator-sdk&logo=npm&color=cb3837)](https://www.npmjs.com/package/@aid-framework/generator-sdk)
+[![generator-py-fastapi](https://img.shields.io/npm/v/@aid-framework/generator-py-fastapi?label=generator-py-fastapi&logo=npm&color=cb3837)](https://www.npmjs.com/package/@aid-framework/generator-py-fastapi)
+[![generator-ts-vercel](https://img.shields.io/npm/v/@aid-framework/generator-ts-vercel?label=generator-ts-vercel&logo=npm&color=cb3837)](https://www.npmjs.com/package/@aid-framework/generator-ts-vercel)
+[![cli](https://img.shields.io/npm/v/@aid-framework/cli?label=cli&logo=npm&color=cb3837)](https://www.npmjs.com/package/@aid-framework/cli)
+[![runtime](https://img.shields.io/npm/v/@aid-framework/runtime?label=runtime&logo=npm&color=cb3837)](https://www.npmjs.com/package/@aid-framework/runtime)
+**PyPI:**
+[![aid-runtime-python](https://img.shields.io/pypi/v/aid-runtime-python?label=aid-runtime-python&logo=pypi&color=3775a9)](https://pypi.org/project/aid-runtime-python/)
+
 **AID** (AI Development Framework) lets you *declare* an AI application once — models, prompts, tools,
 retrieval, agents, pipelines, evals, guardrails, memory, and deployments — and compile it into idiomatic,
 runnable AI services across multiple language stacks.
