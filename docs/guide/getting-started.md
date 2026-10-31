@@ -1,7 +1,7 @@
 # Getting started
 
-This page scaffolds a project, adds one pipeline, generates it, and serves it. Every command
-and every error message below was run against `@aid-framework/cli` 0.1.39.
+This page scaffolds a project, adds one pipeline, generates it, and serves it. Every CLI
+command on this page, and every error message, was run against `@aid-framework/cli` 0.1.48.
 
 You need **Node.js 24 or newer**. Nothing has to be cloned; the CLI is published.
 
@@ -198,8 +198,10 @@ created:
 ```
 
 (with the full list elided; the command prints all twenty). Running it a second time with no
-spec change reports `20 unchanged`. The tree, the ownership rule and the manifest are
-described in [The generated tree](generated-tree.md).
+spec change reports `17 unchanged` and `3 kept`: the three seeded files under `app/business/`
+belong to you, so the generator leaves them alone instead of counting them unchanged. The
+tree, the ownership rule and the manifest are described in
+[The generated tree](generated-tree.md).
 
 ## 6. Serve it
 

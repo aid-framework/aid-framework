@@ -1,6 +1,6 @@
 # Contributing to AID Framework
 
-Thanks for your interest in AID Framework! This project is at an early, pre-alpha stage, so the highest-value
+Thanks for your interest in AID Framework! The project is early and pre-1.0, so the highest-value
 contributions right now are design feedback, bug reports, docs, and small, focused changes.
 
 By participating you agree to follow our [Code of Conduct](CODE_OF_CONDUCT.md).

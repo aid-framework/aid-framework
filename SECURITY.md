@@ -6,14 +6,17 @@ traces can carry sensitive data. We take that seriously.
 
 ## Supported versions
 
-AID Framework is **pre-alpha** and has no releases yet. There are no supported versions to patch at this time.
+AID Framework is pre-1.0 and releases are published, so there is a version to patch. Only the latest
+published release is supported: a fix goes into the next release and is not backported to an earlier minor.
 
 | Version | Supported |
 | --- | --- |
-| `main` (pre-alpha) | ❌ No — not for production use |
-| Latest tagged release | ❌ None published yet |
+| Latest published release | ✅ Yes |
+| Any earlier release | ❌ No — not backported |
+| `main` | ❌ No — development branch, not a release |
 
-This table will be updated when the first release is published.
+Because the project is pre-1.0, an interface may change in a minor release. Upgrade to the current release
+to receive a fix for an older one.
 
 ## Secret scanning
 

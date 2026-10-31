@@ -1,6 +1,6 @@
 # Contributing
 
-AID Framework is pre-alpha, so the highest-value contributions are design feedback, bug reports,
+AID Framework is pre-1.0, so the highest-value contributions are design feedback, bug reports,
 documentation and small focused changes. The authoritative version of this page is
 [CONTRIBUTING.md](https://github.com/aid-framework/aid-framework/blob/main/CONTRIBUTING.md) in the
 repository; this one covers the parts you need in order to run the gates.
