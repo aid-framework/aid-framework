@@ -33,6 +33,7 @@ import {
   planRegeneration,
   type RegenerationReport,
 } from '@aid-framework/generator-sdk';
+import type { Severity } from '@aid-framework/spec';
 import { countBySeverity, hasErrors, sortDiagnostics } from '@aid-framework/spec';
 
 import type { CliContext } from '../context.js';
@@ -191,7 +192,7 @@ export function doctor(context: CliContext, options: DoctorOptions): CommandOutc
   let compiled: CompileOutcome | undefined;
   let specOk = false;
   let irVersion: string | undefined;
-  let specCounts = countBySeverity([]);
+  let specCounts: Record<Severity, number>;
 
   if (read.ok) {
     compiled = compile(read.text, specPath, target);
