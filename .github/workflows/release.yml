@@ -219,6 +219,12 @@ jobs:
     permissions:
       actions: write
       contents: read
+    # This job never checks out the repository; it only calls the API. `gh` still
+    # has to know which repository to call, and without a working tree it infers
+    # that from `GH_REPO` alone -- otherwise every step here dies with
+    # "fatal: not a git repository" the first time a releasable merge gets this far.
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Dispatch the publish workflow on main
         id: dispatch
