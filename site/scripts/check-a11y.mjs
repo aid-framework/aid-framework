@@ -17,7 +17,8 @@
  *   - every link and button has an accessible name (text, `aria-label`, `aria-labelledby`,
  *     `title`, or an image with `alt` inside it);
  *   - no `iframe`, `embed`, or `object`: the site is offline-capable and embeds a third party;
- *   - subresources are same-origin, so no third-party script, style, or font is loaded;
+ *   - subresources are same-origin and inside the site base, so no third-party script,
+ *     style, or font is loaded;
  *   - the local search index is present, so search is not delegated to a hosted service;
  *
  * The 404 page is exempt from the skip-link and landmark rules because VitePress's 404 layout
@@ -35,8 +36,8 @@ import { fileURLToPath } from 'node:url';
 const distRoot = fileURLToPath(new URL('../.vitepress/dist', import.meta.url));
 const BASE = '/aid-framework/';
 const SITE_ORIGIN = 'https://aid-framework.github.io';
+const SITE = new URL(BASE, SITE_ORIGIN);
 const SUBRESOURCE = /<(script|link|img|source|video|audio)\b([^>]*?)\s(?:src|href)="([^"]+)"/gi;
-const EXTERNAL_ORIGIN = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
 
 /** @type {string[]} */
 const failures = [];
@@ -193,11 +194,25 @@ for (const file of files) {
     failures.push(`${page}: embeds a frame or object; the site must stay self-contained`);
   }
 
+  // Origin is compared after resolution, never by string prefix: a prefix test accepts
+  // `https://aid-framework.github.io.evil.example/x.js`, which is a different origin.
   for (const match of html.matchAll(SUBRESOURCE)) {
-    const url = match[3];
-    if (!EXTERNAL_ORIGIN.test(url)) continue;
-    if (url.startsWith(SITE_ORIGIN) || url.startsWith(BASE)) continue;
-    failures.push(`${page}: loads a subresource from another origin: ${url}`);
+    const raw = match[3];
+    /** @type {URL} */
+    let resolved;
+    try {
+      resolved = new URL(raw, SITE);
+    } catch {
+      failures.push(`${page}: subresource URL cannot be parsed: ${raw}`);
+      continue;
+    }
+    if (resolved.origin !== SITE_ORIGIN) {
+      failures.push(`${page}: loads a subresource from another origin: ${raw}`);
+      continue;
+    }
+    if (!resolved.pathname.startsWith(BASE)) {
+      failures.push(`${page}: loads a subresource outside ${BASE}: ${raw}`);
+    }
   }
 }
 
