@@ -195,20 +195,109 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # The automatic route into publishing. `release: published` cannot be used because
-  # `release.yml` creates releases with the workflow `GITHUB_TOKEN`, and GitHub suppresses
-  # workflow runs for `GITHUB_TOKEN`-authored events. Calling the reusable workflow instead
-  # runs it inside this run, so the edge is not suppressed. A called workflow cannot exceed
-  # the caller's grant, so this job grants `id-token: write` itself for the publish job's
-  # OIDC exchange; every other permission stays read-only. It still gates itself on
-  # `AID_PUBLISH_ENABLED`.
+  # The automatic route into publishing. This job dispatches `publish.yml` rather than
+  # calling it, because both registries trust the *dispatching* workflow's OIDC identity, and
+  # because the `npmjs-publish` and `pypi-publish` environments admit deployments from `main`
+  # only -- a run at a tag ref is refused before a single step executes. `workflow_dispatch` is
+  # also the trigger GitHub still delivers for an event authored by `GITHUB_TOKEN`, which is
+  # why a dispatch works here while `release: published` would never fire.
+  #
+  # `main` is the ref, so the published tree is `main`'s and not necessarily the tag's. That is
+  # a real narrowing, forced by the environment rule: `detect` inside `publish.yml` refuses to
+  # publish unless every manifest on the dispatched commit declares exactly this version, so a
+  # stale tag cannot quietly publish newer code under an old version. It can still publish a
+  # commit newer than the tag when that commit did not change any version.
+  #
+  # This job holds `actions: write` and nothing else; the release job holds `contents: write`
+  # for the tag push. Neither job gets both.
   publish:
     name: publish
     needs: release
     if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
     permissions:
+      actions: write
       contents: read
-      id-token: write
-    uses: ./.github/workflows/publish.yml
-    with:
-      version: ${{ needs.release.outputs.version }}
+    steps:
+      - name: Dispatch the publish workflow on main
+        id: dispatch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Look slightly back as well as forward: `createdAt` is assigned by the API, and
+          # clock skew against this runner must not hide the run we are about to start.
+          since="$(date -u -d '-5 seconds' +%Y-%m-%dT%H:%M:%SZ)"
+
+          # `--ref main` is mandatory, not stylistic. Both environments refuse a tag ref, and
+          # `version` must be explicit for the same reason: `main` is not the tag.
+          gh workflow run publish.yml --ref main -f version="$VERSION"
+
+          run_id=""
+          for _ in $(seq 1 24); do
+            run_id="$(gh run list \
+              --workflow publish.yml \
+              --event workflow_dispatch \
+              --branch main \
+              --limit 20 \
+              --json databaseId,createdAt \
+              --jq "[.[] | select(.createdAt >= \"$since\")] | max_by(.createdAt) | .databaseId // empty")"
+            if [ -n "$run_id" ]; then
+              break
+            fi
+            sleep 5
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::dispatched publish.yml but no run for it appeared within two minutes."
+            exit 1
+          fi
+
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "run_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
+          echo "Dispatched publish.yml for $VERSION at main: run $run_id."
+
+      - name: Wait for the publish run
+        id: wait
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+        run: |
+          set +e
+          # Bounded on purpose. An environment with required reviewers legitimately holds the
+          # run until someone approves; blocking forever would surface as a job timeout with
+          # no explanation instead of as "waiting for approval".
+          timeout 1800 gh run watch "$RUN_ID" --exit-status --interval 15 >/dev/null 2>&1
+          code=$?
+          set -e
+          case "$code" in
+            0)   echo "outcome=success" >> "$GITHUB_OUTPUT" ;;
+            124) echo "outcome=pending" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "outcome=failure" >> "$GITHUB_OUTPUT"; exit 1 ;;
+          esac
+
+      - name: Summarize
+        if: always() && steps.dispatch.outcome == 'success'
+        shell: bash
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          RUN_URL: ${{ steps.dispatch.outputs.run_url }}
+          OUTCOME: ${{ steps.wait.outputs.outcome }}
+        run: |
+          {
+            echo "### Publish dispatched for \`$VERSION\`"
+            echo
+            if [ -n "$RUN_URL" ]; then
+              echo "Run: $RUN_URL"
+              echo
+            fi
+            case "$OUTCOME" in
+              success) echo "The publish run succeeded." ;;
+              pending) echo "The publish run has not finished. That is most likely an environment approval that is still waiting; it is not a failure." ;;
+              failure) echo "**The publish run failed.** Follow the run link above." ;;
+              *) echo "The publish run reported no conclusion." ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"
