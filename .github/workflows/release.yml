@@ -198,13 +198,17 @@ jobs:
   # The automatic route into publishing. `release: published` cannot be used because
   # `release.yml` creates releases with the workflow `GITHUB_TOKEN`, and GitHub suppresses
   # workflow runs for `GITHUB_TOKEN`-authored events. Calling the reusable workflow instead
-  # runs it inside this run, so the edge is not suppressed. No new grant is needed: the
-  # called workflow inherits this workflow's token, and it still gates itself on
+  # runs it inside this run, so the edge is not suppressed. A called workflow cannot exceed
+  # the caller's grant, so this job grants `id-token: write` itself for the publish job's
+  # OIDC exchange; every other permission stays read-only. It still gates itself on
   # `AID_PUBLISH_ENABLED`.
   publish:
     name: publish
     needs: release
     if: needs.release.outputs.released == 'true'
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/publish.yml
     with:
       version: ${{ needs.release.outputs.version }}
