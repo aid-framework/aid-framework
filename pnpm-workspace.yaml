@@ -5,8 +5,14 @@ packages:
   # The generated TypeScript example is installed like the Python one: its own
   # project, with the runtime resolved from this workspace.
   - 'examples/support-copilot-ts'
+  # The documentation site. In the workspace so the lockfile and the dependency
+  # license audit cover it like any other package.
+  - 'site'
 
 # pnpm blocks lifecycle scripts unless allowed here, and strictDepBuilds makes
 # `pnpm install` fail while any dependency has one outstanding.
 allowBuilds:
   lefthook: true
+  # VitePress bundles the site with esbuild, which fetches its platform binary
+  # from a postinstall script. Without this the docs build cannot run.
+  esbuild: true

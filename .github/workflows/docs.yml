@@ -1,0 +1,84 @@
+# Publishes the VitePress site in `site/`, which renders the Markdown under `docs/`, to
+# GitHub Pages. Pages must be configured with "GitHub Actions" as the source; this
+# workflow is then the only publisher, and a merge to `main` is what updates the live site.
+#
+# The build also runs on pull requests, where it is deliberately just a build: a broken
+# page, a dead link, or a stale generated reference fails the PR before it reaches `main`.
+# Configure, upload and deploy are skipped there, so a PR run needs no Pages permission.
+#
+# This is not a required check and it is not part of the release gate. The site can be
+# rebuilt from any commit, so a Pages outage must not block a merge or block a tag.
+name: Docs
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Superseded PR builds are cancelled; deployments are not. Cancelling a run that is midway
+# through deploying can leave the environment reporting a deployment that never finished,
+# so the deploy leg keeps its own group and only one main-branch run is ever in flight.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Fails when a committed reference page no longer matches the source it is derived
+      # from. It reads source rather than `dist`, so no build is needed first.
+      - name: Check generated reference
+        run: pnpm docs:check
+
+      - name: Build site
+        run: pnpm docs:build
+
+      - name: Configure Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v6
+
+      - name: Upload artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/.vitepress/dist
+
+  deploy:
+    name: deploy
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

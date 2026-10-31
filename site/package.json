@@ -1,0 +1,18 @@
+{
+  "name": "@aid-framework/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Documentation site for the AID Framework, published to GitHub Pages.",
+  "scripts": {
+    "gen": "node scripts/gen-reference.mjs",
+    "gen:check": "node scripts/gen-reference.mjs --check",
+    "dev": "node scripts/gen-reference.mjs && vitepress dev",
+    "build": "node scripts/gen-reference.mjs && vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.4",
+    "vue": "3.5.44"
+  }
+}
