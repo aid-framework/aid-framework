@@ -201,7 +201,7 @@ if (readme !== undefined) {
       } else {
         const implemented = lineContaining(
           readme,
-          'The CLI implements',
+          'The CLI ships',
           README,
           'the sentence listing implemented CLI commands',
         );
@@ -217,7 +217,7 @@ if (readme !== undefined) {
 
         const unimplemented = lineContaining(
           readme,
-          'specified but not implemented',
+          'not implemented yet',
           README,
           'the sentence listing unimplemented CLI commands',
         );

@@ -1,4 +1,4 @@
-# `support-copilot-ts` — the Phase 1 example
+# `support-copilot-ts` — the TypeScript target example
 
 The same spec as [`support-copilot`](../support-copilot/), aimed at the `ts-vercel` target instead of
 `py-fastapi`, so that the two examples differ by *target* and not by *domain*. It exercises everything that

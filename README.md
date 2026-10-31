@@ -1,6 +1,5 @@
 # AID Framework
 
-**npm:**
 [![spec](https://img.shields.io/npm/v/@aid-framework/spec?label=spec&logo=npm&color=cb3837)](https://www.npmjs.com/package/@aid-framework/spec)
 [![ir](https://img.shields.io/npm/v/@aid-framework/ir?label=ir&logo=npm&color=cb3837)](https://www.npmjs.com/package/@aid-framework/ir)
 [![generator-sdk](https://img.shields.io/npm/v/@aid-framework/generator-sdk?label=generator-sdk&logo=npm&color=cb3837)](https://www.npmjs.com/package/@aid-framework/generator-sdk)
@@ -8,21 +7,22 @@
 [![generator-ts-vercel](https://img.shields.io/npm/v/@aid-framework/generator-ts-vercel?label=generator-ts-vercel&logo=npm&color=cb3837)](https://www.npmjs.com/package/@aid-framework/generator-ts-vercel)
 [![cli](https://img.shields.io/npm/v/@aid-framework/cli?label=cli&logo=npm&color=cb3837)](https://www.npmjs.com/package/@aid-framework/cli)
 [![runtime](https://img.shields.io/npm/v/@aid-framework/runtime?label=runtime&logo=npm&color=cb3837)](https://www.npmjs.com/package/@aid-framework/runtime)
-**PyPI:**
 [![aid-runtime-python](https://img.shields.io/pypi/v/aid-runtime-python?label=aid-runtime-python&logo=pypi&color=3775a9)](https://pypi.org/project/aid-runtime-python/)
 
 **AID** (AI Development Framework) lets you *declare* an AI application once — models, prompts, tools,
 retrieval, agents, pipelines, evals, guardrails, memory, and deployments — and compile it into idiomatic,
 runnable AI services across multiple language stacks.
 
-> **Status: pre-alpha.** [`docs/design.md`](docs/design.md) is the authoritative design document. The
-> shipped surface covers Phase 0 and Phase 2: the spec DSL, the IR, the generator SDK, the Python and
-> TypeScript runtimes, two targets, the `aid` CLI, and three example apps. Phase 2's exit criterion is met:
-> every pipeline step kind is supported, and `DEFERRED_STEP_KINDS` is empty.
->
-> The CLI implements exactly five commands: `init`, `validate`, `gen`, `ingest`, and `eval`.
-> The seven commands specified but not implemented are `dev`, `trace`, `cost`, `guard`, `migrate`, `eject`, and `doctor`.
-> The project is pre-alpha and not production-ready.
+The framework is one repository and a set of published packages: the spec DSL and validator, the
+stack-independent IR, the generator SDK, the Python and TypeScript runtimes, two generator targets, the
+`aid` CLI, and three worked examples. Start with the [quickstart](#quickstart) below, or read
+[`docs/design.md`](docs/design.md) for the architecture and the IR.
+
+The CLI ships five commands: `init`, `validate`, `gen`, `ingest`, and `eval`.
+Seven more are designed but not implemented yet: `dev`, `trace`, `cost`, `guard`, `migrate`, `eject`, and `doctor`.
+See [`packages/cli/`](packages/cli/) for the surface each command supports.
+
+Until 1.0, a minor release can change an interface; pin exact versions if you need a stable surface.
 
 The documentation site — quickstart, spec and CLI references, and both walkthroughs — is published at
 <https://aid-framework.github.io/aid-framework/>.
