@@ -111,6 +111,28 @@ describe('path-based release gating', () => {
     expect(decision.release).toBe(false);
   });
 
+  it('does not release for a root workspace-manifest-only change', () => {
+    // The root manifest is private, declares 0.0.0 and holds scripts plus workspace
+    // settings. Treating it as releasable let a docs-only PR add a docs script and mint
+    // a version that could never publish: detection requires the shipped manifests to
+    // declare the released version, and they declared an older one.
+    expect(decideFor(['package.json']).release).toBe(false);
+    expect(
+      decideFor(['package.json', 'docs/contributing.md', 'site/scripts/check-a11y.mjs']).release,
+    ).toBe(false);
+    expect(matchingRule('package.json', config.nonReleasable)?.pattern).toBe('^package[.]json$');
+  });
+
+  it('keeps a package manifest releasable even though the root one is not', () => {
+    for (const path of [
+      'packages/spec/package.json',
+      'packages/cli/package.json',
+      'runtimes/python/pyproject.toml',
+    ]) {
+      expect(isReleasable(path, config.nonReleasable), `${path} should stay releasable`).toBe(true);
+    }
+  });
+
   it('releases when a single PR contains both docs and code', () => {
     const decision = decideFor(['docs/design.md', 'README.md', 'packages/spec/src/parse.ts']);
 
