@@ -6,11 +6,20 @@ const BASE = '/aid-framework/';
 const REPOSITORY = 'https://github.com/aid-framework/aid-framework';
 
 /**
- * The footer names the latest release tag, not a hand-edited string. Tags are absent from a
- * shallow clone, and the deployment fetches them precisely so the published footer can be
- * checked against `git tag`; when they are missing the version is omitted rather than guessed.
+ * The footer names the version the shipped manifests declare, not a hand-edited string and
+ * not the newest tag: tags `v0.1.40`-`v0.1.43` exist without a release. `currentVersion()`
+ * returns `null` when the manifests disagree, and the footer then omits the version rather
+ * than claiming one.
  */
 const latestRelease = currentVersion();
+
+/**
+ * The bare version the homepage states, and the token it appears as in the Markdown.
+ * `unknown` is the honest fallback when `currentVersion()` cannot name one, because the
+ * shipped manifests disagree rather than being absent.
+ */
+const shippedVersion = latestRelease === null ? 'unknown' : latestRelease.replace(/^v/, '');
+const VERSION_TOKEN = /\{\{\s*AID_VERSION\s*\}\}/g;
 
 /**
  * Licence, notice and security policy are linked to their repository copies, which stay the
@@ -185,6 +194,23 @@ export default defineConfig({
   },
   markdown: {
     theme: { light: 'github-light', dark: 'github-dark' },
+    /**
+     * Substitute the release version into the prose. A Vue interpolation would not work:
+     * Vite's `define` does not reach a render function generated from Markdown, so the
+     * token would render as empty text. Replacing the text token keeps the output literal.
+     */
+    config(md) {
+      md.core.ruler.push('aid-version', (state) => {
+        for (const token of state.tokens) {
+          if (token.type !== 'inline' || token.children === null) continue;
+          for (const child of token.children) {
+            if (child.type !== 'text') continue;
+            child.content = child.content.replaceAll(VERSION_TOKEN, shippedVersion);
+          }
+        }
+        return true;
+      });
+    },
   },
   vite: {
     server: {

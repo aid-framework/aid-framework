@@ -33,13 +33,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # No tags are fetched: the version comes from the shipped manifests, which are part of
+      # the checkout, so a shallow clone reports the same version as a full one.
       - name: Checkout
         uses: actions/checkout@v7
-        with:
-          # The footer names the latest release tag, which `scripts/site-version.mjs` reads
-          # from `git tag`. A shallow clone carries no tags, so the version would silently
-          # disappear from the deployed site rather than from a pull request build.
-          fetch-depth: 0
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
