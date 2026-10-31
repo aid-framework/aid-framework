@@ -13,6 +13,9 @@ runnable AI services across multiple language stacks.
 > The seven commands specified but not implemented are `dev`, `trace`, `cost`, `guard`, `migrate`, `eject`, and `doctor`.
 > The project is pre-alpha and not production-ready.
 
+The documentation site — quickstart, spec and CLI references, and both walkthroughs — is published at
+<https://aid-framework.github.io/aid-framework/>.
+
 ## The problem
 
 Every AI app re-implements the same 70–85% of non-differentiating plumbing: provider adapters and streaming,

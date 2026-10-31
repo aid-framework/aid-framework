@@ -306,7 +306,7 @@ and `reduce`.
 
 A pipeline served over HTTP needs a final `emit`, and `validate` does not check for its
 absence - `gen` fails with an internal error instead. See
-[getting started](getting-started.md#4-add-a-pipeline).
+[getting started](getting-started.md#_4-add-a-pipeline).
 
 ## `evals`
 

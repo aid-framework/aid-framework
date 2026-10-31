@@ -30,6 +30,7 @@
     "docs:dev": "pnpm --filter @aid-framework/docs dev",
     "docs:build": "pnpm --filter @aid-framework/docs build",
     "docs:check": "pnpm --filter @aid-framework/docs gen:check",
+    "docs:links": "pnpm --filter @aid-framework/docs check:links",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "prepare": "lefthook install"
   },

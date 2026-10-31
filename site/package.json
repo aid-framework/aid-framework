@@ -7,6 +7,7 @@
   "scripts": {
     "gen": "node scripts/gen-reference.mjs",
     "gen:check": "node scripts/gen-reference.mjs --check",
+    "check:links": "node scripts/check-links.mjs",
     "dev": "node scripts/gen-reference.mjs && vitepress dev",
     "build": "node scripts/gen-reference.mjs && vitepress build",
     "preview": "vitepress preview"
