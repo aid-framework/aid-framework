@@ -1,6 +1,6 @@
 {
   "name": "@aid-framework/runtime",
-  "version": "0.1.48",
+  "version": "0.1.51",
   "description": "AID runtime for TypeScript: pinned-model gateway, prompt registry, tool dispatch, pipelines, structured output, eval gates and retrieval.",
   "license": "Apache-2.0",
   "repository": {

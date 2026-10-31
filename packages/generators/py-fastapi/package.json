@@ -1,6 +1,6 @@
 {
   "name": "@aid-framework/generator-py-fastapi",
-  "version": "0.1.48",
+  "version": "0.1.51",
   "description": "The AID Framework py-fastapi target generator: turns IR into a thin FastAPI app that binds to the aid-runtime-python library for everything it does at runtime.",
   "license": "Apache-2.0",
   "repository": {
