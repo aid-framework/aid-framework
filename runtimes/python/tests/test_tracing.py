@@ -161,6 +161,9 @@ def test_a_failing_call_is_recorded_exactly_once_on_the_span() -> None:
     with pytest.raises(BoomError, match="boom"), llm_span(model="m", provider="p", tracer=tracer):
         raise BoomError("boom")
 
+    # CodeQL reports the rest of this test as unreachable, because the `raise` above is
+    # the last statement in the `with` block. It runs: `pytest.raises` catches that
+    # exception, and these assertions prove the span recorded it exactly once.
     (recorded,) = exporter.get_finished_spans()
     assert recorded.status.status_code is StatusCode.ERROR
     assert recorded.status.description == "boom"

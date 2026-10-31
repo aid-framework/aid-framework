@@ -31,6 +31,23 @@ repository — not in a test fixture, golden file, dataset, or documentation exa
 reject the push, and a secret that reaches a branch is handled as a live incident. Use obviously fake
 sentinel values instead.
 
+## Code scanning
+
+CodeQL runs on pull requests and on `main` for both languages, and its findings appear in the Security tab.
+Alerts are reviewed by a human rather than enforced as a required check. Two classes are known false
+positives here, and are dismissed with that reason instead of by changing code that works:
+
+- **`py/ineffectual-statement` on abstract stub bodies.** A `Protocol` or `ABC` method whose body is `...`
+  is reported as an ineffectual statement. That is the idiomatic empty body; replacing it with
+  `raise NotImplementedError` would change the behaviour of methods that are already never called on the
+  abstract type.
+- **`py/unreachable-statement` after a `with pytest.raises(...)` block.** A `raise` that ends such a block
+  makes CodeQL model the statements after it as unreachable. They do run: `pytest.raises` catches that
+  exception, and those assertions are what prove a span recorded it exactly once.
+
+A code-scanning alert is a prompt to read the path, not a verdict. Do not restructure working code to
+silence one before confirming it is wrong.
+
 ## Reporting a vulnerability
 
 **Please do not open a public issue for a security problem.**
