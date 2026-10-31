@@ -114,9 +114,12 @@ describe('stableId', () => {
 
 describe('generatedBanner', () => {
   it('names the generator and version but no time', () => {
-    const banner = generatedBanner({ generator: '@aid/generator-py-fastapi', version: '0.1.0' });
+    const banner = generatedBanner({
+      generator: '@aid-framework/generator-py-fastapi',
+      version: '0.1.0',
+    });
     expect(banner).toContain(GENERATED_BANNER_MARKER);
-    expect(banner).toContain('@aid/generator-py-fastapi');
+    expect(banner).toContain('@aid-framework/generator-py-fastapi');
     expect(banner).toContain('v0.1.0');
     expect(scanForNonDeterminism('banner.py', banner)).toEqual([]);
   });

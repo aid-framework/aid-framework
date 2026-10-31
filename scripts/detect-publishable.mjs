@@ -2,11 +2,11 @@
  * Detects artifacts that a release is *allowed and able* to publish, and reports why
  * everything else is not.
  *
- * Publishing is off by construction: `.github/workflows/publish.yml` is
- * `workflow_dispatch`-only plus `release: published`, its `publish` job is gated on this
- * script's output, and that gate requires `vars.AID_PUBLISH_ENABLED == 'true'`. This
- * script is the first half of that gate, so what it means by "publishable" matters more
- * than what it prints.
+ * Publishing is opt-in at two gates: `.github/workflows/publish.yml` runs only from
+ * `release.yml` (`workflow_call`) or by hand (`workflow_dispatch`), and its `publish` job
+ * additionally requires this script's verdict plus `vars.AID_PUBLISH_ENABLED == 'true'`.
+ * This script is the first half of that gate, so what it means by "publishable" matters
+ * more than what it prints.
  *
  * A manifest is publishable when all four hold:
  *
@@ -23,17 +23,23 @@
  *   4. It is not the example app. `examples/support-copilot/pyproject.toml` exists so the
  *      documented quickstart can `pip install -e` the example; nobody publishes it.
  *
- * Today that set is empty, and the reason is claim 3: the released version is `v0.1.4`-ish
- * while every workspace npm manifest is `0.0.0` and `aid-runtime-python` is `0.1.0`. So the
- * publish job reports **Skipped** -- not passed, not failed -- and it stays that way until
- * someone deliberately aligns a manifest with a release, flips `AID_PUBLISH_ENABLED`, and
- * provides credentials. A predicate this strict is deliberate: a detector that cannot fail
- * loud is worse than no publishing at all.
+ * A non-empty set is the steady state, not an accident. `scripts/version.mjs stamp` writes
+ * the next release version into every manifest `release.config.json` lists, so claim 3 is
+ * satisfiable rather than permanently false: a release commit carries manifests that already
+ * declare the version `release.yml` is about to tag, and all eight artifacts ship. When the
+ * two *do* drift -- someone tags `v0.1.40` without re-stamping -- claim 3 degrades to
+ * `unreleased-version`, which is a skip, not a wrong publish.
  *
- * Two things are *not* touched here and are worth knowing before enabling any of it:
- * `release.config.json`'s `packages[]` has no entry for `packages/cli` or
- * `packages/generators/*`, which is inert in the current `repo-wide` mode but a hard error
- * under `independent`; and no registry is configured anywhere in this repository.
+ * What has not changed is that this script neither publishes nor authenticates.
+ * `publish.yml` runs it first and only a non-empty result reaches the publish job, which
+ * uses OIDC trusted publishing (`id-token: write`) instead of a registry token. A predicate
+ * this strict is deliberate: a detector that cannot fail loud is worse than no publishing at
+ * all, so dropping an artifact from the release is a change someone makes here on purpose.
+ *
+ * One thing is still *not* expressed here, and is worth knowing: publish *order* (npm needs
+ * its `workspace:*` dependencies present on the registry before a dependent can install).
+ * That lives in `publish.yml` as an explicit topological list, because this script answers
+ * "which artifacts", not "in what order".
  *
  * Usage: `node scripts/detect-publishable.mjs [--root .] [--version v0.1.5] [--json]
  * [--github-output "$GITHUB_OUTPUT"]`

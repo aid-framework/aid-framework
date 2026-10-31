@@ -7,7 +7,7 @@
  * apart.
  */
 
-import type { IR, TypeField, TypeShape } from '@aid/ir';
+import type { IR, TypeField, TypeShape } from '@aid-framework/ir';
 
 import { annotationFor, className, fieldName } from '../names.js';
 import { MAX_LINE, pythonNumber, pythonString } from '../python.js';

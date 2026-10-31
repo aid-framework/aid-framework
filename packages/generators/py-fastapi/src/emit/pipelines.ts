@@ -27,8 +27,8 @@ import type {
   StepShape,
   TypeRef,
   TypeShape,
-} from '@aid/ir';
-import { isCompositeStep } from '@aid/ir';
+} from '@aid-framework/ir';
+import { isCompositeStep } from '@aid-framework/ir';
 
 import { annotationFor, className, fieldName, moduleName } from '../names.js';
 import { interpolate, templatePlaceholders } from '../placeholders.js';

@@ -1,4 +1,4 @@
-# `@aid/spec` — the declarative spec
+# `@aid-framework/spec` — the declarative spec
 
 Owns the developer-facing DSL: the YAML spec format, its JSON Schema (for editor autocomplete and validation),
 the parser, and the validator that runs before anything reaches the IR.
@@ -39,7 +39,7 @@ referential integrity, capability negotiation, cost sanity, or security checks, 
 the whole program and therefore belong to the IR build gates.
 
 ```ts
-import { checkSpecText, formatDiagnostics } from '@aid/spec';
+import { checkSpecText, formatDiagnostics } from '@aid-framework/spec';
 
 const { ok, diagnostics } = checkSpecText(source, { file: 'aid.spec.yaml' });
 if (!ok) process.stderr.write(formatDiagnostics(diagnostics));

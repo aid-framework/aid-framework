@@ -18,10 +18,10 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { Plan } from '@aid/generator-sdk';
-import type { IR } from '@aid/ir';
-import { buildIR } from '@aid/ir';
-import { checkSpecText } from '@aid/spec';
+import type { Plan } from '@aid-framework/generator-sdk';
+import type { IR } from '@aid-framework/ir';
+import { buildIR } from '@aid-framework/ir';
+import { checkSpecText } from '@aid-framework/spec';
 
 import { planPyFastApi } from '../src/index.js';
 

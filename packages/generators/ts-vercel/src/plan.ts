@@ -8,9 +8,9 @@
  * silently drops a declared capability is worse than one that will not generate.
  */
 
-import type { GeneratedFile, Plan } from '@aid/generator-sdk';
-import { sortByPath } from '@aid/generator-sdk';
-import type { IR } from '@aid/ir';
+import type { GeneratedFile, Plan } from '@aid-framework/generator-sdk';
+import { sortByPath } from '@aid-framework/generator-sdk';
+import type { IR } from '@aid-framework/ir';
 import { emitAgents } from './emit/agents.js';
 import {
   emitBusinessIndex,

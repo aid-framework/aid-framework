@@ -1,7 +1,7 @@
 # `ts-vercel` generator
 
 The **Phase 1 second target**: turns the IR into a Next.js App Router service wired to the
-[`@aid/runtime`](../../../runtimes/typescript/) runtime. Generated code is declarative glue — zod schemas, model
+[`@aid-framework/runtime`](../../../runtimes/typescript/) runtime. Generated code is declarative glue — zod schemas, model
 aliases, prompt templates, route handlers, tool adapters, retrieval bindings, eval definitions — and every
 behaviour it calls already exists in the runtime ([`docs/design.md` §4](../../../docs/design.md), principle 1:
 *thin generated, fat runtime*).
@@ -72,7 +72,7 @@ would be the fail-open the capability discipline forbids: a target must not adve
   and retriever declarations, the `buildRetrievers` factory that resolves and validates the binding at startup,
   and one idempotent ingest entry point per retriever.
 - **Evals** — `evals/<eval>.ts` and `evals/index.ts`: the dataset loader, the stored baseline, the metric list and
-  the gate, delegating every statistic to `@aid/runtime`.
+  the gate, delegating every statistic to `@aid-framework/runtime`.
 - **`observability.ts`** and **`deps.ts`** — tracer setup and the dependency container that the route and the eval
   both build from, so the eval measures the prompt the app actually renders.
 

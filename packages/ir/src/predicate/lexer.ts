@@ -6,7 +6,7 @@
  * `case.metadata.<name>` one path rather than three identifiers.
  */
 
-import type { DiagnosticPath } from '@aid/spec';
+import type { DiagnosticPath } from '@aid-framework/spec';
 import {
   IR_DIAGNOSTIC_CODES,
   type IrDiagnostic,

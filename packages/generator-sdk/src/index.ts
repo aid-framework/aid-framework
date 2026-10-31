@@ -1,10 +1,10 @@
 /**
- * `@aid/generator-sdk` — the generator plugin contract, the `generated/` vs `business/`
+ * `@aid-framework/generator-sdk` — the generator plugin contract, the `generated/` vs `business/`
  * ownership model with its drift algorithm, and the determinism primitives that make
  * regeneration reproducible.
  *
  * Layering is one-directional: `spec ← ir ← generator-sdk ← generators ← cli`. This
- * package may import `@aid/ir` and `@aid/spec`, and neither of them may import this.
+ * package may import `@aid-framework/ir` and `@aid-framework/spec`, and neither of them may import this.
  * That is why a generator's capability declarations travel as data (see `targets.ts`
  * and `targetCapabilityDeclarations`) instead of the IR gate reaching in here.
  */

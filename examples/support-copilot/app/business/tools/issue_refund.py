@@ -1,4 +1,4 @@
-# Created once by AID Framework "@aid/generator-py-fastapi" v0.1.0. Edit freely.
+# Created once by AID Framework "@aid-framework/generator-py-fastapi" v0.1.0. Edit freely.
 # The generator never overwrites this file: it is yours. See aid.manifest.json.
 
 """The `issue_refund` tool. The generator wrote this file once and never rewrites it: fill in the

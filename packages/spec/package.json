@@ -1,8 +1,13 @@
 {
-  "name": "@aid/spec",
-  "version": "0.0.0",
+  "name": "@aid-framework/spec",
+  "version": "0.1.39",
   "description": "The AID Framework specification language: the spec v0.1 JSON Schema, a position-aware YAML parser, and structural validation.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aid-framework/aid-framework.git",
+    "directory": "packages/spec"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

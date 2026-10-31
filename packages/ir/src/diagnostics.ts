@@ -8,7 +8,7 @@ import {
   type DiagnosticInit,
   errorDiagnostic,
   warningDiagnostic,
-} from '@aid/spec';
+} from '@aid-framework/spec';
 
 /** Every diagnostic code this package emits. */
 export const IR_DIAGNOSTIC_CODES = {

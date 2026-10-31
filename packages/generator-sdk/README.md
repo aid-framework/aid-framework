@@ -1,13 +1,13 @@
-# `@aid/generator-sdk` — generator plugin interface
+# `@aid-framework/generator-sdk` — generator plugin interface
 
 Defines what a generator plugin *is*, so third-party and first-party targets are built the same way, and
 supplies the three things every generator needs to be safe to re-run: a manifest, an ownership/drift
 algorithm, and a determinism contract.
 
 Layering is strictly one-directional: `spec ← ir ← generator-sdk ← generators ← cli`. This package imports
-`@aid/ir` and `@aid/spec`; neither may import this one. That constraint is why a target's capability
+`@aid-framework/ir` and `@aid-framework/spec`; neither may import this one. That constraint is why a target's capability
 declaration travels as **data** (`targetCapabilityDeclarations`) rather than the IR's capability gate
-reaching in here — [`@aid/ir`'s README](../ir/README.md) documented the placeholder it ships, and this
+reaching in here — [`@aid-framework/ir`'s README](../ir/README.md) documented the placeholder it ships, and this
 package is the replacement for it.
 
 ## The generator manifest
@@ -25,13 +25,13 @@ than only diffed. It names the runtime the output is paired with and the shape o
 | `tracingBackend` | `TRACING_BACKENDS` — e.g. `otel-genai` |
 | `structuredOutput` | `STRUCTURED_OUTPUTS` — e.g. `pydantic-ai` |
 
-Validation returns diagnostics, never thrown exceptions, in the same compiler-style shape as `@aid/spec` and
-`@aid/ir`, so a user sees one report whatever layer rejected the input. Codes are namespaced `generator/*`
+Validation returns diagnostics, never thrown exceptions, in the same compiler-style shape as `@aid-framework/spec` and
+`@aid-framework/ir`, so a user sees one report whatever layer rejected the input. Codes are namespaced `generator/*`
 and never reuse a `spec/*` or `ir/*` code.
 
 ```ts
-import { parseManifestJson, validateGeneratorSet, checkIRSupport } from '@aid/generator-sdk';
-import { IR_VERSION } from '@aid/ir';
+import { parseManifestJson, validateGeneratorSet, checkIRSupport } from '@aid-framework/generator-sdk';
+import { IR_VERSION } from '@aid-framework/ir';
 
 const parsed = parseManifestJson(source);
 if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics, null, 2));
@@ -88,7 +88,7 @@ the file (`.aid-rej`, per `REJECTION_SUFFIX`), and naming both escapes — `aid 
 ownership of a file, `--force` to discard the edits — turns silent data loss into a decision.
 
 ```ts
-import { planRegeneration, regenerate, hasDrift } from '@aid/generator-sdk';
+import { planRegeneration, regenerate, hasDrift } from '@aid-framework/generator-sdk';
 
 const preview = planRegeneration(plan, { sink, manifest }); // pure: nothing is written
 if (hasDrift(preview)) {
@@ -116,7 +116,7 @@ generator name and version, IR version, spec version — plus one entry per file
 `unchanged` from `edited`.
 
 ```ts
-import { manifestFor, parseAidManifestJson, serializeAidManifest } from '@aid/generator-sdk';
+import { manifestFor, parseAidManifestJson, serializeAidManifest } from '@aid-framework/generator-sdk';
 
 const manifest = manifestFor(files, provenance);
 const text = serializeAidManifest(manifest);
@@ -133,7 +133,7 @@ randomness** in generated code. A single timestamp turns every regeneration into
 tests (§12 regime A) compare bytes.
 
 ```ts
-import { checkDeterminism } from '@aid/generator-sdk';
+import { checkDeterminism } from '@aid-framework/generator-sdk';
 
 const violations = checkDeterminism(files); // { path, pattern, line, excerpt }[]
 ```

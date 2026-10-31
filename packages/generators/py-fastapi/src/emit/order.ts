@@ -7,7 +7,7 @@
  * generator SDK) rather than by authoring order or by a locale-sensitive sort.
  */
 
-import { compareIds, sortById } from '@aid/generator-sdk';
+import { compareIds, sortById } from '@aid-framework/generator-sdk';
 import type {
   AgentShape,
   EmbeddingShape,
@@ -21,7 +21,7 @@ import type {
   RetrieverShape,
   ToolShape,
   VectorStoreShape,
-} from '@aid/ir';
+} from '@aid-framework/ir';
 
 export function orderedModels(ir: IR): ModelShape[] {
   return sortById(ir.models);

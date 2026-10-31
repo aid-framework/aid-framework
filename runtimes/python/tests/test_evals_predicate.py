@@ -1,6 +1,6 @@
 """The predicate evaluator and the ``assert`` metric.
 
-The grammar and the AST belong to ``@aid/ir``; what is pinned here is only the
+The grammar and the AST belong to ``@aid-framework/ir``; what is pinned here is only the
 interpreter of that AST and the metric that scores its verdict. Every "cannot be
 decided" row asserts an ``EvalError`` rather than a ``False`` score, because a
 predicate that silently fails closed would turn a broken spec into a red build for

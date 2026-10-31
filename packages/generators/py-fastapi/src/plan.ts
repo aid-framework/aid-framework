@@ -13,8 +13,8 @@
  * measurable without a filesystem.
  */
 
-import type { GeneratedFile, Plan } from '@aid/generator-sdk';
-import type { IR } from '@aid/ir';
+import type { GeneratedFile, Plan } from '@aid-framework/generator-sdk';
+import type { IR } from '@aid-framework/ir';
 
 import { emitAgents, hasAgents } from './emit/agents.js';
 import { emitBusinessToolSeed, emitContractsInit, emitToolContract } from './emit/contracts.js';

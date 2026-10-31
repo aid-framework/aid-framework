@@ -27,7 +27,7 @@
  * stream without losing its retrieval.
  */
 
-import type { IR, PipelineShape } from '@aid/ir';
+import type { IR, PipelineShape } from '@aid-framework/ir';
 
 /** The index of the one `generate` step, or `undefined` when there is not exactly one. */
 function generateIndex(pipeline: PipelineShape): number | undefined {

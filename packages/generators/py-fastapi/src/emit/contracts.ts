@@ -9,7 +9,7 @@
  * protocol is what makes a hand-written implementation safe to type-check against.
  */
 
-import type { ToolShape } from '@aid/ir';
+import type { ToolShape } from '@aid-framework/ir';
 
 import { annotationFor, className, moduleName } from '../names.js';
 import { INDENT, pythonString } from '../python.js';

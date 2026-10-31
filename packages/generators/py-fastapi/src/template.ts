@@ -8,7 +8,7 @@
  * keeps byte-exact golden output stable as the emitters change.
  */
 
-import { generatedBanner, normalizeText } from '@aid/generator-sdk';
+import { generatedBanner, normalizeText } from '@aid-framework/generator-sdk';
 
 import { GENERATOR_NAME, GENERATOR_VERSION } from './manifest.js';
 import { collapseWhitespace, INDENT, MAX_LINE } from './python.js';

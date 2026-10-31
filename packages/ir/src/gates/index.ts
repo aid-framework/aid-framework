@@ -10,7 +10,7 @@
  * can find.
  */
 
-import { hasErrors, sortDiagnostics } from '@aid/spec';
+import { hasErrors, sortDiagnostics } from '@aid-framework/spec';
 import { deriveRequiredCapabilities } from '../capabilities.js';
 import { phase0TargetCapabilities } from '../catalog/index.js';
 import type { IrDiagnostic } from '../diagnostics.js';

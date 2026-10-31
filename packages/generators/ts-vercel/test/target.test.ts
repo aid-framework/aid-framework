@@ -2,7 +2,7 @@
  * The declaration half of the plugin: the manifest, and the claims it makes.
  *
  * The manifest is written out in this package rather than aliased from
- * `@aid/generator-sdk` so that the SDK's declaration of the `ts-vercel` target and this
+ * `@aid-framework/generator-sdk` so that the SDK's declaration of the `ts-vercel` target and this
  * package's declaration of what it emits are two objects that have to be checked against
  * each other. That check lives here because it is the only place both are visible: the
  * SDK cannot import a generator, and a test that compared the SDK declaration with
@@ -22,8 +22,8 @@ import {
   parseManifest,
   supportsIR,
   validatePlan,
-} from '@aid/generator-sdk';
-import { IR_VERSION } from '@aid/ir';
+} from '@aid-framework/generator-sdk';
+import { IR_VERSION } from '@aid-framework/ir';
 import { describe, expect, it } from 'vitest';
 import { emitPipelineModule } from '../src/emit/pipelines.js';
 import {
@@ -82,13 +82,13 @@ function manifestDifferences(left: unknown, right: unknown, path = ''): string[]
 
 describe('the declaration', () => {
   it('is pinned literally, because there is no SDK declaration to compare against', () => {
-    // `py-fastapi` can compare its manifest against `@aid/generator-sdk`'s copy of it.
+    // `py-fastapi` can compare its manifest against `@aid-framework/generator-sdk`'s copy of it.
     // `ts-vercel` cannot: the SDK cannot depend on a generator that depends on the SDK,
     // so the CLI registry is the authority and the CLI's own suite checks the two agree.
     // What is left here is the literal, which fails on any drift in any field.
     expect(TS_VERCEL_MANIFEST).toEqual({
       manifestVersion: GENERATOR_MANIFEST_VERSION,
-      name: '@aid/generator-ts-vercel',
+      name: '@aid-framework/generator-ts-vercel',
       target: 'ts-vercel',
       version: '0.1.0',
       irRange: TS_VERCEL_MANIFEST.irRange,
@@ -110,7 +110,7 @@ describe('the declaration', () => {
 
   it('is versioned, named and bound to this target', () => {
     expect(TS_VERCEL_MANIFEST.manifestVersion).toBe(GENERATOR_MANIFEST_VERSION);
-    expect(TS_VERCEL_MANIFEST.name).toBe('@aid/generator-ts-vercel');
+    expect(TS_VERCEL_MANIFEST.name).toBe('@aid-framework/generator-ts-vercel');
     expect(TS_VERCEL_MANIFEST.target).toBe(TS_VERCEL_TARGET);
     expect(TS_VERCEL_MANIFEST.version.split('.')).toHaveLength(3);
   });
@@ -221,7 +221,7 @@ describe('the IR contract', () => {
       'new Date(',
       'Math.random',
       'crypto.randomUUID',
-      '@aid/spec',
+      '@aid-framework/spec',
     ];
 
     const sources = [...readTree(join(PACKAGE_ROOT, 'src'))].filter(([path]) =>

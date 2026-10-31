@@ -1,7 +1,7 @@
 /**
  * `generated/agents.ts`: the spec's agents, and the runtime built over them.
  *
- * The runtime ships the loop (`@aid/runtime`'s `AgentRuntime`); this module is wiring,
+ * The runtime ships the loop (`@aid-framework/runtime`'s `AgentRuntime`); this module is wiring,
  * not semantics. It carries two things and nothing else:
  *
  * 1. `DOCUMENT` -- the slice of the IR the agent runtime reads, as a TypeScript literal.
@@ -42,7 +42,14 @@
  * an override from being honoured by a pipeline and missed by an agent.
  */
 
-import type { AgentShape, GuardrailShape, IR, MemoryShape, ModelShape, ToolShape } from '@aid/ir';
+import type {
+  AgentShape,
+  GuardrailShape,
+  IR,
+  MemoryShape,
+  ModelShape,
+  ToolShape,
+} from '@aid-framework/ir';
 
 import { type EmittedFile, generated, paths } from './file.js';
 import { orderedGuardrails } from './guardrails.js';
@@ -252,7 +259,7 @@ const BUILD = [
 export function emitAgents(ir: IR): EmittedFile | undefined {
   if (!hasAgents(ir)) return undefined;
   const ids = orderedAgents(ir).map((agent) => tsValue(agent.id, ''));
-  const header = importStatement('@aid/runtime', [
+  const header = importStatement('@aid-framework/runtime', [
     { name: 'AgentRuntime', type: false },
     { name: 'fromIr', type: false },
   ]);

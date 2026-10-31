@@ -9,7 +9,7 @@
  * this package's rather than an earlier stage's.
  */
 
-import type { IR } from '@aid/ir';
+import type { IR } from '@aid-framework/ir';
 import { describe, expect, it } from 'vitest';
 
 import { planTsVercel } from '../src/index.js';

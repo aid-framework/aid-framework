@@ -15,7 +15,7 @@ import type {
   TypeField,
   TypeRef,
   TypeShape,
-} from '@aid/ir';
+} from '@aid-framework/ir';
 import type { StepBinding } from '../validate.js';
 import { bindingOf, ITERATION_INDEX, ITERATION_ITEM, sortedTypes } from '../validate.js';
 

@@ -17,7 +17,7 @@ import {
 describe('the Phase 0 generator set', () => {
   it('loads as a validated, versioned manifest', () => {
     expect(PY_FASTAPI_MANIFEST.manifestVersion).toBe(GENERATOR_MANIFEST_VERSION);
-    expect(PY_FASTAPI_MANIFEST.name).toBe('@aid/generator-py-fastapi');
+    expect(PY_FASTAPI_MANIFEST.name).toBe('@aid-framework/generator-py-fastapi');
     expect(PY_FASTAPI_MANIFEST.target).toBe(PY_FASTAPI_TARGET);
   });
 

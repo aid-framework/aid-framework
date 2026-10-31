@@ -1,14 +1,14 @@
-# `@aid/ir` — the intermediate representation
+# `@aid-framework/ir` — the intermediate representation
 
 The IR is the one stack-independent, normalized, versioned representation of an app that every generator
-consumes. Generators never read the spec: `@aid/ir` resolves it once, at build time, into something a
+consumes. Generators never read the spec: `@aid-framework/ir` resolves it once, at build time, into something a
 generator can emit code from directly.
 
-Layering is strictly one-directional. `@aid/ir` imports `@aid/spec`; `@aid/spec` never imports `@aid/ir`.
+Layering is strictly one-directional. `@aid-framework/ir` imports `@aid-framework/spec`; `@aid-framework/spec` never imports `@aid-framework/ir`.
 
 ## IR v0.1
 
-`IR_VERSION` is `"0.1.0"` and `specVersion` is carried through from `@aid/spec`, so a consumer can tell which
+`IR_VERSION` is `"0.1.0"` and `specVersion` is carried through from `@aid-framework/spec`, so a consumer can tell which
 spec revision produced an IR. The two are independent and neither implies the other.
 
 Every IR carries all 19 top-level keys of [`docs/design.md` §7.2](../../docs/design.md):
@@ -41,8 +41,8 @@ a runtime descriptor naming plain-async control flow.
 ## Building
 
 ```ts
-import { checkSpecText, formatDiagnostics } from '@aid/spec';
-import { buildIR, runGates, serializeIR } from '@aid/ir';
+import { checkSpecText, formatDiagnostics } from '@aid-framework/spec';
+import { buildIR, runGates, serializeIR } from '@aid-framework/ir';
 
 const checked = checkSpecText(source, { file: 'app.yaml' });
 if (!checked.ok) throw new Error(formatDiagnostics(checked.diagnostics));
@@ -67,7 +67,7 @@ console.log(serializeIR(ir));
 ## The six build-time gates
 
 All six run before code generation. They emit diagnostics, never exceptions, and use the same
-compiler-style shape as `@aid/spec`, so a user sees one report whatever layer rejected the input. IR codes
+compiler-style shape as `@aid-framework/spec`, so a user sees one report whatever layer rejected the input. IR codes
 are namespaced `ir/*` and never reuse a `spec/*` code.
 
 | Gate | Rejects |
@@ -85,7 +85,7 @@ Phase 0 suppresses the guardrail rule: there is no guardrail runtime to enforce 
 
 ### Capability declarations are injected
 
-`@aid/ir` must not import `packages/generator-sdk`, which does not exist yet, so a target's capability
+`@aid-framework/ir` must not import `packages/generator-sdk`, which does not exist yet, so a target's capability
 declaration arrives as a gate argument:
 
 ```ts
@@ -129,7 +129,7 @@ pnpm build
 pnpm test
 ```
 
-Fixtures live in `test/fixtures/`, so this package's tests do not depend on `@aid/spec`'s own fixtures.
+Fixtures live in `test/fixtures/`, so this package's tests do not depend on `@aid-framework/spec`'s own fixtures.
 `test/__golden__/` holds the committed canonical IR for the full fixture, compared byte for byte.
 
 Reference: [`docs/design.md` §7](../../docs/design.md).

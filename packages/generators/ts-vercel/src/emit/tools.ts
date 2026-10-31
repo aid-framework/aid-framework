@@ -7,7 +7,7 @@
  * generator ever needing to read it back.
  */
 
-import type { IR, ToolShape, TypeRef, TypeShape } from '@aid/ir';
+import type { IR, ToolShape, TypeRef, TypeShape } from '@aid-framework/ir';
 import { className, literal, memberAccess, propertyKey, toSnakeCase } from '../names.js';
 import { type EmittedFile, generated, paths, toolAdapterPath, toolContractPath } from './file.js';
 import { fits, importStatement, lines, moduleText, sortStatements } from './text.js';
@@ -143,7 +143,7 @@ export function emitToolAdapter(ir: IR, tool: ToolShape): EmittedFile {
   const constant = `${toSnakeCase(tool.id).toUpperCase()}_NAME`;
 
   const header = lines(
-    importStatement('@aid/runtime', [
+    importStatement('@aid-framework/runtime', [
       { name: 'Tool', type: false },
       { name: 'ToolParameters', type: true },
     ]),
@@ -191,7 +191,7 @@ export function emitToolsIndex(ir: IR): EmittedFile {
     { specifier: `./${tool.id}.js`, name: `as${className(tool.id)}`, type: false },
   ]);
   const header = [
-    importStatement('@aid/runtime', [
+    importStatement('@aid-framework/runtime', [
       { name: 'ConfigurationError', type: false },
       { name: 'Tool', type: true },
       { name: 'ToolExecutor', type: false },

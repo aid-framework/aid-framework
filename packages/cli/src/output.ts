@@ -8,7 +8,7 @@
  * passed alongside it, because two fields that can disagree eventually will.
  */
 
-import { formatDiagnostics } from '@aid/spec';
+import { formatDiagnostics } from '@aid-framework/spec';
 import type { CliContext } from './context.js';
 import type { CliDiagnostic } from './diagnostics.js';
 import type { ExitCode } from './exit.js';

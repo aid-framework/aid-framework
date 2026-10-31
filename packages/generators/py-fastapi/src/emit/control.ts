@@ -13,8 +13,8 @@
  * flat pipeline has no bound to read and should not carry a name for one.
  */
 
-import type { IR, PipelineShape, StepShape } from '@aid/ir';
-import { isCompositeStep, MAX_STEP_DEPTH } from '@aid/ir';
+import type { IR, PipelineShape, StepShape } from '@aid-framework/ir';
+import { isCompositeStep, MAX_STEP_DEPTH } from '@aid-framework/ir';
 
 import { pythonNumber } from '../python.js';
 import { assemble, HEADER, importFrom } from '../template.js';

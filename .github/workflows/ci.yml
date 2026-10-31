@@ -46,7 +46,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Before lint: check-config imports @aid/spec from dist.
+      # Before lint: check-config imports @aid-framework/spec from dist.
       - name: Build
         run: pnpm build
 
@@ -100,7 +100,7 @@ jobs:
       # This is the step that proves the runtime's tests are typechecked at all: they are
       # collected by tsconfig.tests.json, and without an entry there a type error in a
       # runtime test would pass unnoticed. It runs after Build because that config
-      # imports @aid/ir and @aid/spec from dist.
+      # imports @aid-framework/ir and @aid-framework/spec from dist.
       - name: Typecheck
         run: pnpm exec tsc -p tsconfig.tests.json
 

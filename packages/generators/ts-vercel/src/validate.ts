@@ -35,7 +35,7 @@ import {
   type ToolStep,
   type TypeRef,
   type TypeShape,
-} from '@aid/ir';
+} from '@aid-framework/ir';
 import { TS_VERCEL_MANIFEST, TS_VERCEL_TARGET } from './manifest.js';
 import { type Capability, modelCapabilityMember, providerAdapter } from './names.js';
 import { templatePlaceholders } from './placeholders.js';

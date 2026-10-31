@@ -6,7 +6,7 @@
  * network, and the canned answers are keyed by a phrase the rendered prompt contains.
  */
 
-import { FakeProvider, type Retriever, type ToolExecutor } from '@aid/runtime';
+import { FakeProvider, type Retriever, type ToolExecutor } from '@aid-framework/runtime';
 
 import { buildDeps, type Deps } from '../app/generated/deps.js';
 import { buildGateway } from '../app/generated/gateway/index.js';

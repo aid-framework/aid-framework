@@ -3,7 +3,7 @@
  * offending span. Never throws: malformed input yields tokens plus diagnostics.
  */
 
-import type { DiagnosticPath } from '@aid/spec';
+import type { DiagnosticPath } from '@aid-framework/spec';
 import {
   IR_DIAGNOSTIC_CODES,
   type IrDiagnostic,

@@ -14,7 +14,7 @@
  * pretending to be one command with a flag.
  */
 
-import { countBySeverity } from '@aid/spec';
+import { countBySeverity } from '@aid-framework/spec';
 
 import type { CliContext } from '../context.js';
 import { EXIT_FAILURE, EXIT_OK } from '../exit.js';

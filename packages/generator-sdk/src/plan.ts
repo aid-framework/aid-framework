@@ -9,8 +9,8 @@
  * content on disk still match the hash recorded from the last generation?
  */
 
-import type { IR } from '@aid/ir';
-import { sortDiagnostics } from '@aid/spec';
+import type { IR } from '@aid-framework/ir';
+import { sortDiagnostics } from '@aid-framework/spec';
 
 import {
   GENERATOR_DIAGNOSTIC_CODES,

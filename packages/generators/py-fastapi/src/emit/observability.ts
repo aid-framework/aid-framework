@@ -8,7 +8,7 @@
  * what had no runtime name to land in.
  */
 
-import type { IR } from '@aid/ir';
+import type { IR } from '@aid-framework/ir';
 
 import {
   GENERATOR_NAME,

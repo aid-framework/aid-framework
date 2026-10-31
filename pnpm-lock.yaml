@@ -196,7 +196,7 @@ importers:
 
   examples/support-copilot-ts:
     dependencies:
-      '@aid/runtime':
+      '@aid-framework/runtime':
         specifier: workspace:*
         version: link:../../runtimes/typescript
       zod:
@@ -212,19 +212,19 @@ importers:
 
   packages/cli:
     dependencies:
-      '@aid/generator-py-fastapi':
+      '@aid-framework/generator-py-fastapi':
         specifier: workspace:*
         version: link:../generators/py-fastapi
-      '@aid/generator-sdk':
+      '@aid-framework/generator-sdk':
         specifier: workspace:*
         version: link:../generator-sdk
-      '@aid/generator-ts-vercel':
+      '@aid-framework/generator-ts-vercel':
         specifier: workspace:*
         version: link:../generators/ts-vercel
-      '@aid/ir':
+      '@aid-framework/ir':
         specifier: workspace:*
         version: link:../ir
-      '@aid/spec':
+      '@aid-framework/spec':
         specifier: workspace:*
         version: link:../spec
     devDependencies:
@@ -234,10 +234,10 @@ importers:
 
   packages/generator-sdk:
     dependencies:
-      '@aid/ir':
+      '@aid-framework/ir':
         specifier: workspace:*
         version: link:../ir
-      '@aid/spec':
+      '@aid-framework/spec':
         specifier: workspace:*
         version: link:../spec
     devDependencies:
@@ -247,13 +247,13 @@ importers:
 
   packages/generators/py-fastapi:
     dependencies:
-      '@aid/generator-sdk':
+      '@aid-framework/generator-sdk':
         specifier: workspace:*
         version: link:../../generator-sdk
-      '@aid/ir':
+      '@aid-framework/ir':
         specifier: workspace:*
         version: link:../../ir
-      '@aid/spec':
+      '@aid-framework/spec':
         specifier: workspace:*
         version: link:../../spec
     devDependencies:
@@ -263,14 +263,14 @@ importers:
 
   packages/generators/ts-vercel:
     dependencies:
-      '@aid/generator-sdk':
+      '@aid-framework/generator-sdk':
         specifier: workspace:*
         version: link:../../generator-sdk
-      '@aid/ir':
+      '@aid-framework/ir':
         specifier: workspace:*
         version: link:../../ir
     devDependencies:
-      '@aid/spec':
+      '@aid-framework/spec':
         specifier: workspace:*
         version: link:../../spec
       '@types/node':
@@ -279,7 +279,7 @@ importers:
 
   packages/ir:
     dependencies:
-      '@aid/spec':
+      '@aid-framework/spec':
         specifier: workspace:*
         version: link:../spec
     devDependencies:

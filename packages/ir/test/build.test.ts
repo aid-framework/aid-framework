@@ -3,7 +3,7 @@ import {
   SPEC_VERSION,
   SUPPORTED_SECTIONS,
   SUPPORTED_STEP_KINDS,
-} from '@aid/spec';
+} from '@aid-framework/spec';
 import { describe, expect, it } from 'vitest';
 
 import type { BuildContext, StepShape } from '../src/index.js';

@@ -1,12 +1,12 @@
 /**
- * Tests for the publish detector, which decides whether the dormant publish workflow
- * publishes anything at all.
+ * Tests for the publish detector, which decides what the publish workflow may ship.
  *
- * Two properties matter. The first is that today it finds nothing, run against the real
- * repository rather than a fixture, so that a real manifest drifting into publishability
- * is what breaks this test. The second is that it is not a stub that always finds nothing:
- * the fixture cases show each rule failing to exclude, and the real repository is probed
- * with a version that *should* match, so a detector that never fires cannot pass.
+ * Two properties matter. The first is that, run against the real repository, it publishes
+ * exactly the eight artifacts `release.config.json` lists and nothing else -- so a manifest
+ * drifting in or out of publishability breaks this test, not a fixture. The second is that
+ * it is not a stub that always finds everything: the fixture cases show each rule excluding
+ * a manifest on its own, and the real repository is probed one version ahead of the stamped
+ * manifests, so a detector that cannot fail cannot pass.
  */
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -24,6 +24,22 @@ import {
 } from './detect-publishable.mjs';
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
+
+/**
+ * The eight artifacts the release publishes. Spelled out rather than derived from
+ * `release.config.json`, so dropping or adding a package has to be a conscious edit here
+ * too. Already sorted; the detector's order comes from a directory walk.
+ */
+const RELEASE_ARTIFACTS = [
+  'packages/cli/package.json',
+  'packages/generator-sdk/package.json',
+  'packages/generators/py-fastapi/package.json',
+  'packages/generators/ts-vercel/package.json',
+  'packages/ir/package.json',
+  'packages/spec/package.json',
+  'runtimes/python/pyproject.toml',
+  'runtimes/typescript/package.json',
+];
 
 /** @type {string[]} */
 const temporaryRoots = [];
@@ -63,42 +79,41 @@ afterEach(() => {
 });
 
 describe('detect against this repository', () => {
-  it('finds nothing publishable for a version no manifest declares', () => {
-    const detection = detect({ root: repoRoot, version: '0.1.5' });
-
-    expect(publishablePaths(detection)).toEqual([]);
-    // Not vacuous: it saw the manifests and rejected them for a rule each.
-    expect(detection.candidates.length).toBeGreaterThan(5);
-    expect(detection.candidates.some((candidate) => candidate.status === 'private')).toBe(true);
-    expect(detection.candidates.some((candidate) => candidate.status === 'placeholder')).toBe(true);
-    expect(detection.candidates.some((candidate) => candidate.status === 'outside-workspace')).toBe(
-      true,
-    );
-  });
-
-  it('finds the runtime when the released version is the one it declares', () => {
+  it('publishes every artifact at the version the manifests all declare', () => {
     const { version } = parseProjectTable(
       readFileSync(join(repoRoot, 'runtimes', 'python', 'pyproject.toml'), 'utf8'),
     );
+    expect(version).not.toBeNull();
+    expect(version).not.toBe('0.0.0');
 
     const detection = detect({ root: repoRoot, version });
-    const shipped = detection.publishable;
 
-    // Exactly one artifact, and it is the runtime. This is the assertion that would fail if
-    // the detector were a stub that never finds anything -- and, in reverse, the one that
-    // fires the day a real release lines a manifest up with a tag.
-    expect(shipped.map((candidate) => candidate.path)).toEqual(['runtimes/python/pyproject.toml']);
-    const [runtime] = shipped;
-    expect(runtime?.registry).toBe('pypi');
-    expect(runtime?.name).toBe('aid-runtime-python');
-    // The examples declare the same version and must still not ship. There are three of
-    // them now, and they are refused for two different reasons -- both Python examples sit
-    // outside the workspace, the TypeScript one is a workspace member marked `private` --
-    // so this asserts the set rather than whichever example the scan happened to reach
-    // first.
+    // `stamp` writes one version into every manifest, so a disagreement here is exactly
+    // the drift that would silence the release.
+    expect(publishablePaths(detection).sort()).toEqual(RELEASE_ARTIFACTS);
+  });
+
+  it('refuses every artifact when the tag is ahead of the stamped manifests', () => {
+    const detection = detect({ root: repoRoot, version: '99.0.0' });
+
+    expect(publishablePaths(detection)).toEqual([]);
+    // Not vacuous: each release artifact was seen and refused by claim 3, not missed.
+    const released = detection.candidates.filter((candidate) =>
+      RELEASE_ARTIFACTS.includes(candidate.path),
+    );
+    expect(released).toHaveLength(RELEASE_ARTIFACTS.length);
+    expect(released.every((candidate) => candidate.status === 'unreleased-version')).toBe(true);
+  });
+
+  it('never publishes an example, whatever the released version is', () => {
+    const detection = detect({ root: repoRoot, version: '99.0.0' });
+    // Three examples, refused for two different reasons: both Python examples sit outside
+    // the workspace, the TypeScript one is a workspace member marked `private`. Asserting
+    // the set keeps this independent of whichever example the scan reaches first.
     const exampleCandidates = detection.candidates.filter((candidate) =>
       candidate.path.startsWith('examples/'),
     );
+
     expect(exampleCandidates.map((candidate) => candidate.path).sort()).toEqual([
       'examples/guarded-reply/pyproject.toml',
       'examples/support-copilot-ts/package.json',
@@ -189,6 +204,16 @@ describe('detect over a fixture workspace', () => {
     expect(publishablePaths(detection)).toEqual([]);
     const [candidate] = detection.candidates;
     expect(candidate?.status).toBe('private');
+  });
+
+  it('skips the 0.0.0 placeholder even when that is the released version', () => {
+    const root = scratch();
+    write(root, 'packages/thing/package.json', JSON.stringify({ name: 'thing', version: '0.0.0' }));
+
+    const detection = detect({ root, version: '0.0.0' });
+
+    expect(publishablePaths(detection)).toEqual([]);
+    expect(detection.candidates[0]?.status).toBe('placeholder');
   });
 
   it('skips a manifest whose version is not the release', () => {

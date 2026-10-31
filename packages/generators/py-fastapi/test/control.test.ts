@@ -27,8 +27,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { MAX_STEP_DEPTH as IR_DEPTH, isCompositeStep } from '@aid/ir';
-import { MAX_STEP_DEPTH as SPEC_DEPTH } from '@aid/spec';
+import { MAX_STEP_DEPTH as IR_DEPTH, isCompositeStep } from '@aid-framework/ir';
+import { MAX_STEP_DEPTH as SPEC_DEPTH } from '@aid-framework/spec';
 import { describe, expect, it } from 'vitest';
 
 import {

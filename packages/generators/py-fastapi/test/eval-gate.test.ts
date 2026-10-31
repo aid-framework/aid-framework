@@ -16,9 +16,9 @@
  * Every block ends with a mutation that has been shown to be caught.
  */
 
-import { scanForNonDeterminism } from '@aid/generator-sdk';
+import { scanForNonDeterminism } from '@aid-framework/generator-sdk';
 
-import type { EvalShape } from '@aid/ir';
+import type { EvalShape } from '@aid-framework/ir';
 import { describe, expect, it } from 'vitest';
 
 import {

@@ -24,7 +24,7 @@
  * because deletion is the one operation with no recovery.
  */
 
-import { sortDiagnostics } from '@aid/spec';
+import { sortDiagnostics } from '@aid-framework/spec';
 
 import {
   AID_MANIFEST_VERSION,

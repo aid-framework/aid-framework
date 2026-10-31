@@ -1,8 +1,13 @@
 {
-  "name": "@aid/runtime",
-  "version": "0.0.0",
+  "name": "@aid-framework/runtime",
+  "version": "0.1.39",
   "description": "AID runtime for TypeScript: pinned-model gateway, prompt registry, tool dispatch, pipelines, structured output, eval gates and retrieval.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aid-framework/aid-framework.git",
+    "directory": "runtimes/typescript"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

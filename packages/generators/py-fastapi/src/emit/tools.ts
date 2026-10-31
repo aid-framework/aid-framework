@@ -9,7 +9,7 @@
  * `Protocol` in `app/generated/contracts`.
  */
 
-import type { IR, ToolShape } from '@aid/ir';
+import type { IR, ToolShape } from '@aid-framework/ir';
 
 import { className, moduleName } from '../names.js';
 import { INDENT, pythonStatement, pythonString } from '../python.js';

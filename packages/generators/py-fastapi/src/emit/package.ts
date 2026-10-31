@@ -9,7 +9,7 @@
  * files it may not overwrite, so it does not.
  */
 
-import type { IR } from '@aid/ir';
+import type { IR } from '@aid-framework/ir';
 
 import { assemble, HEADER } from '../template.js';
 import type { EmittedFile } from './file.js';

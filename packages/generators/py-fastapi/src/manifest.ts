@@ -2,7 +2,7 @@
  * This generator's own manifest declaration.
  *
  * The declaration is written out here rather than re-exported from
- * `@aid/generator-sdk`'s `targets.ts`, because the two are checked against each other:
+ * `@aid-framework/generator-sdk`'s `targets.ts`, because the two are checked against each other:
  * the SDK ships the target declarations the IR's capability gate consumes, and this
  * package ships the one it actually emits. A test asserts the two are deeply equal, so
  * either side drifting is a failing check rather than a silent divergence. If this
@@ -39,15 +39,15 @@ import {
   type GeneratorManifestInput,
   parseManifest,
   supportsIR,
-} from '@aid/generator-sdk';
-import { IR_VERSION } from '@aid/ir';
-import { formatDiagnostics } from '@aid/spec';
+} from '@aid-framework/generator-sdk';
+import { IR_VERSION } from '@aid-framework/ir';
+import { formatDiagnostics } from '@aid-framework/spec';
 
 export const PY_FASTAPI_TARGET = 'py-fastapi';
 
 export const PY_FASTAPI_MANIFEST_INPUT: GeneratorManifestInput = {
   manifestVersion: 1,
-  name: '@aid/generator-py-fastapi',
+  name: '@aid-framework/generator-py-fastapi',
   target: PY_FASTAPI_TARGET,
   version: '0.1.0',
   irRange: `^${IR_VERSION}`,
