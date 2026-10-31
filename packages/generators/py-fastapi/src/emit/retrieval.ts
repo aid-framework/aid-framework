@@ -19,7 +19,7 @@
  * passages should rank -- belongs to `app/business`, and the generator never writes it.
  */
 
-import type { IR, RetrieverShape, Trait } from '@aid/ir';
+import type { IR, RetrieverShape, Trait } from '@aid-framework/ir';
 
 import { moduleName } from '../names.js';
 import { INDENT, pythonNumber, pythonStatement, pythonString } from '../python.js';

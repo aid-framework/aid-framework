@@ -1,5 +1,5 @@
 /**
- * `@aid/ir` — the packed intermediate representation, its builder, its build-time
+ * `@aid-framework/ir` — the packed intermediate representation, its builder, its build-time
  * gates, the canonical serializer, and the PolicyExpr front end.
  *
  * The public entry point layer 3 (`generator-sdk`) consumes: `buildIR` turns a

@@ -1,7 +1,7 @@
 /**
  * `aid gen` — compile the spec and reconcile the tree with it.
  *
- * Every decision about *what* changes belongs to `@aid/generator-sdk`: `planRegeneration`
+ * Every decision about *what* changes belongs to `@aid-framework/generator-sdk`: `planRegeneration`
  * decides the actions, `regenerate` applies them, and the drift rule that refuses to
  * overwrite an edited generated file is the SDK's. The CLI decides four things and
  * nothing else: which target, which spec, whether to write, and what the run's exit code
@@ -17,7 +17,7 @@
  * those as drift even though the generator was the one that wrote them.
  */
 
-import type { RegenerationReport } from '@aid/generator-sdk';
+import type { RegenerationReport } from '@aid-framework/generator-sdk';
 import {
   createNodeSink,
   formatRegenerationSummary,
@@ -26,8 +26,8 @@ import {
   regenerate,
   rejectionPath,
   serializeAidManifest,
-} from '@aid/generator-sdk';
-import { hasErrors, sortDiagnostics } from '@aid/spec';
+} from '@aid-framework/generator-sdk';
+import { hasErrors, sortDiagnostics } from '@aid-framework/spec';
 
 import type { CliContext } from '../context.js';
 import type { CliDiagnostic } from '../diagnostics.js';

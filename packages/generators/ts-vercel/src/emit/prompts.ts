@@ -7,7 +7,7 @@
  * never-overwritten tier, so changing a prompt's wording does not touch generated code.
  */
 
-import type { IR, PromptShape } from '@aid/ir';
+import type { IR, PromptShape } from '@aid-framework/ir';
 import { literal, toSnakeCase } from '../names.js';
 import { runtimeTemplate } from '../placeholders.js';
 import { type EmittedFile, generated, paths, promptPath } from './file.js';
@@ -31,7 +31,7 @@ function promptModule(prompt: PromptShape): string {
     fields.push(`  required: [${required.map((name) => literal(name)).join(', ')}],`);
   }
   return [
-    importStatement('@aid/runtime', [{ name: 'PromptTemplate', type: false }]),
+    importStatement('@aid-framework/runtime', [{ name: 'PromptTemplate', type: false }]),
     '',
     `export const ${promptConstant(prompt.id)} = new PromptTemplate({`,
     ...fields,
@@ -47,7 +47,7 @@ export function emitPromptModules(ir: IR): EmittedFile[] {
 
 export function emitPromptsIndex(ir: IR): EmittedFile {
   const header = [
-    importStatement('@aid/runtime', [{ name: 'PromptRegistry', type: false }]),
+    importStatement('@aid-framework/runtime', [{ name: 'PromptRegistry', type: false }]),
     importStatement('../../business/prompts/index.js', [{ name: 'OVERRIDES', type: false }]),
     ...ir.prompts.map((prompt) =>
       importStatement(`./${toSnakeCase(prompt.id)}.js`, [

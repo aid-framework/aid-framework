@@ -1,4 +1,4 @@
-import { SPEC_VERSION, SUPPORTED_SECTIONS } from '@aid/spec';
+import { SPEC_VERSION, SUPPORTED_SECTIONS } from '@aid-framework/spec';
 import { describe, expect, it } from 'vitest';
 
 import {

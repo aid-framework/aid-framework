@@ -12,7 +12,7 @@
  * `stripTrailingSlashes` is an O(N) backward loop for the same reason.
  */
 
-import type { TypeRef } from '@aid/ir';
+import type { TypeRef } from '@aid-framework/ir';
 
 /**
  * Names a source file cannot use as an identifier. A module named `import` is a
@@ -196,7 +196,7 @@ export function annotationFor(ref: TypeRef, optional: boolean): string {
  * The IR's model capability vocabulary mapped onto the runtime's `Capability`
  * enum.
  *
- * The two vocabularies are deliberately different sizes: `@aid/ir` says what a model
+ * The two vocabularies are deliberately different sizes: `@aid-framework/ir` says what a model
  * supports (`vision`, `audio`, `rerank`, ...) and the runtime names only what it can
  * act on. A declared capability with no counterpart is therefore not an error -- the
  * pinned spec advertises the intersection -- but it is *recorded* rather than

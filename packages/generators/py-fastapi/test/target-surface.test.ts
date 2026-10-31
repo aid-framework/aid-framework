@@ -20,9 +20,9 @@
  * tests prove what was written, the example tests prove the runtime accepts it.
  */
 
-import type { IR } from '@aid/ir';
-import { buildIR, runGates } from '@aid/ir';
-import { checkSpecText } from '@aid/spec';
+import type { IR } from '@aid-framework/ir';
+import { buildIR, runGates } from '@aid-framework/ir';
+import { checkSpecText } from '@aid-framework/spec';
 import { describe, expect, it } from 'vitest';
 
 import { PY_FASTAPI_MANIFEST, PY_FASTAPI_TARGET, planPyFastApi } from '../src/index.js';

@@ -7,7 +7,14 @@
  * type, so there is exactly one definition of each shape per generated app.
  */
 
-import type { IR, StepInputValue, StepShape, TypeField, TypeRef, TypeShape } from '@aid/ir';
+import type {
+  IR,
+  StepInputValue,
+  StepShape,
+  TypeField,
+  TypeRef,
+  TypeShape,
+} from '@aid-framework/ir';
 import { className, literal, zodPrimitive } from '../names.js';
 import { type EmittedFile, generated, paths } from './file.js';
 import { moduleText } from './text.js';

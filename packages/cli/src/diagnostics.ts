@@ -1,8 +1,8 @@
 /**
  * Diagnostics, the one currency every layer already speaks.
  *
- * `@aid/spec` defines the shape and the renderer, and `@aid/ir` and
- * `@aid/generator-sdk` re-declare the same shape nominally with their own closed code
+ * `@aid-framework/spec` defines the shape and the renderer, and `@aid-framework/ir` and
+ * `@aid-framework/generator-sdk` re-declare the same shape nominally with their own closed code
  * unions. The CLI reads all of them through the widened `Diagnostic<string>` view and
  * renders them with the spec package's renderer: it renames no code, re-ranks no
  * severity, and re-checks nothing a gate already decided.
@@ -13,8 +13,8 @@
  * produced a code from its shape, which is the point.
  */
 
-import type { Diagnostic } from '@aid/spec';
-import { errorDiagnostic, warningDiagnostic } from '@aid/spec';
+import type { Diagnostic } from '@aid-framework/spec';
+import { errorDiagnostic, warningDiagnostic } from '@aid-framework/spec';
 
 /** The shared diagnostic shape, widened over the code union. */
 export type CliDiagnostic = Diagnostic<string>;

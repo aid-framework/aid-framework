@@ -1,18 +1,18 @@
 /**
- * Diagnostics for the generator layer. Reuses `@aid/spec`'s `Diagnostic` shape so the
+ * Diagnostics for the generator layer. Reuses `@aid-framework/spec`'s `Diagnostic` shape so the
  * parser, the IR gates, and this layer print one report, while this layer keeps its own
  * closed code union (`generator/*`) for typo checking. Codes are part of the public
  * contract; renaming one is a breaking change.
  *
- * `@aid/spec` locates a diagnostic by a path *inside* a document. This layer's failures
+ * `@aid-framework/spec` locates a diagnostic by a path *inside* a document. This layer's failures
  * are mostly about a whole file — a drifted `generated/` file, an unplanned path — so the
  * helpers here take a flat string: either a repo-relative file path or a dotted location
  * such as `output.generatedDir`. It is passed through as a single path segment, which
  * renders identically and keeps this layer from inventing index arithmetic it does not have.
  */
 
-import type { Diagnostic } from '@aid/spec';
-import { errorDiagnostic, warningDiagnostic } from '@aid/spec';
+import type { Diagnostic } from '@aid-framework/spec';
+import { errorDiagnostic, warningDiagnostic } from '@aid-framework/spec';
 
 export const GENERATOR_DIAGNOSTIC_CODES = {
   manifestNotAMapping: 'generator/manifest-not-a-mapping',

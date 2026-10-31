@@ -10,7 +10,7 @@
  * override without a second registry.
  */
 
-import type { IR, PromptShape } from '@aid/ir';
+import type { IR, PromptShape } from '@aid-framework/ir';
 
 import { constantName, moduleName } from '../names.js';
 import { interpolate } from '../placeholders.js';

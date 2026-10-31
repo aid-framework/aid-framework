@@ -136,7 +136,9 @@ describe('the emitted module', () => {
     // one name longer than it was and the single-line form no longer fits. Asserting the
     // three names plus the type keeps the pin on the module's agreement with the runtime
     // rather than on the formatter's wrapping.
-    const [runtimeImport] = module.split('\n\n').filter((block) => block.includes('@aid/runtime'));
+    const [runtimeImport] = module
+      .split('\n\n')
+      .filter((block) => block.includes('@aid-framework/runtime'));
     expect(runtimeImport).toContain('ConcurrencyLimiter');
     expect(runtimeImport).toContain('LIMITER_KEY');
     expect(runtimeImport).toContain('PRINCIPAL_KEY');

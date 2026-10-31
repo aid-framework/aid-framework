@@ -1,5 +1,5 @@
 /**
- * `@aid/cli` - the `aid` command: init, validate, gen, ingest and eval.
+ * `@aid-framework/cli` - the `aid` command: init, validate, gen, ingest and eval.
  *
  * The CLI is glue. Every judgement it reports -- whether a spec parses, what the IR is,
  * what a target can emit, which generated file was hand-edited, whether an eval regressed

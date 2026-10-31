@@ -22,7 +22,7 @@
  * predicate is answered rather than left undefined.
  */
 
-import type { IR } from '@aid/ir';
+import type { IR } from '@aid-framework/ir';
 import { type EmittedFile, generated, paths } from './file.js';
 import { importStatement, moduleText } from './text.js';
 
@@ -44,7 +44,7 @@ export function concurrencyLimit(ir: IR): number {
 
 /** The module body. */
 export function controlModule(ir: IR): string {
-  const imports = importStatement('@aid/runtime', [
+  const imports = importStatement('@aid-framework/runtime', [
     { name: 'ConcurrencyLimiter', type: false },
     { name: 'LIMITER_KEY', type: false },
     { name: 'PipelineContext', type: true },

@@ -11,7 +11,7 @@
  * lowest id wins, so two runs -- or two machines -- produce the same file.
  */
 
-import type { TypeShape } from '@aid/ir';
+import type { TypeShape } from '@aid-framework/ir';
 
 import { require } from './require.js';
 

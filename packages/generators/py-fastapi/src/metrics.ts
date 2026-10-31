@@ -24,7 +24,7 @@
  * messages) is reachable from a unit test.
  */
 
-import type { EvalShape, MetricShape, TypeRef } from '@aid/ir';
+import type { EvalShape, MetricShape, TypeRef } from '@aid-framework/ir';
 
 import { pythonString } from './python.js';
 

@@ -5,7 +5,7 @@
  * compared against a golden tree before anything touches the user's disk.
  */
 
-import { managedRoots } from '@aid/generator-sdk';
+import { managedRoots } from '@aid-framework/generator-sdk';
 
 import { PY_FASTAPI_MANIFEST } from '../manifest.js';
 

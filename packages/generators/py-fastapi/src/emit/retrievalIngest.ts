@@ -16,7 +16,7 @@
  * to run it under a bare install with no extras, without side effects.
  */
 
-import type { IR, RetrieverShape } from '@aid/ir';
+import type { IR, RetrieverShape } from '@aid-framework/ir';
 
 import { moduleName } from '../names.js';
 import { INDENT, pythonStatement, pythonString } from '../python.js';

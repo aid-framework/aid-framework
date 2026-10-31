@@ -106,7 +106,7 @@ describe('policy', () => {
   });
 
   it('agrees with the IR on the builtin set and arity', () => {
-    // The runtime carries its own copy because it may not import `@aid/*`; the IR owns
+    // The runtime carries its own copy because it may not import `@aid-framework/*`; the IR owns
     // the grammar, so the two are held together here instead of diverging silently.
     const source = readFileSync(join(HERE, '../../../packages/ir/src/policy/ast.ts'), 'utf8');
     const declared = /export const POLICY_BUILTINS = \[([^\]]+)\]/
@@ -530,7 +530,7 @@ describe('the reserved names', () => {
   });
 
   it('agree with the spec layer, which refuses a binding on one of them', () => {
-    // The two runtimes each carry their own copy -- neither may import `@aid/*` -- so
+    // The two runtimes each carry their own copy -- neither may import `@aid-framework/*` -- so
     // the spec constant and the runtime constant are held together here instead.
     const source = readFileSync(join(HERE, '../../../packages/spec/src/validate.ts'), 'utf8');
     const match = /export const MAX_STEP_DEPTH = (\d+);/.exec(source);

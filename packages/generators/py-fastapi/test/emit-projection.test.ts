@@ -27,7 +27,7 @@
 
 import { readFileSync } from 'node:fs';
 
-import type { TypeRef, TypeShape } from '@aid/ir';
+import type { TypeRef, TypeShape } from '@aid-framework/ir';
 import { describe, expect, it } from 'vitest';
 
 import { emitStep, Pipeline, PipelineContext } from '../../../../runtimes/typescript/src/index.js';

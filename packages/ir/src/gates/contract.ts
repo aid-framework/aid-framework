@@ -7,7 +7,7 @@
  * passing one — that is how an unpublished rule becomes a false sense of safety.
  */
 
-import type { DiagnosticInit } from '@aid/spec';
+import type { DiagnosticInit } from '@aid-framework/spec';
 import type { TargetCapabilityDeclarations } from '../catalog/index.js';
 import {
   type IrDiagnostic,

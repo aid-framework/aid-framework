@@ -36,9 +36,21 @@
     }
   ],
   "packages": [
-    { "name": "@aid/spec", "path": "packages/spec", "registry": "npm" },
-    { "name": "@aid/ir", "path": "packages/ir", "registry": "npm" },
-    { "name": "@aid/generator-sdk", "path": "packages/generator-sdk", "registry": "npm" },
+    { "name": "@aid-framework/spec", "path": "packages/spec", "registry": "npm" },
+    { "name": "@aid-framework/ir", "path": "packages/ir", "registry": "npm" },
+    { "name": "@aid-framework/generator-sdk", "path": "packages/generator-sdk", "registry": "npm" },
+    {
+      "name": "@aid-framework/generator-py-fastapi",
+      "path": "packages/generators/py-fastapi",
+      "registry": "npm"
+    },
+    {
+      "name": "@aid-framework/generator-ts-vercel",
+      "path": "packages/generators/ts-vercel",
+      "registry": "npm"
+    },
+    { "name": "@aid-framework/cli", "path": "packages/cli", "registry": "npm" },
+    { "name": "@aid-framework/runtime", "path": "runtimes/typescript", "registry": "npm" },
     { "name": "aid-runtime-python", "path": "runtimes/python", "registry": "pypi" }
   ]
 }

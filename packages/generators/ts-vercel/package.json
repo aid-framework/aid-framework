@@ -1,9 +1,13 @@
 {
-  "name": "@aid/generator-ts-vercel",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@aid-framework/generator-ts-vercel",
+  "version": "0.1.39",
   "description": "AID generator for a Next.js App Router (Vercel) TypeScript target.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aid-framework/aid-framework.git",
+    "directory": "packages/generators/ts-vercel"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -29,11 +33,11 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@aid/generator-sdk": "workspace:*",
-    "@aid/ir": "workspace:*"
+    "@aid-framework/generator-sdk": "workspace:*",
+    "@aid-framework/ir": "workspace:*"
   },
   "devDependencies": {
-    "@aid/spec": "workspace:*",
+    "@aid-framework/spec": "workspace:*",
     "@types/node": "^26.6.5"
   }
 }

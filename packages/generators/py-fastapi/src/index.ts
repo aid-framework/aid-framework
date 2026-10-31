@@ -1,5 +1,5 @@
 /**
- * `@aid/generator-py-fastapi`: the Phase 0 Python target.
+ * `@aid-framework/generator-py-fastapi`: the Phase 0 Python target.
  *
  * The single input is the IR. Nothing here reads a spec file, a template directory or
  * the filesystem at all: `plan` is a pure function of the IR, and the runtime library
@@ -13,7 +13,7 @@
  * generator it then runs cannot disagree.
  */
 
-import type { Generator, Plan } from '@aid/generator-sdk';
+import type { Generator, Plan } from '@aid-framework/generator-sdk';
 
 import { PY_FASTAPI_MANIFEST } from './manifest.js';
 import { planPyFastApi } from './plan.js';

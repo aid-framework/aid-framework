@@ -8,7 +8,7 @@
  * fake provider instead.
  */
 
-import type { IR } from '@aid/ir';
+import type { IR } from '@aid-framework/ir';
 
 import { INDENT } from '../python.js';
 import { assemble, HEADER, importBlock, importFrom } from '../template.js';

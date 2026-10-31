@@ -29,7 +29,7 @@ import type {
   StepShape,
   ToolStep,
   TypeField,
-} from '@aid/ir';
+} from '@aid-framework/ir';
 import { TsVercelPlanError } from '../errors.js';
 import { className, literal, memberAccess, propertyKey, toSnakeCase } from '../names.js';
 import { problem, stepUnsupported } from '../validate.js';
@@ -999,7 +999,7 @@ export function emitPipelineModule(ir: IR, pipeline: PipelineShape): EmittedFile
     { specifier: '../requests.js', names: [{ name: contextType, type: true }] },
   ].sort((a, b) => (a.specifier < b.specifier ? -1 : a.specifier > b.specifier ? 1 : 0));
   const header = [
-    importStatement('@aid/runtime', [
+    importStatement('@aid-framework/runtime', [
       ...sortedNames([...new Set(runtimeValues)]).map((name) => ({ name, type: false })),
       ...(usesRetrieved && !hasRerank ? [{ name: 'RetrievalResult', type: true }] : []),
       { name: 'Step', type: true },
@@ -1142,7 +1142,7 @@ export function emitRouteModule(ir: IR, pipeline: PipelineShape): EmittedFile {
   const canBlock = pipelineCanBlock(ir, pipeline);
 
   const header = [
-    importStatement('@aid/runtime', [
+    importStatement('@aid-framework/runtime', [
       { name: 'PipelineError', type: false },
       { name: 'PipelineContext', type: true },
     ]),

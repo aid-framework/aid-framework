@@ -1,4 +1,4 @@
-# `@aid/runtime` (TypeScript)
+# `@aid-framework/runtime` (TypeScript)
 
 The TypeScript runtime for the AID framework. It mirrors the Python runtime in
 `runtimes/python/aid_runtime` module for module, so an application generated for

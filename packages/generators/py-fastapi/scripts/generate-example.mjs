@@ -8,7 +8,7 @@
  * is the point: a second example must not demonstrate a different generator.
  *
  * This is the example's `aid gen`, and it is deliberately three library calls rather
- * than a bespoke code path: the spec is checked and lowered by `@aid/spec` and `@aid/ir`,
+ * than a bespoke code path: the spec is checked and lowered by `@aid-framework/spec` and `@aid-framework/ir`,
  * the IR is gated, and the plan is applied through the generator SDK's regeneration
  * algorithm -- the same one the CLI will use (design §10). That matters for the example
  * specifically, because the algorithm is what preserves `app/business/**` and refuses to
@@ -27,9 +27,9 @@ import {
   parseAidManifestJson,
   regenerate,
   serializeAidManifest,
-} from '@aid/generator-sdk';
-import { buildIR, runGates } from '@aid/ir';
-import { checkSpecText } from '@aid/spec';
+} from '@aid-framework/generator-sdk';
+import { buildIR, runGates } from '@aid-framework/ir';
+import { checkSpecText } from '@aid-framework/spec';
 import {
   GENERATOR_NAME,
   GENERATOR_VERSION,
@@ -71,7 +71,7 @@ if (buildErrors.length > 0) {
 }
 
 // The capabilities this generator declares travel with the IR, the way they do under
-// the CLI. Left to its default, `runGates` falls back to `@aid/ir`'s placeholder
+// the CLI. Left to its default, `runGates` falls back to `@aid-framework/ir`'s placeholder
 // catalog, which declares no retrieval at all: the example would then be gated against a
 // narrower vocabulary than the target really has, and a spec asking for retrieval would
 // be rejected here while `aid gen` accepted it.

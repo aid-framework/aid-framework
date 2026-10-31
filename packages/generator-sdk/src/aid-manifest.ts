@@ -13,8 +13,8 @@
  * The record means "this generator created this file once and then let go of it".
  */
 
-import { canonicalJson } from '@aid/ir';
-import { sortDiagnostics } from '@aid/spec';
+import { canonicalJson } from '@aid-framework/ir';
+import { sortDiagnostics } from '@aid-framework/spec';
 import { sha256Hex, sortByPath } from './determinism.js';
 import {
   GENERATOR_DIAGNOSTIC_CODES,

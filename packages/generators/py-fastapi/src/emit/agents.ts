@@ -35,7 +35,14 @@
  * left for a reader to discover.
  */
 
-import type { AgentShape, GuardrailShape, IR, MemoryShape, ModelShape, ToolShape } from '@aid/ir';
+import type {
+  AgentShape,
+  GuardrailShape,
+  IR,
+  MemoryShape,
+  ModelShape,
+  ToolShape,
+} from '@aid-framework/ir';
 
 import { INDENT, MAX_LINE, pythonStatement, pythonString } from '../python.js';
 import { assemble, HEADER, importBlock, importFrom, tupleLiteral } from '../template.js';

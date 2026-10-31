@@ -19,7 +19,7 @@ import {
   scanForNonDeterminism,
   serializeAidManifest,
   sha256Hex,
-} from '@aid/generator-sdk';
+} from '@aid-framework/generator-sdk';
 import { describe, expect, it } from 'vitest';
 
 import {

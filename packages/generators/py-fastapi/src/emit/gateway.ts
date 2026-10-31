@@ -15,7 +15,7 @@
  *   `vision` without the generated app claiming it can see.
  */
 
-import type { IR, ModelShape } from '@aid/ir';
+import type { IR, ModelShape } from '@aid-framework/ir';
 
 import { modelCapabilities, providerAdapter } from '../names.js';
 import { INDENT, MAX_LINE, pythonNumber, pythonString } from '../python.js';

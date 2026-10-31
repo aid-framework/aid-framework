@@ -1,8 +1,13 @@
 {
-  "name": "@aid/cli",
-  "version": "0.0.0",
+  "name": "@aid-framework/cli",
+  "version": "0.1.39",
   "description": "The `aid` command: scaffold a project, validate its spec, generate its code, and run its eval gate.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aid-framework/aid-framework.git",
+    "directory": "packages/cli"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -32,11 +37,11 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@aid/generator-py-fastapi": "workspace:*",
-    "@aid/generator-sdk": "workspace:*",
-    "@aid/generator-ts-vercel": "workspace:*",
-    "@aid/ir": "workspace:*",
-    "@aid/spec": "workspace:*"
+    "@aid-framework/generator-py-fastapi": "workspace:*",
+    "@aid-framework/generator-sdk": "workspace:*",
+    "@aid-framework/generator-ts-vercel": "workspace:*",
+    "@aid-framework/ir": "workspace:*",
+    "@aid-framework/spec": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.6.5"

@@ -1,8 +1,13 @@
 {
-  "name": "@aid/generator-py-fastapi",
-  "version": "0.0.0",
+  "name": "@aid-framework/generator-py-fastapi",
+  "version": "0.1.39",
   "description": "The AID Framework py-fastapi target generator: turns IR into a thin FastAPI app that binds to the aid-runtime-python library for everything it does at runtime.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aid-framework/aid-framework.git",
+    "directory": "packages/generators/py-fastapi"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -29,9 +34,9 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@aid/generator-sdk": "workspace:*",
-    "@aid/ir": "workspace:*",
-    "@aid/spec": "workspace:*"
+    "@aid-framework/generator-sdk": "workspace:*",
+    "@aid-framework/ir": "workspace:*",
+    "@aid-framework/spec": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.6.5"

@@ -45,7 +45,7 @@ import {
   type IR,
   REQUIRED_CAPABILITIES,
   type RequiredCapability,
-} from '@aid/ir';
+} from '@aid-framework/ir';
 import { describe, expect, it } from 'vitest';
 
 import { PY_FASTAPI_MANIFEST } from '../src/index.js';

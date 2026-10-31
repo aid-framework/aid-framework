@@ -1,253 +1,253 @@
 {
   "files": [
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "business",
       "path": "app/business/index.ts",
       "sha256": "bcc35773b747afddfe5958cff917a5ea400ede5753edc15142ea320e0b9a6aa1"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "business",
       "path": "app/business/prompts/index.ts",
       "sha256": "64e8700a2965af27336601c86d6fa4e7783d4cf310e5b8e21bf58f88d59cef2f"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "business",
       "path": "app/business/tools/index.ts",
       "sha256": "f4a0bdbfe7db49dc23c4c063162c3d61f6abb7f6c1fce8e094ca320db5816e50"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "business",
       "path": "app/business/tools/lookup_customer.ts",
       "sha256": "dfcc27a01c981d1d47e178a037c38b800966c3d656f7362d7c2b2d6f8adb90f4"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/agents.ts",
-      "sha256": "928763d7437f90e20f973a611aea051b549fc7bc02390fcea8aee17c5168c302"
+      "sha256": "5d49edb4b3d6b15b6f62af71807f29d937d1e732e69a517b537845ac55af5f09"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/contracts/index.ts",
-      "sha256": "003e6fa31617f754dceebc69d090cda1e7a04ec7f74896a0f3653da3cd24a3e3"
+      "sha256": "4871c6a62e405394f3f6a95fd10fc77aeffb8c83b3c22771a5dd96cf58f584b5"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/contracts/lookup_customer.ts",
-      "sha256": "9b39833880e8f1c9af5523ec71855bc8b7f14efae8b91009fffcd820542b4c1b"
+      "sha256": "0667cb81a0780a0e88a364c3c11c82220048d30e72db109c96e5320e9b854b87"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/control.ts",
-      "sha256": "ef252f23bef037916fea60d41299bd93362f9419b542dc6df18ce818f4632d5a"
+      "sha256": "799f7e8be7c820e4a77890389b4ad0feab1552714f8365ddefba07d94c41ebbc"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/deps.ts",
-      "sha256": "cc319bee05bbbc688dcb705c25b7f7138528a57e6a0258419573484bbf5e32f2"
+      "sha256": "b94ff0b4f5fbee7ef22cebad16ab1fb35cf251184632353f970dc32246bb5065"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/evals/classify_quality.ts",
-      "sha256": "e3359ec4d667883b54f08328c272d1ce64ee41b2535edd062e475453972eae41"
+      "sha256": "16a047290da565eb9e1e367bcd919ae5d672a968ebfe2e4fd450dda92cb6eeee"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/evals/handbook_quality.ts",
-      "sha256": "e9df3f9c677f5d5e6514e15dc1f719c8caea404104107cbc0dc9f9e04ce6512a"
+      "sha256": "453c8641343fb90ec316c24e744406fb470d50bfe348d1aaba98a3f216652a01"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/evals/index.ts",
-      "sha256": "f8135288902c16a28599753cead98cb8a434fe4b7f80098dd54547ce2c5f561d"
+      "sha256": "1833300ab0f894e81615d88f0e1ee44e56e77c554cdc8331a6d4a01954057d84"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/evals/triage_quality.ts",
-      "sha256": "f30fd2fbf7d1be11d1ae3c52b007e469ec6023d053d9fcf6321d84454883c6d5"
+      "sha256": "3131d3dce7f7d6b168e0cb9a43c30c89826422fb1bc7eef005e4055dc34e402a"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/gateway/index.ts",
-      "sha256": "0d80398bcbfc8c98976625959afb88699c1273340651ccae470892a8357f175b"
+      "sha256": "7be49a5caf741965fdb44a5320f56512e6a1ffb550c9d5750310613480b52f6a"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/gateway/models.ts",
-      "sha256": "debdde3efb3b431c448b6994e2eb48c92ebf0eec42fe24f96d34388e5a7c21c7"
+      "sha256": "dff8ff355458f32553463aefc8e3ffa55bf6f9dffc03bfdb3ee778be0391110e"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/guardrails.ts",
-      "sha256": "69b5d5457af4377f278aee31e82e1aa682ef7df6888cb84deee797a58c29b581"
+      "sha256": "c0a406305f3aefbd247c04c346717f2af78f74e66ee8dd33cf001ecbe3307fdf"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/index.ts",
-      "sha256": "601ca740d8a03eb7d26af08424cfee93064bb5515cc0b809bf23ebeb299b4e57"
+      "sha256": "9221eca05ccc160747c9dffbeec5f2bd30212c2b76b2ef79dd6ab44b5b7790a8"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/observability.ts",
-      "sha256": "651bb89d47a72c3a44be86dcabe11fe2742213ec223e114b45d98dc2724cf185"
+      "sha256": "52a59ff60ffc2a15231558167c5a149a5b49024bfd1c9e1f2da22e2c5e057b21"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/pipelines/answer_ticket.ts",
-      "sha256": "5ccf3186760c62edbb40ddc5bb7986af1b5f3119630dc0671e40dfd3fa35aeb6"
+      "sha256": "814309cdec2c1a696b459780f32f2730b138ae455ebfa723ede2ce1194f8720c"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/pipelines/index.ts",
-      "sha256": "117a6aabd39a2f0e75ee3f9b5f518b444ee8f19c19c7ff727a427610c126e24d"
+      "sha256": "745842aa29958c1613e11c41bc3c4830220ebcc644181c2f944b5c3c09368771"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/pipelines/triage.ts",
-      "sha256": "e9f9ae22f01eced20761119708184e64d3ed480b2e3715e9f3b5862c2c1363cb"
+      "sha256": "e72e1f96d2059c05669afc2fed7872044428638b66c6c03d7ff7ef29c1e40b85"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/prompts/classify_ticket.ts",
-      "sha256": "7ab973a77fdb5002a643b978976c0b2f85acae157a85a2f373a691d88443ef76"
+      "sha256": "a540266c8e6ac5c53fb54c4ac920a5cc826309959eeb5d045a494ce7b9d7f86b"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/prompts/index.ts",
-      "sha256": "5bd1825d389247344df8ab7b20b6f3d7974065d4ef0f847ed4a795763676d642"
+      "sha256": "7a95358806412d4e70261eaf1326915fbaf7b885453d55ba9ce05b415ed54584"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/prompts/triage_instructions.ts",
-      "sha256": "de2e0e16fc7c93878f5208534f89ae2f2f5c85c8085e0c989e68e863be0aee5d"
+      "sha256": "abf488217895d83762ffa1212bbadfb7c09f51e787a0b3270a52b8973dcb15bc"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/requests.ts",
-      "sha256": "4c4be3407a17a8e4e31bb5a7c052980e8ba3fd8476b7985e532cf9df8d5d53e0"
+      "sha256": "be91e575d73d1088930eea508df0b36a114c445ad4380c452aba0544bb078473"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/retrieval/bindings.ts",
-      "sha256": "3841780d17233f67f4c307cebbaa7240429039fc225387d4b0c55bc5bce59fe5"
+      "sha256": "3ebe39cf0d38fb62cd8ffb68a4f927485395f02be2bd46c7bfbdcd8d1799cbfd"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/retrieval/index.ts",
-      "sha256": "3c40880d09f9dd23a45a06f746f34138f4b4a49b4bcce5d6fa25e41f76a85c76"
+      "sha256": "f261b7a8df4b3c1a3a2531a75d8324cb332e11198cfac14236083604e14daee1"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/retrieval/ingest/handbook.ts",
-      "sha256": "34533e24a26e27d84f083a1fad169cf27e894d9b83b7d17f7d1e314231586892"
+      "sha256": "df02466faaaf6c07e91e218e021ce52667c7bb1d788ecfecb6211a8969c6eda8"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/retrieval/ingest/index.ts",
-      "sha256": "ea51022160faefbdc12abba16d2c757faec48a26303757fd357539fb4adb7f0f"
+      "sha256": "7848151ec470d1267e328675c276850db63b127f0ed97f93b768daf37d22add9"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/routes/answer_ticket.ts",
-      "sha256": "955b2a1dcfee24813a80553827d3bfba485ea65a7298b3e070bbe41ea1913b5a"
+      "sha256": "55d68e31ac0310036401b9b464dada9f083ec4dad093ae5faf4e1b98266660a0"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/routes/index.ts",
-      "sha256": "872592830a9561775402b1eda25d2d84506dec4b9f854dfc88c037ac11965b28"
+      "sha256": "8956194f2db10b4999d701d4f7d8f378a6c6572fc5b7cb093a42224b454303db"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/routes/triage.ts",
-      "sha256": "8c6ab1edb6b8902e2d160edc5181edd1d9375054004750de7b44d70bc3470634"
+      "sha256": "3ce29ebc33d7840ae860709b7da64dbba5f2a3b5bf102d5f4bfcbb2677937829"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/schemas.ts",
-      "sha256": "f6643f2005cd40de888bbf2da55c818265fcb3c7fe0d6f6f1e4d0b91062fa006"
+      "sha256": "d7a609066cc579d0f00829a6082ca22e26ff959a1720a10d19191e22daef5247"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/tools/index.ts",
-      "sha256": "5f4a801ae4cb73124e16846770c547fa3c2862ce7dfa97be9e6c0b35f724b0b3"
+      "sha256": "015eb1cb1b8e431110156fc43c1e6132d5dfcdeaea1619f72dd207927242ff5a"
     },
     {
-      "generator": "@aid/generator-ts-vercel",
+      "generator": "@aid-framework/generator-ts-vercel",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/tools/lookup_customer.ts",
-      "sha256": "6f29cda7d4092d1d25474a7f946387530f12c4ccaa070e88a6e0807c13f2c82a"
+      "sha256": "c5f87fba294363a95f023dbbf4a880236d3379d02ddc79ecf05f364e818bd2b4"
     }
   ],
   "generatedBy": {
-    "generator": "@aid/generator-ts-vercel",
+    "generator": "@aid-framework/generator-ts-vercel",
     "generatorVersion": "0.1.0",
     "irVersion": "0.1.0"
   },

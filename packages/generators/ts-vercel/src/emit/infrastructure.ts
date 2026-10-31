@@ -7,7 +7,7 @@
  * model table is plain data so a cost or capability change is a one-line diff.
  */
 
-import type { IR, ModelShape } from '@aid/ir';
+import type { IR, ModelShape } from '@aid-framework/ir';
 import {
   literal,
   modelCapabilities,
@@ -28,7 +28,7 @@ import {
   tsValue,
 } from './text.js';
 
-const RUNTIME = '@aid/runtime';
+const RUNTIME = '@aid-framework/runtime';
 
 function costExpression(model: ModelShape): string {
   const profile = model.costProfile;
@@ -301,7 +301,7 @@ export function emitObservability(ir: IR): EmittedFile {
       unwired: [...declared].filter((capability) => !wireable(capability)),
     },
     emitsAgainst: { structuredOutput: 'zod', tracing: 'otel-genai' },
-    generator: '@aid/generator-ts-vercel',
+    generator: '@aid-framework/generator-ts-vercel',
     irVersion: ir.irVersion,
     models: { advertised: modelWired, unrepresentable },
     observability: { redact: [...ir.observability.redact], trace: ir.observability.trace },

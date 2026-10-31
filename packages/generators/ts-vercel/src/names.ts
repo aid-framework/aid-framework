@@ -8,11 +8,11 @@
  * CodeQL `js/polynomial-redos` finding waiting to happen.
  */
 
-import type { ModelCapability, PrimitiveType } from '@aid/ir';
+import type { ModelCapability, PrimitiveType } from '@aid-framework/ir';
 
 /**
  * The runtime's `Capability` union, restated locally. The generator depends on
- * `@aid/generator-sdk` and `@aid/ir` only, and a type import from the runtime would
+ * `@aid-framework/generator-sdk` and `@aid-framework/ir` only, and a type import from the runtime would
  * add a dependency edge to the emitted-code package for no behavioural gain.
  */
 export type Capability =

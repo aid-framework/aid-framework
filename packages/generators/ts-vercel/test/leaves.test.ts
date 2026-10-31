@@ -13,7 +13,7 @@
  * check is emitted only when some guardrail declares `output`.
  */
 
-import type { IR } from '@aid/ir';
+import type { IR } from '@aid-framework/ir';
 import { describe, expect, it } from 'vitest';
 
 import { emitPipelineModule } from '../src/emit/pipelines.js';

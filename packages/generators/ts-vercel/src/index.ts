@@ -1,8 +1,8 @@
 /**
- * `@aid/generator-ts-vercel`: the Phase 1 TypeScript target.
+ * `@aid-framework/generator-ts-vercel`: the Phase 1 TypeScript target.
  *
  * The single input is the IR. Nothing here reads a spec file, a template directory or
- * the filesystem: `plan` is a pure function of the IR, and `@aid/runtime` holds the
+ * the filesystem: `plan` is a pure function of the IR, and `@aid-framework/runtime` holds the
  * behaviour. Generated code is declarative wiring -- zod schemas, model aliases, prompt
  * templates, tool adapters and their contracts, pipelines, routes, retriever bindings
  * with their ingest entry points -- and everything it calls into already exists in the
@@ -20,7 +20,7 @@
  *    one-line Next shim delegates to it.
  */
 
-import type { Generator, Plan } from '@aid/generator-sdk';
+import type { Generator, Plan } from '@aid-framework/generator-sdk';
 
 import {
   APP_ROOT,

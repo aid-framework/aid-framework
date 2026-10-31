@@ -27,7 +27,7 @@
  * `text` on the first three -- the validator refuses anything else at plan time.
  */
 
-import type { GuardrailShape, IR } from '@aid/ir';
+import type { GuardrailShape, IR } from '@aid-framework/ir';
 
 import { stringLiteral } from '../names.js';
 import { type EmittedFile, generated, paths } from './file.js';
@@ -171,7 +171,7 @@ export function emitGuardrails(ir: IR): EmittedFile {
   return generated(
     paths.guardrails,
     moduleText(
-      importStatement('@aid/runtime', [
+      importStatement('@aid-framework/runtime', [
         { name: 'ConfigurationError', type: false },
         { name: 'GuardrailBlockedError', type: false },
         { name: 'GuardrailDefinition', type: true },

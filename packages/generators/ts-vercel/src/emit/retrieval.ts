@@ -11,7 +11,7 @@
  * by the route handlers and must stay usable in an edge runtime.
  */
 
-import type { IR, RetrieverShape } from '@aid/ir';
+import type { IR, RetrieverShape } from '@aid-framework/ir';
 import { literal, propertyKey } from '../names.js';
 import { type EmittedFile, generated, paths, retrievalIngestModulePath } from './file.js';
 import { exportStatement, importStatement, moduleText, tsValue } from './text.js';
@@ -76,7 +76,7 @@ function retrieverExpression(retriever: RetrieverShape): string {
 }
 
 export function emitRetrievalBindings(ir: IR): EmittedFile {
-  const header = importStatement('@aid/runtime', [
+  const header = importStatement('@aid-framework/runtime', [
     { name: 'ChunkingSpec', type: false },
     { name: 'EmbeddingCostProfile', type: false },
     { name: 'EmbeddingSpec', type: false },
@@ -143,7 +143,7 @@ export function emitRetrievalBindings(ir: IR): EmittedFile {
 export function emitRetrievalIndex(ir: IR): EmittedFile {
   void ir;
   const header = [
-    importStatement('@aid/runtime', [
+    importStatement('@aid-framework/runtime', [
       { name: 'ConfigurationError', type: false },
       { name: 'Retriever', type: false },
       { name: 'bindingFromSpec', type: false },
@@ -189,7 +189,7 @@ export function emitRetrievalIndex(ir: IR): EmittedFile {
 
 function ingestModule(retriever: RetrieverShape): string {
   const header = [
-    importStatement('@aid/runtime', [{ name: 'IngestReport', type: true }]),
+    importStatement('@aid-framework/runtime', [{ name: 'IngestReport', type: true }]),
     importStatement('../index.js', [{ name: 'buildRetrievers', type: false }]),
   ].join('\n');
   return [

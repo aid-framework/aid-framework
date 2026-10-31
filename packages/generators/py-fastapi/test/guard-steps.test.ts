@@ -20,8 +20,8 @@
  * gate. Each case names which layer it pins, and the two codes are not interchangeable.
  */
 
-import type { IR } from '@aid/ir';
-import { checkSpecText, formatPath } from '@aid/spec';
+import type { IR } from '@aid-framework/ir';
+import { checkSpecText, formatPath } from '@aid-framework/spec';
 import { describe, expect, it } from 'vitest';
 
 import { checkPlan, planPyFastApi } from '../src/index.js';

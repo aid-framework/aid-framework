@@ -24,7 +24,7 @@ import {
   rejectionPath,
   sha256Hex,
   staleGeneratedFiles,
-} from '@aid/generator-sdk';
+} from '@aid-framework/generator-sdk';
 import { describe, expect, it } from 'vitest';
 
 import {

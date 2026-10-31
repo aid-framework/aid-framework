@@ -1,5 +1,5 @@
 /**
- * `@aid/spec` - the AID Framework specification language: the JSON Schema, a
+ * `@aid-framework/spec` - the AID Framework specification language: the JSON Schema, a
  * position-aware YAML parser, and the local structural rules.
  *
  * It performs no cross-section validation - those are IR build-time gates. The

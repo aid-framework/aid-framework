@@ -1,7 +1,7 @@
 /**
  * This generator's own manifest declaration.
  *
- * Written out here rather than aliased from `@aid/generator-sdk` for the same reason
+ * Written out here rather than aliased from `@aid-framework/generator-sdk` for the same reason
  * `py-fastapi` does it: the SDK's declaration is what the IR's capability gate
  * consumes, this one is what the package emits from, and a test compares them. An
  * alias would make that comparison vacuous.
@@ -22,8 +22,8 @@ import {
   type GeneratorManifestInput,
   parseManifest,
   supportsIR,
-} from '@aid/generator-sdk';
-import { IR_VERSION } from '@aid/ir';
+} from '@aid-framework/generator-sdk';
+import { IR_VERSION } from '@aid-framework/ir';
 
 export const TS_VERCEL_TARGET = 'ts-vercel';
 
@@ -62,7 +62,7 @@ export const TS_VERCEL_CAPABILITIES = [
 
 export const TS_VERCEL_MANIFEST_INPUT: GeneratorManifestInput = {
   manifestVersion: 1,
-  name: '@aid/generator-ts-vercel',
+  name: '@aid-framework/generator-ts-vercel',
   target: TS_VERCEL_TARGET,
   version: '0.1.0',
   irRange: `^${IR_VERSION}`,

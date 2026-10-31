@@ -1,4 +1,4 @@
-# Created once by AID Framework "@aid/generator-py-fastapi" v0.1.0. Edit freely.
+# Created once by AID Framework "@aid-framework/generator-py-fastapi" v0.1.0. Edit freely.
 # The generator never overwrites this file: it is yours. See aid.manifest.json.
 
 """The `lookup_customer` tool: resolve the account a ticket came from.

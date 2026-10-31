@@ -3,20 +3,20 @@
  *
  * This is the only place both generators and the registry are visible at once, so it is
  * where the cross-check lives: a target's entry has to be derived from the manifest its
- * own package declares, or `aid gen --target X` and `@aid/generator-X` disagree about
- * layout, version and capabilities. `py-fastapi` gets that check from
- * `@aid/generator-sdk`; `ts-vercel` cannot, because the SDK cannot depend on a generator
+ * own package declares, or `aid gen --target X` and `@aid-framework/generator-X` disagree
+ * about layout, version and capabilities. `py-fastapi` gets that check from
+ * `@aid-framework/generator-sdk`; `ts-vercel` cannot, because the SDK cannot depend on a generator
  * that depends on the SDK -- so the registry is authoritative and this test pins it.
  */
 
-import { PY_FASTAPI_MANIFEST } from '@aid/generator-py-fastapi';
+import { PY_FASTAPI_MANIFEST } from '@aid-framework/generator-py-fastapi';
 import {
   TS_VERCEL_CAPABILITIES,
   TS_VERCEL_MANIFEST,
   tsVercelGenerator,
-} from '@aid/generator-ts-vercel';
-import { buildIR, REQUIRED_CAPABILITIES, runGates } from '@aid/ir';
-import { checkSpecText } from '@aid/spec';
+} from '@aid-framework/generator-ts-vercel';
+import { buildIR, REQUIRED_CAPABILITIES, runGates } from '@aid-framework/ir';
+import { checkSpecText } from '@aid-framework/spec';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -60,7 +60,7 @@ describe('the ts-vercel entry', () => {
 
   it('is derived from the generator package, not restated here', () => {
     expect(target?.manifest).toBe(TS_VERCEL_MANIFEST);
-    expect(target?.manifest.name).toBe('@aid/generator-ts-vercel');
+    expect(target?.manifest.name).toBe('@aid-framework/generator-ts-vercel');
     expect(target?.manifest.target).toBe('ts-vercel');
   });
 

@@ -11,7 +11,7 @@ import {
   generatedBanner,
   normalizeText,
   sha256Hex,
-} from '@aid/generator-sdk';
+} from '@aid-framework/generator-sdk';
 import { GENERATOR_NAME, GENERATOR_VERSION } from '../manifest.js';
 import { propertyKey, stringLiteral } from '../names.js';
 

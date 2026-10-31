@@ -15,11 +15,11 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { AidManifest, AidManifestProvenance, Plan } from '@aid/generator-sdk';
-import { parseAidManifestJson, sortByPath } from '@aid/generator-sdk';
-import type { IR } from '@aid/ir';
-import { buildIR, runGates } from '@aid/ir';
-import { checkSpecText } from '@aid/spec';
+import type { AidManifest, AidManifestProvenance, Plan } from '@aid-framework/generator-sdk';
+import { parseAidManifestJson, sortByPath } from '@aid-framework/generator-sdk';
+import type { IR } from '@aid-framework/ir';
+import { buildIR, runGates } from '@aid-framework/ir';
+import { checkSpecText } from '@aid-framework/spec';
 
 import { planTsVercel, TS_VERCEL_MANIFEST, TS_VERCEL_TARGET } from '../src/index.js';
 
@@ -88,7 +88,7 @@ export function irForSpecText(text: string, file = EXAMPLE_SPEC_PATH): IR {
   requireNoErrors('the spec did not lower to an IR', diagnostics);
 
   // The catalog is injected rather than defaulted, exactly as the CLI injects it: the
-  // gate's own fallback is `@aid/ir`'s placeholder vocabulary, which is narrower than
+  // gate's own fallback is `@aid-framework/ir`'s placeholder vocabulary, which is narrower than
   // this target's declaration and would reject a spec this generator emits.
   const gates = runGates(ir, {
     targetCapabilities: { [TS_VERCEL_TARGET]: TS_VERCEL_MANIFEST.capabilities },

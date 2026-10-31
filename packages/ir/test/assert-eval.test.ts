@@ -6,8 +6,8 @@
  * failure rather than a metric that quietly scores zero.
  */
 
-import { buildIR } from '@aid/ir';
-import { checkSpecText } from '@aid/spec';
+import { buildIR } from '@aid-framework/ir';
+import { checkSpecText } from '@aid-framework/spec';
 import { describe, expect, it } from 'vitest';
 
 import { byId, codesOf, fixtureText } from './helpers.js';

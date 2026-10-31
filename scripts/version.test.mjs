@@ -6,7 +6,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -175,7 +175,7 @@ describe('forcing a release', () => {
 describe('version arithmetic', () => {
   it('parses only tags that match the prefix', () => {
     expect(parseVersionTag('v1.2.3', 'v')).toEqual({ major: 1, minor: 2, patch: 3 });
-    expect(parseVersionTag('@aid/spec@0.1.0', 'v')).toBeNull();
+    expect(parseVersionTag('@aid-framework/spec@0.1.0', 'v')).toBeNull();
     expect(parseVersionTag('v1.2', 'v')).toBeNull();
     expect(parseVersionTag('v1.2.3-rc.1', 'v')).toBeNull();
     expect(parseVersionTag('1.2.3', 'v')).toBeNull();
@@ -199,7 +199,7 @@ describe('version arithmetic', () => {
 
   it('picks the greatest release tag and ignores everything else', () => {
     expect(latestReleaseTag(['v0.1.0', 'v0.10.0', 'v0.9.0'], 'v')).toBe('v0.10.0');
-    expect(latestReleaseTag(['v0.1.0', '@aid/spec@9.9.9'], 'v')).toBe('v0.1.0');
+    expect(latestReleaseTag(['v0.1.0', '@aid-framework/spec@9.9.9'], 'v')).toBe('v0.1.0');
     expect(latestReleaseTag([], 'v')).toBeNull();
     expect(latestReleaseTag(['nope'], 'v')).toBeNull();
   });
@@ -242,8 +242,8 @@ describe('per-package mode (kept working for a later switch)', () => {
     ...baseConfig(),
     mode: 'independent',
     packages: [
-      { name: '@aid/ir', path: 'packages/ir', registry: 'npm' },
-      { name: '@aid/spec', path: 'packages/spec', registry: 'npm' },
+      { name: '@aid-framework/ir', path: 'packages/ir', registry: 'npm' },
+      { name: '@aid-framework/spec', path: 'packages/spec', registry: 'npm' },
     ],
   });
 
@@ -255,19 +255,19 @@ describe('per-package mode (kept working for a later switch)', () => {
     expect(decision.release).toBe(true);
     expect(decision.version).toBeNull();
     expect(decision.packages?.map((entry) => entry.tag)).toEqual([
-      '@aid/ir@0.1.0',
-      '@aid/spec@0.1.0',
+      '@aid-framework/ir@0.1.0',
+      '@aid-framework/spec@0.1.0',
     ]);
   });
 
   it('increments each package independently', () => {
     const decision = decideFor(['packages/spec/src/index.ts'], {
       cfg: independent,
-      tags: ['@aid/spec@0.4.2', '@aid/ir@0.1.0'],
+      tags: ['@aid-framework/spec@0.4.2', '@aid-framework/ir@0.1.0'],
     });
 
     expect(decision.packages).toHaveLength(1);
-    expect(decision.packages?.[0]?.tag).toBe('@aid/spec@0.4.3');
+    expect(decision.packages?.[0]?.tag).toBe('@aid-framework/spec@0.4.3');
     expect(decision.packages?.[0]?.previousVersion).toBe('0.4.2');
   });
 
@@ -278,7 +278,9 @@ describe('per-package mode (kept working for a later switch)', () => {
   });
 
   it('matches package paths on a boundary, not a prefix', () => {
-    expect(packageFor('packages/spec/src/a.ts', independent.packages)?.name).toBe('@aid/spec');
+    expect(packageFor('packages/spec/src/a.ts', independent.packages)?.name).toBe(
+      '@aid-framework/spec',
+    );
     expect(packageFor('packages/spec-extra/src/a.ts', independent.packages)).toBeNull();
   });
 });
@@ -395,3 +397,201 @@ function baseConfig() {
     packages: [],
   };
 }
+
+/**
+ * `stamp` closes the gap claim 3 of `detect-publishable.mjs` opens: the tag is the
+ * source of truth, so the manifests have to be brought to the tag's version by hand.
+ * It runs against a fixture repo rather than the real manifests -- a test that stamped
+ * the working tree would dirty the checkout it is verifying.
+ */
+describe('the stamp subcommand', () => {
+  const script = fileURLToPath(new URL('version.mjs', import.meta.url));
+
+  /** @param {string} dir @param {string} name */
+  function readNpm(dir, name) {
+    return JSON.parse(readFileSync(join(dir, `packages/${name}/package.json`), 'utf8'));
+  }
+
+  /** @param {string} dir */
+  function readPyproject(dir) {
+    return readFileSync(join(dir, 'runtimes/python/pyproject.toml'), 'utf8');
+  }
+
+  /** @param {string} dir */
+  function readBarrel(dir) {
+    return readFileSync(join(dir, 'runtimes/python/src/aid_runtime/__init__.py'), 'utf8');
+  }
+
+  /**
+   * The runtime exposes `__version__` as a literal next to its own metadata, and
+   * `tests/test_package.py` pins the two equal, so a stamp has to move both.
+   *
+   * @param {string} dir
+   * @param {string} [version]
+   */
+  function addBarrel(dir, version = '0.1.0') {
+    mkdirSync(join(dir, 'runtimes/python/src/aid_runtime'), { recursive: true });
+    writeFileSync(
+      join(dir, 'runtimes/python/src/aid_runtime/__init__.py'),
+      `"""Barrel."""\n\n__version__ = "${version}"\n`,
+    );
+  }
+
+  /**
+   * One manifest of each registry shape, because the two are stamped differently: a
+   * `package.json` through its parsed form, a `pyproject.toml` line by line.
+   *
+   * @param {{ npm?: string, pypi?: string }} [versions]
+   * @returns {string} the fixture root
+   */
+  function fixture({ npm = '0.0.0', pypi = '0.1.0' } = {}) {
+    const dir = mkdtempSync(join(tmpdir(), 'aid-stamp-'));
+    mkdirSync(join(dir, 'packages/spec'), { recursive: true });
+    mkdirSync(join(dir, 'runtimes/python'), { recursive: true });
+    writeFileSync(
+      join(dir, 'packages/spec/package.json'),
+      `${JSON.stringify({ name: '@aid-framework/spec', version: npm }, null, 2)}\n`,
+    );
+    writeFileSync(
+      join(dir, 'runtimes/python/pyproject.toml'),
+      `[project]\nname = "aid-runtime-python"\nversion = "${pypi}"\n`,
+    );
+    writeFileSync(
+      join(dir, 'release.config.json'),
+      JSON.stringify({
+        ...baseConfig(),
+        packages: [
+          { name: '@aid-framework/spec', path: 'packages/spec', registry: 'npm' },
+          { name: 'aid-runtime-python', path: 'runtimes/python', registry: 'pypi' },
+        ],
+      }),
+    );
+    return dir;
+  }
+
+  /**
+   * @param {string} dir
+   * @param {string[]} extra
+   * @returns {{ status: number | null, stdout: string, stderr: string }}
+   */
+  function runStamp(dir, extra) {
+    const result = spawnSync(
+      process.execPath,
+      [script, 'stamp', '--config', join(dir, 'release.config.json'), ...extra],
+      { encoding: 'utf8' },
+    );
+    return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+  }
+
+  /**
+   * @param {{ npm?: string, pypi?: string }} options
+   * @param {(dir: string) => void} body
+   */
+  function withFixture(options, body) {
+    const dir = fixture(options);
+    try {
+      body(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('writes the version into every manifest the release config lists', () => {
+    withFixture({}, (dir) => {
+      const result = runStamp(dir, ['--version', '0.1.39']);
+
+      expect(result.status).toBe(0);
+      expect(readNpm(dir, 'spec').version).toBe('0.1.39');
+      expect(readPyproject(dir)).toContain('version = "0.1.39"');
+      expect(result.stdout).toContain('2 written, 0 unchanged');
+    });
+  });
+
+  it('is a byte-identical no-op on a second run', () => {
+    withFixture({}, (dir) => {
+      expect(runStamp(dir, ['--version', '0.1.39']).status).toBe(0);
+      const before = { npm: readNpm(dir, 'spec'), pypi: readPyproject(dir) };
+
+      const second = runStamp(dir, ['--version', '0.1.39']);
+
+      expect(second.status).toBe(0);
+      expect({ npm: readNpm(dir, 'spec'), pypi: readPyproject(dir) }).toEqual(before);
+      expect(second.stdout).toContain('0 written, 2 unchanged');
+    });
+  });
+
+  it('stamps the module-level __version__ a pypi package exposes', () => {
+    withFixture({}, (dir) => {
+      addBarrel(dir);
+
+      const result = runStamp(dir, ['--version', '0.1.39']);
+
+      expect(result.status).toBe(0);
+      expect(readBarrel(dir)).toContain('__version__ = "0.1.39"');
+      expect(readPyproject(dir)).toContain('version = "0.1.39"');
+      expect(result.stdout).toContain('3 written, 0 unchanged');
+    });
+  });
+
+  it('leaves an already-matching __version__ byte-identical', () => {
+    withFixture({}, (dir) => {
+      addBarrel(dir, '0.1.39');
+      expect(runStamp(dir, ['--version', '0.1.39']).status).toBe(0);
+      const before = { barrel: readBarrel(dir), pypi: readPyproject(dir) };
+
+      const second = runStamp(dir, ['--version', '0.1.39']);
+
+      expect(second.status).toBe(0);
+      expect({ barrel: readBarrel(dir), pypi: readPyproject(dir) }).toEqual(before);
+      expect(second.stdout).toContain('0 written, 3 unchanged');
+    });
+  });
+
+  it('rejects a tag instead of quietly stripping its v', () => {
+    withFixture({}, (dir) => {
+      const result = runStamp(dir, ['--version', 'v0.1.39']);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('bare semver');
+      expect(readNpm(dir, 'spec').version).toBe('0.0.0');
+      expect(readPyproject(dir)).toContain('version = "0.1.0"');
+    });
+  });
+
+  it('rejects a version that is not x.y.z', () => {
+    withFixture({}, (dir) => {
+      const result = runStamp(dir, ['--version', '0.1']);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('x.y.z');
+      expect(readNpm(dir, 'spec').version).toBe('0.0.0');
+    });
+  });
+
+  it('leaves version-like strings outside the [project] table alone', () => {
+    withFixture({}, (dir) => {
+      const path = join(dir, 'runtimes/python/pyproject.toml');
+      writeFileSync(
+        path,
+        [
+          '[build-system]',
+          'requires = ["hatchling"]',
+          '',
+          '[project]',
+          'name = "aid-runtime-python"',
+          'version = "0.1.0"',
+          '',
+          '[tool.hatch.version]',
+          'version = "9.9.9"',
+          '',
+        ].join('\n'),
+      );
+
+      expect(runStamp(dir, ['--version', '0.1.39']).status).toBe(0);
+
+      const text = readFileSync(path, 'utf8');
+      expect(text).toContain('version = "0.1.39"');
+      expect(text).toContain('version = "9.9.9"');
+    });
+  });
+});

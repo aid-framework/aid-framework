@@ -4,8 +4,8 @@
  *
  * This is the sequence `packages/generators/py-fastapi/scripts/generate-example.mjs`
  * already performs for the example app, and it is deliberately the *same* sequence
- * rather than a parallel one: every step is a call into `@aid/spec`, `@aid/ir`,
- * `@aid/generator-sdk` or `@aid/generator-py-fastapi`. The CLI introduces no gate, no
+ * rather than a parallel one: every step is a call into `@aid-framework/spec`, `@aid-framework/ir`,
+ * `@aid-framework/generator-sdk` or `@aid-framework/generator-py-fastapi`. The CLI introduces no gate, no
  * hash, no drift rule and no manifest reader of its own -- a second implementation of a
  * gate is a defect, because the two can disagree and only one of them will be right.
  *
@@ -28,10 +28,10 @@ import {
   type Plan,
   parseAidManifestJson,
   type RegenerationSink,
-} from '@aid/generator-sdk';
-import type { IR } from '@aid/ir';
-import { buildIR, runGates } from '@aid/ir';
-import { checkSpecText, hasErrors, sortDiagnostics } from '@aid/spec';
+} from '@aid-framework/generator-sdk';
+import type { IR } from '@aid-framework/ir';
+import { buildIR, runGates } from '@aid-framework/ir';
+import { checkSpecText, hasErrors, sortDiagnostics } from '@aid-framework/spec';
 
 import type { CliContext } from './context.js';
 import type { CliDiagnostic } from './diagnostics.js';

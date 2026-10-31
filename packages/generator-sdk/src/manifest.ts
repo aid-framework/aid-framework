@@ -15,8 +15,8 @@
  * {@link checkIRSupport} instead of at codegen time.
  */
 
-import { IR_VERSION, type RequiredCapability, resolveRequiredCapability } from '@aid/ir';
-import { type Diagnostic, sortDiagnostics } from '@aid/spec';
+import { IR_VERSION, type RequiredCapability, resolveRequiredCapability } from '@aid-framework/ir';
+import { type Diagnostic, sortDiagnostics } from '@aid-framework/spec';
 
 import {
   GENERATOR_DIAGNOSTIC_CODES,

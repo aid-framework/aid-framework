@@ -278,7 +278,7 @@ deployments:
 ### 6.3 Retrieval surface as implemented (Phase 1)
 
 §6.1 is the north star and stays that way. Spec v0.1 implements the retrieval *subset* of it — the DSL
-below is what `@aid/spec` accepts and `@aid/ir` resolves today. Tier 5 of the table above is what this
+below is what `@aid-framework/spec` accepts and `@aid-framework/ir` resolves today. Tier 5 of the table above is what this
 section, §7.2's retrieval shapes, and §7.4's retrieval rules deliver; the runtime that executes it is a
 later layer.
 

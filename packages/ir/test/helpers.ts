@@ -1,13 +1,13 @@
 /**
  * Fixture loading for the IR tests. Fixtures live in this package so its tests do
- * not couple to `@aid/spec`'s own fixtures, which must be free to change.
+ * not couple to `@aid-framework/spec`'s own fixtures, which must be free to change.
  */
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { checkSpecText, type Diagnostic } from '@aid/spec';
+import { checkSpecText, type Diagnostic } from '@aid-framework/spec';
 
 import type { BuildResult, GateOptions, GateRunResult, IR } from '../src/index.js';
 import { buildIR, runGates } from '../src/index.js';

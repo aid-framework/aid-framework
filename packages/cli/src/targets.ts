@@ -3,11 +3,11 @@
  *
  * A target is a generator plus the layout it declares. Nothing here restates that
  * layout -- the spec path, the generated root, the business root, the manifest path and
- * the eval module names all come from `@aid/generator-sdk`'s `managedRoots` and
- * `@aid/generator-py-fastapi`'s path helpers, so a generator that moves a file moves
+ * the eval module names all come from `@aid-framework/generator-sdk`'s `managedRoots` and
+ * `@aid-framework/generator-py-fastapi`'s path helpers, so a generator that moves a file moves
  * every command with it, without the CLI being edited.
  *
- * The capability declarations are the SDK's `phase0TargetCapabilities`, not `@aid/ir`'s
+ * The capability declarations are the SDK's `phase0TargetCapabilities`, not `@aid-framework/ir`'s
  * placeholder of the same name. The placeholder exists so the gate could be written
  * before a real generator existed; feeding it to the gate would make the capability gate
  * pass vacuously for every spec, which is the one failure mode a gate must not have.
@@ -20,14 +20,14 @@ import {
   evalModulePath as pyFastApiEvalModulePath,
   pyFastApiGenerator,
   retrievalIngestModulePath as pyFastApiIngestModulePath,
-} from '@aid/generator-py-fastapi';
+} from '@aid-framework/generator-py-fastapi';
 import {
   type Generator,
   type GeneratorManifest,
   managedRoots,
   type Plan,
   targetCapabilityDeclarations,
-} from '@aid/generator-sdk';
+} from '@aid-framework/generator-sdk';
 import {
   checkPlan as checkTsVercel,
   TS_VERCEL_MANIFEST,
@@ -35,9 +35,9 @@ import {
   tsVercelGenerator,
   retrievalIngestModulePath as tsVercelIngestModulePath,
   paths as tsVercelPaths,
-} from '@aid/generator-ts-vercel';
-import type { IR, TargetCapabilityDeclarations } from '@aid/ir';
-import { errorDiagnostic } from '@aid/spec';
+} from '@aid-framework/generator-ts-vercel';
+import type { IR, TargetCapabilityDeclarations } from '@aid-framework/ir';
+import { errorDiagnostic } from '@aid-framework/spec';
 
 import type { CliDiagnostic } from './diagnostics.js';
 import { CLI_DIAGNOSTIC_CODES } from './diagnostics.js';

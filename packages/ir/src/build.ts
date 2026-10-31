@@ -7,7 +7,7 @@
  * and reports `ir/*` diagnostics through the same shape every other gate uses.
  */
 
-import { SPEC_VERSION } from '@aid/spec';
+import { SPEC_VERSION } from '@aid-framework/spec';
 import {
   deriveRequiredCapabilities,
   isModelCapability,

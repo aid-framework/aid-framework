@@ -18,7 +18,7 @@
  * variable. An eval that paraphrased the prompt would measure a prompt nobody calls.
  */
 
-import type { EvalShape, IR, MetricShape, PromptShape } from '@aid/ir';
+import type { EvalShape, IR, MetricShape, PromptShape } from '@aid-framework/ir';
 
 import {
   isRetrievalEval,

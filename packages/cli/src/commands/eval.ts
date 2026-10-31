@@ -35,8 +35,8 @@
 
 import { existsSync } from 'node:fs';
 
-import type { IR } from '@aid/ir';
-import { sortDiagnostics } from '@aid/spec';
+import type { IR } from '@aid-framework/ir';
+import { sortDiagnostics } from '@aid-framework/spec';
 
 import type { CliContext } from '../context.js';
 import type { CliDiagnostic } from '../diagnostics.js';

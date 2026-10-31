@@ -1,4 +1,9 @@
-# Publishing is dormant by construction, and this file says exactly what would wake it up.
+# Publishes the workspace to npm and PyPI over OIDC trusted publishing, and does nothing
+# else. The first real publish is `v0.1.39`, dispatched by hand through `workflow_dispatch`.
+# It can be dispatched by hand because the manifests already declare `0.1.39`: that is what
+# `scripts/version.mjs stamp --version 0.1.39` wrote and committed, so the tag, the manifests
+# and this workflow name the same version before anything is uploaded. That agreement is what
+# detection's third condition asks for, and it is why stamping exists at all.
 #
 # WARNING: this workflow is deliberately NOT triggered by `release: published`. GitHub
 # suppresses workflow runs for events authored by `GITHUB_TOKEN`, and `release.yml` creates
@@ -6,57 +11,80 @@
 # here could therefore never fire: it would sit in this file advertising an automatic path
 # that is unreachable, and a maintainer who enabled publishing and waited for a release to
 # wake this job would see nothing and reasonably read it as broken. That is exactly why it
-# is not used. The automatic route is now `release.yml` calling this file through
-# `workflow_call`, which is not suppressed -- `workflow_call` runs the called workflow inside
-# the caller's own run rather than as a new run for a `GITHUB_TOKEN`-authored event.
-# `workflow_dispatch` remains for manual runs.
+# is not used. The automatic route is `release.yml` calling this file through `workflow_call`,
+# which is not suppressed -- `workflow_call` runs the called workflow inside the caller's own
+# run rather than as a new run for a `GITHUB_TOKEN`-authored event. `workflow_dispatch`
+# remains for manual runs.
 #
-# Nothing in this repository is publishable as it stands, and the gate is two-deep so that
-# stays true even after a mistake:
+# The gate is two-deep:
 #
 #   1. `detect` asks `scripts/detect-publishable.mjs` whether any manifest may be published
 #      for the version being released. A manifest counts only if it declares a name and a
 #      version, is not `private`, does not carry the `0.0.0` workspace placeholder, and
 #      declares the exact version being released -- `release.yml` tags the commit and never
-#      rewrites a manifest, so the tag is the source of truth for this repository. The
-#      example app is installed by the docs and is not an artifact.
-#   2. `publish` runs only if (1) found something *and* the repository variable
-#      `AID_PUBLISH_ENABLED` is the string `true`. Otherwise it reports **Skipped**, which
-#      is neither a pass nor a failure: a publish job that goes green having published
+#      rewrites a manifest, so the tag is the source of truth. The example app is installed
+#      by the docs and is not an artifact.
+#   2. `publish-npm` and `publish-pypi` run only if (1) found something *and* the repository
+#      variable `AID_PUBLISH_ENABLED` is the string `true`. Otherwise they report **Skipped**,
+#      which is neither a pass nor a failure: a publish job that goes green having published
 #      nothing, or that fails because there was nothing to do, would both be worse than no
 #      job at all.
 #
-# So there are three things a maintainer must do before a release publishes anything, and
-# none of them are done here because they are decisions rather than defaults:
+# Authentication is OIDC only. There is no `NODE_AUTH_TOKEN`, no `NPM_TOKEN`, and no
+# `secrets:` reference anywhere in this file: npm provenance and PyPI trusted publishing both
+# exchange this run's identity (`id-token: write`) for a short-lived credential. The
+# publishers are registered on the registries, not in this repository --
 #
-#   * align a manifest's version with a release (or start versioning manifests at all --
-#     every workspace `package.json` is `0.0.0` today);
-#   * set the `AID_PUBLISH_ENABLED` repository variable to `true`;
-#   * choose a registry for each artifact and provision credentials or trusted publishing.
+#   * npm, once per package: Settings -> Trusted Publisher -> GitHub Actions, with repository
+#     `aid-framework/aid-framework`, workflow `publish.yml`, and Environment left blank.
+#   * PyPI: Publishing -> add a *pending* publisher for `aid-runtime-python` with the same
+#     three values. A pending publisher is what creates the project on the first upload.
 #
-# No registry, token, secret or scope is configured in this repository, and this workflow
-# references none. If a release ever does land on a publishable artifact while enabled, the
-# job fails loudly instead of reporting a success that published nothing.
+# There is deliberately no `environment:` key on either publish job. Both registries match
+# the Environment field of the trusted-publisher registration against the job, so blank on
+# the registry has to mean blank here. Adding one later is a two-registry change: the moment
+# a job claims an environment, every upload fails until the npm trusted publisher and the
+# PyPI publisher are both edited to name it. Absent, not merely unset, is the point.
+#
+# Bootstrap asymmetry, on the record: npm's trusted-publisher UI exists only for a package
+# that already exists, so each of the seven npm packages needs one initial publish by some
+# other means before OIDC works for it. PyPI has no such gap. This file is written for the
+# steady state and deliberately carries no token-based bootstrap machinery.
+#
+# Re-runs are safe. Both registries are asked for the exact version first, and a version that
+# is already there is reported as skipped rather than retried, so a release that died halfway
+# can simply be dispatched again.
 name: Publish
 
 on:
   workflow_call:
     inputs:
       version:
-        description: "Version to look for (defaults to the latest tag). Publishing also needs AID_PUBLISH_ENABLED=true and credentials."
+        description: "Version to publish (defaults to the latest tag). Publishing also needs AID_PUBLISH_ENABLED=true."
         type: string
         required: false
         default: ""
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to look for (defaults to the latest tag). Publishing also needs AID_PUBLISH_ENABLED=true and credentials."
+        description: "Version to publish (defaults to the latest tag). Publishing also needs AID_PUBLISH_ENABLED=true."
         type: string
         required: false
         default: ""
 
 permissions:
   contents: read
+  # npm provenance and PyPI's upload token are both obtained by exchanging this run's OIDC
+  # identity for a short-lived credential. Nothing else is granted, and nothing else is
+  # needed because no long-lived registry secret exists.
+  #
+  # NOTE: this grant is only effective when the caller allows it. Permissions can be kept or
+  # reduced across `workflow_call`, never raised, so a calling job that does not itself grant
+  # `id-token: write` leaves the publish jobs without an OIDC identity. `release.yml` currently
+  # declares `contents: read` and nothing else, which means the automatic path cannot mint a
+  # token until that job grants `id-token: write`. The preflight step below detects this and
+  # names the fix rather than letting it surface as a 401 from the registry.
+  id-token: write
 
 concurrency:
   # A cancelled publish is a half-published registry; never run two releases at once.
@@ -118,8 +146,9 @@ jobs:
             else
               echo "Nothing is publishable for \`${VERSION:-the version being released}\`."
               echo
-              echo "This is the expected state: the release workflow tags a commit, and no"
-              echo "manifest in the repository declares that version yet."
+              echo "A manifest ships only when it declares the released version, so this"
+              echo "means the manifests and the tag disagree. Re-run"
+              echo "\`scripts/version.mjs stamp --version <tag>\`, commit, and release again."
             fi
             echo
             if [ "$ENABLED" = "true" ]; then
@@ -130,26 +159,212 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-  publish:
-    name: publish
+  publish-npm:
+    name: publish-npm
     needs: detect
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # Job-level on purpose: when nothing is publishable, this job reports Skipped rather
-    # than a green run that published nothing or a red run with nothing wrong.
+    timeout-minutes: 30
+    # Job-level on purpose: when nothing is publishable, this job reports Skipped rather than
+    # a green run that published nothing or a red run with nothing wrong.
     if: needs.detect.outputs.publishable == 'true' && vars.AID_PUBLISH_ENABLED == 'true'
     steps:
-      # The only reachable state today: something is publishable, publishing is enabled, and
-      # no registry or credential exists in this repository. Failing loudly is the only
-      # honest outcome -- a green job here would be a claim about a registry that nothing
-      # performed. Activating publishing means adding a real step below (with credentials or
-      # trusted publishing for a chosen registry) and deleting this guard.
-      - name: Fail loudly while no registry is configured
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Check that this run can mint an OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `id-token: write` above is a request, not a guarantee: the calling workflow has to
+          # grant it too. Fail here, where the remedy is obvious, rather than at the registry.
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::this run has no OIDC token endpoint. The workflow that calls publish.yml must grant id-token: write to the calling job."
+            exit 1
+          fi
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          # Deliberately no `registry-url`. It writes an `_authToken=${NODE_AUTH_TOKEN}`
+          # line into .npmrc, and there is no token to put there: the whole point of this
+          # workflow is that the credential is minted from this run's OIDC identity instead.
+
+      - name: Assert the npm floor for trusted publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Trusted publishing needs npm >= 11.5.1 on Node >= 22.14.0. `.nvmrc` pins 24, which
+          # covers Node, but the bundled npm is whatever the toolchain image happened to ship,
+          # so assert it instead of assuming it.
+          floor=11.5.1
+          have="$(npm --version)"
+          lowest="$(printf '%s\n%s\n' "$floor" "$have" | sort -V | head -n1)"
+          if [ "$lowest" != "$floor" ]; then
+            echo "npm $have is below the $floor floor; installing it."
+            npm install --global "npm@$floor"
+            have="$(npm --version)"
+            lowest="$(printf '%s\n%s\n' "$floor" "$have" | sort -V | head -n1)"
+            if [ "$lowest" != "$floor" ]; then
+              echo "::error::npm $have is still below $floor, which trusted publishing requires."
+              exit 1
+            fi
+          fi
+          echo "npm $have (floor $floor)."
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Publish packages
         shell: bash
         env:
-          ARTIFACTS: ${{ needs.detect.outputs.artifacts }}
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -uo pipefail
+          # Topological order, measured from the `workspace:*` graph: spec depends on nothing,
+          # runtime and ir depend on spec, generator-sdk on ir and spec, both generators on
+          # generator-sdk/ir/spec, and cli on all of them. Publishing out of order would put a
+          # package on the registry whose own dependencies are not installable yet.
+          packages=(
+            packages/spec
+            runtimes/typescript
+            packages/ir
+            packages/generator-sdk
+            packages/generators/ts-vercel
+            packages/generators/py-fastapi
+            packages/cli
+          )
+
+          echo "### npm ($VERSION)" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+
+          failed=0
+          for pkg_dir in "${packages[@]}"; do
+            name="$(jq -r .name "$pkg_dir/package.json")"
+            declared="$(jq -r .version "$pkg_dir/package.json")"
+            if [ "$declared" != "$VERSION" ]; then
+              echo "::error::$pkg_dir declares $declared but $VERSION is being released."
+              echo "- **failed**: $name (declares $declared, not $VERSION)" >> "$GITHUB_STEP_SUMMARY"
+              failed=1
+              continue
+            fi
+            # Re-runs and post-bootstrap publishes must not fail on a version that is already
+            # on the registry.
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already on the registry; skipping."
+              echo "- skipped, already published: $name@$VERSION" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            echo "::group::publish $name@$VERSION"
+            # `pnpm publish`, not `npm publish`: every internal dependency is `workspace:*`,
+            # and pnpm rewrites those to `^$VERSION` on the way out. npm would ship the
+            # literal `workspace:*` protocol, which no consumer can resolve. `--access public`
+            # is mandatory because scoped packages default to restricted, and `--provenance`
+            # builds the attestation against this run's OIDC identity.
+            if ( cd "$pkg_dir" && pnpm publish --access public --provenance --no-git-checks ); then
+              echo "- published: $name@$VERSION" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::failed to publish $name@$VERSION"
+              echo "- **failed**: $name@$VERSION" >> "$GITHUB_STEP_SUMMARY"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
+  publish-pypi:
+    name: publish-pypi
+    needs: detect
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: needs.detect.outputs.publishable == 'true' && vars.AID_PUBLISH_ENABLED == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Check that this run can mint an OIDC token
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::this run has no OIDC token endpoint. The workflow that calls publish.yml must grant id-token: write to the calling job."
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          # Matches the `requires-python` floor, so the wheel is built on what CI proves it on.
+          python-version: "3.11"
+
+      - name: Decide whether PyPI needs this version
+        id: check
+        shell: bash
+        env:
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
-          echo "::error::\`$ARTIFACTS\` is publishable for $VERSION and AID_PUBLISH_ENABLED is true, but this workflow has no publish step and this repository has no registry credentials. Configure a registry and credentials, add the publish step, and remove this guard."
-          exit 1
+          name="$(
+            python -c 'import tomllib,pathlib;print(tomllib.loads(pathlib.Path("runtimes/python/pyproject.toml").read_text())["project"]["name"])'
+          )"
+          declared="$(
+            python -c 'import tomllib,pathlib;print(tomllib.loads(pathlib.Path("runtimes/python/pyproject.toml").read_text())["project"]["version"])'
+          )"
+          if [ "$declared" != "$VERSION" ]; then
+            echo "::error::runtimes/python declares $declared but $VERSION is being released. Run scripts/version.mjs stamp and commit the result."
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          # `-f` makes curl exit non-zero on the 404 that means "not published yet".
+          if curl -fsS -o /dev/null "https://pypi.org/pypi/$name/$VERSION/json"; then
+            echo "$name $VERSION is already on PyPI; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build sdist and wheel
+        if: steps.check.outputs.skip != 'true'
+        shell: bash
+        working-directory: runtimes/python
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade build
+          python -m build
+          ls -l dist
+
+      - name: Publish to PyPI
+        id: upload
+        if: steps.check.outputs.skip != 'true'
+        # Trusted publishing: the action demands `id-token: write` and no password, and
+        # exchanges the OIDC identity for an upload token. `packages-dir` is workspace-relative.
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: runtimes/python/dist/
+
+      - name: Summarize
+        if: always()
+        shell: bash
+        env:
+          NAME: ${{ steps.check.outputs.name }}
+          VERSION: ${{ needs.detect.outputs.version }}
+          SKIP: ${{ steps.check.outputs.skip }}
+          OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          set -euo pipefail
+          echo "### PyPI ($VERSION)" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          if [ "$SKIP" = "true" ]; then
+            echo "- skipped, already published: $NAME $VERSION" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$OUTCOME" = "success" ]; then
+            echo "- published: $NAME $VERSION" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- **failed**: $NAME $VERSION ($OUTCOME)" >> "$GITHUB_STEP_SUMMARY"
+          fi

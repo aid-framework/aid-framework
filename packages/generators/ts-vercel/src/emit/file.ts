@@ -15,7 +15,7 @@
  * example hand-writes `app/main.py`. See the README.
  */
 
-import { managedRoots } from '@aid/generator-sdk';
+import { managedRoots } from '@aid-framework/generator-sdk';
 import { TS_VERCEL_MANIFEST } from '../manifest.js';
 
 export const MANIFEST_PATH = managedRoots(TS_VERCEL_MANIFEST).manifestFilename;

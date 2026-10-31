@@ -14,10 +14,20 @@
  *
  * The JSON decision goes to stdout and notes to stderr, so a redirect stays clean.
  * Exit 0 means a decision was produced - including "do not release"; exit 2 means
- * a usage or I/O failure.
+ * a usage or I/O failure. `stamp` is the exception: a rejected `--version` is exit 1.
+ *
+ * `stamp` is the counterweight to the tag being the source of truth: it writes a
+ * version into every manifest `release.config.json` lists, so `release.yml` tagging
+ * `v0.1.39` and the manifests declaring `0.1.39` cannot drift apart. A pypi package
+ * that also exposes a module-level `__version__` gets that literal stamped too, since
+ * the runtime's own tests pin it to `[project].version`. It is a maintainer command
+ * run before the release commit, deliberately not a CI step -- a workflow that rewrote
+ * manifests could publish a version nobody reviewed.
  */
 
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * @typedef {object} Version
@@ -81,7 +91,169 @@ const USAGE = [
   '                                     (--changed-files-file <file> | --changed-files a,b)',
   '                                     [--force] [--github-output <file>]',
   '       node scripts/version.mjs latest  --config <file> (--tags-file <file> | --tags a,b)',
+  '       node scripts/version.mjs stamp   --version x.y.z [--config <file>]',
 ].join('\n');
+
+/** A released version as a manifest declares it: bare, no tag prefix. */
+const STAMP_VERSION = /^\d+\.\d+\.\d+$/;
+
+/**
+ * A `stamp` argument the maintainer can fix by retyping. Distinct from the generic
+ * exit 2 so `stamp`'s contract -- reject a bad version with exit 1 -- holds without
+ * making every other failure look like a usage error.
+ */
+export class StampVersionError extends Error {
+  /** @param {string} message */
+  constructor(message) {
+    super(message);
+    this.name = 'StampVersionError';
+    this.exitCode = 1;
+  }
+}
+
+/**
+ * The version to write, rejecting anything a manifest may not declare. A tag prefix
+ * is the caller quoting the git tag rather than the version, so it is named
+ * explicitly instead of being silently stripped: `stamp --version v0.1.39` writing
+ * `0.1.39` would hide that the two spellings differ.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+export function parseStampVersion(value) {
+  if (value.startsWith('v')) {
+    throw new StampVersionError(
+      `--version takes a bare semver version, not a tag: use ${value.slice(1)} instead of ${value}`,
+    );
+  }
+  if (!STAMP_VERSION.test(value)) {
+    throw new StampVersionError(`--version must be a x.y.z version, got "${value}"`);
+  }
+  return value;
+}
+
+/**
+ * Rewrite `[project] version` in a `pyproject.toml`, leaving every other byte alone.
+ * The fields that decide publishability are flat strings in the project table, so the
+ * four lines of parsing that `detect-publishable.mjs` already relies on are enough;
+ * a TOML dependency would be the tail wagging the dog.
+ *
+ * @param {string} text
+ * @param {string} version
+ * @returns {{ text: string, changed: boolean }}
+ */
+export function stampProjectVersion(text, version) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(eol);
+  let inProject = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line === undefined) continue;
+    const trimmed = line.trim();
+    if (trimmed.startsWith('[')) {
+      inProject = /^\[\s*project\s*\]$/.test(trimmed);
+      continue;
+    }
+    if (!inProject) continue;
+    const match = /^(\s*version\s*=\s*")([^"]*)(".*)$/.exec(line);
+    if (match === null) continue;
+    const [, prefix, declared, suffix] = match;
+    if (declared === version) return { text, changed: false };
+    lines[index] = `${prefix}${version}${suffix}`;
+    return { text: lines.join(eol), changed: true };
+  }
+  throw new StampVersionError(
+    'pyproject.toml has no static version in its [project] table, so it cannot be stamped',
+  );
+}
+
+/**
+ * A pypi package can expose its own version as a module-level literal as well as in
+ * `[project]`. `runtimes/python` does, and its `tests/test_package.py` pins the two
+ * equal, so stamping only the manifest would publish a distribution whose barrel
+ * disagrees with its own metadata.
+ *
+ * @param {string} text
+ * @param {string} version
+ * @returns {{ text: string, changed: boolean } | null} null when the module has no literal
+ */
+export function stampBarrelVersion(text, version) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(eol);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line === undefined) continue;
+    const match = /^(__version__\s*=\s*["'])([^"']*)(["'].*)$/.exec(line);
+    if (match === null) continue;
+    const [, prefix, declared, suffix] = match;
+    if (declared === version) return { text, changed: false };
+    lines[index] = `${prefix}${version}${suffix}`;
+    return { text: lines.join(eol), changed: true };
+  }
+  return null;
+}
+
+/**
+ * Write `version` into every manifest `release.config.json` lists. Idempotent by
+ * construction rather than by re-serializing: a manifest that already declares the
+ * version is not written at all, so a second run leaves every byte identical.
+ *
+ * @param {{ config: ReleaseConfig, root: string, version: string }} options
+ * @returns {{ version: string, written: string[], unchanged: string[] }}
+ */
+export function stamp({ config, root, version }) {
+  /** @type {string[]} */
+  const written = [];
+  /** @type {string[]} */
+  const unchanged = [];
+
+  for (const entry of config.packages) {
+    const directory = join(root, ...entry.path.split('/'));
+    if (entry.registry === 'npm') {
+      const path = `${entry.path}/package.json`;
+      const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
+      if (manifest.version === version) {
+        unchanged.push(path);
+        continue;
+      }
+      manifest.version = version;
+      writeFileSync(join(directory, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+      written.push(path);
+    } else if (entry.registry === 'pypi') {
+      const path = `${entry.path}/pyproject.toml`;
+      const absolute = join(directory, 'pyproject.toml');
+      const result = stampProjectVersion(readFileSync(absolute, 'utf8'), version);
+      if (!result.changed) {
+        unchanged.push(path);
+      } else {
+        writeFileSync(absolute, result.text);
+        written.push(path);
+      }
+
+      const sourceDir = join(directory, 'src');
+      if (!existsSync(sourceDir)) continue;
+      for (const module of readdirSync(sourceDir)) {
+        const barrel = join(sourceDir, module, '__init__.py');
+        if (!existsSync(barrel)) continue;
+        const stamped = stampBarrelVersion(readFileSync(barrel, 'utf8'), version);
+        if (stamped === null) continue;
+        const barrelPath = `${entry.path}/src/${module}/__init__.py`;
+        if (!stamped.changed) {
+          unchanged.push(barrelPath);
+          continue;
+        }
+        writeFileSync(barrel, stamped.text);
+        written.push(barrelPath);
+      }
+    } else {
+      throw new Error(
+        `release.config.json lists "${entry.name}" with unknown registry "${entry.registry}"`,
+      );
+    }
+  }
+
+  return { version, written, unchanged };
+}
 
 /** @param {string} value */
 function escapeRegExp(value) {
@@ -90,7 +262,7 @@ function escapeRegExp(value) {
 
 /**
  * Parses `v1.2.3` (or `<prefix>1.2.3`). Anything else - e.g. a package-scoped
- * `@aid/spec@0.1.0` tag, which only means something in independent mode - is null.
+ * `@aid-framework/spec@0.1.0` tag, which only means something in independent mode - is null.
  *
  * @param {string} tag
  * @param {string} prefix
@@ -456,11 +628,48 @@ function listOption(args, key) {
   return null;
 }
 
+/** The repo root, only used to find the default `release.config.json` for `stamp`. */
+const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+
+/**
+ * `stamp --version x.y.z [--config <file>]`.
+ *
+ * The config is optional here, unlike `decide`, so the maintainer command is a
+ * one-liner against the checked-in release config. Package paths resolve against the
+ * config's own directory, which keeps `--config` usable from a fixture tree.
+ *
+ * @param {Record<string, string | undefined>} args
+ */
+function stampCommand(args) {
+  const requested = args['version'];
+  if (requested === undefined) throw new StampVersionError(`--version is required\n${USAGE}`);
+  const version = parseStampVersion(requested);
+
+  const configPath = resolve(args['config'] ?? join(REPO_ROOT, 'release.config.json'));
+  const config = parseConfig(JSON.parse(readFileSync(configPath, 'utf8')));
+  const result = stamp({ config, root: dirname(configPath), version });
+
+  process.stdout.write(
+    `[stamp] ${version}: ${result.written.length} written, ${result.unchanged.length} unchanged\n`,
+  );
+  if (result.written.length === 0) {
+    const total = result.written.length + result.unchanged.length;
+    process.stdout.write(`[stamp] all ${total} manifests already declare ${version}\n`);
+  }
+  for (const path of result.written) process.stdout.write(`  wrote ${path}\n`);
+  for (const path of result.unchanged) process.stdout.write(`  unchanged ${path}\n`);
+}
+
 function main() {
   const argv = process.argv.slice(2);
   const hasCommand = argv[0] !== undefined && !argv[0].startsWith('--');
   const command = hasCommand ? argv[0] : 'decide';
   const args = parseArgs(hasCommand ? argv.slice(1) : argv);
+
+  if (command === 'stamp') {
+    stampCommand(args);
+    return;
+  }
 
   const configPath = args['config'];
   if (configPath === undefined) throw new Error(`--config is required\n${USAGE}`);
@@ -522,6 +731,7 @@ if (
     main();
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    const exitCode = /** @type {{ exitCode?: number }} */ (error).exitCode;
+    process.exit(typeof exitCode === 'number' ? exitCode : 2);
   }
 }

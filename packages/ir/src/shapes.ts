@@ -391,7 +391,7 @@ export function isCompositeStep(step: { kind: StepShape['kind'] }): step is Comp
  * generated package (`aid_runtime.control` keeps a default for hand-written use), so a
  * drift between build and runtime fails a test instead of diverging silently.
  */
-export { MAX_STEP_DEPTH } from '@aid/spec';
+export { MAX_STEP_DEPTH } from '@aid-framework/spec';
 
 export interface ErrorPolicy {
   retries: number;

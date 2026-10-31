@@ -5,7 +5,7 @@
  * gate owes them is resolution, not recursion.
  */
 
-import { checkSpecText } from '@aid/spec';
+import { checkSpecText } from '@aid-framework/spec';
 import { describe, expect, it } from 'vitest';
 
 import {

@@ -2,7 +2,7 @@
  * The declaration half of the plugin: the manifest, and the claims it makes.
  *
  * The manifest is written out in this package rather than aliased from
- * `@aid/generator-sdk`, so that the SDK's declaration of the `py-fastapi` target and
+ * `@aid-framework/generator-sdk`, so that the SDK's declaration of the `py-fastapi` target and
  * this package's declaration of what it emits are two objects that have to be checked
  * against each other. That check lives here because it is the only place both are
  * visible: the SDK cannot import a generator, and a test that compared the SDK
@@ -22,9 +22,9 @@ import {
   PY_FASTAPI_MANIFEST as SDK_DECLARATION,
   supportsIR,
   validatePlan,
-} from '@aid/generator-sdk';
+} from '@aid-framework/generator-sdk';
 
-import { IR_VERSION } from '@aid/ir';
+import { IR_VERSION } from '@aid-framework/ir';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -92,7 +92,7 @@ describe('manifest parity with the SDK', () => {
 
   it('is versioned, named and bound to this target', () => {
     expect(PY_FASTAPI_MANIFEST.manifestVersion).toBe(GENERATOR_MANIFEST_VERSION);
-    expect(PY_FASTAPI_MANIFEST.name).toBe('@aid/generator-py-fastapi');
+    expect(PY_FASTAPI_MANIFEST.name).toBe('@aid-framework/generator-py-fastapi');
     expect(PY_FASTAPI_MANIFEST.target).toBe(PY_FASTAPI_TARGET);
     expect(PY_FASTAPI_MANIFEST.version.split('.')).toHaveLength(3);
   });

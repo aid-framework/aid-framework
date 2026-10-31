@@ -28,7 +28,7 @@
  * `text` on the first three -- `./validate.ts` refuses anything else at plan time.
  */
 
-import type { GuardrailShape, IR } from '@aid/ir';
+import type { GuardrailShape, IR } from '@aid-framework/ir';
 
 import { INDENT, MAX_LINE, pythonString, pythonTuple } from '../python.js';
 import { assemble, HEADER, importBlock, importFrom } from '../template.js';

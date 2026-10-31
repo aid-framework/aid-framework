@@ -20,7 +20,7 @@ import {
 import { codes, messages } from './helpers.js';
 
 const PROVENANCE: AidManifestProvenance = {
-  generator: '@aid/generator-py-fastapi',
+  generator: '@aid-framework/generator-py-fastapi',
   generatorVersion: '0.1.0',
   irVersion: '0.1.0',
 };
@@ -117,7 +117,7 @@ const VALID_RECORD = {
   path: 'app/generated/main.py',
   owner: 'generated',
   sha256: sha256Hex('x = 1\n'),
-  generator: '@aid/generator-py-fastapi',
+  generator: '@aid-framework/generator-py-fastapi',
   generatorVersion: '0.1.0',
 };
 

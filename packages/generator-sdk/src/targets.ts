@@ -1,7 +1,7 @@
 /**
- * The Phase 0 target declarations, in the shape `@aid/ir`'s capability gate consumes.
+ * The Phase 0 target declarations, in the shape `@aid-framework/ir`'s capability gate consumes.
  *
- * `@aid/ir` ships a placeholder (`PHASE_0_TARGET_CAPABILITIES`) precisely so the gate
+ * `@aid-framework/ir` ships a placeholder (`PHASE_0_TARGET_CAPABILITIES`) precisely so the gate
  * can exist before a real generator does; this module is the replacement. It matters
  * that these are *declarations*, not aspirations: a target that claims `streaming`
  * makes every spec requiring streaming pass the capability gate, so the list is the
@@ -13,7 +13,7 @@
  *   `FeatureDeferredError`; the Python runtime now streams and the generator emits a
  *   route that negotiates `Accept: text/event-stream`, so the declaration is backed by
  *   an emitter, a runtime and a committed example. The TypeScript runtime still defers
- *   streaming (ratified to L6), which is why `@aid/ir`'s derivation and this list are
+ *   streaming (ratified to L6), which is why `@aid-framework/ir`'s derivation and this list are
  *   kept separate concerns.
  * - `agents` and `cursor-memory` are declared since layer P7b, and they are two
  *   declarations rather than one because the IR derives two: `agents` from an `agents`
@@ -21,7 +21,7 @@
  *   capability to declare). Both are backed by emitted code -- `generated/agents.py`
  *   builds the runtime over this app's own gateway and tools and serves the routes --
  *   and by the example's `tests/test_agents.py`, which pauses a run and resumes it. The
- *   TypeScript target declares neither, so `@aid/ir` will route a spec that needs them
+ *   TypeScript target declares neither, so `@aid-framework/ir` will route a spec that needs them
  *   to the Python target or refuse it.
  * - the absence of `emitsAgainst.orchestration` — Phase 0 control flow is plain async,
  *   and orchestration frameworks are deferred to Phase 2. An agent loop is not an
@@ -29,8 +29,8 @@
  *   from the repo's own runtime and depends on nothing outside it.
  */
 
-import { IR_VERSION, type TargetCapabilityDeclarations } from '@aid/ir';
-import { formatDiagnostics } from '@aid/spec';
+import { IR_VERSION, type TargetCapabilityDeclarations } from '@aid-framework/ir';
+import { formatDiagnostics } from '@aid-framework/spec';
 
 import {
   type GeneratorManifest,
@@ -48,7 +48,7 @@ export const PY_FASTAPI_TARGET = 'py-fastapi';
  */
 export const PY_FASTAPI_MANIFEST_INPUT: GeneratorManifestInput = {
   manifestVersion: 1,
-  name: '@aid/generator-py-fastapi',
+  name: '@aid-framework/generator-py-fastapi',
   target: PY_FASTAPI_TARGET,
   version: '0.1.0',
   irRange: `^${IR_VERSION}`,
@@ -99,7 +99,7 @@ export function phase0Generators(): GeneratorManifest[] {
   return [PY_FASTAPI_MANIFEST];
 }
 
-/** Drop-in replacement for `@aid/ir`'s `phase0TargetCapabilities()`. */
+/** Drop-in replacement for `@aid-framework/ir`'s `phase0TargetCapabilities()`. */
 export function phase0TargetCapabilities(): TargetCapabilityDeclarations {
   return targetCapabilityDeclarations(phase0Generators());
 }

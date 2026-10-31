@@ -30,7 +30,7 @@ import {
   type ToolShape,
   type TypeRef,
   type TypeShape,
-} from '@aid/ir';
+} from '@aid-framework/ir';
 
 import { PY_FASTAPI_MANIFEST, supportsIrVersion } from './manifest.js';
 import { isRetrievalEval, judgeAlias, mapMetric } from './metrics.js';
@@ -2185,7 +2185,7 @@ function distinctSubjects(
  * The prompt and model an eval measures, or why it measures none.
  *
  * The spec language can only name a pipeline (`evals.<id>.target` is validated against
- * `pipeline:<id>` by `@aid/spec`), while the IR can also name a prompt directly, so both
+ * `pipeline:<id>` by `@aid-framework/spec`), while the IR can also name a prompt directly, so both
  * forms have to resolve here -- and both resolve to the same thing, because an eval
  * measures a prompt through the step that renders it.
  *

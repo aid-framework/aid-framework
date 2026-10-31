@@ -26,8 +26,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { IR, MemoryShape } from '@aid/ir';
-import { deriveRequiredCapabilities } from '@aid/ir';
+import type { IR, MemoryShape } from '@aid-framework/ir';
+import { deriveRequiredCapabilities } from '@aid-framework/ir';
 import { describe, expect, it } from 'vitest';
 
 import { planPyFastApi } from '../src/index.js';
@@ -636,6 +636,11 @@ describe('a spec with no agent and no memory', () => {
  * Only the `generated` tier is pinned. The `business` tier is developer-owned -- the
  * generator seeds it once and never rewrites it -- so pinning those bytes would pin the
  * fixture's own contents rather than anything the generator decides.
+ *
+ * Every digest here was re-recorded once, when the package scope changed to `@aid-framework/*`:
+ * the generator's name is written into each generated file, so that rename moved all 27. The
+ * `observability.py` pin is deliberately left at its pre-rename value, so the exclusion below
+ * still has exactly one file that has moved.
  */
 describe('the pre-P7b example', () => {
   const FIXTURE = join(REPO_ROOT, 'packages/generators/py-fastapi/test/fixtures/p7a');

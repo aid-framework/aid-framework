@@ -10,7 +10,7 @@
  * compile and fail loudly rather than compile and return a plausible lie.
  */
 
-import type { EvalShape, IR, MetricShape, ToolShape } from '@aid/ir';
+import type { EvalShape, IR, MetricShape, ToolShape } from '@aid-framework/ir';
 import { className, literal, propertyKey, toSnakeCase } from '../names.js';
 import {
   business,
@@ -166,7 +166,7 @@ function gateBody(evalShape: EvalShape, metrics: readonly string[]): string[] {
 }
 
 /**
- * The `@aid/runtime` names a plain eval module needs: only the metrics the spec
+ * The `@aid-framework/runtime` names a plain eval module needs: only the metrics the spec
  * actually asks for, because the emitted module has no other way to use one.
  */
 function plainEvalImports(
@@ -197,7 +197,7 @@ function plainEvalModule(evalShape: EvalShape): string {
   const names = metrics.map((metric) => metric.kind);
   const asserted = metrics.find((metric) => metric.kind === 'assert');
   const header = [
-    importStatement('@aid/runtime', plainEvalImports(evalShape, metrics)),
+    importStatement('@aid-framework/runtime', plainEvalImports(evalShape, metrics)),
     importStatement('../gateway/index.js', [{ name: 'buildGateway', type: false }]),
   ].join('\n');
   const body = [
@@ -248,7 +248,7 @@ function retrievalEvalModule(ir: IR, evalShape: EvalShape, metric: MetricShape):
   const expectDocs = metric.kind === 'retrieval' ? [...metric.expectDocs] : [];
   const k = metric.kind === 'retrieval' ? metric.k : 5;
   const header = [
-    importStatement('@aid/runtime', [
+    importStatement('@aid-framework/runtime', [
       { name: 'ConfigurationError', type: false },
       { name: 'Dataset', type: false },
       { name: 'RetrievalCase', type: false },
@@ -364,7 +364,7 @@ function camelId(id: string): string {
 function businessToolSeed(tool: ToolShape): string {
   const handler = `${className(tool.id)}Handler`;
   const header = [
-    importStatement('@aid/runtime', [{ name: 'ConfigurationError', type: false }]),
+    importStatement('@aid-framework/runtime', [{ name: 'ConfigurationError', type: false }]),
     importStatement(`../../generated/contracts/${tool.id}.js`, [{ name: handler, type: true }]),
   ].join('\n');
   const body = [
@@ -421,7 +421,7 @@ export function emitBusinessPromptsIndex(ir: IR): EmittedFile {
   return business(
     paths.businessPromptsIndex,
     seedText(
-      `import type { PromptTemplate } from '@aid/runtime';`,
+      `import type { PromptTemplate } from '@aid-framework/runtime';`,
       [
         '/**',
         ' * Prompt overrides, layered over the generated templates at build time.',
