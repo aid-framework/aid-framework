@@ -67,8 +67,41 @@ the IR, the CLI surface, and the roadmap.
 
 ## Quickstart
 
+The CLI is published, so nothing needs to be cloned. You need Node.js 24 or newer:
+
+```bash
+npx @aid-framework/cli init my-app
+cd my-app
+npx @aid-framework/cli validate   # spec → IR → every build-time gate
+npx @aid-framework/cli gen        # compile the spec into a runnable service
+```
+
+The default target is `py-fastapi`, and the generated routers import
+[`aid-runtime-python`](https://pypi.org/project/aid-runtime-python/). The ASGI entry point is yours — a few lines
+in `app/main.py` mounting the generated routers:
+
+```python
+from fastapi import FastAPI
+from app.generated.routes.answer_ticket import answer_ticket_router
+
+app = FastAPI()
+app.include_router(answer_ticket_router)
+```
+
+```bash
+pip install aid-runtime-python "fastapi>=0.115,<1" "uvicorn>=0.30,<1"
+uvicorn app.main:app --reload
+```
+
+Use `--target ts-vercel` for the TypeScript / Vercel target, which pairs with
+[`@aid-framework/runtime`](https://www.npmjs.com/package/@aid-framework/runtime). A spec declares the targets it
+is for; `--target` selects among them. [`packages/cli/`](packages/cli/) documents every command and the exit-code
+contract.
+
+## Working on the framework itself
+
 You need Node.js 24 (see [`.nvmrc`](.nvmrc)) and [uv](https://docs.astral.sh/uv/); `corepack enable` puts
-pnpm on your PATH. `aid` is not on a registry yet, so this drives the compiled CLI from the checkout.
+pnpm on your PATH.
 
 ```bash
 corepack enable
@@ -81,7 +114,7 @@ node ../../packages/cli/dist/cli.js gen --dry-run  # report the change set, and 
 node ../../packages/cli/dist/cli.js gen            # reconcile the tree with the spec
 ```
 
-Scaffolding a new project, and the options every command takes:
+Scaffolding from the checkout, and the options every command takes:
 
 ```bash
 node packages/cli/dist/cli.js init my-app --gen                      # from a starter spec

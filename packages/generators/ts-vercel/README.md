@@ -1,164 +1,123 @@
-# `ts-vercel` generator
+# `@aid-framework/generator-ts-vercel`
 
-The **Phase 1 second target**: turns the IR into a Next.js App Router service wired to the
-[`@aid-framework/runtime`](../../../runtimes/typescript/) runtime. Generated code is declarative glue — zod schemas, model
-aliases, prompt templates, route handlers, tool adapters, retrieval bindings, eval definitions — and every
-behaviour it calls already exists in the runtime ([`docs/design.md` §4](../../../docs/design.md), principle 1:
-*thin generated, fat runtime*).
+The TypeScript / Vercel target for [AID Framework](https://github.com/aid-framework/aid-framework). It compiles an
+IR into a Next.js app whose behaviour lives in [`@aid-framework/runtime`](https://www.npmjs.com/package/@aid-framework/runtime),
+with a `business/` tier the compiler creates once and never touches again.
 
-The only input is the IR. `plan` is a pure function of it: nothing here reads a spec file, a template
-directory, the environment or the clock, so the same IR always produces the same bytes.
+```text
+app.spec.yaml ──aid gen --target ts-vercel──▶ app/generated/  (compiler)
+                                              app/business/   (you)
+```
 
-**Emits against** ([`§8.1`](../../../docs/design.md)):
+## Install
 
-| Key | Value | Why |
-| --- | --- | --- |
-| `structuredOutput` | `zod` | Response models are zod schemas, so a structured-output call is validated by the runtime's gateway |
-| `tracing` | `otel-genai` | Spans follow the OTel GenAI semantic conventions |
-| `orchestration` | *absent* | Control flow is **plain async**. Orchestration frameworks are deferred to Phase 2 ([`§14`](../../../docs/design.md)), and declaring nothing is what keeps the choice swappable |
+```sh
+npm install --save-dev @aid-framework/generator-ts-vercel
+```
 
-## Deviation: no `emitsAgainst.vectorStore`
+Requires Node.js 24 or newer. In practice you pull it in through
+[`@aid-framework/cli`](https://www.npmjs.com/package/@aid-framework/cli).
 
-The frozen plan's L6 row asks for
-`emitsAgainst = { structuredOutput: 'zod', tracing: 'otel-genai', vectorStore: 'pgvector' }`. **The third key is
-not expressible, and this package does not declare it.** `EmitsAgainst` in
-[`packages/generator-sdk/src/manifest.ts:56`](../../generator-sdk/src/manifest.ts) has exactly three members —
-`orchestration?`, `structuredOutput?`, `tracing?` — and adding a fourth is an SDK change, which is outside this
-layer.
+## Use it
 
-The plan cites [`manifest.test.ts:135`](../../generator-sdk/test/manifest.test.ts) as evidence that
-`emitsAgainst.vectorStore` is supported. That line is inside the test *"rejects an unknown emitsAgainst key and
-an out-of-vocabulary value"*, and it asserts `manifestUnknownKey` **for** `{ vectorStore: 'pgvector' }`: the plan
-cited the counter-example as if it were the example.
+A spec generates one target at a time, so a project that ships both stacks declares both:
 
-`pgvector` is nevertheless honoured — as the IR's store kind
-([`packages/ir/src/shapes.ts:397-400`](../../ir/src/shapes.ts)), not as an `emitsAgainst` key. `validate.ts`
-accepts `memory` and `pgvector` stores and refuses any other kind, and the emitted `retrieval/bindings.ts` passes
-the kind through to the runtime, whose `PgVectorStore` adapter loads its driver lazily. So the **substance** of
-the plan's declaration is present; the declared shape is the SDK's. This is the same fail-closed resolution
-`py-fastapi` reached, and for the same reason: a manifest that does not parse is not a target.
+```yaml
+project:
+  name: support-copilot
+  targets:
+    - py-fastapi
+    - ts-vercel
+```
 
-A test pins the key set to an exact literal — `Object.keys(manifest.emitsAgainst).sort()` equals
-`['structuredOutput', 'tracing']` — the same non-vacuous shape
-[`py-fastapi/test/target.test.ts:137`](../py-fastapi/test/target.test.ts) uses, so adding or dropping a key fails
-rather than silently passing.
+```sh
+npx aid gen --target ts-vercel
+```
 
-## Capabilities: 6 declared, `streaming` not
+```text
+ts-vercel: 20 created, 0 updated, 0 unchanged, 0 kept
+```
 
-| Declared | Honoured by |
+`--target` selects among the targets the spec declares. Naming an undeclared one fails with `target-unsupported`
+and lists what is declared, because generating a stack the spec never asked for would make the spec a lie.
+
+## What it emits
+
+| Path | Contents |
 | --- | --- |
-| `http-trigger` | `routes/<pipeline>.ts`, a Fetch-shaped handler Next serves |
-| `json-schema` | `schemas.ts`, zod schemas the runtime validates structured output with |
-| `tool-calling` | `tools/**` and `contracts/**`, adapters over handlers you own |
-| `otel` | `observability.ts`, the runtime tracer |
-| `embeddings` | `retrieval/bindings.ts`, `retrieval/index.ts`, `retrieval/ingest/**` |
-| `rerank` | the retriever binding's `rerank` spec, resolved by the runtime's `rerankerFor` |
+| `app/generated/index.ts` | The package's public surface |
+| `app/generated/deps.ts` | Wiring: gateway, registry, executor, pipelines |
+| `app/generated/control.ts` | The composite-step helpers the pipelines use |
+| `app/generated/schemas.ts` | zod schemas derived from the IR's `types` |
+| `app/generated/gateway/models.ts` | `ModelSpec` values and pinned aliases from the IR |
+| `app/generated/observability.ts` | Tracer setup |
+| `app/generated/guardrails.ts` | The guardrail policies the IR declares |
+| `app/generated/contracts/` | The interface each business module must satisfy |
+| `app/generated/pipelines/` | One module per pipeline, as ordinary async code |
+| `app/generated/prompts/` | The registry the IR's prompts resolve into |
+| `app/generated/tools/` | Tool definitions and dispatch |
+| `app/generated/evals/` | The eval dataset and gate thresholds |
+| `app/generated/retrieval/` | Retriever bindings, plus `ingest/` for corpus indexing |
+| `app/generated/routes/` | Request handlers for pipelines with an `http` trigger |
+| `app/business/`, `app/business/prompts/`, `app/business/tools/` | Your seam — created once, then never touched |
 
-`streaming` is **not** declared. `ModelGateway.stream` raises `FeatureDeferredError`, so declaring the capability
-would be the fail-open the capability discipline forbids: a target must not advertise what it cannot emit.
+The exact file set follows the spec: a spec that declares no retrievers emits no `retrieval/` modules.
 
-**Emits** (24 files per generated app — [`§8.3`](../../../docs/design.md)):
+### A note on `app/`
 
-- **Model gateway wiring** — `gateway/models.ts` and `gateway/index.ts`: one alias per declared model, with
-  provider, model id and cost profile, validated against the runtime's adapter registry.
-- **Prompt registry wiring** — `prompts/<prompt>.ts` and `prompts/index.ts`: the template, its version, and the
-  typed values it interpolates.
-- **One structured-output endpoint** — `requests.ts`, `schemas.ts`, `routes/<pipeline>.ts` and
-  `pipelines/<pipeline>.ts`: the request shape, the response schema, the route handler, and the plain-async
-  pipeline that renders the prompt, calls the gateway, runs the tool and shapes the response.
-- **One tool** — `tools/<tool>.ts` plus `contracts/<tool>.ts`, and their two indexes: a zod-validated adapter
-  over a handler you own. The handler itself is seeded once and then yours.
-- **Retrieval** — `retrieval/bindings.ts`, `retrieval/index.ts` and `retrieval/ingest/**`: the embedding, store
-  and retriever declarations, the `buildRetrievers` factory that resolves and validates the binding at startup,
-  and one idempotent ingest entry point per retriever.
-- **Evals** — `evals/<eval>.ts` and `evals/index.ts`: the dataset loader, the stored baseline, the metric list and
-  the gate, delegating every statistic to `@aid-framework/runtime`.
-- **`observability.ts`** and **`deps.ts`** — tracer setup and the dependency container that the route and the eval
-  both build from, so the eval measures the prompt the app actually renders.
+The output root is `app/`, which is also Next.js's own directory convention. That collision is deliberate and
+accepted for parity with the other target's layout: the generated tree sits at the project's `app/`, alongside
+whatever Next puts there. If you already have a Next project at that root, generate into a fresh directory rather
+than merging the two.
 
-Packaging, the Next `app/api/**` shim and the tests are **not** generated: `package.json`, `app/api/<path>/route.ts`
-and `tests/**` are hand-written in the example, because a plan may only write into the two managed tiers below.
+## Capabilities
 
-## Layout and ownership ([`§8.4`](../../../docs/design.md))
+```text
+http-trigger, json-schema, tool-calling, otel,
+embeddings, rerank, guardrails, agents, cursor-memory
+```
 
-| Path | Owner | On regeneration |
-| --- | --- | --- |
-| `app/generated/**` | the generator | overwritten, never merged |
-| `app/business/**` | you | created once if missing, then **never** touched |
-| `app/aid.manifest.json` | the generator | rewritten from the plan; not a planned artifact itself |
+It emits against **zod** for structured output and **`otel-genai`** for tracing.
 
-A generated file whose bytes no longer match the hash recorded in the manifest is **drift**: regeneration reports
-it as an error, leaves your edit in place, and writes the content it wanted beside it as `<path>.aid-rej`.
-`--force` discards the edit instead (with a warning), and `--prune` deletes generated files the plan no longer
-produces ([`§10`](../../../docs/design.md)).
+Note the absence of `streaming`: this target does not declare it, so the IR's `deploy/streaming` gate rejects a
+spec that asks for a streaming deployment here rather than emitting an endpoint that cannot stream.
 
-## Accepted collision: `output.root: 'app'`
+## The `business/` seam
 
-Decision A7 puts `generated/` and `business/` under `output.root: 'app'` for parity with the Python target, and
-that root is also Next.js's own App Router directory. The plan names the collision, accepts it for parity with
-the SDK's `managedRoots`, and flags it for review; **this package accepts it too rather than working around it.**
-The consequences, stated plainly:
+Everything in `generated/` is replaced on the next `aid gen`. `business/` is created only if missing and is never
+written again — that is where prompts, tool handlers and domain logic belong.
 
-- `app/generated/**` and `app/business/**` sit beside your own routes, layouts and pages, in the directory the
-  framework already owns. Nothing is lost, because the two managed tiers are disjoint from Next's file
-  conventions (`route.ts`, `layout.tsx`, `page.tsx`), but it is a naming collision a reader must know about.
-- A future `output.root` of `.` would remove it at the cost of parity; that is a plan decision, not this layer's.
+`app/generated/contracts/` carries the interfaces the business modules implement, so a missing or misnamed export
+is a type error at build time instead of a runtime surprise.
 
-## Deviation: the `app/api/**` shim is hand-written
+## Determinism
 
-A7 also asks the generator to emit "a thin emitted `app/api/<path>/route.ts` shim that Next actually serves".
-**This package does not emit it**, for two independent mechanical reasons, either of which is sufficient:
+Given the same IR, this generator produces byte-identical output — no timestamps, no absolute paths, no host
+names, and import order derived from stable ids rather than from filesystem walk order. That makes `generated/`
+diffable and keeps a regeneration from producing a diff it did not mean.
 
-1. **The plan validator refuses the path.** `validatePlan` accepts writes only under the manifest's managed roots
-   (`app/generated`, `app/business`); `app/api/tickets/route.ts` is rejected with `generator/plan-owner-mismatch`.
-   A test asserts exactly that rejection.
-2. **The manifest's owner cross-check would break every later run.** `parseAidManifest` treats the first path
-   segment as the owner, so a recorded `app/api/...` entry does not match the generator's root and the next
-   `aid gen` fails to parse the manifest it wrote itself — a hard CLI break, not a cosmetic mismatch.
+## Programmatic use
 
-So the generator emits the real handler at `app/generated/routes/<pipeline>.ts`, which exports both
-`handle<Pipeline>` and a `ROUTE` constant (`{ method, path }`), and the example hand-writes the three-line Next
-shim at `app/api/tickets/answer/route.ts`. This mirrors `py-fastapi`, where `app/main.py` is likewise hand-written
-because a plan may not write outside its tiers: the framework's mount point is yours, the handler is generated.
+```ts
+import { manifest, plan } from '@aid-framework/generator-ts-vercel';
+import type { Generator } from '@aid-framework/generator-sdk';
+```
 
-## No `next` dependency
+The generator satisfies the `Generator` contract from
+[`@aid-framework/generator-sdk`](https://www.npmjs.com/package/@aid-framework/generator-sdk): `plan(ir)` is pure
+and `emit(plan)` returns the file set. Ownership, drift detection and manifest writing are the SDK's, so this
+package contains no regeneration logic of its own.
 
-Next is the **deployment target**, not a dependency of this repository. `next` pulls `caniuse-lite`, which is
-CC-BY-4.0, and [`scripts/check-licenses.mjs`](../../../scripts/check-licenses.mjs) allows only
-0BSD/Apache-2.0/BlueOak/BSD/CC0-1.0/ISC/MIT/MIT-0/MPL-2.0/Python-2.0/PSF-2.0/Unlicense/WTFPL. Adding Next would
-mean weakening the license allowlist, which this layer does not do. The example therefore ships
-`tests/server.ts`, a Node host that speaks the same Fetch-shaped contract as the emitted handler and looks up the
-same `ROUTE` constant, so the end-to-end job can boot generated code and hit a real socket without a Next install.
+## Related packages
 
-**Determinism** ([`§8.2`](../../../docs/design.md)): output is path-sorted, LF-only, with one trailing newline, no
-timestamps, no absolute paths and no machine names. `checkDeterminism` in the generator SDK is the lint that holds
-this; a test in this package plans the example twice and compares bytes.
+- [`@aid-framework/runtime`](https://www.npmjs.com/package/@aid-framework/runtime) — the runtime the emitted code
+  imports
+- [`aid-runtime-python`](https://pypi.org/project/aid-runtime-python/) — the Python runtime
+- [`@aid-framework/generator-py-fastapi`](https://www.npmjs.com/package/@aid-framework/generator-py-fastapi) — the
+  Python target
+- [`@aid-framework/cli`](https://www.npmjs.com/package/@aid-framework/cli) — `aid`
 
-**Prompt templates** are the one place the two runtimes disagree about syntax: the IR stores `{{ name }}` mustaches
-and the TypeScript runtime parses `str.format`-style `{name}` fields. `src/placeholders.ts` performs that
-conversion once, `validate.ts` refuses a template the runtime cannot interpolate, and the emitter never re-indents
-template content.
+## License
 
-**Not responsible for:** runtime behaviour — the gateway, prompt registry, tool executor, tracing, retrieval, the
-eval harness and the baseline statistics all live in [`runtimes/typescript/`](../../../runtimes/typescript/).
-
-**Status:** implemented for the Phase 1 scope and reachable as `aid gen --target ts-vercel` through the two-entry
-registry in [`packages/cli/src/targets.ts`](../../cli/src/targets.ts). `py-fastapi` remains the default target.
-
-**Scope boundary:** the generator rejects what it cannot express rather than emitting something broken
-([`§4`](../../../docs/design.md), capability negotiation) — `cursor-memory`, guardrails, multi-step agent loops,
-streaming bodies, `llm-judge` as a required CI gate, latency and cost budgets, eval metrics selected by field or
-value, non-`http` triggers, retriever `filters` and non-file sources. Each refusal has a plan diagnostic code.
-
-**Tests:** `test/golden.test.ts` (the example's committed tree *is* the golden fixture), `test/drift.test.ts`
-(regeneration safety across both tiers), `test/target.test.ts` (manifest, capability discipline, IR-only purity,
-layout), `test/text.test.ts` (the byte-level helpers, including the linear edge trim every emitter shares) and
-[`packages/cli/test/targets.test.ts`](../../cli/test/targets.test.ts) (the registry cross-check). The
-example app is in [`examples/support-copilot-ts/`](../../../examples/support-copilot-ts/), and the end-to-end job
-runs `pnpm e2e:ts` after the Python example's `pnpm e2e` in the same `e2e` job, then the example's own suite
-(`pnpm --filter support-copilot-ts-example test`), which the root `vitest` run does not collect and whose 7 passing
-tests are pinned by `examples/support-copilot-ts/scripts/run-tests.mjs`.
-
-Reference: [`docs/design.md` §8](../../../docs/design.md) (generator plugin model),
-[`§9`](../../../docs/design.md) (runtime libraries), [`§6.1`](../../../docs/design.md) (example spec),
-[`§12`](../../../docs/design.md) (testing), [`§14`](../../../docs/design.md) (roadmap).
+[Apache-2.0](https://github.com/aid-framework/aid-framework/blob/main/LICENSE). Code generated by AID Framework is
+not subject to this license.

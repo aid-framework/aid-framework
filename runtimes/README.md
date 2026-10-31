@@ -1,46 +1,41 @@
 # `runtimes/`
 
-One hand-written runtime library **per stack**. This is the real framework: the generated code is thin glue,
-and the behavior lives here ([`docs/design.md` §4](../docs/design.md), principle 1;
-[`§9`](../docs/design.md)).
+One hand-written runtime library **per stack**. This is the real framework: the generated code is thin glue, and
+the behavior lives here.
 
-**Currently Python only.** The design targets more stacks ([`docs/design.md` §14](../docs/design.md)), but
-repository bootstrap scaffolds a single runtime — [`python/`](python/) — paired with the `py-fastapi`
-generator. Additional stacks will land together with their generators rather than being stubbed out ahead of
-them.
+| Runtime | Stack | Generator it pairs with | Distribution |
+| --- | --- | --- | --- |
+| [`python/`](python/) | Python 3.11+ | `py-fastapi` | [`aid-runtime-python`](https://pypi.org/project/aid-runtime-python/) |
+| [`typescript/`](typescript/) | Node.js 24+ | `ts-vercel` | [`@aid-framework/runtime`](https://www.npmjs.com/package/@aid-framework/runtime) |
 
-Each runtime eventually provides the same capabilities, implemented idiomatically for its stack. Phase 0
-implements the first group below; the rest are deferred by [`§14`](../docs/design.md) and are listed here so
-the target shape stays visible.
+Both are implemented and published. The TypeScript runtime mirrors the Python one module for module, so an
+application generated for either language meets the same gateway semantics, the same pinned-model rules, the same
+eval-gate arithmetic and the same retrieval surface. The eval gate in particular reproduces the same z-critical
+table and N-run sampling, because a gate whose statistics differed per language would let a TypeScript regression
+pass a Python baseline.
 
-**Phase 0:**
+Each runtime provides the same capabilities, implemented idiomatically for its stack:
 
 - **Model gateway** — provider adapters behind one interface, alias → **pinned-model** resolution, capability
-  negotiation, ordered fallbacks, retries/backoff, and token/cost accounting with enforced budgets.
+  negotiation, ordered fallbacks, token/cost accounting with enforced budgets.
 - **Prompt registry** — versioned prompts, typed rendering, few-shot assembly.
 - **Tool executor** — declared tool definitions, argument validation, structured results.
 - **Pipeline** — plain-async named steps over a frozen context, each step traced.
-- **Eval harness** — datasets, metrics including LLM-as-judge, and thresholds gated by **N-run sampling
-  against a stored baseline** rather than by equality.
+- **Agent runtime** — the agent loop, transfer vs. delegate, budgets with bounded degrade, memory, and a
+  checkpointed human-in-the-loop pause.
+- **Retrieval** — connectors, chunkers, embedders, vector stores, hybrid fusion, reranking and citations.
+- **Eval harness** — datasets, metrics, and thresholds gated by **N-run sampling against a stored baseline**
+  rather than by equality.
 - **Observability & cost** — OTel GenAI spans per model call, with cost recorded on the span.
 
-**Deferred, per [`§14`](../docs/design.md):** streaming (the transport is request/response only and the
-capability is withdrawn from target declarations until layer L5 implements it), escalation routing, retrieval (connectors, chunkers, embedders, vector stores,
-reranking, citation assembly), a memory tier, a guardrails engine, prompt/semantic caching, rate limiting and
-token buckets, and a latency p95 budget. Multi-provider breadth is one HTTP provider plus one fake; Anthropic,
-Azure and Bedrock adapters are not Phase 0.
+**Deferred in both:** streaming (the transport is request/response only; `Capability` includes it so a build can
+require it, but calling the streaming entry point raises), escalation routing, a hosted rerank adapter,
+prompt/semantic caching, rate limiting, and provider breadth beyond one HTTP adapter plus one fake. Each is
+refused explicitly rather than approximated.
 
 **Non-responsibility:** a runtime contains no app-specific prompts, tools, or rubrics. Those belong to the
-generated app's `business/` tier ([`docs/design.md` §8.4](../docs/design.md), the seam).
+generated app's `business/` tier.
 
-| Runtime | Stack | Generator it pairs with | Phase | Status |
-| --- | --- | --- | --- | --- |
-| [`python/`](python/) | Python 3.11+ | `py-fastapi` | Phase 0 | Implemented (Phase 0 scope) |
+Runtimes are versioned independently, and each declares the IR/target range and provider SDK ranges it supports.
 
-Planned but **not yet scaffolded**: TypeScript/Node (Vercel AI SDK), .NET (Semantic Kernel), and Java
-(Spring AI) — see [`docs/design.md` §14](../docs/design.md).
-
-Runtimes are versioned independently, and each declares the IR/target range and provider SDK ranges it
-supports ([`docs/design.md` §13](../docs/design.md), versioning).
-
-Reference: [`docs/design.md` §9](../docs/design.md).
+For the design rationale, see [`docs/design.md`](../docs/design.md).
