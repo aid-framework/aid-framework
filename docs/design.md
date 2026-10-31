@@ -1130,7 +1130,7 @@ agree with its own runtime rather than with the other one.
 | `runtimes/typescript/test/conformance/run.ts` | TypeScript consumer, and the comparator. Prints `corpus:` and `typescript: N/M`. |
 | `.github/workflows/ci.yml` (`conformance`) | Runs both, then diffs the two verdict sets. |
 
-Seven semantics are pinned bit for bit wherever they are numeric, all of them behaviour both runtimes
+Eight semantics are pinned bit for bit wherever they are numeric, all of them behaviour both runtimes
 already implement — the suite adds no runtime features:
 
 - **alias resolution** — a pinned alias to its concrete model, plus the closed failure modes.
@@ -1142,13 +1142,31 @@ already implement — the suite adds no runtime features:
 - **composite steps** — the arm a `branch` selects from a principal, the ceiling a `parallel`
   observes and the input-order merge it keeps when arms finish in reverse, the per-item bindings
   a `map` produces, the collection order a `reduce` preserves, and the depth bound all four share.
+- **leaf steps** — the event an `emit` projects and the fields it reads them from, the prompt a
+  `generate` renders before it binds a completion, the query a `retrieve` asks with its ceiling and
+  the exact result it binds, and the arguments a `tool` executes with the parsed content it binds.
+  Each is driven through the same runtime constructors (`emit_step`, `generate_step`,
+  `retrieve_step`, `tool_step`, and their TypeScript mirrors) that hand the work to the real
+  primitive — a prompt registry, a gateway, a retriever seam, a tool executor — rather than
+  re-implementing it, so the case reddens when the binding, the rendered prompt or the projection
+  changes.
+
+`emit` needed a runtime surface before it could have a case: generated apps compose the response in
+the route, so the projection had no callable form. The terminator added for it is library-only —
+emission is byte-identical, and `py-fastapi` still builds its route through `responsePlan` — which
+means nothing in the build forces the two to agree.
+`packages/generators/py-fastapi/test/emit-projection.test.ts` is what forces it: for one
+representative event and one binding, it asserts that the plan's derived reference paths are the
+dotted sources the corpus case declares, and that projecting the corpus input along them yields the
+payload the corpus pins. A change to either side reddens it. `ts-vercel` has no equivalent to pin —
+it emits no code for `emit` and its route reads a binding the spec declared.
 
 A case a runtime does not implement yet is scoped to the runtime that does, and the scope must carry
 a reason naming the layer that lifts it: `runtimes: ["python"], reason: "..."`. A scope without a
-reason fails both runners, so a gap is always visible rather than implied by silence. At present the
-scoped cases are the agent loop, the guardrails engine and the memory stores, waiting on **L6b**, and
-the `rerank`/`guard`/`agent` wiring steps, waiting on the **L6c** step drivers. Scope is never a way
-to skip a case a runtime claims.
+reason fails both runners, so a gap is always visible rather than implied by silence. No case is
+scoped today: the corpus runs whole against both runtimes, and a `steps.<kind>` case exists for every
+entry in `SUPPORTED_STEP_KINDS`, which is the phase-exit criterion rather than a coincidence of it.
+Scope is never a way to skip a case a runtime claims.
 
 Each runner resolves the corpus path itself and prints what it resolved, and the job fails unless the
 two resolved paths are identical and the case count each runtime reports equals the count the corpus

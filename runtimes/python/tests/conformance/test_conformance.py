@@ -90,12 +90,17 @@ from aid_runtime import (
     Threshold,
     TokenUsage,
     Tool,
+    ToolCall,
+    ToolExecutor,
     ToolPermissionError,
+    ToolResult,
     UnknownModelAliasError,
     bm25_scores,
     branch,
+    emit_step,
     estimate_cost_usd,
     fuse,
+    generate_step,
     lexical_ranking,
     lexical_score,
     map_step,
@@ -103,8 +108,10 @@ from aid_runtime import (
     parse_structured,
     reduce_step,
     reranker_for,
+    retrieve_step,
     run_structured,
     similarity,
+    tool_step,
     z_critical,
 )
 from aid_runtime.agents import GuardrailDefinition, GuardrailEngine
@@ -1219,6 +1226,187 @@ def _steps_agent(data: Mapping[str, Any]) -> dict[str, Any]:
     return asyncio.run(run())
 
 
+# --- the four steps that call a runtime seam ---------------------------------
+
+
+class _RecordingRetriever:
+    """A retriever that records what it was asked and returns one seeded result.
+
+    The ``retrieve`` *step* is the subject of its case -- which query it passes,
+    whether it forwards ``top_k``, and which name it binds under -- so the search
+    itself is seeded from the case rather than run. That search is what the
+    ``retrieval.*`` ops pin. Typed against the step's ``RetrieverSeam``, so this is
+    the whole of the contract rather than a stand-in for a class.
+    """
+
+    def __init__(self, result: RetrievalResult) -> None:
+        self._result = result
+        self.calls: list[tuple[str, int | None]] = []
+
+    async def retrieve(self, query: str, *, top_k: int | None = None) -> RetrievalResult:
+        self.calls.append((query, top_k))
+        return self._result
+
+
+class _RecordingTools(ToolExecutor):
+    """A real executor that keeps the call, so its id and arguments are observable."""
+
+    def __init__(self, tools: list[Tool]) -> None:
+        super().__init__(tools)
+        self.seen: list[ToolCall] = []
+
+    async def execute(self, call: ToolCall) -> ToolResult:
+        self.seen.append(call)
+        return await super().execute(call)
+
+
+#: The arguments a ``steps.tool`` case declares, as JSON Schema. Runner plumbing, so it
+#: stays out of the corpus: the case states the arguments it passes, not how they are
+#: described to a model.
+_TOOL_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {"city": {"type": "string"}},
+    "required": ["city"],
+    "additionalProperties": False,
+}
+
+
+def _steps_emit(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``emit`` step: the event payload it projects, and that the run went on.
+
+    Each field is read from the binding its source names, so ``payload`` proves the
+    projection and ``bound`` proves it was bound under the declared name rather than
+    merely returned. Two bindings are read on purpose: a step that resolved every
+    field off one of them fails on the other.
+
+    ``continued`` is asserted because the terminator binds instead of stopping -- a
+    generated route runs every step and only then builds its response object, so a
+    step after the emit still has to run. ``fields`` is the declaration order rather
+    than sorted: the terminator preserves it, and a projection that reordered its keys
+    is then visible instead of invisible.
+    """
+    ran = "_after_emit"
+    step = emit_step(
+        {str(name): str(source) for name, source in data["fields"].items()}, key=str(data["as"])
+    )
+
+    async def afterwards(current: PipelineContext) -> PipelineContext:
+        return current.with_values(**{ran: True})
+
+    context = _seeded(
+        {"values": data.get("values", {}), "principal": data.get("principal", {})},
+        ConcurrencyLimiter(1),
+    )
+    settled = asyncio.run(Pipeline.of(step, afterwards).run(context))
+    payload = settled.require(str(data["as"]))
+    return {
+        "bound": str(data["as"]),
+        "payload": dict(payload),
+        "fields": list(payload),
+        "continued": settled.values.get(ran) is True,
+    }
+
+
+def _steps_retrieve(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``retrieve`` step: the query and ceiling it searched with, and its binding.
+
+    ``query``/``topK`` are what the *retriever saw*, not what the case declared, so a
+    step that dropped or substituted either fails here. ``resultQuery`` is the seeded
+    result's own query, which deliberately differs from the step's: it proves the
+    returned object is bound whole rather than a fresh result built from the step's
+    arguments. ``calls`` is one, because a step that searched twice is a different
+    step.
+    """
+    retriever = _RecordingRetriever(_retrieval_binding(data["result"]))
+    declared = data.get("topK")
+    step = retrieve_step(
+        retriever,
+        binding=str(data["as"]),
+        query=str(data["query"]),
+        top_k=None if declared is None else int(declared),
+    )
+    context = _seeded({"values": {}, "principal": data.get("principal", {})}, ConcurrencyLimiter(1))
+    found: RetrievalResult = asyncio.run(Pipeline.of(step).run(context)).require(str(data["as"]))
+    query, forwarded = retriever.calls[-1]
+    return {
+        "bound": str(data["as"]),
+        "query": query,
+        "topK": forwarded,
+        "calls": len(retriever.calls),
+        "items": len(found.items),
+        "resultQuery": found.query,
+    }
+
+
+def _steps_tool(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``tool`` step: the call it made, and the content it bound parsed.
+
+    ``callId`` is the binding name, which is what makes a trace of the step name the
+    value it produced. ``arguments`` is what the executor was handed rather than what
+    the case declared, so an argument a step invented or dropped is visible. ``city``
+    and ``days`` are read out of the bound value, so binding the raw content string
+    instead of parsing it fails here.
+    """
+    content = str(data["content"])
+
+    def weather(city: str) -> str:
+        return content
+
+    tools = _RecordingTools([Tool.of(str(data["tool"]), weather, parameters=_TOOL_PARAMETERS)])
+    step = tool_step(
+        tools,
+        binding=str(data["as"]),
+        tool=str(data["tool"]),
+        arguments={str(name): value for name, value in data["arguments"].items()},
+    )
+    context = _seeded({"values": {}, "principal": data.get("principal", {})}, ConcurrencyLimiter(1))
+    bound = asyncio.run(Pipeline.of(step).run(context)).require(str(data["as"]))
+    call = tools.seen[-1]
+    return {
+        "bound": str(data["as"]),
+        "city": str(bound["city"]),
+        "days": int(bound["days"]),
+        "callId": call.id,
+        "name": call.name,
+        "arguments": dict(call.arguments),
+    }
+
+
+def _steps_generate(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``generate`` step: the prompt it sent, and the answer it bound.
+
+    ``sent`` is the user message the provider actually received, which is how the
+    render is proved: the template carries a placeholder the case's values fill, and
+    the case's keyed answer is spelled for the rendered text, so a step that sent the
+    template unrendered both misreports ``sent`` and misses the answer. ``calls`` is
+    one, because a step that asked twice is a different step.
+    """
+    provider = FakeProvider(name="fake", answers={str(data["sent"]): str(data["answer"])})
+    gateway = ModelGateway(
+        providers={"fake": provider},
+        aliases={str(data["model"]): _spec(data["spec"])},
+    )
+    prompts = PromptRegistry(
+        [PromptTemplate(name=str(data["prompt"]), version="1", template=str(data["template"]))]
+    )
+    step = generate_step(
+        gateway,
+        prompts,
+        binding=str(data["as"]),
+        prompt=str(data["prompt"]),
+        model=str(data["model"]),
+        values={str(name): str(value) for name, value in data.get("values", {}).items()},
+    )
+    context = _seeded({"values": {}, "principal": data.get("principal", {})}, ConcurrencyLimiter(1))
+    answer = asyncio.run(Pipeline.of(step).run(context)).require(str(data["as"]))
+    return {
+        "bound": str(data["as"]),
+        "answer": answer,
+        "sent": provider.calls[-1].messages[-1].content,
+        "calls": len(provider.calls),
+    }
+
+
 _OPS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     "alias.resolve": _alias_resolve,
     "alias.unknown": _alias_unknown,
@@ -1254,6 +1442,10 @@ _OPS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     "steps.rerank": _steps_rerank,
     "steps.guard": _steps_guard,
     "steps.agent": _steps_agent,
+    "steps.emit": _steps_emit,
+    "steps.generate": _steps_generate,
+    "steps.retrieve": _steps_retrieve,
+    "steps.tool": _steps_tool,
     "agent.engine": _agent_engine,
     "agent.guardrail": _agent_guardrail,
 }

@@ -217,6 +217,15 @@ export {
   SourceSpec,
   VectorStoreSpec,
 } from './retrieval/types.js';
+export type { RetrieverSeam } from './steps.js';
+export {
+  EMITTED_KEY,
+  emitStep,
+  generateStep,
+  resolveSource,
+  retrieveStep,
+  toolStep,
+} from './steps.js';
 export type { AgentModel, StructuredOutput } from './structured.js';
 export {
   buildAgent,

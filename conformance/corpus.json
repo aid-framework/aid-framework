@@ -2149,6 +2149,112 @@
       }
     },
     {
+      "id": "steps-emit-projects-the-declared-fields",
+      "op": "steps.emit",
+      "description": "An emit step projects each field of the event from the binding its source names, and the run continues past it.",
+      "input": {
+        "as": "emitted",
+        "fields": {
+          "subject": "ticket.subject",
+          "state": "ticket.state"
+        },
+        "values": {
+          "ticket": {
+            "subject": "Refund my order",
+            "state": "open"
+          }
+        }
+      },
+      "expect": {
+        "bound": "emitted",
+        "payload": {
+          "subject": "Refund my order",
+          "state": "open"
+        },
+        "fields": ["subject", "state"],
+        "continued": true
+      }
+    },
+    {
+      "id": "steps-generate-renders-then-binds-the-completion",
+      "op": "steps.generate",
+      "description": "A generate step renders its prompt before the call and binds the answer the model returned.",
+      "input": {
+        "as": "greeting",
+        "prompt": "greet",
+        "template": "Greet {name} warmly.",
+        "values": {
+          "name": "Ada"
+        },
+        "model": "small",
+        "sent": "Greet Ada warmly.",
+        "answer": "Hello, Ada.",
+        "spec": {
+          "name": "gpt-4o-mini-2024-07-18",
+          "provider": "fake",
+          "cost": {
+            "inputPer1kUsd": 0.00015,
+            "outputPer1kUsd": 0.0006
+          },
+          "contextWindow": 128000,
+          "maxOutputTokens": 16384,
+          "capabilities": ["structured-output", "tool-calling"]
+        }
+      },
+      "expect": {
+        "bound": "greeting",
+        "answer": "Hello, Ada.",
+        "sent": "Greet Ada warmly.",
+        "calls": 1
+      }
+    },
+    {
+      "id": "steps-retrieve-binds-the-result-it-was-asked-for",
+      "op": "steps.retrieve",
+      "description": "A retrieve step searches with the query and ceiling it was given and binds the whole result it got back.",
+      "input": {
+        "as": "passages",
+        "query": "how do I reset my password",
+        "topK": 1,
+        "result": {
+          "retriever": "handbook",
+          "seedQuery": "password",
+          "items": ["Reset from settings.", "Email support."]
+        }
+      },
+      "expect": {
+        "bound": "passages",
+        "query": "how do I reset my password",
+        "topK": 1,
+        "calls": 1,
+        "items": 2,
+        "resultQuery": "password"
+      }
+    },
+    {
+      "id": "steps-tool-binds-the-parsed-content-under-the-binding-name",
+      "op": "steps.tool",
+      "description": "A tool step calls the declared tool with the declared arguments, names the call after its binding, and binds the parsed content.",
+      "input": {
+        "as": "forecast",
+        "tool": "weather",
+        "arguments": {
+          "city": "Paris"
+        },
+        "content": "{\"city\": \"Paris\", \"days\": 2}"
+      },
+      "expect": {
+        "bound": "forecast",
+        "city": "Paris",
+        "days": 2,
+        "callId": "forecast",
+        "name": "weather",
+        "arguments": {
+          "city": "Paris"
+        }
+      }
+    },
+    {
       "id": "eval-assert-passes",
       "op": "eval.assert",
       "description": "A predicate that holds scores 1.0 and carries no detail; the spec's message is reserved for a real failure.",
