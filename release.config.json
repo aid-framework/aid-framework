@@ -23,6 +23,10 @@
       "reason": "root-level markdown (README, CONTRIBUTING, ...); ships nothing to a consumer"
     },
     {
+      "pattern": "^package[.]json$",
+      "reason": "root workspace manifest; private with version 0.0.0, so it ships nothing to a consumer (package manifests under packages/ and runtimes/ stay releasable)"
+    },
+    {
       "pattern": "^[.]editorconfig$",
       "reason": "repository plumbing; ships nothing to a consumer"
     },
