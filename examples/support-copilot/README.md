@@ -1,4 +1,4 @@
-# `support-copilot` — the Phase 0 example
+# `support-copilot` — the Python end-to-end example
 
 The smallest spec that still exercises every contract the `py-fastapi` target emits: a model gateway with a
 pinned model and a fallback, a prompt the registry serves, a business tool behind a generated adapter, a

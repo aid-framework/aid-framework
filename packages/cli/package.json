@@ -1,6 +1,6 @@
 {
   "name": "@aid-framework/cli",
-  "version": "0.1.39",
+  "version": "0.1.48",
   "description": "The `aid` command: scaffold a project, validate its spec, generate its code, and run its eval gate.",
   "license": "Apache-2.0",
   "repository": {

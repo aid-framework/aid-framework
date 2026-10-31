@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aid-runtime-python"
-version = "0.1.39"
+version = "0.1.48"
 description = "The AID Framework Python runtime: model gateway with pinning and cost budgets, prompt registry, tool executor, OTel GenAI tracing, plain-async pipeline, and an eval harness that gates on statistical regression against a stored baseline."
 readme = "README.md"
 requires-python = ">=3.11"

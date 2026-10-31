@@ -7,7 +7,7 @@ fails if the spec, the generated code, and `app/aid.manifest.json` drift apart.
 
 ## `support-copilot/` — Python, `py-fastapi`
 
-The Phase 0 example, and the one the quickstart uses. Its spec exercises the `py-fastapi` target end to end:
+The smallest end-to-end example, and the one the quickstart uses. Its spec exercises the `py-fastapi` target end to end:
 a model gateway with a pinned model and an offline fallback, a prompt registry, a business tool
 (`lookup_customer`), structured output, `POST /tickets/answer`, an in-memory retriever over a two-document
 corpus with citations, input and retrieval guardrails, a `buffer` memory tier, agent routes including a
