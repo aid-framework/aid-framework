@@ -15,6 +15,10 @@
       "reason": "documentation only; ships nothing to a consumer"
     },
     {
+      "pattern": "^site/",
+      "reason": "documentation site only; ships nothing to a consumer"
+    },
+    {
       "pattern": "^[^/]+[.]md$",
       "reason": "root-level markdown (README, CONTRIBUTING, ...); ships nothing to a consumer"
     },

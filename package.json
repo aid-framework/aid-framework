@@ -27,6 +27,9 @@
     "test:watch": "vitest --coverage.enabled=false",
     "e2e": "node scripts/e2e-example.mjs",
     "e2e:ts": "node scripts/e2e-example-ts.mjs",
+    "docs:dev": "pnpm --filter @aid-framework/docs dev",
+    "docs:build": "pnpm --filter @aid-framework/docs build",
+    "docs:check": "pnpm --filter @aid-framework/docs gen:check",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "prepare": "lefthook install"
   },
@@ -39,6 +42,7 @@
     "markdownlint-cli2": "^0.23.3",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5",
+    "vue": "3.5.44",
     "yaml": "^2.9.1"
   }
 }

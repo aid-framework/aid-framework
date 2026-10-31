@@ -108,6 +108,7 @@ replay_pid*
 .cache/
 .tmp/
 tmp/
+site/.vitepress/cache/
 
 # ── Local scratch output ─────────────────────────────────────
 # Gate runs redirect tool output to files so the interesting lines can be read back; those
