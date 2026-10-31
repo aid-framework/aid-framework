@@ -21,6 +21,7 @@ Every command accepts `-h` / `--help` for its own usage, and `--json` for one JS
 | [`gen`](#gen) | compile the spec and reconcile the tree with it |
 | [`ingest`](#ingest) | index a retriever corpus into the store the spec declares |
 | [`eval`](#eval) | run the eval gate, or record the baseline it measures against |
+| [`doctor`](#doctor) | diagnose the tree against the spec: drift, versions, missing files |
 
 ## `init`
 
@@ -98,6 +99,20 @@ aid eval [spec] [--target <name>] [--suite <id>] [--baseline]
 | `--suite <id>` | run one eval instead of all of them |
 | `--target <name>` | generator target; one of py-fastapi, ts-vercel |
 | `--baseline` | record a fresh baseline instead of gating |
+| `--json` | print one JSON document on stdout |
+| `-h`, `--help` | print this command's usage |
+
+## `doctor`
+
+diagnose the tree against the spec: drift, versions, missing files
+
+```sh
+aid doctor [spec] [--target <name>]
+```
+
+| Option | Description |
+| --- | --- |
+| `--target <name>` | generator target; one of py-fastapi, ts-vercel |
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |
 

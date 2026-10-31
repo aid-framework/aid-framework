@@ -14,6 +14,7 @@
 
 import type { ParsedArguments } from './args.js';
 import { booleanFlag, JSON_FLAG, parseArguments, valueFlag } from './args.js';
+import { doctor } from './commands/doctor.js';
 import { evaluate } from './commands/eval.js';
 import { generate } from './commands/gen.js';
 import { ingest } from './commands/ingest.js';
@@ -120,6 +121,17 @@ export const COMMANDS: readonly Command[] = [
         target: args.values.get('target'),
         suite: args.values.get('suite'),
         baseline: args.booleans.has('baseline'),
+      }),
+  },
+  {
+    name: 'doctor',
+    summary: 'diagnose the tree against the spec: drift, versions, missing files',
+    usage: 'doctor [spec] [--target <name>]',
+    flags: [TARGET_FLAG, JSON_FLAG],
+    run: (context, args) =>
+      doctor(context, {
+        spec: args.positionals[0],
+        target: args.values.get('target'),
       }),
   },
 ];

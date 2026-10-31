@@ -33,6 +33,14 @@ export const CLI_DIAGNOSTIC_CODES = {
   runnerUnsupported: 'cli/runner-unsupported',
   runnerFailed: 'cli/runner-failed',
   runnerWarned: 'cli/runner-warned',
+  // `aid doctor` originates these. The tree checks it reports through the SDK's own
+  // codes (drift, stale) rather than these, so a reader sees one code per fact.
+  manifestMissing: 'cli/manifest-missing',
+  provenanceMismatch: 'cli/provenance-mismatch',
+  versionMismatch: 'cli/version-mismatch',
+  filesMissing: 'cli/files-missing',
+  businessMissing: 'cli/business-missing',
+  filesOutdated: 'cli/files-outdated',
 } as const;
 
 export type CliDiagnosticCode = (typeof CLI_DIAGNOSTIC_CODES)[keyof typeof CLI_DIAGNOSTIC_CODES];
