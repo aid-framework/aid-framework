@@ -294,7 +294,7 @@ def test_the_real_gate_refuses_a_non_deterministic_retrieval_metric() -> None:
     # gate reads `name` and `deterministic` off whatever it is handed, so a
     # metric that is not reproducible is rejected at construction, exactly as a
     # native `Metric` would be.
-    gate_input = cast("list[Metric]", [_WobblingMetric()])
+    gate_input = cast(list[Metric], [_WobblingMetric()])
 
     with pytest.raises(GateConfigurationError, match="non-deterministic"):
         BaselineGate([THRESHOLD], metrics=gate_input)

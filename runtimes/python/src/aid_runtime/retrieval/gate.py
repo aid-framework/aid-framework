@@ -65,7 +65,7 @@ class RetrievalGate:
         # from these, which is the part of the protocol a retrieval metric shares.
         self._gate = BaselineGate(
             thresholds,
-            metrics=cast("Sequence[Metric]", self._metrics),
+            metrics=cast(Sequence[Metric], self._metrics),
         )
 
     @property
