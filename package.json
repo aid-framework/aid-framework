@@ -15,7 +15,7 @@
     "typecheck": "tsc -b && tsc -p tsconfig.tests.json",
     "lint": "pnpm lint:code && pnpm lint:md && pnpm lint:config",
     "lint:code": "biome ci --error-on-warnings .",
-    "lint:md": "markdownlint-cli2",
+    "lint:md": "markdownlint-cli2 && node scripts/check-docs-claims.mjs",
     "lint:config": "node scripts/check-config.mjs",
     "lint:actions": "node scripts/check-workflows.mjs",
     "lint:licenses": "node scripts/check-licenses.mjs",

@@ -4,10 +4,14 @@
 retrieval, agents, pipelines, evals, guardrails, memory, and deployments — and compile it into idiomatic,
 runnable AI services across multiple language stacks.
 
-> **Status: pre-alpha.** [`docs/design.md`](docs/design.md) is the authoritative design document. Phase 0
-> has landed: the spec DSL, the IR, the generator SDK, the `py-fastapi` generator with one example app, the
-> Python runtime, and the `aid` CLI. The CLI implements `init`, `validate`, `gen`, and `eval` today; `dev`,
-> `ingest`, `trace`, `cost`, `guard`, `migrate`, `eject`, and `doctor` are specified but not implemented.
+> **Status: pre-alpha.** [`docs/design.md`](docs/design.md) is the authoritative design document. The
+> shipped surface covers Phase 0 and Phase 2: the spec DSL, the IR, the generator SDK, the Python and
+> TypeScript runtimes, two targets, the `aid` CLI, and three example apps. Phase 2's exit criterion is met:
+> every pipeline step kind is supported, and `DEFERRED_STEP_KINDS` is empty.
+>
+> The CLI implements exactly five commands: `init`, `validate`, `gen`, `ingest`, and `eval`.
+> The seven commands specified but not implemented are `dev`, `trace`, `cost`, `guard`, `migrate`, `eject`, and `doctor`.
+> The project is pre-alpha and not production-ready.
 
 ## The problem
 
@@ -29,9 +33,9 @@ drives the whole loop.
 flowchart TD
     A["1. Spec (source of truth)<br/>models · prompts · tools · retrievers · agents<br/>pipelines · evals · guardrails · memory · deployments"]
     B["2. IR<br/>stack-independent, normalized, versioned"]
-    C["3. Generator plugins<br/>py-fastapi (Python first; more targets planned)"]
+    C["3. Generator plugins<br/>py-fastapi (Python) · ts-vercel (TypeScript)"]
     D["4. Runtime libraries (per stack)<br/>gateway · prompt registry · retrieval · agent loop<br/>tool executor · memory · guardrails · evals · o11y/cost"]
-    E["5. CLI<br/>init · gen · dev · ingest · eval · trace · migrate · eject"]
+    E["5. CLI<br/>init · validate · gen · ingest · eval"]
     A -->|parse, validate, capability-check| B
     B -->|plan, emit| C
     C -->|imports| D
@@ -41,6 +45,12 @@ flowchart TD
 Two correctness regimes ship together from day one: **golden-file tests** verify generated *code*, and an
 **eval harness** verifies model *behavior*. See [`docs/design.md`](docs/design.md) for the full architecture,
 the IR, the CLI surface, and the roadmap.
+
+## What ships today
+
+- **Targets:** `py-fastapi` (Python) and `ts-vercel` (TypeScript).
+- **Pipeline step kinds:** `generate`, `retrieve`, `tool`, `emit`, `branch`, `parallel`, `map`, `reduce`, `rerank`, `guard`, and `agent` — `DEFERRED_STEP_KINDS` is empty, so none is deferred.
+- **Conformance corpus:** 73 language-neutral cases run against both the Python and TypeScript runtimes.
 
 ## Repository layout
 
