@@ -64,6 +64,21 @@ export default defineConfig({
     if (/(^|\/)404\.md$/.test(pageData.relativePath)) return [];
     return [['link', { rel: 'canonical', href: canonicalUrl(pageData.relativePath) }]];
   },
+  /**
+   * VitePress's appearance switch names itself in `onMounted`, from
+   * `themeConfig.lightModeSwitchTitle` / `darkModeSwitchTitle`, and it sets only
+   * `title` — never `aria-label`. Until the theme hydrates, the emitted button is
+   * an unnamed `role="switch"`, which is what a screen reader reaches if the script
+   * has not run. Naming it in the HTML makes the name part of the document instead
+   * of a side effect of hydration; `title` keeps the hover hint, and `aria-label`
+   * wins over it for assistive technology.
+   */
+  transformHtml(html) {
+    return html.replace(
+      /(<button class="VPSwitch VPSwitchAppearance"[^>]*?role="switch")/g,
+      '$1 aria-label="Switch colour theme"',
+    );
+  },
   // The trailing slash on `hostname` is load-bearing. VitePress emits page paths
   // without a leading slash (`guide/getting-started`), and the sitemap library
   // resolves them with `new URL(path, hostname)`. Without the slash the base

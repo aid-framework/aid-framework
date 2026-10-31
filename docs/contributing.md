@@ -43,6 +43,12 @@ uv pip install --python .venv -e "runtimes/python[dev]" -e "examples/support-cop
 | `pnpm lint` | Biome, markdownlint and config validation |
 | `pnpm lint:actions` | actionlint over `.github/workflows` |
 | `pnpm lint:licenses` | Dependency licence audit |
+| `pnpm docs:check` | The generated reference pages still match their sources |
+| `pnpm docs:links` | Every internal link and fragment in the built site resolves |
+| `pnpm docs:a11y` | The built site keeps its accessibility and self-containment invariants |
+
+The three `docs:*` gates read `site/.vitepress/dist`, so run `pnpm docs:build` first; CI runs
+them in the same job, immediately after the build.
 
 The Python trees have their own gates, run from each directory:
 
