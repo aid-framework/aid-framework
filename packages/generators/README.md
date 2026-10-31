@@ -1,28 +1,26 @@
 # `packages/generators/` — generator plugins
 
 One generator plugin per target stack. Each consumes **only the IR** and emits small, declarative glue that
-imports the matching runtime library. Generators do not implement behavior; the runtime does
-([`docs/design.md` §4](../../docs/design.md), principle 1: *thin generated, fat runtime*).
+imports the matching runtime library. Generators do not implement behavior; the runtime does — *thin generated,
+fat runtime*.
 
-**Currently Python only.** [`py-fastapi/`](py-fastapi/) is implemented for the Phase 0 scope, paired with the
-[`../../runtimes/python/`](../../runtimes/python/) runtime. Further target plugins land later
-([`docs/design.md` §14](../../docs/design.md)).
-
-| Plugin | Emits against | Phase | Status |
+| Plugin | Emits | Runtime | npm |
 | --- | --- | --- | --- |
-| [`py-fastapi/`](py-fastapi/) | Pydantic AI (structured output) + OTel GenAI; plain-async control flow | Phase 0 | Implemented |
+| [`py-fastapi/`](py-fastapi/) | FastAPI + Pydantic; OTel GenAI; plain-async control flow | [`aid-runtime-python`](https://pypi.org/project/aid-runtime-python/) | [`@aid-framework/generator-py-fastapi`](https://www.npmjs.com/package/@aid-framework/generator-py-fastapi) |
+| [`ts-vercel/`](ts-vercel/) | Next.js / Vercel functions + zod; OTel GenAI; plain-async control flow | [`@aid-framework/runtime`](https://www.npmjs.com/package/@aid-framework/runtime) | [`@aid-framework/generator-ts-vercel`](https://www.npmjs.com/package/@aid-framework/generator-ts-vercel) |
 
-Planned but **not yet scaffolded**: `ts-vercel` (Vercel AI SDK + zod), `dotnet-semantickernel`
-(Semantic Kernel), and `java-spring-ai` (Spring AI).
+Both are implemented and published at the same version as the rest of the framework. A spec declares the targets
+it is for, and `aid gen --target <name>` selects among the declared ones.
 
 Every plugin implements the contract in [`../generator-sdk/`](../generator-sdk/) and must satisfy:
 
 - **Golden-file tests** — fixture spec → expected file tree; any diff is reviewable.
 - **Determinism** — generating twice from the same IR produces byte-identical output.
-- **Capability negotiation** — fail loudly *before* codegen when the target cannot express a required feature
-  rather than emitting broken code.
+- **Capability negotiation** — fail loudly *before* codegen when the target cannot express a required feature,
+  rather than emitting broken code. `ts-vercel`, for example, does not declare `streaming`, so a streaming
+  deployment is rejected at build time.
 
-**Status:** `py-fastapi` is implemented and tested; the other targets are planned but not scaffolded.
+A new target means a new directory here plus a manifest; the SDK supplies ownership, drift detection and
+manifest writing, so a plugin contains no regeneration logic of its own.
 
-Reference: [`docs/design.md` §5](../../docs/design.md) (architecture), [`§8`](../../docs/design.md),
-[`§12`](../../docs/design.md), [`§14`](../../docs/design.md).
+For the design rationale, see [`docs/design.md`](../../docs/design.md).

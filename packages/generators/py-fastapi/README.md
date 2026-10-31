@@ -1,80 +1,140 @@
-# `py-fastapi` generator
+# `@aid-framework/generator-py-fastapi`
 
-The **Phase 0 reference target**: turns the IR into a small FastAPI service wired to the
-[`aid-runtime-python`](../../../runtimes/python/) runtime. Generated code is declarative glue — model aliases,
-prompt templates, request and response models, routes, tool adapters, eval definitions — and every behaviour
-it calls already exists in the runtime ([`docs/design.md` §4](../../../docs/design.md), principle 1: *thin
-generated, fat runtime*).
+The Python target for [AID Framework](https://github.com/aid-framework/aid-framework). It compiles an IR into a
+FastAPI service whose behaviour lives in [`aid-runtime-python`](https://pypi.org/project/aid-runtime-python/),
+and whose prompts and tool handlers live in a `business/` tier the compiler never touches.
 
-The only input is the IR. `plan` is a pure function of it: nothing here reads a spec file, a template
-directory, the environment or the clock, so the same IR always produces the same bytes.
+```text
+app.spec.yaml ──aid gen──▶ app/generated/  (compiler)
+                           app/business/   (you)
+```
 
-**Emits against** ([`§8.1`](../../../docs/design.md)):
+## Install
 
-| Key | Value | Why |
-| --- | --- | --- |
-| `structuredOutput` | `pydantic` | Response models are Pydantic models, so a structured-output call is validated by the runtime's gateway |
-| `tracing` | `otel-genai` | Spans follow the OTel GenAI semantic conventions |
-| `orchestration` | *absent* | Phase 0 control flow is **plain async**. Orchestration frameworks are deferred to Phase 2 ([`§14`](../../../docs/design.md)), and declaring nothing is what keeps the choice swappable |
+```sh
+npm install --save-dev @aid-framework/generator-py-fastapi
+```
 
-`emitsAgainst` is the declaration that makes two targets comparable: a target emitting Pydantic models and an
-OTel tracer is not interchangeable with one emitting Zod and Langfuse. This package declares it in
-`src/manifest.ts` rather than aliasing the SDK's copy, and a test asserts the two are deeply equal, so either
-side drifting is a failing check.
+Requires Node.js 24 or newer. In practice you pull it in through
+[`@aid-framework/cli`](https://www.npmjs.com/package/@aid-framework/cli), which is also Node.
 
-**Emits** (19 files per generated app — [`§8.3`](../../../docs/design.md)):
+## Use it
 
-- **Model gateway wiring** — `gateway/models.py`: one alias per declared model, with provider, model id and
-  cost profile, validated against the runtime's adapter registry.
-- **Prompt registry wiring** — `prompts/<prompt>.py`: the template, its version, and the typed values it
-  interpolates.
-- **One structured-output endpoint** — `requests.py`, `schemas.py`, `routes/<pipeline>.py` and
-  `pipelines/<pipeline>.py`: the request model, the response model, the route, and the plain-async pipeline
-  that renders the prompt, calls the gateway, runs the tool and shapes the response.
-- **One tool** — `tools/<tool>.py` plus `contracts/<tool>.py`: a Pydantic-validated adapter over a handler you
-  own. The handler itself is seeded once and then yours.
-- **One eval** — `evals/<eval>.py`: the dataset loader, the stored baseline, the JSON-schema metric and the
-  baseline gate, delegating every statistic to `aid_runtime.evals`.
-- **`observability.py`** and **`deps.py`** — tracer setup and the dependency container that the route and the
-  eval both build from, so the eval measures the prompt the app actually renders.
+Declare the target, then generate:
 
-Packaging and the entrypoint are **not** generated: `pyproject.toml`, `app/main.py`, the dataset and baseline
-JSON, and the tests are hand-written in the example, because a plan may only write into the two managed tiers
-below.
+```yaml
+project:
+  name: support-copilot
+  targets:
+    - py-fastapi
+```
 
-**Layout and ownership** ([`§8.4`](../../../docs/design.md)):
+```sh
+npx aid gen
+```
 
-| Path | Owner | On regeneration |
-| --- | --- | --- |
-| `app/generated/**` | the generator | overwritten, never merged |
-| `app/business/**` | you | created once if missing, then **never** touched |
-| `app/aid.manifest.json` | the generator | rewritten from the plan; not a planned artifact itself |
+```text
+py-fastapi: 16 created, 0 updated, 0 unchanged, 0 kept
+```
 
-A generated file whose bytes no longer match the hash recorded in the manifest is **drift**: regeneration
-reports it as an error, leaves your edit in place, and writes the content it wanted beside it as
-`<path>.aid-rej`. `--force` discards the edit instead (with a warning), and `--prune` deletes generated files
-the plan no longer produces ([`§10`](../../../docs/design.md)).
+With no `--target`, `aid gen` emits the first target the spec declares, so a Python-only project never has to name
+its own target.
 
-**Determinism** ([`§8.2`](../../../docs/design.md)): output is path-sorted, LF-only, with one trailing newline,
-no timestamps, no absolute paths and no machine names. `checkDeterminism` in the generator SDK is the lint that
-holds this; a test in this package plans the example twice and compares bytes.
+## What it emits
 
-**Not responsible for:** runtime behaviour — the gateway, prompt registry, tool executor, tracing, the eval
-harness and the baseline statistics all live in [`runtimes/python/`](../../../runtimes/python/).
+| Path | Contents |
+| --- | --- |
+| `app/generated/__init__.py` | Package marker |
+| `app/generated/deps.py` | The FastAPI app object and dependency wiring |
+| `app/generated/requests.py` | Request models per HTTP-served pipeline |
+| `app/generated/schemas.py` | Pydantic models derived from the IR's `types` |
+| `app/generated/gateway/models.py` | `ModelSpec` values and pinned aliases from the IR |
+| `app/generated/observability.py` | Tracer setup |
+| `app/generated/contracts/` | The protocol each business module must satisfy |
+| `app/generated/pipelines/` | One module per pipeline: the step wiring, as ordinary async code |
+| `app/generated/prompts/` | The registry the IR's prompts resolve into |
+| `app/generated/tools/` | Tool definitions and dispatch |
+| `app/generated/evals/` | The eval dataset and gate thresholds |
+| `app/generated/routes/` | HTTP routes for pipelines with an `http` trigger |
+| `app/business/`, `app/business/prompts/`, `app/business/tools/` | Your seam — created once, then never touched |
 
-**Status:** implemented for the Phase 0 scope. Driven programmatically from this package's tests and from
-`scripts/generate-example.mjs`; the CLI that exposes it as `aid gen` is the next layer, not this one.
+The exact file set follows the spec: a spec that declares no retrievers emits no retrieval modules, and a spec
+with no HTTP trigger emits no routes.
 
-**Scope boundary:** the generator rejects what it cannot express rather than emitting something broken
-([`§4`](../../../docs/design.md), capability negotiation) — retrieval, memory, guardrails, multi-step agent
-loops, streaming *bodies* (the capability is declared, not implemented), `llm-judge` as a required CI gate,
-latency and cost budgets, and eval metrics selected by field or value.
+### Serving it
 
-**Tests:** `test/golden.test.ts` (the example's committed tree *is* the golden fixture), `test/drift.test.ts`
-(regeneration safety across both tiers), `test/eval-gate.test.ts` (the gate stays statistical) and
-`test/target.test.ts` (this manifest against the SDK's). The example app and its runtime tests are in
-[`examples/support-copilot/`](../../../examples/support-copilot/).
+The generator owns the routes; the application decides what to mount and how to run it. That entry point is
+hand-written — `app/main.py`:
 
-Reference: [`docs/design.md` §8](../../../docs/design.md) (generator plugin model),
-[`§9`](../../../docs/design.md) (runtime libraries), [`§6.1`](../../../docs/design.md) (example spec),
-[`§12`](../../../docs/design.md) (testing), [`§14`](../../../docs/design.md) (roadmap).
+```python
+from fastapi import FastAPI
+
+from app.generated.routes.answer_ticket import answer_ticket_router
+
+app = FastAPI(title="support-copilot", version="0.1.0")
+app.include_router(answer_ticket_router)
+```
+
+```sh
+pip install aid-runtime-python "fastapi>=0.115,<1" "uvicorn>=0.30,<1"
+uvicorn app.main:app --reload
+```
+
+`deps.py` provides `build_deps()` and `get_deps()` — the process-wide container of the gateway, prompt registry
+and tool executor. It does not create an ASGI app: mounting is yours, so a regeneration cannot take it away.
+
+The generator never writes `main.py` or a `pyproject.toml`, because packaging and mounting are application
+decisions rather than spec content.
+
+## Capabilities
+
+The manifest declares what this target can honour, and the IR's `capability` gate rejects a spec that needs
+anything else:
+
+```text
+http-trigger, json-schema, streaming, tool-calling, otel,
+embeddings, rerank, guardrails, agents, cursor-memory
+```
+
+It emits against **Pydantic** for structured output and **`otel-genai`** for tracing.
+
+Declaring a capability is not a claim that every field in that section is expressible. A declaration this target
+cannot honour is rejected at generation time with a diagnostic naming the field, rather than silently dropped.
+
+## The `business/` seam
+
+Everything in `generated/` is replaced on the next `aid gen`. `business/` is created only if it is missing and is
+never written again — that is where prompts, tool handlers and domain logic belong.
+
+`app/generated/contracts/` is the contract between the two: it declares what each business module must provide, so
+a missing or misnamed handler is a type error in your editor instead of an exception in production.
+
+## Determinism
+
+Given the same IR, this generator produces byte-identical output — no timestamps, no absolute paths, no host
+names. That is what makes `generated/` diffable and golden-file tests meaningful, and it is enforced by the
+generator's own tests rather than by convention.
+
+## Programmatic use
+
+```ts
+import { PACKAGE, TARGET, manifest, plan } from '@aid-framework/generator-py-fastapi';
+import type { Generator } from '@aid-framework/generator-sdk';
+```
+
+The generator satisfies the `Generator` contract from
+[`@aid-framework/generator-sdk`](https://www.npmjs.com/package/@aid-framework/generator-sdk): `plan(ir)` is pure
+and `emit(plan)` returns the file set, with all regeneration safety supplied by the SDK.
+
+## Related packages
+
+- [`aid-runtime-python`](https://pypi.org/project/aid-runtime-python/) — the runtime the emitted code imports
+- [`@aid-framework/runtime`](https://www.npmjs.com/package/@aid-framework/runtime) — the TypeScript runtime
+- [`@aid-framework/generator-ts-vercel`](https://www.npmjs.com/package/@aid-framework/generator-ts-vercel) — the
+  TypeScript target
+- [`@aid-framework/cli`](https://www.npmjs.com/package/@aid-framework/cli) — `aid`
+
+## License
+
+[Apache-2.0](https://github.com/aid-framework/aid-framework/blob/main/LICENSE). Code generated by AID Framework is
+not subject to this license.

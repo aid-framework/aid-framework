@@ -1,17 +1,54 @@
-# `@aid-framework/ir` — the intermediate representation
+# `@aid-framework/ir`
 
-The IR is the one stack-independent, normalized, versioned representation of an app that every generator
-consumes. Generators never read the spec: `@aid-framework/ir` resolves it once, at build time, into something a
-generator can emit code from directly.
+The intermediate representation of [AID Framework](https://github.com/aid-framework/aid-framework): the one
+normalized, stack-independent, versioned form of an application that every code generator consumes.
 
-Layering is strictly one-directional. `@aid-framework/ir` imports `@aid-framework/spec`; `@aid-framework/spec` never imports `@aid-framework/ir`.
+Generators never read a spec. This package resolves the spec **once** into an IR, so a Python target and a
+TypeScript target are looking at the same program — the same names, the same defaults, the same resolved
+references.
 
-## IR v0.1
+```text
+spec.yaml ──buildIR──▶ IR ──runGates──▶ buildable ──▶ generator plan ──▶ code
+```
 
-`IR_VERSION` is `"0.1.0"` and `specVersion` is carried through from `@aid-framework/spec`, so a consumer can tell which
-spec revision produced an IR. The two are independent and neither implies the other.
+## Install
 
-Every IR carries all 19 top-level keys of [`docs/design.md` §7.2](../../docs/design.md):
+```sh
+npm install @aid-framework/ir
+```
+
+Requires Node.js 24 or newer. Depends only on `@aid-framework/spec`.
+
+## Quick start
+
+```ts
+import { checkSpecText, formatDiagnostics } from '@aid-framework/spec';
+import { buildIR, runGates, serializeIR } from '@aid-framework/ir';
+
+const checked = checkSpecText(source, { file: 'app/app.spec.yaml' });
+if (!checked.ok) throw new Error(formatDiagnostics(checked.diagnostics));
+
+const built = buildIR(checked.value, { file: 'app/app.spec.yaml' });
+if (built.diagnostics.some((d) => d.severity === 'error')) {
+  throw new Error(formatDiagnostics(built.diagnostics));
+}
+
+const gates = runGates(built.ir, { file: 'app/app.spec.yaml' });
+if (!gates.ok) throw new Error(formatDiagnostics(gates.diagnostics));
+
+const canonical = serializeIR(built.ir);
+```
+
+`buildIR` resolves every type, model, prompt and tool reference eagerly, materializes every default, and derives
+each stable identity from identity rather than from content — so editing one prompt does not renumber an unrelated
+pipeline.
+
+## The IR
+
+`IR_VERSION` is `"0.1.0"`. `specVersion` is carried through from the spec, so a consumer can always tell which
+spec revision produced an IR. The two are independent: neither implies the other.
+
+An IR always carries all nineteen top-level keys, even when a collection is empty:
 
 ```text
 irVersion, specVersion, project, types, models, prompts, tools, retrievers, embeddings,
@@ -19,94 +56,67 @@ stores, memory, agents, pipelines, evals, guardrails, deployments, observability
 requiredCapabilities
 ```
 
-Phase 0 populates `types`, `models`, `prompts`, `tools`, `pipelines`, and `evals`. Phase 1 adds `stores` and
-`retrievers` from their spec sections and derives `embeddings` from the embedding models a spec declares.
+### An empty collection is a contract
 
-### Empty collections are a contract, not an omission
+An empty array here is not "missing" — it is a statement. The collections are present and required by the schema
+even when empty, so a later version can fill one in without touching a single consumer:
 
-Five collections are **present and empty by design**. They are `[]` rather than omitted or `undefined`, and
-the JSON Schema requires each of them, so a later phase can fill one in without touching a single consumer.
-An empty array is otherwise indistinguishable from "not implemented", so the two reasons are worth keeping
-apart:
+- `agents`, `guardrails`, `memory`, `deployments` — declared by the spec language but unused by this document.
+- `embeddings` — not a spec section at all. A spec declares embedding capacity by giving a model the `embeddings`
+  capability and pointing a retriever at it, so this collection is **derived** from that content. Empty means the
+  app embeds nothing.
 
-- `agents`, `guardrails`, `memory`, `deployments` — sections the spec **defers**. Layer 1 lists them in
-  `DEFERRED_SECTIONS`, so no spec can populate them yet.
-- `embeddings` — not a spec section at all. It exists only in the IR: a spec declares embedding capacity by
-  giving a model the `embeddings` capability and pointing a retriever at it, so the collection is derived
-  from that content rather than written out by hand. Empty means "this app embeds nothing".
+`observability` and `runtime` are objects with defaults rather than arrays: tracing on, and a runtime descriptor
+naming plain-async control flow.
 
-`observability` and `runtime` are objects rather than arrays, present with Phase 0 defaults: tracing on, and
-a runtime descriptor naming plain-async control flow.
+## The build-time gates
 
-## Building
-
-```ts
-import { checkSpecText, formatDiagnostics } from '@aid-framework/spec';
-import { buildIR, runGates, serializeIR } from '@aid-framework/ir';
-
-const checked = checkSpecText(source, { file: 'app.yaml' });
-if (!checked.ok) throw new Error(formatDiagnostics(checked.diagnostics));
-
-const { ir, diagnostics } = buildIR(checked.value, { file: 'app.yaml' });
-const gates = runGates(ir, { file: 'app.yaml' });
-
-if (!gates.ok) throw new Error(formatDiagnostics(gates.diagnostics));
-console.log(serializeIR(ir));
-```
-
-- `buildIR(value, { file? })` returns `{ ir, diagnostics }`. It resolves every `TypeRef` and every
-  `model`/`prompt`/`tool` reference eagerly, materializes every default, and derives each stable identity
-  from identity rather than content, so an unrelated edit never churns a generated diff.
-- `runGates(ir, { targetCapabilities?, file? })` returns `{ ok, diagnostics, suppressed, byGate }`. `ok` is
-  false when any gate emitted an error-severity diagnostic.
-- `serializeIR(ir)` renders canonical JSON.
-- `deriveRequiredCapabilities(ir)` returns the capabilities the IR's own content requires, in vocabulary
-  order. `runGates` sets `requiredCapabilities` from it before gating, so the value on the IR is the one the
-  generator should read.
-
-## The six build-time gates
-
-All six run before code generation. They emit diagnostics, never exceptions, and use the same
-compiler-style shape as `@aid-framework/spec`, so a user sees one report whatever layer rejected the input. IR codes
-are namespaced `ir/*` and never reuse a `spec/*` code.
+Gates decide whether an IR is buildable, before a single byte of code is emitted. There are sixteen, run as one
+report by `runGates`. All of them emit diagnostics rather than throwing, in the same compiler-style shape as
+`@aid-framework/spec`, so a user gets one report whatever layer rejected the input.
 
 | Gate | Rejects |
 | --- | --- |
-| `referential` | An unresolvable `TypeRef` or reference, a reference whose kind does not match (a `tool` step naming a prompt), prompt variables that do not match the template, an undefined or duplicated step binding, a malformed eval target, a `fallbacks` cycle |
-| `normalize` | A value left implicit for the generator to invent, a provider Phase 0 does not serve, params above a model's limits |
-| `capability` | A target that declares no capabilities, an unknown target, a capability outside the vocabulary, a required capability the target does not declare |
-| `cost` | A budget declared against an unpriced model. Warns when an estimate exceeds a budget, and when a model is unpriced but unbudgeted |
-| `security` | A `write`/`destructive` tool with no `auth`, a `destructive` tool without `requiresConfirmation`, an under-redacting trace config, an HTTP path that reaches a write with no `auth` |
-| `eval-coverage` | Nothing: warns when an HTTP-served pipeline has no `eval` with `gate.ci: true` |
+| `referential` | An unresolvable type or reference, a reference of the wrong kind, prompt variables that do not match the template, an undefined or duplicated step binding, a malformed eval target, a fallback cycle |
+| `normalize` | A value left implicit for the generator to invent, a provider this build does not serve, params above a model's limits |
+| `capability` | A target declaring no capabilities, an unknown target, a capability outside the vocabulary, a required capability the target does not declare |
+| `cost` | A budget declared against an unpriced model. Warns for an estimate above a budget, and for an unpriced, unbudgeted model |
+| `security` | A write or destructive tool with no auth policy, a destructive tool without confirmation, an under-redacting trace config, an HTTP path reaching a write with no auth |
+| `eval-coverage` | Nothing — warns when an HTTP-served pipeline has no CI-gating eval |
+| `agents/refs-resolve` | An agent naming a tool, prompt or model that does not exist |
+| `agents/handoff-cycles` | Transfer or delegation graphs that can re-enter an agent |
+| `agents/budgets` | An agent budget that cannot be honoured |
+| `agents/budget-degrade` | `onBudgetExhausted: degrade` with no strictly cheaper alias to step down to |
+| `guardrails/coverage` | A guardrail not attached to an input or output it can act on |
+| `guardrails/policies` | A guardrail policy that does not parse, or names an unknown builtin |
+| `hitl/side-effects` | A human-in-the-loop pause guarding a side effect it cannot actually hold |
+| `memory/refs` | A memory reference that does not resolve to a declared scope |
+| `deploy/streaming` | A deployment declaring streaming the target cannot emit |
+| `orchestration/deepagents` | An agent engine declaration the runtime cannot honour |
 
-**Suppression is explicit.** A check Phase 0 genuinely cannot enforce appears in `suppressed` with a stated
-reason rather than being skipped silently, because a skipped check is indistinguishable from a passing one.
-Phase 0 suppresses the guardrail rule: there is no guardrail runtime to enforce it against.
+**Suppression is explicit.** A check this build genuinely cannot enforce appears in `suppressed` with a stated
+reason rather than being skipped silently — because a skipped check and a passing check look identical from the
+outside.
 
-### Capability declarations are injected
-
-`@aid-framework/ir` must not import `packages/generator-sdk`, which does not exist yet, so a target's capability
-declaration arrives as a gate argument:
+The capability set the gates check is derived from the IR's own content and written back onto
+`requiredCapabilities`, so the value a generator reads is the value that was actually checked:
 
 ```ts
-runGates(ir, { targetCapabilities: { 'py-fastapi': ['http-trigger', 'json-schema', 'otel'] } });
+const result = runGates(ir, {
+  targetCapabilities: {
+    'py-fastapi': ['http-trigger', 'json-schema', 'otel'],
+  },
+});
+
+result.ok;         // false when any gate emitted an error
+result.byGate;     // per-gate diagnostics
+result.suppressed; // what was not enforced, and why
 ```
-
-`src/catalog/` exports the Phase 0 reference declaration (`PHASE_0_TARGET_CAPABILITIES`) that the default
-uses. Layer 3 supplies the real declarations instead, and nothing else in this package changes.
-
-## Canonical serialization
-
-`serializeIR` is deterministic so that regeneration is byte-reproducible and golden files are stable: object
-keys sorted, LF endings, 2-space indent, exactly one trailing newline, no `NaN`/`Infinity`/`undefined`, and
-`undefined` fields omitted rather than written as `null`. Array order is preserved because an array's order
-is meaningful; an object's is not. Two spec documents that differ only in key order or whitespace produce
-byte-identical IR.
 
 ## PolicyExpr
 
-`src/policy/` parses the policy mini-language used by `tool.auth` into a plain-JSON AST, so the AST can be
-embedded in the IR, serialized canonically, and evaluated by any target.
+Tool auth policies are written in a small expression language. This package parses them into a plain-JSON AST, so
+the AST can live in the IR, serialize canonically, and be evaluated by any target in any language.
 
 ```text
 or         := and ('or' and)*
@@ -117,19 +127,73 @@ primary    := 'true' | 'false' | builtin '(' args ')' | '(' or ')'
 builtin    := hasRole | hasScope | isAuthenticated
 ```
 
-Parsing is a total function: `parsePolicyExpr(source, context?)` returns either an AST or position-bearing
-diagnostics, never a thrown exception. **Anything outside this grammar is a validation error**, including an
-unknown builtin. That is the fail-closed rule: a policy the runtime cannot evaluate must never be treated as
-`true`.
+```ts
+import { parsePolicyExpr, formatPolicyExpr } from '@aid-framework/ir';
 
-## Development
-
-```sh
-pnpm build
-pnpm test
+const parsed = parsePolicyExpr("hasRole('admin') or hasScope('tickets:write')");
+if (parsed.ok) console.log(formatPolicyExpr(parsed.value));
 ```
 
-Fixtures live in `test/fixtures/`, so this package's tests do not depend on `@aid-framework/spec`'s own fixtures.
-`test/__golden__/` holds the committed canonical IR for the full fixture, compared byte for byte.
+Parsing is a total function: it returns either an AST or positioned diagnostics, never a thrown exception.
+Anything outside this grammar is a validation error, including an unknown builtin. That is the fail-closed rule —
+a policy the runtime cannot evaluate must never be treated as `true`.
 
-Reference: [`docs/design.md` §7](../../docs/design.md).
+Eval predicates use a companion grammar with the same properties (`parsePredicateExpr`, `PREDICATE_BUILTINS`), so
+a gate condition is as strict as an auth policy.
+
+## Canonical serialization
+
+`serializeIR` is deterministic, so regeneration is byte-reproducible and golden files are stable:
+
+- object keys sorted, LF endings, two-space indent, exactly one trailing newline;
+- no `NaN`, `Infinity` or `undefined`; an absent field is omitted rather than written as `null`;
+- array order preserved, because an array's order is meaningful and an object's is not.
+
+Two documents that differ only in key order or whitespace therefore produce byte-identical IR.
+
+## Model catalog
+
+The catalog is the build-time source of truth for model pricing and limits, used by the `cost` and `normalize`
+gates.
+
+```ts
+import {
+  CATALOG_VERSION, catalogCostProfile, catalogCostProfiles, catalogModel,
+} from '@aid-framework/ir';
+```
+
+The catalog JSON is also exported as `@aid-framework/ir/catalog/models.json`, and the IR schema as
+`@aid-framework/ir/ir.schema.json`.
+
+## Capabilities
+
+```ts
+import {
+  DEFERRED_CAPABILITIES, MODEL_CAPABILITIES, REQUIRED_CAPABILITIES,
+  deriveRequiredCapabilities, isRequiredCapability,
+} from '@aid-framework/ir';
+```
+
+`deriveRequiredCapabilities(ir)` returns the capabilities the IR's own content requires, in vocabulary order.
+`runGates` calls it before gating, so the gates and the generator never disagree about what is required.
+
+## API
+
+| Export | Purpose |
+| --- | --- |
+| `buildIR(value, options?)` | Spec value → `{ ir, diagnostics }` |
+| `runGates(ir, options?)` | Run all gates; returns `{ ok, diagnostics, suppressed, byGate }` |
+| `GATES` | The gate registry, in execution order |
+| `serializeIR(ir)`, `canonicalJson(value)` | Canonical JSON rendering |
+| `IR_VERSION` | The IR shape version (`0.1.0`) |
+| `IR_COLLECTIONS`, `IR_ONLY_COLLECTIONS` | The collection vocabulary |
+| `deriveRequiredCapabilities(ir)` | The capabilities the content requires |
+| `REQUIRED_CAPABILITIES`, `MODEL_CAPABILITIES`, `DEFERRED_CAPABILITIES` | The capability vocabularies |
+| `parsePolicyExpr`, `formatPolicyExpr`, `POLICY_BUILTINS` | The tool-auth policy language |
+| `parsePredicateExpr`, `formatPredicateExpr`, `PREDICATE_BUILTINS` | The eval predicate language |
+| `catalogModel`, `catalogCostProfile`, `catalogCostProfiles`, `CATALOG_VERSION` | Model pricing and limits |
+
+## License
+
+[Apache-2.0](https://github.com/aid-framework/aid-framework/blob/main/LICENSE). Code generated by AID Framework is
+not subject to this license.
