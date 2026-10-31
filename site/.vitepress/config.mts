@@ -16,6 +16,13 @@ export default defineConfig({
   head: [
     ['link', { rel: 'icon', type: 'image/svg+xml', href: '/aid-framework/favicon.svg' }],
     ['meta', { name: 'theme-color', content: '#0b1020' }],
+    [
+      'meta',
+      {
+        name: 'google-site-verification',
+        content: 'URgYOLgzCY-V-CbXInuNNyseZdk3NOCpVA5K6nTz9Mw',
+      },
+    ],
   ],
   themeConfig: {
     nav: [
