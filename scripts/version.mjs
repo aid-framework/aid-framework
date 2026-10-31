@@ -25,7 +25,7 @@
  * manifests could publish a version nobody reviewed.
  */
 
-import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -194,6 +194,33 @@ export function stampBarrelVersion(text, version) {
 }
 
 /**
+ * Read a file, treating only "it is not there" as absence. Probing with `existsSync`
+ * first would be a check-then-use race; one syscall plus the error code answers the
+ * same question atomically, which is also what CodeQL's `js/file-system-race` wants.
+ *
+ * @param {string} path
+ * @returns {string | null}
+ */
+function readFileIfPresent(path) {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'ENOENT') throw error;
+    return null;
+  }
+}
+
+/** @param {string} path @returns {string[] | null} */
+function readDirIfPresent(path) {
+  try {
+    return readdirSync(path);
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'ENOENT') throw error;
+    return null;
+  }
+}
+
+/**
  * Write `version` into every manifest `release.config.json` lists. Idempotent by
  * construction rather than by re-serializing: a manifest that already declares the
  * version is not written at all, so a second run leaves every byte identical.
@@ -230,12 +257,11 @@ export function stamp({ config, root, version }) {
         written.push(path);
       }
 
-      const sourceDir = join(directory, 'src');
-      if (!existsSync(sourceDir)) continue;
-      for (const module of readdirSync(sourceDir)) {
-        const barrel = join(sourceDir, module, '__init__.py');
-        if (!existsSync(barrel)) continue;
-        const stamped = stampBarrelVersion(readFileSync(barrel, 'utf8'), version);
+      for (const module of readDirIfPresent(join(directory, 'src')) ?? []) {
+        const barrel = join(directory, 'src', module, '__init__.py');
+        const source = readFileIfPresent(barrel);
+        if (source === null) continue;
+        const stamped = stampBarrelVersion(source, version);
         if (stamped === null) continue;
         const barrelPath = `${entry.path}/src/${module}/__init__.py`;
         if (!stamped.changed) {
