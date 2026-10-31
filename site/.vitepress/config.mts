@@ -24,6 +24,14 @@ export default defineConfig({
       },
     ],
   ],
+  // The trailing slash on `hostname` is load-bearing. VitePress emits page paths
+  // without a leading slash (`guide/getting-started`), and the sitemap library
+  // resolves them with `new URL(path, hostname)`. Without the slash the base
+  // directory is treated as a file and `/aid-framework/` is dropped from every
+  // URL; with a leading-slash path it would be dropped too.
+  sitemap: {
+    hostname: 'https://aid-framework.github.io/aid-framework/',
+  },
   themeConfig: {
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
