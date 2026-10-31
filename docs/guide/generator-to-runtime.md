@@ -1,3 +1,7 @@
+---
+description: "How generated code stays thin: it wires the spec's specifics into an in-process runtime library, with no proxy, sidecar or control plane."
+---
+
 # Generator to runtime
 
 Generated code is thin on purpose. It imports a runtime library, wires the spec's specifics into

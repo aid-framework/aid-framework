@@ -1,3 +1,7 @@
+---
+description: "The design document: why a spec compiles to services, and the constraints that shape the spec, the IR, the generators and the runtime."
+---
+
 # Polyglot AI App Framework — Design Document
 
 **Name:** AID Framework (command: `aid`)

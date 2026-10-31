@@ -1,3 +1,7 @@
+---
+description: "The CLI's five commands, its exit taxonomy, and its refusal to own rules that already live in the IR or the generators."
+---
+
 # Runtime to CLI
 
 The CLI is the smallest layer and the one with the strictest contract, because CI reads it. It is

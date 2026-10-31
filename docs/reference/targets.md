@@ -1,3 +1,7 @@
+---
+description: "The generator targets and their capability matrix, read from each generator manifest and checked against the IR capability gate."
+---
+
 # Targets
 
 A target is a generator plugin. A spec declares the targets it is for; `aid gen` emits one target at a time. Each row below is read from the generator's own manifest, which a test checks against the declaration the IR capability gate consumes.

@@ -1,3 +1,7 @@
+---
+description: "How a generator plugin turns the IR into bytes, and how the SDK rejects an unsafe plan before anything touches disk."
+---
+
 # IR to generator
 
 A generator is a plugin with two functions: `plan` is a pure function of the IR, and `emit`

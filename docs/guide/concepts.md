@@ -1,3 +1,7 @@
+---
+description: "The four layers — spec, IR, generators and runtime — and why keeping them separate explains most of the framework's behaviour."
+---
+
 # Concepts
 
 Four layers, each with one job. Almost everything surprising about this framework is a

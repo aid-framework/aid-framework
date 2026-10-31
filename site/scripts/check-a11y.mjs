@@ -9,8 +9,10 @@
  * Rules:
  *   - every page declares a non-empty `lang`;
  *   - every page except the 404 page offers a skip link whose target id exists on the page;
- *   - every page except the 404 page keeps its content in a landmark (`main`, `role="main"`,
- *     or `article`, which VitePress uses for the home layout);
+ *   - every page except the 404 page keeps its content in a main landmark (`main` or
+ *     `role="main"`). `article` is not accepted: VitePress does not wrap the home layout in
+ *     one, and the only articles on the homepage are feature cards, so accepting it passed
+ *     on the cards while the page itself had no landmark at all;
  *   - every `img` has an `alt` attribute, present even when empty;
  *   - no page repeats an `id`;
  *   - no positive `tabindex`, which reorders focus away from the document order;
@@ -156,10 +158,10 @@ for (const file of files) {
     if (hasSkipLink) skipLinkCount += 1;
     else failures.push(`${page}: no skip link to the main content`);
 
-    const hasLandmark =
-      /<main\b/.test(html) || /\srole="main"/.test(html) || /<article\b/.test(html);
-    if (!hasLandmark) {
-      failures.push(`${page}: content is in no landmark (main, role="main", or article)`);
+    // `article` is deliberately not accepted. The homepage's only articles are feature
+    // cards, so accepting it reported the page as having a landmark when it had none.
+    if (!/<main\b/.test(html) && !/\srole="main"/.test(html)) {
+      failures.push(`${page}: content is in no main landmark (main or role="main")`);
     }
   }
 

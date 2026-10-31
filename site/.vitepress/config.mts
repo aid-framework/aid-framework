@@ -5,6 +5,17 @@ const SITE_ORIGIN = 'https://aid-framework.github.io';
 const BASE = '/aid-framework/';
 const REPOSITORY = 'https://github.com/aid-framework/aid-framework';
 
+const SITE_NAME = 'AID Framework';
+
+/**
+ * The fallback description, used by the homepage and by any page that forgets to declare
+ * one. It is the site's own tagline, so a page that renders it in `og:description` is
+ * describing the project rather than the page it is on; `scripts/check-head.mjs` fails a
+ * non-home page that does exactly that.
+ */
+const SITE_DESCRIPTION =
+  'A declarative spec for AI services: one YAML file compiled to Python and TypeScript services that you own.';
+
 /**
  * The footer names the version the shipped manifests declare, not a hand-edited string and
  * not the newest tag: tags `v0.1.40`-`v0.1.43` exist without a release. `currentVersion()`
@@ -48,9 +59,8 @@ function canonicalUrl(relativePath: string): string {
  * one copy: the site renders it where it already lives instead of owning a duplicate.
  */
 export default defineConfig({
-  title: 'AID Framework',
-  description:
-    'A declarative spec for AI services: one YAML file compiled to Python and TypeScript services that you own.',
+  title: SITE_NAME,
+  description: SITE_DESCRIPTION,
   lang: 'en-GB',
   base: BASE,
   srcDir: '../docs',
@@ -69,9 +79,36 @@ export default defineConfig({
   ],
   transformHead({ pageData }) {
     // The generated 404 page is not addressable, so a canonical would point at a
-    // URL that never resolves. It is already excluded from the sitemap.
+    // URL that never resolves. It is already excluded from the sitemap, and it has
+    // no title or description worth sharing.
     if (/(^|\/)404\.md$/.test(pageData.relativePath)) return [];
-    return [['link', { rel: 'canonical', href: canonicalUrl(pageData.relativePath) }]];
+
+    const url = canonicalUrl(pageData.relativePath);
+    const isHome = /(^|\/)index\.md$/.test(pageData.relativePath);
+    const pageTitle = typeof pageData.title === 'string' ? pageData.title.trim() : '';
+    const title =
+      pageTitle === '' || pageTitle === SITE_NAME ? SITE_NAME : `${pageTitle} | ${SITE_NAME}`;
+    const declared = pageData.frontmatter.description;
+    const description =
+      typeof declared === 'string' && declared.trim() !== '' ? declared.trim() : SITE_DESCRIPTION;
+
+    return [
+      ['link', { rel: 'canonical', href: url }],
+      // Open Graph and Twitter card tags. Without them a shared link renders as a bare
+      // URL: the crawler keeps the page title and finds no summary, or scrapes body text
+      // that starts mid-sentence. `twitter:card` is `summary` rather than
+      // `summary_large_image` because the site ships no social preview image, and a card
+      // that promises an image it does not have renders worse than one that does not.
+      ['meta', { property: 'og:type', content: isHome ? 'website' : 'article' }],
+      ['meta', { property: 'og:site_name', content: SITE_NAME }],
+      ['meta', { property: 'og:title', content: title }],
+      ['meta', { property: 'og:description', content: description }],
+      ['meta', { property: 'og:url', content: url }],
+      ['meta', { property: 'og:locale', content: 'en_GB' }],
+      ['meta', { name: 'twitter:card', content: 'summary' }],
+      ['meta', { name: 'twitter:title', content: title }],
+      ['meta', { name: 'twitter:description', content: description }],
+    ];
   },
   /**
    * VitePress's appearance switch names itself in `onMounted`, from
@@ -83,9 +120,23 @@ export default defineConfig({
    * wins over it for assistive technology.
    */
   transformHtml(html) {
-    return html.replace(
-      /(<button class="VPSwitch VPSwitchAppearance"[^>]*?role="switch")/g,
-      '$1 aria-label="Switch colour theme"',
+    return (
+      html
+        .replace(
+          /(<button class="VPSwitch VPSwitchAppearance"[^>]*?role="switch")/g,
+          '$1 aria-label="Switch colour theme"',
+        )
+        /**
+         * The home layout renders its content straight into `<div class="VPContent">`,
+         * while a content page gets a real `<main>` inside it. The homepage therefore had
+         * no main landmark, and the only `<article>` elements on it are feature cards, so a
+         * landmark rule that accepted `article` passed on the cards and hid the gap.
+         *
+         * `role="main"` on the wrapper makes the skip link's `#VPContent` target an actual
+         * landmark. It is limited to the home variant because on a content page the same
+         * wrapper also holds the sidebar and the outline.
+         */
+        .replace(/(<div class="VPContent is-home" id="VPContent")/g, '$1 role="main"')
     );
   },
   // The trailing slash on `hostname` is load-bearing. VitePress emits page paths

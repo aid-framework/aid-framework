@@ -1,3 +1,7 @@
+---
+description: "How an eval becomes a gate: a pipeline, a dataset, at least one metric, and a statistical comparison against a committed baseline."
+---
+
 # Eval metrics
 
 An eval names a pipeline, a dataset and at least one metric, and it compares the result against a

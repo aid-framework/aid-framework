@@ -662,18 +662,58 @@ function conformancePage() {
   lines.push('');
   lines.push('Next: [the target matrix](./targets.md) or [the eval metrics](./eval-metrics.md).');
   lines.push('');
-  return lines.join('\n');
+  // The counts come from the corpus just read, so the description cannot disagree with
+  // the page it describes.
+  return withDescription(
+    `The language-neutral conformance corpus both runtimes must reproduce: ${cases.length} cases across ${byOp.size} operations.`,
+    lines.join('\n'),
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Write or check
 // ---------------------------------------------------------------------------
 
+/**
+ * A generated page carries its own description in the file, because the whole file is
+ * derived: VitePress reads the frontmatter, and a hand edit to the output would be reverted
+ * by the next `gen`. A page with no description falls back to the site tagline, which
+ * describes the project rather than the page it is on, and `check-head.mjs` rejects that on
+ * every page except the homepage.
+ *
+ * @param {string} description
+ * @param {string} body
+ * @returns {string}
+ */
+function withDescription(description, body) {
+  return `---\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`;
+}
+
 /** @type {[string, string][]} */
 const pages = [
-  ['docs/reference/spec.md', specPage()],
-  ['docs/reference/cli.md', cliPage()],
-  ['docs/reference/targets.md', targetsPage()],
+  [
+    'docs/reference/spec.md',
+    withDescription(
+      'Every spec key, type and constraint, generated from the JSON Schema that aid validate enforces.',
+      specPage(),
+    ),
+  ],
+  [
+    'docs/reference/cli.md',
+    withDescription(
+      'The aid command reference, generated from the CLI command table so it cannot list a flag the parser rejects.',
+      cliPage(),
+    ),
+  ],
+  [
+    'docs/reference/targets.md',
+    withDescription(
+      'The generator targets and their capability matrix, read from each generator manifest and checked against the IR capability gate.',
+      targetsPage(),
+    ),
+  ],
+  // `conformancePage` applies its own description, because the counts in it are read
+  // from the corpus it just parsed.
   ['docs/reference/conformance.md', conformancePage()],
 ];
 

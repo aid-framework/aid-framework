@@ -1,3 +1,7 @@
+---
+description: "A minimal example proving a guard step is load-bearing exactly where no route-level table sees the payload."
+---
+
 # Walkthrough: guarded-reply
 
 `examples/guarded-reply` is one pipeline, one guardrail and one claim: **a `guard` step is

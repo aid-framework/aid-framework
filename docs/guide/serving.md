@@ -1,3 +1,7 @@
+---
+description: "How to run a generated tree: the hand-written entry point, the HTTP contract, and the seam for tests and fake providers."
+---
+
 # Serving
 
 A generated tree is a library of routes plus a hand-written entry point. This page is how you

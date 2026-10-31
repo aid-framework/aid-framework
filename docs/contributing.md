@@ -1,3 +1,7 @@
+---
+description: "How to contribute to AID Framework: sign-off, the local gates, and the conventions a pull request must follow."
+---
+
 # Contributing
 
 AID Framework is pre-1.0, so the highest-value contributions are design feedback, bug reports,
@@ -44,11 +48,13 @@ uv pip install --python .venv -e "runtimes/python[dev]" -e "examples/support-cop
 | `pnpm lint:actions` | actionlint over `.github/workflows` |
 | `pnpm lint:licenses` | Dependency licence audit |
 | `pnpm docs:check` | The generated reference pages still match their sources |
+| `pnpm docs:head` | Every page declares its own description and the social metadata a shared link needs |
 | `pnpm docs:links` | Every internal link and fragment in the built site resolves |
 | `pnpm docs:a11y` | The built site keeps its accessibility and self-containment invariants |
 
-The three `docs:*` gates read `site/.vitepress/dist`, so run `pnpm docs:build` first; CI runs
-them in the same job, immediately after the build.
+`docs:check` reads the sources, so it needs no build. The gates that read the build -
+`docs:head`, `docs:links` and `docs:a11y` - need `pnpm docs:build` first; CI runs them in the
+same job, immediately after the build.
 
 The Python trees have their own gates, run from each directory:
 

@@ -1,3 +1,7 @@
+---
+description: "The aid command reference, generated from the CLI command table so it cannot list a flag the parser rejects."
+---
+
 # CLI reference
 
 The `aid` command, generated from the `COMMANDS` table in `packages/cli/src/main.ts`. The table is also what the parser enforces and what `aid --help` prints, so this page cannot list a flag the CLI does not accept.

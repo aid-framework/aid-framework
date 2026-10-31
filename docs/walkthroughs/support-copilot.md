@@ -1,3 +1,7 @@
+---
+description: "The largest example: a nine-step pipeline, four guardrails at different enforcement points, and two agents, one of which can pause."
+---
+
 # Walkthrough: support-copilot
 
 `examples/support-copilot` is the largest example, and it is built to demonstrate disagreement

@@ -1,3 +1,7 @@
+---
+description: "Sharp edges reproduced on this repository, including the cases where validate passes and gen refuses, and what each error actually means."
+---
+
 # Troubleshooting
 
 The sharp edges below were all reproduced on this repository, and each one says what the tool
