@@ -75,6 +75,7 @@ to `app/app.spec.yaml` and regenerate, and one router module appears per HTTP-se
 | `aid gen [spec]` | Compile the spec and reconcile the tree with it |
 | `aid ingest [spec]` | Index a retriever corpus into the store the spec declares |
 | `aid eval [spec]` | Run the eval gate, or record the baseline it measures against |
+| `aid doctor [spec]` | Diagnose the tree against the spec: drift, provenance and version mismatches, missing and outdated generated files. Reports; writes nothing |
 
 Every command accepts `--help` for its own options and `--json` for machine-readable output.
 
