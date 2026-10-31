@@ -31,6 +31,7 @@ export default defineConfig({
       'packages/**/test/**/*.test.ts',
       'runtimes/typescript/test/**/*.test.ts',
       'scripts/**/*.test.mjs',
+      'site/scripts/**/*.test.mjs',
     ],
     exclude: ['**/node_modules/**', '**/dist/**'],
     // Golden-file tests compare byte-for-byte, so never retry silently.

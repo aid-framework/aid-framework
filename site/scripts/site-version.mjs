@@ -1,62 +1,122 @@
 /**
- * The release the site reports in its footer.
+ * The release the site reports in its footer and on its homepage.
  *
- * The tag is the source of truth, not a manifest: every `package.json` declares `0.0.0`
- * between releases and `release.yml` stamps the real version only for a publish. The
- * selection logic is not reimplemented here — `scripts/version.mjs latest` is the command
- * the release workflow itself uses, so the footer and the release gate cannot disagree
- * about which tag is current.
+ * A tag is not proof of a release: `v0.1.40`-`v0.1.43` were cut while the release gate
+ * could not tell a docs-only change from a code change, so nothing was published under
+ * them. The version a consumer can install is therefore the one the shipped manifests
+ * declare, because the publish workflow stamps a manifest only for a release it is about
+ * to publish. Reading the manifests makes the site match npm and PyPI instead of
+ * outrunning them.
  *
- * It is invoked as a subprocess rather than imported because VitePress bundles this file
- * into the config, and the entry point's `#!` line is only legal at the start of a file.
+ * `release.config.json` is the list of shipped manifests, so it is read instead of
+ * re-listing them here; a package added there is picked up without a second edit.
  *
- * A shallow clone has no tags (`actions/checkout` fetches one commit by default), and a
- * checkout with no tags has no honest answer — `null` is returned and the footer omits the
- * version instead of printing a guess.
+ * Every shipped package must agree. A split version means the tree is mid-stamp or a bump
+ * was applied by hand, and neither has one honest answer, so `null` is returned and the
+ * site omits the version rather than printing a guess.
  *
  * Usage:
  *   node scripts/site-version.mjs   print the version, or nothing when unknown
  */
 
-import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 /**
- * @returns {string | null} the latest release tag (`v0.1.41`), or `null` when the
- * checkout carries no tags.
+ * The shipped packages and tag prefix from `release.config.json`.
+ *
+ * `parseConfig` in `scripts/version.mjs` validates more, but it cannot be imported here:
+ * VitePress bundles this file into its config, and that entry point starts with a `#!`
+ * line, which is only legal at the top of a file — esbuild fails once it is inlined. The
+ * two fields read here are the whole contract this module needs.
+ *
+ * @returns {{ tagPrefix: string, packages: { path: string, registry: string }[] } | null}
  */
-export function currentVersion() {
-  /** @type {string} */
-  let tags;
+function shippedPackages() {
+  /** @type {unknown} */
+  let raw;
   try {
-    tags = execFileSync('git', ['tag', '--list'], { cwd: repoRoot, encoding: 'utf8' });
+    raw = JSON.parse(readFileSync(join(repoRoot, 'release.config.json'), 'utf8'));
   } catch {
     return null;
   }
+  if (typeof raw !== 'object' || raw === null) return null;
 
-  const list = tags
-    .split('\n')
-    .map((tag) => tag.trim())
-    .filter((tag) => tag.length > 0);
-  if (list.length === 0) return null;
+  const { tagPrefix, packages } = /** @type {Record<string, unknown>} */ (raw);
+  if (typeof tagPrefix !== 'string' || tagPrefix.length === 0) return null;
+  if (!Array.isArray(packages) || packages.length === 0) return null;
 
-  const stdout = execFileSync(
-    process.execPath,
-    [
-      join(repoRoot, 'scripts', 'version.mjs'),
-      'latest',
-      '--config',
-      join(repoRoot, 'release.config.json'),
-      '--tags',
-      list.join(','),
-    ],
-    { encoding: 'utf8' },
-  ).trim();
+  /** @type {{ path: string, registry: string }[]} */
+  const entries = [];
+  for (const entry of packages) {
+    if (typeof entry !== 'object' || entry === null) return null;
+    const { path, registry } = /** @type {Record<string, unknown>} */ (entry);
+    if (typeof path !== 'string' || typeof registry !== 'string') return null;
+    entries.push({ path, registry });
+  }
+  return { tagPrefix, packages: entries };
+}
 
-  return stdout.length === 0 ? null : stdout;
+/**
+ * `[project] version` from a `pyproject.toml`, mirroring the table-aware scan in
+ * `scripts/version.mjs` so a `version` under another table is never mistaken for it.
+ *
+ * @param {string} text
+ * @returns {string | null}
+ */
+function projectVersion(text) {
+  let inProject = false;
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('[')) {
+      inProject = /^\[\s*project\s*\]$/.test(trimmed);
+      continue;
+    }
+    if (!inProject) continue;
+    const match = /^\s*version\s*=\s*"([^"]*)"/.exec(line);
+    if (match !== null) return match[1] ?? null;
+  }
+  return null;
+}
+
+/**
+ * @param {{ path: string, registry: string }} entry
+ * @returns {string | null} the version the manifest declares, or `null` when unreadable
+ */
+function declaredVersion(entry) {
+  const directory = join(repoRoot, ...entry.path.split('/'));
+  try {
+    if (entry.registry === 'npm') {
+      const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
+      return typeof manifest.version === 'string' ? manifest.version : null;
+    }
+    return projectVersion(readFileSync(join(directory, 'pyproject.toml'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @returns {string | null} the released version with its tag prefix (`v0.1.39`), or
+ * `null` when the shipped manifests do not all declare one.
+ */
+export function currentVersion() {
+  const config = shippedPackages();
+  if (config === null) return null;
+
+  const declared = new Set();
+  for (const entry of config.packages) {
+    const version = declaredVersion(entry);
+    if (version === null) return null;
+    declared.add(version);
+  }
+
+  if (declared.size !== 1) return null;
+  const [version] = declared;
+  return version === undefined || version === '0.0.0' ? null : `${config.tagPrefix}${version}`;
 }
 
 if (
