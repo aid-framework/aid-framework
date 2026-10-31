@@ -68,6 +68,12 @@ jobs:
       - name: Check internal links
         run: pnpm docs:links
 
+      # Structural accessibility and self-containment on the same dist: landmarks, skip
+      # links, accessible names, unique ids, no third-party subresources or embeds, and a
+      # local search index. It is not an audit — it cannot judge contrast or reading order.
+      - name: Check accessibility
+        run: pnpm docs:a11y
+
       - name: Configure Pages
         if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v6
