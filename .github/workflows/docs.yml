@@ -35,6 +35,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # The footer names the latest release tag, which `scripts/site-version.mjs` reads
+          # from `git tag`. A shallow clone carries no tags, so the version would silently
+          # disappear from the deployed site rather than from a pull request build.
+          fetch-depth: 0
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -55,6 +60,13 @@ jobs:
 
       - name: Build site
         run: pnpm docs:build
+
+      # Reads the emitted HTML rather than the Markdown, so it catches the links VitePress
+      # generates as well as the ones authors type: a sidebar entry for a page that does not
+      # exist, an absolute path outside `/aid-framework/`, or a fragment naming no heading.
+      # Runs on pull requests too, which is where a dead link should fail.
+      - name: Check internal links
+        run: pnpm docs:links
 
       - name: Configure Pages
         if: github.event_name != 'pull_request'

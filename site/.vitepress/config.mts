@@ -1,7 +1,26 @@
 import { defineConfig } from 'vitepress';
+import { currentVersion } from '../scripts/site-version.mjs';
 
 const SITE_ORIGIN = 'https://aid-framework.github.io';
 const BASE = '/aid-framework/';
+const REPOSITORY = 'https://github.com/aid-framework/aid-framework';
+
+/**
+ * The footer names the latest release tag, not a hand-edited string. Tags are absent from a
+ * shallow clone, and the deployment fetches them precisely so the published footer can be
+ * checked against `git tag`; when they are missing the version is omitted rather than guessed.
+ */
+const latestRelease = currentVersion();
+
+/**
+ * Licence, notice and security policy are linked to their repository copies, which stay the
+ * single source of truth; the site never restates their text.
+ */
+const LEGAL_LINKS = [
+  `<a href="${REPOSITORY}/blob/main/LICENSE">Licence</a>`,
+  `<a href="${REPOSITORY}/blob/main/NOTICE">Notice</a>`,
+  `<a href="${REPOSITORY}/blob/main/SECURITY.md">Security</a>`,
+].join(' · ');
 
 /**
  * GitHub Pages serves `/guide/concepts` and `/guide/concepts.html` for the same
@@ -139,7 +158,13 @@ export default defineConfig({
     },
     docFooter: { prev: 'Previous', next: 'Next' },
     footer: {
-      message: 'Released under the MIT licence.',
+      message: [
+        latestRelease === null ? null : `Latest release ${latestRelease}`,
+        'Released under the Apache-2.0 licence',
+        LEGAL_LINKS,
+      ]
+        .filter((part) => part !== null)
+        .join(' · '),
       copyright: 'AID Framework contributors',
     },
   },

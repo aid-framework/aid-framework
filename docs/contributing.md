@@ -86,3 +86,12 @@ Open an issue with a minimal spec fragment that reproduces the problem, the expe
 behaviour, and your environment. Security issues go through
 [SECURITY.md](https://github.com/aid-framework/aid-framework/blob/main/SECURITY.md) rather than a
 public issue.
+
+## Licence
+
+AID Framework is released under the
+[Apache License 2.0](https://github.com/aid-framework/aid-framework/blob/main/LICENSE). Third-party
+attributions are recorded in
+[NOTICE](https://github.com/aid-framework/aid-framework/blob/main/NOTICE); read the two together,
+because Section 4(d) of the licence is what makes the notice file part of what a redistribution has
+to carry.

@@ -87,7 +87,7 @@ Not every refusal lives in this layer, and knowing where to look saves time:
   plan compiler* in `aid gen`, as `unsupported-streaming`. `aid validate` returns ok. See
   [Serving](serving.md#streaming).
 - **A pipeline with no final `emit`** is not a validation diagnostic at all; `gen` fails with an
-  internal error. See [getting started](getting-started.md#4-add-a-pipeline).
+  internal error. See [getting started](getting-started.md#_4-add-a-pipeline).
 
 Both are defects of placement rather than of intent, and both are listed in
 [Troubleshooting](../troubleshooting.md).
