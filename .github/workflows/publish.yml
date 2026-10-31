@@ -11,10 +11,26 @@
 # here could therefore never fire: it would sit in this file advertising an automatic path
 # that is unreachable, and a maintainer who enabled publishing and waited for a release to
 # wake this job would see nothing and reasonably read it as broken. That is exactly why it
-# is not used. The automatic route is `release.yml` calling this file through `workflow_call`,
-# which is not suppressed -- `workflow_call` runs the called workflow inside the caller's own
-# run rather than as a new run for a `GITHUB_TOKEN`-authored event. `workflow_dispatch`
-# remains for manual runs.
+# is not used.
+#
+# This workflow is dispatched, never called. `release.yml` runs
+# `gh workflow run publish.yml --ref main -f version=<tag>` once the tag exists, and the same
+# command is how a maintainer publishes by hand. Two independent rules force that shape, and
+# neither is enforced by this file:
+#
+#   * The `npmjs-publish` and `pypi-publish` environments allow deployments only from
+#     `main`. A run at a tag ref never enters them: it ends in about a second with zero
+#     steps, no runner assigned, and a `failure` conclusion, which reads like a broken
+#     workflow rather than a refused deployment. The ref must therefore be `main`, and
+#     `version` must be passed explicitly because `main` is not the tag.
+#   * Both registries match the OIDC identity against the publisher record that names this
+#     workflow. A `workflow_call` invocation reports the *caller's* identity (`release.yml`),
+#     which no publisher record names: PyPI rejects it as an attestation mismatch and npm
+#     answers the token exchange with 404. `workflow_call` is consequently not declared at
+#     all -- it is not a supported route, so it must not look like one.
+#
+# `workflow_dispatch` is also the trigger that survives `GITHUB_TOKEN` suppression, which is
+# why the automatic route can be a dispatch at all.
 #
 # The gate is two-deep:
 #
@@ -69,17 +85,10 @@
 name: Publish
 
 on:
-  workflow_call:
-    inputs:
-      version:
-        description: "Version to publish (defaults to the latest tag). Publishing also needs AID_PUBLISH_ENABLED=true."
-        type: string
-        required: false
-        default: ""
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (defaults to the latest tag). Publishing also needs AID_PUBLISH_ENABLED=true."
+        description: "Version to publish; pass the tag being released (defaults to the latest tag when omitted). Publishing also needs AID_PUBLISH_ENABLED=true."
         type: string
         required: false
         default: ""
@@ -88,14 +97,9 @@ permissions:
   contents: read
   # npm provenance and PyPI's upload token are both obtained by exchanging this run's OIDC
   # identity for a short-lived credential. Nothing else is granted, and nothing else is
-  # needed because no long-lived registry secret exists.
-  #
-  # NOTE: this grant is only effective when the caller allows it. Permissions can be kept or
-  # reduced across `workflow_call`, never raised, so a calling job that does not itself grant
-  # `id-token: write` leaves the publish jobs without an OIDC identity. `release.yml`'s publish
-  # job grants `id-token: write` for exactly that reason, and a new caller has to do the same.
-  # The preflight step below detects a caller that does not and names the fix rather than
-  # letting it surface as a 401 from the registry.
+  # needed because no long-lived registry secret exists. Because this workflow is dispatched
+  # as a run of its own, this file's grant is the whole grant -- there is no caller that could
+  # reduce it.
   id-token: write
 
 concurrency:
@@ -191,10 +195,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # `id-token: write` above is a request, not a guarantee: the calling workflow has to
-          # grant it too. Fail here, where the remedy is obvious, rather than at the registry.
+          # Fail here, where the remedy is obvious, rather than at the registry.
           if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            echo "::error::this run has no OIDC token endpoint. The workflow that calls publish.yml must grant id-token: write to the calling job."
+            echo "::error::this run has no OIDC token endpoint, so the registry exchange cannot happen. Check that id-token: write still reaches this job."
             exit 1
           fi
 
@@ -313,7 +316,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            echo "::error::this run has no OIDC token endpoint. The workflow that calls publish.yml must grant id-token: write to the calling job."
+            echo "::error::this run has no OIDC token endpoint, so the registry exchange cannot happen. Check that id-token: write still reaches this job."
             exit 1
           fi
 
