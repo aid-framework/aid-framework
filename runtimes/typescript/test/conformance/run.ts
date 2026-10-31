@@ -70,6 +70,7 @@ import {
   EvalBaseline,
   EvalCase,
   EvalRun,
+  emitStep,
   estimateCostUsd,
   FakeProvider,
   FileMemoryStore,
@@ -77,6 +78,7 @@ import {
   fuse,
   GuardrailBlockedError,
   GuardrailEngine,
+  generateStep,
   INDEX_KEY,
   InProcessMemoryStore,
   ITEM_KEY,
@@ -106,10 +108,12 @@ import {
   RerankSpec,
   RetrievalResult,
   RetrievedItem,
+  type RetrieverSeam,
   type RunResult,
   EvalError as RuntimeEvalError,
   reduceStep,
   rerankerFor,
+  retrieveStep,
   runStructured,
   ScriptedTurn,
   STEPS_KEY,
@@ -118,7 +122,11 @@ import {
   Threshold,
   TokenUsage,
   Tool,
+  type ToolCall,
+  ToolExecutor,
   ToolPermissionError,
+  type ToolResult,
+  toolStep,
   UnknownModelAliasError,
   zCritical,
 } from '../../dist/index.js';
@@ -1429,6 +1437,208 @@ async function stepsAgent(input: Json): Promise<Json> {
   };
 }
 
+/** A retriever that records what it was asked and returns one seeded result. */
+class RecordingRetriever implements RetrieverSeam {
+  readonly calls: { readonly query: string; readonly topK: number | null }[] = [];
+  readonly #result: RetrievalResult;
+
+  constructor(result: RetrievalResult) {
+    this.#result = result;
+  }
+
+  async retrieve(
+    query: string,
+    options: { readonly topK?: number | null } = {},
+  ): Promise<RetrievalResult> {
+    this.calls.push({ query, topK: options.topK ?? null });
+    return this.#result;
+  }
+}
+
+/** A real executor that keeps the call, so its id and arguments are observable. */
+class RecordingTools extends ToolExecutor {
+  readonly seen: ToolCall[] = [];
+
+  override async execute(call: ToolCall): Promise<ToolResult> {
+    this.seen.push(call);
+    return await super.execute(call);
+  }
+}
+
+/**
+ * The arguments a `steps.tool` case declares, as JSON Schema. Runner plumbing, so it
+ * stays out of the corpus: the case states the arguments it passes, not how they are
+ * described to a model.
+ */
+const TOOL_PARAMETERS: ToolParameters = {
+  type: 'object',
+  properties: { city: { type: 'string' } },
+  required: ['city'],
+  additionalProperties: false,
+};
+
+/**
+ * One `emit` step: the event payload it projects, and that the run went on.
+ *
+ * Each field is read from the binding its source names, so `payload` proves the
+ * projection and `bound` proves it was bound under the declared name rather than merely
+ * returned. Two bindings are read on purpose: a step that resolved every field off one
+ * of them fails on the other.
+ *
+ * `continued` is asserted because the terminator binds instead of stopping -- a generated
+ * route runs every step and only then builds its response object, so a step after the
+ * emit still has to run. `fields` is the declaration order rather than sorted: the
+ * terminator preserves it, and a projection that reordered its keys is then visible
+ * instead of invisible.
+ */
+async function stepsEmit(input: Json): Promise<Json> {
+  const boundAs = asString(input.as, 'as');
+  const sources: Record<string, string> = {};
+  for (const [field, source] of Object.entries(asRecord(input.fields, 'fields'))) {
+    sources[field] = asString(source, `fields.${field}`);
+  }
+
+  const after = '_after_emit';
+  const step = emitStep(sources, { key: boundAs });
+  const afterwards: Step = async (current) => current.withValues({ [after]: true });
+
+  const context = seeded(
+    { values: input.values ?? {}, principal: input.principal ?? {} },
+    new ConcurrencyLimiter(1),
+  );
+  const settled = await Pipeline.of(step, afterwards).run(context);
+  const payload = asRecord(settled.require(boundAs), 'payload');
+  return {
+    bound: boundAs,
+    payload,
+    fields: Object.keys(payload),
+    continued: settled.values[after] === true,
+  };
+}
+
+/**
+ * One `retrieve` step: the query and ceiling it searched with, and its binding.
+ *
+ * `query`/`topK` are what the *retriever saw*, not what the case declared, so a step
+ * that dropped or substituted either fails here. `resultQuery` is the seeded result's
+ * own query, which deliberately differs from the step's: it proves the returned object
+ * is bound whole rather than a fresh result built from the step's arguments. `calls` is
+ * one, because a step that searched twice is a different step.
+ */
+async function stepsRetrieve(input: Json): Promise<Json> {
+  const boundAs = asString(input.as, 'as');
+  const retriever = new RecordingRetriever(
+    retrievalBinding(asRecord(input.result ?? {}, 'result')),
+  );
+  const declared = input.topK === undefined ? undefined : asInt(input.topK, 'topK');
+  const step = retrieveStep(retriever, {
+    binding: boundAs,
+    query: asString(input.query, 'query'),
+    topK: declared,
+  });
+
+  const context = seeded(
+    { values: {}, principal: input.principal ?? {} },
+    new ConcurrencyLimiter(1),
+  );
+  const found = (await Pipeline.of(step).run(context)).require(boundAs) as RetrievalResult;
+  const last = at(retriever.calls, retriever.calls.length - 1, 'retriever call');
+  return {
+    bound: boundAs,
+    query: last.query,
+    topK: last.topK,
+    calls: retriever.calls.length,
+    items: found.items.length,
+    resultQuery: found.query,
+  };
+}
+
+/**
+ * One `tool` step: the call it made, and the content it bound parsed.
+ *
+ * `callId` is the binding name, which is what makes a trace of the step name the value
+ * it produced. `arguments` is what the executor was handed rather than what the case
+ * declared, so an argument a step invented or dropped is visible. `city` and `days` are
+ * read out of the bound value, so binding the raw content string instead of parsing it
+ * fails here.
+ */
+async function stepsTool(input: Json): Promise<Json> {
+  const name = asString(input.tool, 'tool');
+  const boundAs = asString(input.as, 'as');
+  const content = asString(input.content, 'content');
+  const tools = new RecordingTools([
+    Tool.of({ name, handler: () => content, parameters: TOOL_PARAMETERS }),
+  ]);
+  const step = toolStep(tools, {
+    binding: boundAs,
+    tool: name,
+    arguments: asRecord(input.arguments ?? {}, 'arguments'),
+  });
+
+  const context = seeded(
+    { values: {}, principal: input.principal ?? {} },
+    new ConcurrencyLimiter(1),
+  );
+  const bound_ = asRecord((await Pipeline.of(step).run(context)).require(boundAs), 'tool result');
+  const call = at(tools.seen, tools.seen.length - 1, 'tool call');
+  return {
+    bound: boundAs,
+    city: asString(bound_.city, 'city'),
+    days: asInt(bound_.days, 'days'),
+    callId: call.id,
+    name: call.name,
+    arguments: call.arguments,
+  };
+}
+
+/**
+ * One `generate` step: the prompt it sent, and the answer it bound.
+ *
+ * `sent` is the user message the provider actually received, which is how the render is
+ * proved: the template carries a placeholder the case's values fill, and the case's
+ * keyed answer is spelled for the rendered text, so a step that sent the template
+ * unrendered both misreports `sent` and misses the answer. `calls` is one, because a
+ * step that asked twice is a different step.
+ */
+async function stepsGenerate(input: Json): Promise<Json> {
+  const boundAs = asString(input.as, 'as');
+  const sent = asString(input.sent, 'sent');
+  const provider = new FakeProvider({
+    name: 'fake',
+    answers: { [sent]: asString(input.answer, 'answer') },
+  });
+  const gateway = new ModelGateway({
+    providers: { fake: provider },
+    aliases: { [asString(input.model, 'model')]: spec(input.spec) },
+  });
+  const prompts = new PromptRegistry([
+    new PromptTemplate({
+      name: asString(input.prompt, 'prompt'),
+      version: '1',
+      template: asString(input.template, 'template'),
+    }),
+  ]);
+  const step = generateStep(gateway, prompts, {
+    binding: boundAs,
+    prompt: asString(input.prompt, 'prompt'),
+    model: asString(input.model, 'model'),
+    values: asRecord(input.values ?? {}, 'values'),
+  });
+
+  const context = seeded(
+    { values: {}, principal: input.principal ?? {} },
+    new ConcurrencyLimiter(1),
+  );
+  const answer = (await Pipeline.of(step).run(context)).require(boundAs);
+  const last = at(provider.calls, provider.calls.length - 1, 'provider call');
+  return {
+    bound: boundAs,
+    answer: asString(answer, 'answer'),
+    sent: at(last.messages, last.messages.length - 1, 'message').content,
+    calls: provider.calls.length,
+  };
+}
+
 const OPS: Readonly<Record<string, Handler>> = {
   'alias.resolve': aliasResolve,
   'alias.unknown': aliasUnknown,
@@ -1457,6 +1667,10 @@ const OPS: Readonly<Record<string, Handler>> = {
   'steps.rerank': stepsRerank,
   'steps.guard': stepsGuard,
   'steps.agent': stepsAgent,
+  'steps.emit': stepsEmit,
+  'steps.generate': stepsGenerate,
+  'steps.retrieve': stepsRetrieve,
+  'steps.tool': stepsTool,
   'agent.steps': agentLoop,
   'agent.budget': agentLoop,
   'agent.transfer': agentLoop,

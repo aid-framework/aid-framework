@@ -44,23 +44,6 @@ function stepSchemaDiscriminators(): string[] {
   });
 }
 
-/**
- * Step kinds with no conformance case, and why.
- *
- * L7b records this gap rather than closing it. A `steps.<kind>` case drives a *step*
- * op, and the corpus has no op for these three because the Python and TypeScript
- * runtime pipelines do not expose a callable step handler for them yet. Inventing an
- * op name or mapping them onto a neighbouring op would make the check green while
- * pinning nothing, so the exception is named here, sized exactly, and carried as the
- * L7c follow-up. Anything outside this set is a real failure.
- */
-const MISSING_CONFORMANCE_OPS: Readonly<Record<string, string>> = {
-  emit: 'no steps.emit op: runtime pipelines expose no callable emit step (L7c)',
-  generate: 'no steps.generate op: runtime pipelines expose no callable generate step (L7c)',
-  retrieve: 'no steps.retrieve op: runtime pipelines expose no callable retrieve step (L7c)',
-  tool: 'no steps.tool op: runtime pipelines expose no callable tool step (L7c)',
-};
-
 describe('phase exit: nothing is deferred', () => {
   it('leaves DEFERRED_STEP_KINDS empty', () => {
     // The phase-exit criterion is mechanical: this list being empty *is* the exit.
@@ -131,15 +114,15 @@ describe('phase exit: every supported kind reaches both generators', () => {
 });
 
 describe('phase exit: the conformance corpus covers every supported kind', () => {
-  it('covers every kind outside the named L7c gap', () => {
+  it('covers every supported kind with a `steps.<kind>` case', () => {
     const corpus = JSON.parse(readFileSync(join(ROOT, 'conformance/corpus.json'), 'utf8')) as {
       cases: { op: string }[];
     };
     const ops = new Set(corpus.cases.map((entry) => entry.op));
     const missing = SUPPORTED_STEP_KINDS.filter((kind) => !ops.has(`steps.${kind}`));
-    // Sorted and exact: a new gap is a failure, and closing one of these is a failure
-    // until the entry is deleted, so the set cannot silently grow or linger.
-    expect([...missing].sort()).toEqual(Object.keys(MISSING_CONFORMANCE_OPS).sort());
+    // Sorted and exact, with no exception list behind it: a kind without a case is the
+    // whole failure, so this criterion cannot be reopened by adding a named exemption.
+    expect([...missing].sort()).toEqual([]);
   });
 });
 
