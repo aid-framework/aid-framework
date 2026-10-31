@@ -1,3 +1,7 @@
+---
+description: "Every spec key, type and constraint, generated from the JSON Schema that aid validate enforces."
+---
+
 # Spec reference
 
 Every key, type, and constraint below is read from `packages/spec/src/schema/spec.schema.json`, the schema `aid validate` enforces. A `required` column of `yes` means `aid validate` rejects a spec that omits the key.

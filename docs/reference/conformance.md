@@ -1,3 +1,7 @@
+---
+description: "The language-neutral conformance corpus both runtimes must reproduce: 73 cases across 40 operations."
+---
+
 # Conformance
 
 The conformance corpus is a set of language-neutral behaviours that both runtimes must reproduce. It currently holds **73 cases** across **40 operations**. The list below is generated from `conformance/corpus.json`.

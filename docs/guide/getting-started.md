@@ -1,3 +1,7 @@
+---
+description: "Scaffold a project, add one pipeline, generate it and serve it with the published CLI."
+---
+
 # Getting started
 
 This page scaffolds a project, adds one pipeline, generates it, and serves it. Every CLI

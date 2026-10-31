@@ -1,3 +1,7 @@
+---
+description: "The spec surface in the order you reach for it, with the rules that most often produce a gate failure."
+---
+
 # Writing a spec
 
 This page is the surface in the order you will reach for it, with the rules that most often

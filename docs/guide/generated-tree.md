@@ -1,3 +1,7 @@
+---
+description: "What aid gen writes into app/, which files belong to you, and why a second run reports kept files rather than unchanged ones."
+---
+
 # The generated tree
 
 `aid gen` writes into `app/`. This page is what lands there, which files are yours, and what

@@ -30,6 +30,7 @@
     "docs:dev": "pnpm --filter @aid-framework/docs dev",
     "docs:build": "pnpm --filter @aid-framework/docs build",
     "docs:check": "pnpm --filter @aid-framework/docs gen:check",
+    "docs:head": "pnpm --filter @aid-framework/docs check:head",
     "docs:links": "pnpm --filter @aid-framework/docs check:links",
     "docs:a11y": "pnpm --filter @aid-framework/docs check:a11y",
     "check": "pnpm lint && pnpm typecheck && pnpm test",

@@ -3,7 +3,8 @@
 # workflow is then the only publisher, and a merge to `main` is what updates the live site.
 #
 # The build also runs on pull requests, where it is deliberately just a build: a broken
-# page, a dead link, or a stale generated reference fails the PR before it reaches `main`.
+# page, a dead link, a stale generated reference, or a page that inherits the site tagline
+# instead of describing itself fails the PR before it reaches `main`.
 # Configure, upload and deploy are skipped there, so a PR run needs no Pages permission.
 #
 # This is not a required check and it is not part of the release gate. The site can be
@@ -57,6 +58,12 @@ jobs:
 
       - name: Build site
         run: pnpm docs:build
+
+      # Reads the emitted HTML rather than the Markdown, so it sees what a crawler sees. A
+      # page that inherits the site tagline is reported as having no description, because
+      # the tag is always present and only the text tells you whether an author wrote one.
+      - name: Check page metadata
+        run: pnpm docs:head
 
       # Reads the emitted HTML rather than the Markdown, so it catches the links VitePress
       # generates as well as the ones authors type: a sidebar entry for a page that does not

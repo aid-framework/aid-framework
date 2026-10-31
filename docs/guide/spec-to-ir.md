@@ -1,3 +1,7 @@
+---
+description: "How @aid-framework/spec decides a document is well formed and @aid-framework/ir decides it is coherent, so both targets obey one rule set."
+---
+
 # Spec to IR
 
 Two packages, one direction: `@aid-framework/spec` decides whether a document is *well formed*,
