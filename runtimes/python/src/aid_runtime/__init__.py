@@ -128,6 +128,7 @@ from aid_runtime.evals import (
     z_critical,
 )
 from aid_runtime.gateway import ModelGateway, estimate_usage
+from aid_runtime.local_trace import TRACE_DIR_ENV, local_trace_enabled
 from aid_runtime.pipeline import (
     STEPS_KEY,
     Pipeline,
@@ -268,7 +269,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.55"
+__version__ = "0.1.56"
 
 __all__ = [
     "ATTRIBUTES",
@@ -285,6 +286,7 @@ __all__ = [
     "REDUCED_KEY",
     "RESERVED_KEYS",
     "STEPS_KEY",
+    "TRACE_DIR_ENV",
     "AgentBudgetDegradedError",
     "AgentCheckpoint",
     "AgentDefinition",
@@ -471,6 +473,7 @@ __all__ = [
     "lexical_ranking",
     "lexical_score",
     "llm_span",
+    "local_trace_enabled",
     "map_step",
     "metric_names",
     "normalize",

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from opentelemetry import trace
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 
+from aid_runtime.local_trace import finish_span, wrap_span
 from aid_runtime.types import TokenUsage
 
 if TYPE_CHECKING:
@@ -130,11 +131,19 @@ def llm_span(
         record_exception=False,
         set_status_on_exception=False,
     ) as span:
+        recorded = wrap_span(
+            span,
+            name=f"{operation} {model}",
+            kind=SpanKind.CLIENT.name,
+            attributes=attributes,
+        )
         try:
-            yield span
+            yield recorded
         except BaseException as exc:
-            record_exception(span, exc)
+            record_exception(recorded, exc)
             raise
+        finally:
+            finish_span(recorded)
 
 
 def record_usage(span: Span, usage: TokenUsage) -> None:
@@ -166,18 +175,27 @@ def agent_span(
     makes open their own CLIENT child spans.
     """
     active = tracer or get_tracer()
+    attributes = aid_attributes(agent_id=agent_id, agent_engine=engine)
     with active.start_as_current_span(
         f"invoke_agent {agent_id}",
         kind=SpanKind.INTERNAL,
-        attributes=aid_attributes(agent_id=agent_id, agent_engine=engine),
+        attributes=attributes,
         record_exception=False,
         set_status_on_exception=False,
     ) as span:
+        recorded = wrap_span(
+            span,
+            name=f"invoke_agent {agent_id}",
+            kind=SpanKind.INTERNAL.name,
+            attributes=attributes,
+        )
         try:
-            yield span
+            yield recorded
         except BaseException as exc:
-            record_exception(span, exc)
+            record_exception(recorded, exc)
             raise
+        finally:
+            finish_span(recorded)
 
 
 def record_hitl(
