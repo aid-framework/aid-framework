@@ -62,6 +62,7 @@ export type RegenerationAction =
   | { kind: 'update'; path: string; owner: FileOwner }
   | { kind: 'unchanged'; path: string; owner: FileOwner }
   | { kind: 'keep-business'; path: string }
+  | { kind: 'keep-scaffold'; path: string }
   | {
       kind: 'drift';
       path: string;
@@ -76,6 +77,8 @@ export interface RegenerationReport {
   unchanged: string[];
   /** Business files that already existed and were left exactly as they were. */
   kept: string[];
+  /** Scaffold files that already existed and were left exactly as they were. */
+  scaffoldKept: string[];
   drifted: DriftedFile[];
   /** Recorded generated files that are no longer planned. */
   stale: string[];
@@ -108,6 +111,7 @@ export function planRegeneration(plan: Plan, options: RegenerationOptions): Rege
   const updated: string[] = [];
   const unchanged: string[] = [];
   const kept: string[] = [];
+  const scaffoldKept: string[] = [];
   const drifted: DriftedFile[] = [];
   const ejections: string[] = [];
   const ejectedPaths = new Set(manifest?.ejected ?? []);
@@ -122,6 +126,21 @@ export function planRegeneration(plan: Plan, options: RegenerationOptions): Rege
     }
 
     const actual = options.sink.read(file.path);
+
+    // Scaffold content is created once and then belongs to the developer: CI has to be
+    // editable (a runner, a credential, a second toolchain), and comparing it against a
+    // generated hash would turn every legitimate edit into a conflict. The manifest never
+    // records it, so there is no record to fall back on either.
+    if (file.owner === 'scaffold') {
+      if (actual === undefined) {
+        created.push(file.path);
+        actions.push({ kind: 'create', path: file.path, owner: 'scaffold' });
+      } else {
+        scaffoldKept.push(file.path);
+        actions.push({ kind: 'keep-scaffold', path: file.path });
+      }
+      continue;
+    }
 
     if (file.owner === 'business') {
       if (actual === undefined) {
@@ -200,6 +219,7 @@ export function planRegeneration(plan: Plan, options: RegenerationOptions): Rege
     updated,
     unchanged,
     kept,
+    scaffoldKept: sortByPath(scaffoldKept.map((path) => ({ path }))).map((entry) => entry.path),
     drifted,
     stale,
     pruned: [],
@@ -320,6 +340,9 @@ function nextManifest(input: NextManifestInput): AidManifest {
 
   for (const file of sortByPath(input.plan.files)) {
     if (input.prunedPaths.has(file.path)) continue;
+    // Scaffold content is developer-owned from the moment it is written, so it has no
+    // record: a manifest entry would claim a hash the developer is expected to change.
+    if (file.owner === 'scaffold') continue;
     // The ledger outlives the plan. A generator that keeps planning an ejected path must
     // not re-add the record that makes the next run regenerate it.
     if (ejectedPaths.has(file.path)) continue;
@@ -383,6 +406,7 @@ export function formatRegenerationSummary(report: RegenerationReport): string {
     `${report.unchanged.length} unchanged`,
     `${report.kept.length} kept`,
   ];
+  if (report.scaffoldKept.length > 0) parts.push(`${report.scaffoldKept.length} scaffold kept`);
   if (report.drifted.length > 0) parts.push(`${report.drifted.length} conflicts`);
   if (report.stale.length > 0) parts.push(`${report.stale.length} stale`);
   if (report.ejected.length > 0) parts.push(`${report.ejected.length} ejected`);

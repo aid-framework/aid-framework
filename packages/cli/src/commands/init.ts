@@ -213,7 +213,7 @@ export function init(context: CliContext, options: InitOptions): CommandOutcome 
   const generation = options.gen
     ? generate(
         { ...context, cwd: root },
-        { spec: specPath, target: target.name, dryRun: false, force: false },
+        { spec: specPath, target: target.name, dryRun: false, force: false, check: false },
       )
     : undefined;
 

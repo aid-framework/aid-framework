@@ -43,6 +43,8 @@ export interface GenerateOptions {
   readonly target: string | undefined;
   readonly dryRun: boolean;
   readonly force: boolean;
+  /** Fail when the tree does not match the spec; writes nothing. */
+  readonly check: boolean;
 }
 
 /** A spec that compiled and a plan that was reconciled, or the reason it was not. */
@@ -53,6 +55,7 @@ export interface GenerateSuccess {
   readonly warnings: readonly CliDiagnostic[];
   readonly dryRun: boolean;
   readonly force: boolean;
+  readonly check: boolean;
   readonly manifestWritten: boolean;
 }
 
@@ -93,7 +96,7 @@ function render(context: CliContext, options: GenerateOptions): CommandOutcome {
 
   const reconciliation = { sink, manifest: manifest.manifest, force: options.force };
 
-  if (options.dryRun) {
+  if (options.dryRun || options.check) {
     // A dry run takes the branch in which no write call exists at all, rather than the
     // branch that writes and is then trusted not to. `planRegeneration` is the SDK's
     // planner without its writer, so "writes nothing" is a property of the code path
@@ -103,8 +106,9 @@ function render(context: CliContext, options: GenerateOptions): CommandOutcome {
       specPath,
       report: planRegeneration(compiled.plan, reconciliation),
       warnings: compiled.diagnostics,
-      dryRun: true,
+      dryRun: options.dryRun,
       force: options.force,
+      check: options.check,
       manifestWritten: false,
     });
   }
@@ -122,6 +126,7 @@ function render(context: CliContext, options: GenerateOptions): CommandOutcome {
     warnings: compiled.diagnostics,
     dryRun: false,
     force: options.force,
+    check: false,
     manifestWritten: true,
   });
 }
@@ -132,7 +137,7 @@ export function generate(context: CliContext, options: GenerateOptions): Command
 }
 
 function summarize(success: GenerateSuccess): CommandOutcome {
-  const { report, target, specPath, warnings, dryRun, force, manifestWritten } = success;
+  const { report, target, specPath, warnings, dryRun, force, check, manifestWritten } = success;
   const diagnostics = sortDiagnostics([...warnings, ...report.diagnostics]);
   // Two ways to fail, and neither is redundant. `hasErrors` is the SDK's verdict on the
   // run; `hasDrift` is checked alongside it rather than instead of it because drift is
@@ -140,21 +145,35 @@ function summarize(success: GenerateSuccess): CommandOutcome {
   // a gate -- and drift is the one failure that silently destroys a developer's edits.
   // `--force` is the caller answering it, so a run that discarded the edits did what it
   // was told and exits 0; only an unforced run leaves drift outstanding.
-  const failed = hasErrors(diagnostics) || (!force && hasDrift(report));
+  //
+  // `--check` is the CI form of the determinism promise: a tree that merely *would* change
+  // is a failure, because the committed tree is supposed to be the compiled spec. A dry
+  // run alone cannot express that -- it prints the same plan and exits 0 for a missing file.
+  const pending = [...report.created, ...report.updated, ...report.stale];
+  const failed = check
+    ? hasErrors(diagnostics) || pending.length > 0 || report.drifted.length > 0
+    : hasErrors(diagnostics) || (!force && hasDrift(report));
 
   const text: string[] = [
-    `${target.name}: ${dryRun ? 'dry run, ' : ''}${formatRegenerationSummary(report)}`,
+    `${target.name}: ${check ? 'check, ' : dryRun ? 'dry run, ' : ''}${formatRegenerationSummary(report)}`,
   ];
+  if (check && pending.length > 0) {
+    text.push('the tree does not match the spec; run `aid gen` and commit the result:');
+    for (const path of pending) text.push(`  ${path}`);
+  }
   text.push(...lines('created:', report.created));
   text.push(...lines('updated:', report.updated));
   if (report.drifted.length > 0) {
     text.push(
-      dryRun ? 'would refuse to overwrite:' : 'refused to overwrite, the new content is beside it:',
+      dryRun || check
+        ? 'would refuse to overwrite:'
+        : 'refused to overwrite, the new content is beside it:',
     );
     for (const drift of report.drifted) {
       text.push(`  ${drift.path}  ->  ${rejectionPath(drift.path)}`);
     }
   }
+  text.push(...lines('scaffold kept (yours):', report.scaffoldKept));
   text.push(...lines('no longer generated:', report.stale));
   text.push(...lines('ejected, skipped:', report.ejected));
 
@@ -167,12 +186,14 @@ function summarize(success: GenerateSuccess): CommandOutcome {
       target: target.name,
       spec: specPath,
       dryRun,
+      check,
       manifest: { path: target.manifestPath, written: manifestWritten },
       changes: {
         created: report.created,
         updated: report.updated,
         unchanged: report.unchanged,
         kept: report.kept,
+        scaffold: report.scaffoldKept,
         // Paths, like every sibling here: the report answers "which files", and the
         // rejected content is on disk at the deterministic `rejectionPath` the human
         // summary prints. Mixing record objects into one entry and strings into the rest

@@ -11,12 +11,12 @@
  * per test would re-prove the same thing at the cost of re-running the whole pipeline.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AidManifest, AidManifestProvenance, Plan } from '@aid-framework/generator-sdk';
-import { parseAidManifestJson, sortByPath } from '@aid-framework/generator-sdk';
+import { CI_WORKFLOW_PATH, parseAidManifestJson, sortByPath } from '@aid-framework/generator-sdk';
 import type { IR } from '@aid-framework/ir';
 import { buildIR, runGates } from '@aid-framework/ir';
 import { checkSpecText } from '@aid-framework/spec';
@@ -143,11 +143,13 @@ export function readTree(root: string): Map<string, string> {
 }
 
 /**
- * The two managed tiers as the example ships them, POSIX-keyed and app-relative.
+ * The two managed tiers as the example ships them, POSIX-keyed and app-relative, plus the
+ * scaffold tier at its project-relative path.
  *
- * Only `generated/` and `business/` are included: everything else in the example --
- * the spec, the Next `app/api` shim, the tests, `package.json` -- is hand-written and
- * belongs to no tier, so including it would report the whole project as stray.
+ * Only `generated/`, `business/`, and the scaffold file are included: everything else in
+ * the example -- the spec, the Next `app/api` shim, the tests, `package.json` -- is
+ * hand-written and belongs to no tier, so including it would report the whole project as
+ * stray.
  */
 export function shippedManagedTree(): Map<string, string> {
   const tree = readTree(join(EXAMPLE_ROOT, 'app'));
@@ -158,6 +160,9 @@ export function shippedManagedTree(): Map<string, string> {
       managed.set(exampleAppPath(path), content);
     }
   }
+
+  const scaffold = join(EXAMPLE_ROOT, CI_WORKFLOW_PATH);
+  if (existsSync(scaffold)) managed.set(CI_WORKFLOW_PATH, readFileSync(scaffold, 'utf8'));
 
   return managed;
 }

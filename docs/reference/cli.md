@@ -59,13 +59,14 @@ aid validate [spec]
 compile the spec and reconcile the tree with it
 
 ```sh
-aid gen [spec] [--target <name>] [--dry-run] [--force]
+aid gen [spec] [--target <name>] [--dry-run] [--check] [--force]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--target <name>` | generator target; one of py-fastapi, ts-vercel |
 | `--dry-run` | report what would change, and write nothing |
+| `--check` | fail when the committed tree does not match the spec; writes nothing |
 | `--force` | overwrite generated files that were edited by hand |
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |

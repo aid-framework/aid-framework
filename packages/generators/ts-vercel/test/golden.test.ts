@@ -55,11 +55,12 @@ describe('the committed example', () => {
     expect(mismatches.length, formatMismatches(mismatches, shipped)).toBe(0);
   });
 
-  it('holds the whole of both managed tiers, and only those', () => {
+  it('holds the whole of every tier, and only those', () => {
     const shipped = shippedManagedTree();
     expect(generated().length).toBe(31);
     expect(planFilesByOwner('business').length).toBe(4);
-    expect(shipped.size).toBe(35);
+    expect(planFilesByOwner('scaffold').length).toBe(1);
+    expect(shipped.size).toBe(36);
   });
 
   it('records every generated file in aid.manifest.json at the hash of its bytes', () => {
@@ -102,6 +103,14 @@ describe('the committed example', () => {
     const disagreements: string[] = [];
     for (const file of examplePlan().files) {
       const record = manifest.files.find((entry) => entry.path === file.path);
+      /* A scaffold file is created once and then the developer's, so the manifest must
+       * stay silent about it: a hash would turn every legitimate edit into drift. */
+      if (file.owner === 'scaffold') {
+        if (record !== undefined) {
+          disagreements.push(`${file.path}: plan says scaffold, but the manifest records it`);
+        }
+        continue;
+      }
       if (record?.owner !== file.owner) {
         disagreements.push(`${file.path}: plan says ${file.owner}, manifest says ${record?.owner}`);
       }

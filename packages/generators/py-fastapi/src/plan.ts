@@ -14,13 +14,14 @@
  */
 
 import type { GeneratedFile, Plan } from '@aid-framework/generator-sdk';
+import { ACTION_PINS, cliRangeFor, scaffoldCi, scaffoldEvals } from '@aid-framework/generator-sdk';
 import type { IR } from '@aid-framework/ir';
 
 import { emitAgents, hasAgents } from './emit/agents.js';
 import { emitBusinessToolSeed, emitContractsInit, emitToolContract } from './emit/contracts.js';
 import { emitControl, hasComposite } from './emit/control.js';
 import { emitDeps } from './emit/deps.js';
-import { emitEval, emitEvalsInit } from './emit/evals.js';
+import { emitEval, emitEvalsInit, evalModulePath } from './emit/evals.js';
 import { emitGatewayInit, emitGatewayModels } from './emit/gateway.js';
 import { emitGuardrails, hasGuardrails } from './emit/guardrails.js';
 import { emitObservability } from './emit/observability.js';
@@ -33,6 +34,7 @@ import { emitSchemas } from './emit/schemas.js';
 import { emitSse } from './emit/sse.js';
 import { emitBusinessToolsInit, emitToolAdapter, emitToolsInit } from './emit/tools.js';
 import { PyFastApiPlanError } from './errors.js';
+import { GENERATOR_VERSION, PY_FASTAPI_MANIFEST } from './manifest.js';
 import { streams } from './streaming.js';
 import { checkPlan } from './validate.js';
 
@@ -49,9 +51,10 @@ function byPath(left: GeneratedFile, right: GeneratedFile): number {
  * The tree is laid out as design §8.3 describes: `generated/` is entirely this
  * generator's, `business/` holds only the seams a developer is meant to edit, and the
  * two `__init__.py` files that make the package importable belong to it as well.
- * Nothing above `generated/` or `business/` is planned -- `validatePlan` refuses a path
- * outside the managed roots, so `app/main.py` and the app's packaging are the
- * application's own files rather than generation output.
+ * Nothing above `generated/` or `business/` is planned except the scaffold files §6a
+ * allows -- the CI workflow, and the eval workflow when the spec declares a `gate.ci`
+ * eval -- so `app/main.py` and the app's packaging are the application's own files
+ * rather than generation output.
  */
 export function filesFor(ir: IR): GeneratedFile[] {
   const prompts = orderedPrompts(ir);
@@ -84,7 +87,64 @@ export function filesFor(ir: IR): GeneratedFile[] {
     emitBusinessToolsInit(ir),
     ...tools.map((tool) => emitBusinessToolSeed(tool)),
     emitBusinessPromptsInit(),
+    scaffoldCi(ciProfile(), cliRangeFor(GENERATOR_VERSION)),
+    ...evalsScaffold(ir),
   ].sort(byPath);
+}
+
+/** The scaffold profile for this target; the spec path follows the manifest's root. */
+function ciProfile() {
+  const root = PY_FASTAPI_MANIFEST.output.root;
+  return {
+    target: PY_FASTAPI_MANIFEST.target,
+    specPath: `${root}/app.spec.yaml`,
+    dependencyManifest: 'pyproject.toml',
+    toolchain: [`- uses: ${ACTION_PINS.setupPython}`, '  with:', "    python-version: '3.11'"],
+    install: ['pip install --upgrade pip', 'pip install -e ".[dev]"'],
+    lint: ['ruff check .', 'ruff format --check .', 'mypy'],
+    build: 'python -m compileall -q app',
+    test: 'pytest -q',
+  } as const;
+}
+
+/**
+ * The env vars the generated gateway reads a model key from. A fake model has no key, and
+ * `apiKeyEnv` is absent for it, so the gate runs unguarded in a fake-only project.
+ */
+function declaredSecrets(ir: IR): readonly string[] {
+  const names = new Set<string>();
+  for (const model of ir.models) {
+    if (model.provider !== 'fake' && model.apiKeyEnv !== undefined) names.add(model.apiKeyEnv);
+  }
+  return [...names].sort();
+}
+
+/**
+ * The eval gate, for specs that declare a `gate.ci` eval.
+ *
+ * The command is the generated module itself -- the same one `aid eval` shells out to --
+ * so the workflow does not depend on a published CLI version, and the gate that runs in
+ * CI is byte-for-byte the gate a developer runs by hand.
+ */
+function evalsScaffold(ir: IR): readonly GeneratedFile[] {
+  const suites = orderedEvals(ir).filter((evaluation) => evaluation.gate.ci);
+  if (suites.length === 0) return [];
+  const profile = ciProfile();
+  return [
+    scaffoldEvals({
+      target: profile.target,
+      specPath: profile.specPath,
+      toolchain: profile.toolchain,
+      install: profile.install,
+      suites: suites.map((evaluation) => ({
+        id: evaluation.id,
+        command: `python -m ${evalModulePath(evaluation.id)
+          .replace(/\.py$/, '')
+          .replace(/\//g, '.')}`,
+      })),
+      secrets: declaredSecrets(ir),
+    }),
+  ];
 }
 
 /**

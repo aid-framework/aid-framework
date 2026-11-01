@@ -104,10 +104,12 @@ export {
   isGeneratedPath,
   isRelativePath,
   isReservedPath,
+  isScaffoldPath,
   normalizeRelativePath,
   ownerForPath,
   REJECTION_SUFFIX,
   rejectionPath,
+  SCAFFOLD_PREFIXES,
 } from './ownership.js';
 export type {
   GeneratedFile,
@@ -117,6 +119,15 @@ export type {
   PlanValidationOptions,
 } from './plan.js';
 export { isRecord, validatePlan } from './plan.js';
+export type { CiProfile, EvalProfile, EvalSuite } from './scaffold.js';
+export {
+  ACTION_PINS,
+  CI_WORKFLOW_PATH,
+  cliRangeFor,
+  EVALS_WORKFLOW_PATH,
+  scaffoldCi,
+  scaffoldEvals,
+} from './scaffold.js';
 export type { Version } from './semver.js';
 export {
   compareVersions,

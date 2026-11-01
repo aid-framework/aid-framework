@@ -25,7 +25,7 @@ export const BUSINESS_ROOT = managedRoots(TS_VERCEL_MANIFEST).businessDir;
 /** The manifest's `output.root`: the Next.js App Router directory. */
 export const APP_ROOT = TS_VERCEL_MANIFEST.output.root;
 
-export type FileOwner = 'generated' | 'business';
+export type FileOwner = 'generated' | 'business' | 'scaffold';
 
 export interface EmittedFile {
   readonly path: string;
