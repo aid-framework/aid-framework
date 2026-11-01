@@ -1,10 +1,11 @@
 /**
- * The OpenTofu wiring, derived from the deployment plan.
+ * The deployment wiring, derived from the deployment plan.
  *
- * This emits the *derived* layer only: the plan itself, the tfvars an env root consumes,
- * and a README that says who owns what. Provider HCL (the `modules/` and `envs/` trees)
- * is not emitted here, because it carries no information the IR has -- and because an
- * emitter that wrote AWS resources it could not `tofu validate` would be guessing.
+ * This emits the *derived* layer only: the plan itself, the two spellings an env root
+ * consumes (Terraform tfvars, CDK context), and a README that says who owns what.
+ * Provider code -- the OpenTofu `modules/` and `envs/` trees, and CDK stacks -- is not
+ * emitted here, because it carries no information the IR has, and because an emitter
+ * that wrote AWS resources it could not `tofu validate` or `cdk synth` would be guessing.
  *
  * The load-bearing rule is enforced by construction: nothing in this file accepts an
  * account id, a region, a CIDR, a domain, or a sizing number, so none can appear in the
@@ -15,6 +16,12 @@ import type { DeployPlan } from '@aid-framework/ir';
 
 /** Where every derived infrastructure file lives, relative to the project root. */
 export const INFRA_GENERATED_DIR = 'infra/generated';
+
+/** The plan both backends read. */
+export const INFRA_PLAN_PATH = `${INFRA_GENERATED_DIR}/deploy.plan.json`;
+
+/** The same plan spelled for a CDK app, which is TypeScript and therefore camelCase. */
+export const INFRA_CDK_CONTEXT_PATH = `${INFRA_GENERATED_DIR}/deploy.cdk-context.json`;
 
 /** The manifest recording what this emitter wrote, so a hand edit is never overwritten. */
 export const INFRA_MANIFEST_PATH = 'infra/aid.infra.manifest.json';
@@ -70,13 +77,58 @@ export interface DeployTfvars {
 }
 
 /**
+ * The plan spelled for a CDK app: the same facts as `DeployTfvars`, keyed the way a
+ * TypeScript project reads them. Two spellings of one document are worth it because a
+ * CDK app cannot read HCL and a module tree cannot read JSON; what must not differ is
+ * the facts, and `infra.test.ts` asserts exactly that.
+ *
+ * Deliberately absent, as in the tfvars: any value a person must choose.
+ */
+export interface DeployContext {
+  readonly project: { readonly name: string; readonly namespace: string };
+  readonly services: Readonly<
+    Record<
+      string,
+      {
+        readonly target: string;
+        readonly streaming: boolean;
+        readonly routes: readonly { pipeline: string; method: string; path: string }[];
+        readonly env: readonly {
+          name: string;
+          secret: boolean;
+          from: string;
+          value?: string;
+        }[];
+        readonly secrets: readonly string[];
+        readonly providers: readonly string[];
+        readonly ingest: readonly string[];
+      }
+    >
+  >;
+  readonly stores: Readonly<
+    Record<
+      string,
+      {
+        readonly kind: string;
+        readonly secretRef?: string;
+        readonly requiresExtension?: string;
+        readonly retrievers: readonly string[];
+      }
+    >
+  >;
+  readonly tasks: readonly { id: string; kind: string; source: string; schedule?: string }[];
+  readonly alarms: readonly { id: string; metric: string; source: string }[];
+}
+
+/**
  * Every derived file, in a stable order. Pure: the same plan always yields the same bytes,
  * so `aid infra gen --check` can compare content instead of trusting a timestamp.
  */
 export function emitInfra(plan: DeployPlan): InfraFile[] {
   return [
-    { path: `${INFRA_GENERATED_DIR}/deploy.plan.json`, contents: json(plan) },
+    { path: INFRA_PLAN_PATH, contents: json(plan) },
     { path: `${INFRA_GENERATED_DIR}/deploy.auto.tfvars.json`, contents: json(tfvars(plan)) },
+    { path: INFRA_CDK_CONTEXT_PATH, contents: json(cdkContext(plan)) },
     { path: `${INFRA_GENERATED_DIR}/README.md`, contents: readme(plan) },
   ];
 }
@@ -134,6 +186,55 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
   };
 }
 
+/**
+ * The CDK spelling of the same document.
+ *
+ * It renames `tfvars(plan)` rather than re-deriving from the plan: two loops over the
+ * same plan would drift, and the backend that drifted would be silently missing a fact.
+ * Renaming keeps one source and makes parity structural instead of asserted.
+ */
+export function cdkContext(plan: DeployPlan): DeployContext {
+  const spelled = tfvars(plan);
+
+  const services: Record<string, DeployContext['services'][string]> = {};
+  for (const [id, service] of Object.entries(spelled.services)) {
+    services[id] = {
+      target: service.target,
+      streaming: service.streaming,
+      routes: service.routes.map((route) => ({ ...route })),
+      env: service.env.map((variable) => ({
+        name: variable.name,
+        secret: variable.secret,
+        from: variable.from,
+        ...(variable.value === undefined ? {} : { value: variable.value }),
+      })),
+      secrets: [...service.secret_names],
+      providers: [...service.providers],
+      ingest: [...service.ingest],
+    };
+  }
+
+  const stores: Record<string, DeployContext['stores'][string]> = {};
+  for (const [id, store] of Object.entries(spelled.data_stores)) {
+    stores[id] = {
+      kind: store.kind,
+      ...(store.secret_ref === undefined ? {} : { secretRef: store.secret_ref }),
+      ...(store.requires_extension === undefined
+        ? {}
+        : { requiresExtension: store.requires_extension }),
+      retrievers: [...store.retrievers],
+    };
+  }
+
+  return {
+    project: { name: spelled.project.name, namespace: spelled.project.namespace },
+    services,
+    stores,
+    tasks: spelled.tasks.map((task) => ({ ...task })),
+    alarms: spelled.alarms.map((alarm) => ({ ...alarm })),
+  };
+}
+
 function readme(plan: DeployPlan): string {
   const routes = plan.services.reduce((total, service) => total + service.endpoints.length, 0);
   return [
@@ -146,14 +247,27 @@ function readme(plan: DeployPlan): string {
     '| --- | --- |',
     '| `deploy.plan.json` | The provider-neutral deployment plan both backends render. |',
     '| `deploy.auto.tfvars.json` | The same plan spelled as Terraform inputs. |',
+    '| `deploy.cdk-context.json` | The same plan spelled for a CDK app, with camelCase keys. |',
     '',
     '## Using it',
     '',
-    'An env root consumes the tfvars directly, so dev and prod share one module tree:',
+    'With OpenTofu, an env root consumes the tfvars directly, so dev and prod share one',
+    'module tree:',
     '',
     '```sh',
     'tofu -chdir=infra/envs/dev plan -var-file=../../generated/deploy.auto.tfvars.json',
     '```',
+    '',
+    'With CDK, an app in `infra/cdk/<env>` reads the context file and supplies the',
+    'constructs, account and region itself:',
+    '',
+    '```sh',
+    'aid infra plan  --iac cdk --env dev',
+    'aid infra apply --iac cdk --env dev',
+    '```',
+    '',
+    '`aid infra` defaults to `--iac tofu`; the generated bytes are identical either way,',
+    'because both backends consume this one plan.',
     '',
     '## What is here, and what is not',
     '',

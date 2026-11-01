@@ -1,16 +1,18 @@
 /**
- * `aid infra` — derive the deployment wiring from the spec, and drive OpenTofu.
+ * `aid infra` — derive the deployment wiring from the spec, and drive a backend.
  *
  * The division of labour is the same one `aid gen` keeps, and for the same reason:
  * *what* the infrastructure says is derived by `@aid-framework/ir` (`buildDeployPlan`) and
  * spelled by `emitInfra`; *whether a file may be rewritten* is the generator SDK's drift
- * rule, reused as-is. This file decides four things and nothing else: which action, which
- * spec, which environment, and what an exit status means. In particular it does not
- * re-hash files or re-implement drift — a second implementation of that rule would
- * eventually disagree, and the one that disagreed would be holding someone's edits.
+ * rule, reused as-is. This file decides five things and nothing else: which action, which
+ * spec, which environment, which backend (`iac`), and what an exit status means. In
+ * particular it does not re-hash files or re-implement drift — a second implementation of
+ * that rule would eventually disagree, and the one that disagreed would be holding
+ * someone's edits.
  *
- * `plan`, `apply` and `drift` shell out through `context.spawn`, so a missing `tofu` is a
- * diagnostic and not a crash, and a test can observe the argv without OpenTofu installed.
+ * `plan`, `apply` and `drift` shell out through `context.spawn`, so a missing `tofu` or
+ * `cdk` is a diagnostic and not a crash, and a test can observe the argv without either
+ * installed.
  */
 
 import { existsSync } from 'node:fs';
@@ -29,20 +31,31 @@ import type { IR } from '@aid-framework/ir';
 import { buildDeployPlan, DEPLOY_PLAN_VERSION } from '@aid-framework/ir';
 import { hasErrors, sortDiagnostics } from '@aid-framework/spec';
 
-import type { CliContext } from '../context.js';
-import type { CliDiagnostic } from '../diagnostics.js';
+import type { CliContext, SpawnResult } from '../context.js';
+import type { CliDiagnostic, CliDiagnosticCode } from '../diagnostics.js';
 import { CLI_DIAGNOSTIC_CODES, cliError } from '../diagnostics.js';
 import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE } from '../exit.js';
+import { cdkRoot, classifyCdk, runCdk } from '../infra/cdk.js';
 import type { InfraFile } from '../infra/emit.js';
-import { emitInfra, INFRA_GENERATED_DIR, INFRA_MANIFEST_PATH } from '../infra/emit.js';
+import {
+  emitInfra,
+  INFRA_CDK_CONTEXT_PATH,
+  INFRA_GENERATED_DIR,
+  INFRA_MANIFEST_PATH,
+} from '../infra/emit.js';
 import type { InfraAction } from '../infra/tofu.js';
-import { envRoot, runTofu, TFVARS_PATH } from '../infra/tofu.js';
+import { classifyTofu, envRoot, runTofu, TFVARS_PATH } from '../infra/tofu.js';
 import type { CommandOutcome } from '../output.js';
 import { outcome } from '../output.js';
 import { lowerSpec, readSpec } from '../pipeline.js';
 import { DEFAULT_SPEC_PATH } from '../targets.js';
 
 const SUBCOMMANDS = ['gen', 'plan', 'apply', 'drift'] as const;
+
+/** The backends a bare action can drive. `tofu` stays the default, so nothing shipped moves. */
+const IAC_BACKENDS = ['tofu', 'cdk'] as const;
+
+type IacBackend = (typeof IAC_BACKENDS)[number];
 
 /** The env root a bare action runs in. */
 const DEFAULT_ENV = 'dev';
@@ -67,7 +80,9 @@ export interface InfraOptions {
   readonly force: boolean;
   readonly env: string | undefined;
   readonly confirmProd: boolean;
-  /** Whether stdout must stay a single JSON document, which decides how `tofu` streams. */
+  /** `plan`, `apply`, `drift`: which tool to drive. Defaults to `tofu`. */
+  readonly iac: string | undefined;
+  /** Whether stdout must stay a single JSON document, which decides how a tool streams. */
   readonly json: boolean;
 }
 
@@ -95,6 +110,20 @@ export function infra(context: CliContext, options: InfraOptions): CommandOutcom
           code: CLI_DIAGNOSTIC_CODES.infraUnknownSubcommand,
           message: `Unknown subcommand "${options.subcommand}".`,
           hint: `Use one of: ${SUBCOMMANDS.join(', ')}.`,
+        }),
+      ],
+    });
+  }
+
+  if (options.iac !== undefined && !(IAC_BACKENDS as readonly string[]).includes(options.iac)) {
+    return outcome({
+      command: 'infra',
+      exitCode: EXIT_USAGE,
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.infraUnknownIac,
+          message: `Unknown infrastructure backend "${options.iac}".`,
+          hint: `Use one of: ${IAC_BACKENDS.join(', ')}.`,
         }),
       ],
     });
@@ -223,10 +252,58 @@ function generate(context: CliContext, options: InfraOptions): CommandOutcome {
   });
 }
 
+/**
+ * One backend's answer to "where does the plan live, what is its env root, and what does
+ * an exit status mean". The command owns policy; the backend object is only the spelling
+ * of the differences, so the two paths below cannot drift into different rules.
+ */
+interface Backend {
+  readonly root: string;
+  readonly planPath: string;
+  readonly missingCode: CliDiagnosticCode;
+  readonly failedCode: CliDiagnosticCode;
+  readonly installHint: string;
+  readonly rootHint: string;
+  readonly run: (stdio: 'inherit' | 'pipe') => SpawnResult;
+  readonly classify: (status: number | null) => 'ok' | 'drift' | 'failed';
+}
+
+function backendFor(
+  context: CliContext,
+  iac: IacBackend,
+  action: InfraAction,
+  env: string,
+): Backend {
+  if (iac === 'cdk') {
+    return {
+      root: cdkRoot(env),
+      planPath: INFRA_CDK_CONTEXT_PATH,
+      missingCode: CLI_DIAGNOSTIC_CODES.infraCdkMissing,
+      failedCode: CLI_DIAGNOSTIC_CODES.infraCdkFailed,
+      installHint: 'Install the AWS CDK, or point AID_CDK at a cdk binary.',
+      rootHint: `Create ${cdkRoot(env)} with your CDK app; the generated context is consumed there, not written to.`,
+      run: (stdio) => runCdk(context, action, env, stdio),
+      classify: (status) => classifyCdk(action, status),
+    };
+  }
+  return {
+    root: envRoot(env),
+    planPath: TFVARS_PATH,
+    missingCode: CLI_DIAGNOSTIC_CODES.infraTofuMissing,
+    failedCode: CLI_DIAGNOSTIC_CODES.infraTofuFailed,
+    installHint: 'Install OpenTofu, or point AID_TOFU at a tofu binary.',
+    rootHint: `Create ${envRoot(env)} with your module wiring; the generated tfvars is consumed there, not written to.`,
+    run: (stdio) => runTofu(context, action, env, stdio),
+    classify: (status) => classifyTofu(action, status),
+  };
+}
+
 function action(context: CliContext, options: InfraOptions, action: InfraAction): CommandOutcome {
   const command = 'infra';
+  const iac: IacBackend = options.iac === 'cdk' ? 'cdk' : 'tofu';
   const env = options.env ?? DEFAULT_ENV;
-  const fields = { action, env, tool: 'tofu' };
+  const fields = { action, env, tool: iac };
+  const backend = backendFor(context, iac, action, env);
 
   if (action === 'apply' && env === 'prod' && !options.confirmProd) {
     return outcome({
@@ -243,7 +320,7 @@ function action(context: CliContext, options: InfraOptions, action: InfraAction)
     });
   }
 
-  if (!existsSync(join(context.cwd, ...TFVARS_PATH.split('/')))) {
+  if (!existsSync(join(context.cwd, ...backend.planPath.split('/')))) {
     return outcome({
       command,
       exitCode: EXIT_FAILURE,
@@ -251,15 +328,14 @@ function action(context: CliContext, options: InfraOptions, action: InfraAction)
       diagnostics: [
         cliError({
           code: CLI_DIAGNOSTIC_CODES.infraNotGenerated,
-          message: `"${TFVARS_PATH}" is missing, so there is nothing to ${action}.`,
+          message: `"${backend.planPath}" is missing, so there is nothing to ${action}.`,
           hint: 'Run `aid infra gen` first.',
         }),
       ],
     });
   }
 
-  const root = envRoot(env);
-  if (!existsSync(join(context.cwd, ...root.split('/')))) {
+  if (!existsSync(join(context.cwd, ...backend.root.split('/')))) {
     return outcome({
       command,
       exitCode: EXIT_FAILURE,
@@ -267,14 +343,14 @@ function action(context: CliContext, options: InfraOptions, action: InfraAction)
       diagnostics: [
         cliError({
           code: CLI_DIAGNOSTIC_CODES.infraEnvRootMissing,
-          message: `The environment root "${root}" does not exist.`,
-          hint: `Create ${root} with your module wiring; the generated tfvars is consumed there, not written to.`,
+          message: `The environment root "${backend.root}" does not exist.`,
+          hint: backend.rootHint,
         }),
       ],
     });
   }
 
-  const result = runTofu(context, action, env, options.json ? 'pipe' : 'inherit');
+  const result = backend.run(options.json ? 'pipe' : 'inherit');
 
   if (result.error !== undefined) {
     return outcome({
@@ -283,50 +359,49 @@ function action(context: CliContext, options: InfraOptions, action: InfraAction)
       fields,
       diagnostics: [
         cliError({
-          code: CLI_DIAGNOSTIC_CODES.infraTofuMissing,
+          code: backend.missingCode,
           message: `Could not run "${result.error.message}".`,
-          hint: 'Install OpenTofu, or point AID_TOFU at a tofu binary.',
+          hint: backend.installHint,
         }),
       ],
     });
   }
 
-  // OpenTofu reserves exit 2 for "the plan is non-empty" under `-detailed-exitcode`, so
-  // drift is a distinguishable status rather than a guess over human output. It is a
-  // failure: a drift check that exited 0 would be a gate that never closes.
-  const driftDetected = action === 'drift' && result.status === 2;
-  const succeeded = result.status === 0;
+  const verdict = backend.classify(result.status);
 
-  const diagnostics: CliDiagnostic[] = driftDetected
-    ? [
-        cliError({
-          code: CLI_DIAGNOSTIC_CODES.infraDriftDetected,
-          message: `The "${env}" environment no longer matches the generated wiring.`,
-          hint: 'Review the plan output, then apply to converge or fix the spec.',
-        }),
-      ]
-    : succeeded
-      ? []
-      : [
+  // Drift is a failure: a drift check that exited 0 would be a gate that never closes.
+  const diagnostics: CliDiagnostic[] =
+    verdict === 'drift'
+      ? [
           cliError({
-            code: CLI_DIAGNOSTIC_CODES.infraTofuFailed,
-            message: `tofu ${action} exited ${result.status}.`,
-            ...(result.stderr.trim() === '' ? {} : { hint: result.stderr.trim() }),
+            code: CLI_DIAGNOSTIC_CODES.infraDriftDetected,
+            message: `The "${env}" environment no longer matches the generated wiring.`,
+            hint: 'Review the plan output, then apply to converge or fix the spec.',
           }),
-        ];
+        ]
+      : verdict === 'ok'
+        ? []
+        : [
+            cliError({
+              code: backend.failedCode,
+              message: `${iac} ${action} exited ${result.status}.`,
+              ...(result.stderr.trim() === '' ? {} : { hint: result.stderr.trim() }),
+            }),
+          ];
 
-  const text = driftDetected
-    ? `${env}: drift detected`
-    : succeeded
-      ? `${env}: tofu ${action} succeeded`
-      : `${env}: tofu ${action} failed (exit ${result.status})`;
+  const text =
+    verdict === 'drift'
+      ? `${env}: drift detected`
+      : verdict === 'ok'
+        ? `${env}: ${iac} ${action} succeeded`
+        : `${env}: ${iac} ${action} failed (exit ${result.status})`;
 
   return outcome({
     command,
-    exitCode: succeeded ? EXIT_OK : EXIT_FAILURE,
+    exitCode: verdict === 'ok' ? EXIT_OK : EXIT_FAILURE,
     diagnostics,
     text,
-    ...(succeeded ? {} : { stderr: result.stderr }),
+    ...(verdict === 'ok' ? {} : { stderr: result.stderr }),
     fields: {
       ...fields,
       status: result.status,
