@@ -20,6 +20,7 @@ import { doctor } from './commands/doctor.js';
 import { eject } from './commands/eject.js';
 import { evaluate } from './commands/eval.js';
 import { generate } from './commands/gen.js';
+import { guard } from './commands/guard.js';
 import { infra } from './commands/infra.js';
 import { ingest } from './commands/ingest.js';
 import { init } from './commands/init.js';
@@ -110,6 +111,26 @@ export const COMMANDS: readonly Command[] = [
         port: args.values.get('port'),
         noGen: args.booleans.has('no-gen'),
         noReload: args.booleans.has('no-reload'),
+      }),
+  },
+  {
+    name: 'guard',
+    summary: 'measure the guardrails against a red-team corpus',
+    usage: 'guard [spec] [--target <name>] [--red-team <file>]',
+    flags: [
+      TARGET_FLAG,
+      valueFlag(
+        'red-team',
+        'file',
+        'the corpus to measure against; defaults to redteam.json beside the spec, then at the project root',
+      ),
+      JSON_FLAG,
+    ],
+    run: (context, args) =>
+      guard(context, {
+        spec: args.positionals[0],
+        target: args.values.get('target'),
+        redTeam: args.values.get('red-team'),
       }),
   },
   {

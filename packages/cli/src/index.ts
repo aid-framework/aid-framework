@@ -23,6 +23,8 @@ export type { EvalOptions } from './commands/eval.js';
 export { evaluate } from './commands/eval.js';
 export type { GenerateOptions, GenerateSuccess } from './commands/gen.js';
 export { generate } from './commands/gen.js';
+export type { GuardOptions } from './commands/guard.js';
+export { guard } from './commands/guard.js';
 export type { InfraOptions } from './commands/infra.js';
 export { infra } from './commands/infra.js';
 export type { IngestOptions } from './commands/ingest.js';

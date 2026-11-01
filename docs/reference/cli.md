@@ -20,6 +20,7 @@ Every command accepts `-h` / `--help` for its own usage. All except `dev` accept
 | [`validate`](#validate) | parse the spec, build the IR, and run every build-time gate |
 | [`gen`](#gen) | compile the spec and reconcile the tree with it |
 | [`dev`](#dev) | regenerate the tree and run the application on a local server |
+| [`guard`](#guard) | measure the guardrails against a red-team corpus |
 | [`ingest`](#ingest) | index a retriever corpus into the store the spec declares |
 | [`eval`](#eval) | run the eval gate, or record the baseline it measures against |
 | [`cost`](#cost) | report cost and latency from the local trace sink |
@@ -87,6 +88,21 @@ aid dev [spec] [--target <name>] [--port <n>] [--no-gen] [--no-reload]
 | `--port <n>` | the port to serve on; defaults to 8000, the uvicorn default |
 | `--no-gen` | serve the tree as it is, without regenerating it first |
 | `--no-reload` | turn off the reloader that restarts the server on code changes |
+| `-h`, `--help` | print this command's usage |
+
+## `guard`
+
+measure the guardrails against a red-team corpus
+
+```sh
+aid guard [spec] [--target <name>] [--red-team <file>]
+```
+
+| Option | Description |
+| --- | --- |
+| `--target <name>` | generator target; one of py-fastapi, ts-vercel |
+| `--red-team <file>` | the corpus to measure against; defaults to redteam.json beside the spec, then at the project root |
+| `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |
 
 ## `ingest`
