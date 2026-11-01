@@ -24,6 +24,7 @@ concurrency:
 
 env:
   ACTIONLINT_VERSION: "1.7.12"
+  OPENTOFU_VERSION: "1.13.2"
 
 jobs:
   node:
@@ -382,6 +383,39 @@ jobs:
       # asserts shellcheck is present.
       - name: Lint workflows
         run: actionlint -color -shellcheck=shellcheck
+
+  # The provider module is generated HCL. The machine that writes it cannot run `tofu`
+  # -- an Application Control policy blocks the newly-downloaded binary -- so the
+  # committed fixture under `packages/cli/test/fixtures/infra` is the only place the
+  # module is ever validated. `infra-modules.test.ts` asserts the fixture is byte-for-byte
+  # what the emitter produces, so a module that stops validating also fails a unit test.
+  # Advisory for a merge, like `typescript`: it gates nothing until the ruleset names it.
+  tofu:
+    name: tofu
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install OpenTofu
+        run: |
+          set -euo pipefail
+          url="https://github.com/opentofu/opentofu/releases/download/v${OPENTOFU_VERSION}/tofu_${OPENTOFU_VERSION}_linux_amd64.zip"
+          curl -sSfL -o /tmp/tofu.zip "$url"
+          sudo unzip -q -o /tmp/tofu.zip -d /usr/local/bin tofu
+          tofu version
+
+      # -backend=false: validation needs the provider schema, not state. The fixture is
+      # an env root exactly as a project would hold one, so this also proves the
+      # documented `source` path resolves.
+      - name: Init the fixture env root
+        working-directory: packages/cli/test/fixtures/infra/envs/dev
+        run: tofu init -backend=false -input=false -no-color
+
+      - name: Validate the serverless module
+        working-directory: packages/cli/test/fixtures/infra/envs/dev
+        run: tofu validate -no-color
 
   # release.yml tags whatever commit a releasable merge produces, and publish.yml only
   # publishes a tag whose manifests declare that exact version. Nothing used to check

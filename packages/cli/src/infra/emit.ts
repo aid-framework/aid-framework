@@ -14,17 +14,15 @@
 
 import type { DeployPlan } from '@aid-framework/ir';
 
-/** Where every derived infrastructure file lives, relative to the project root. */
-export const INFRA_GENERATED_DIR = 'infra/generated';
+import { ENV_ROOT_MAIN_TF, ENV_ROOT_VARIABLES_TF, emitServerlessModule } from './modules.js';
+import { INFRA_CDK_CONTEXT_PATH, INFRA_GENERATED_DIR, INFRA_PLAN_PATH } from './paths.js';
 
-/** The plan both backends read. */
-export const INFRA_PLAN_PATH = `${INFRA_GENERATED_DIR}/deploy.plan.json`;
-
-/** The same plan spelled for a CDK app, which is TypeScript and therefore camelCase. */
-export const INFRA_CDK_CONTEXT_PATH = `${INFRA_GENERATED_DIR}/deploy.cdk-context.json`;
-
-/** The manifest recording what this emitter wrote, so a hand edit is never overwritten. */
-export const INFRA_MANIFEST_PATH = 'infra/aid.infra.manifest.json';
+export {
+  INFRA_CDK_CONTEXT_PATH,
+  INFRA_GENERATED_DIR,
+  INFRA_MANIFEST_PATH,
+  INFRA_PLAN_PATH,
+} from './paths.js';
 
 export interface InfraFile {
   /** Repository-relative, POSIX-separated. */
@@ -130,6 +128,7 @@ export function emitInfra(plan: DeployPlan): InfraFile[] {
     { path: `${INFRA_GENERATED_DIR}/deploy.auto.tfvars.json`, contents: json(tfvars(plan)) },
     { path: INFRA_CDK_CONTEXT_PATH, contents: json(cdkContext(plan)) },
     { path: `${INFRA_GENERATED_DIR}/README.md`, contents: readme(plan) },
+    ...emitServerlessModule(plan),
   ];
 }
 
@@ -237,6 +236,7 @@ export function cdkContext(plan: DeployPlan): DeployContext {
 
 function readme(plan: DeployPlan): string {
   const routes = plan.services.reduce((total, service) => total + service.endpoints.length, 0);
+  const serverless = plan.services.some((service) => service.target === 'serverless');
   return [
     '# Generated infrastructure',
     '',
@@ -248,6 +248,11 @@ function readme(plan: DeployPlan): string {
     '| `deploy.plan.json` | The provider-neutral deployment plan both backends render. |',
     '| `deploy.auto.tfvars.json` | The same plan spelled as Terraform inputs. |',
     '| `deploy.cdk-context.json` | The same plan spelled for a CDK app, with camelCase keys. |',
+    ...(serverless
+      ? [
+          '| `modules/serverless/` | The Lambda + HTTP API module a `serverless` service deploys into. |',
+        ]
+      : []),
     '',
     '## Using it',
     '',
@@ -258,6 +263,32 @@ function readme(plan: DeployPlan): string {
     'tofu -chdir=infra/envs/dev plan -var-file=../../generated/deploy.auto.tfvars.json',
     '```',
     '',
+    ...(serverless
+      ? [
+          'The env root is yours, not generated. `infra/envs/dev/variables.tf` declares the',
+          'three business inputs and the plan-shaped ones the tfvars already supplies:',
+          '',
+          '```hcl',
+          ...ENV_ROOT_VARIABLES_TF.trimEnd().split('\n'),
+          '```',
+          '',
+          'and `infra/envs/dev/main.tf` calls the module:',
+          '',
+          '```hcl',
+          ...ENV_ROOT_MAIN_TF.trimEnd().split('\n'),
+          '```',
+          '',
+          'The module refuses a service it cannot size or an image it cannot pull, and names',
+          'the service in the error rather than failing at invoke time.',
+          '',
+        ]
+      : [
+          'No provider module is generated for this plan yet: AWS modules exist for',
+          '`serverless` only, so a container, batch or edge target needs a hand-written env',
+          'root. The plan document and tfvars above are still the contract to write it',
+          'against.',
+          '',
+        ]),
     'With CDK, an app in `infra/cdk/<env>` reads the context file and supplies the',
     'constructs, account and region itself:',
     '',

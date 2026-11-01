@@ -210,6 +210,63 @@ ever planning that path again.
 Files that are no longer in the plan are reported as "no longer generated" and left on disk.
 Deletion needs an explicit `prune`, because it is the one operation with no recovery.
 
+## Infrastructure
+
+`aid infra gen` writes the same kind of tree one level up. Everything under
+`infra/generated/` is derived and managed; everything else under `infra/` is yours:
+
+```text
+infra/
+  aid.infra.manifest.json               managed record
+  generated/
+    deploy.plan.json                    generated
+    deploy.auto.tfvars.json             generated
+    deploy.cdk-context.json             generated
+    README.md                           generated
+    modules/serverless/                 generated, when a deployment targets serverless
+      versions.tf
+      variables.tf
+      main.tf
+      outputs.tf
+  envs/dev/                             yours
+    main.tf
+    variables.tf
+```
+
+The plan and both spellings of it are always emitted. The OpenTofu module is emitted only when
+a deployment declares `target: serverless`, so a container-only project gains no directory to
+ignore. Its bytes are constant: it loops over the generated tfvars instead of naming services,
+which is what lets it be validated once and be correct for every project.
+
+The env root is yours and is never written by `aid infra gen`. `infra/envs/<env>/main.tf` calls
+`../../generated/modules/serverless`, and `variables.tf` declares the three inputs no spec can
+supply:
+
+| Input | Why it cannot be derived |
+| --- | --- |
+| `image_uris` | `deployments[].image` is a `ghcr.io` registry, and Lambda cannot pull from it. |
+| `secret_arns` | An ARN names one account, so it belongs to the environment, not the spec. |
+| `sizing` | Memory and timeout are a cost decision, not an inference from the pipeline. |
+
+The module turns a spec mistake into a plan-time refusal rather than a broken deploy: a
+`streaming` service (an HTTP API cannot stream a body), a service with no image, and a secret
+with no ARN are each a `precondition` whose message names the service. Generated AWS modules
+exist for `serverless` only; `container`, `batch` and `edge` still need a hand-written env root,
+and the plan document is the contract to write it against.
+
+`aid infra plan` and `aid infra apply` spawn the backend but never run `init`, because
+initialising is a decision about a backend and a lock table, not a consequence of the spec. Run
+it yourself in the env root first:
+
+```console
+tofu -chdir=infra/envs/dev init
+aid infra plan --env dev
+```
+
+The generated module is validated in CI, not here: a job runs `tofu init -backend=false` and
+`tofu validate` over the fixture at `packages/cli/test/fixtures/infra`, which is asserted
+byte-identical to what the emitter writes.
+
 ## What you write
 
 - `app/main.py` - the ASGI entry point. `aid gen` never emits it. See [Serving](serving.md).
