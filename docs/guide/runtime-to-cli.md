@@ -20,7 +20,7 @@ somewhere else.
 | `aid migrate` | Emits the SQL the declared vector stores need, for an operator to apply once. |
 | `aid ingest` | Runs the generated ingest module for one retriever or all of them. |
 | `aid eval` | Runs one generated eval module, or records its baseline. |
-| `aid cost` | Reports cost, token and latency totals from the runtime's local trace sink. Reads; never reprices. |
+| `aid cost` | Reports cost, token and latency totals from the runtime's local trace sink, optionally failing when they exceed `--budget`. Reads; never reprices. |
 | `aid trace` | Prints a run's span tree from the same sink, with model, tokens, cost and time per span. Reads; replays nothing. |
 | `aid doctor` | Diagnoses the tree against the spec: hand-edited generated files, provenance and version mismatches, and missing or outdated generated files. Reports; writes nothing. |
 | `aid eject` | Takes ownership of a generated file: moves it to `business/` and excludes it from generation. |
@@ -148,7 +148,14 @@ AID_TRACE_DIR=.aid/traces node .next/standalone/server.js
 
 aid cost .aid/traces
 aid cost .aid/traces --since 2026-10-01 --json
+aid cost .aid/traces --budget 0.50       # exit 1 when the measured spend exceeds $0.50
 ```
+
+`--budget` compares the total against a ceiling and nothing more: it is the same recorded
+`aid.cost.usd` sum the report prints, not a second price model. Generating a project with eval
+gates opts the nightly run into this: the workflow captures spans into `.aid-traces` and passes
+`--budget "$BUDGET"` only when a repository variable `AID_COST_BUDGET` is set, so an unconfigured
+project reports spend instead of failing on a ceiling nobody chose.
 
 Each span carries `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, the model the provider
 served, and `aid.cost.usd` - the price the runtime gateway computed for that call. `aid cost` sums
@@ -159,10 +166,11 @@ be a second answer to the same question.
 A span with tokens but no `aid.cost.usd` is counted under `unpricedSpans` and kept out of the total.
 It is not summed as zero, because a missing price would otherwise read as a cheap run.
 
-The taxonomy holds here too. A missing directory, or one that is not a directory, and an
-unparseable `--since` are **2**; a trace file that exists but cannot be read is **1**, with the
-readable rest still reported; an empty directory is **0** with a warning, because zero spans is a
-true statement rather than a failure.
+The taxonomy holds here too. A missing directory, or one that is not a directory, an unparseable
+`--since`, and a `--budget` that is not a plain non-negative decimal are **2**; a trace file that
+exists but cannot be read, or a measured total above `--budget`, is **1**, with the readable rest
+still reported; an empty directory is **0** with a warning, because zero spans is a true statement
+rather than a failure.
 
 ## `trace` shows the shape of a run; it does not replay it
 

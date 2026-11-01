@@ -194,19 +194,21 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'cost',
     summary: 'report cost and latency from the local trace sink',
-    usage: 'cost [dir] [--since <date>]',
+    usage: 'cost [dir] [--since <date>] [--budget <usd>]',
     flags: [
       valueFlag(
         'since',
         'date',
         'only count spans that started at or after this date (YYYY-MM-DD or an ISO 8601 instant)',
       ),
+      valueFlag('budget', 'usd', 'fail when the measured cost exceeds this ceiling'),
       JSON_FLAG,
     ],
     run: (context, args) =>
       cost(context, {
         dir: args.positionals[0],
         since: args.values.get('since'),
+        budget: args.values.get('budget'),
       }),
   },
   {

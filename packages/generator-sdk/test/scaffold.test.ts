@@ -122,7 +122,7 @@ describe('scaffoldEvals', () => {
     secrets: ['OPENAI_API_KEY'],
   };
 
-  const file = scaffoldEvals(EVAL_PROFILE);
+  const file = scaffoldEvals(EVAL_PROFILE, '0.1');
 
   it('emits the workflow at the path the scaffold tier owns', () => {
     expect(file.path).toBe(EVALS_WORKFLOW_PATH);
@@ -164,16 +164,34 @@ describe('scaffoldEvals', () => {
     const gated = file.content
       .split('\n')
       .filter((line) => line.includes("if: steps.creds.outputs.ready == 'true'"));
-    expect(gated).toHaveLength(EVAL_PROFILE.suites.length);
+    expect(gated).toHaveLength(EVAL_PROFILE.suites.length + 1);
+  });
+
+  it('captures the spans the eval run produces, so spend can be read afterwards', () => {
+    expect(file.content).toContain('AID_TRACE_DIR: .aid-traces');
+    expect(file.content).toContain('aid cost .aid-traces');
+    // The CLI has to be on the runner for the cost step; it is pinned to the release line.
+    expect(file.content).toContain('@aid-framework/cli@0.1');
+  });
+
+  it('takes the spending ceiling from a repository variable, never an invented default', () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting on GitHub's expression syntax
+    expect(file.content).toContain('BUDGET: ${{ vars.AID_COST_BUDGET }}');
+    expect(file.content).toContain('aid cost .aid-traces --budget "$BUDGET"');
+    // Unset means report-only, so a project that spends more is not failed by a guess.
+    expect(file.content).toContain('aid cost .aid-traces\n');
   });
 
   it('omits the credential guard when every model is a fake', () => {
-    const fakeOnly = scaffoldEvals({ ...EVAL_PROFILE, secrets: [] });
+    const fakeOnly = scaffoldEvals({ ...EVAL_PROFILE, secrets: [] }, '0.1');
     expect(fakeOnly.content).not.toContain('id: creds');
     expect(fakeOnly.content).not.toContain('::error::');
     for (const suite of EVAL_PROFILE.suites) {
       expect(fakeOnly.content).toContain(`run: ${suite.command}`);
     }
+    // Trace capture and the cost step do not depend on a credential.
+    expect(fakeOnly.content).toContain('AID_TRACE_DIR: .aid-traces');
+    expect(fakeOnly.content).toContain('aid cost .aid-traces');
   });
 });
 

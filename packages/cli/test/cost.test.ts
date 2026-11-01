@@ -5,8 +5,9 @@
  * obey -- what `--since` accepts, what an unpriced span counts as, which order models
  * print in -- because those are the judgements a reader would otherwise have to trust.
  * The command tests then pin the exit taxonomy: a wrong invocation is `2`, an unreadable
- * trace file is `1`, and everything else is `0` even when the report is empty, because an
- * empty report is a true statement about a directory that has no traces yet.
+ * trace file is `1`, spending past a `--budget` ceiling is `1`, and everything else is `0`
+ * even when the report is empty, because an empty report is a true statement about a
+ * directory that has no traces yet.
  */
 
 import { chmodSync } from 'node:fs';
@@ -433,4 +434,109 @@ describe('aid cost', () => {
       expect(run.stdout).toContain('spans: 1 in 1 trace(s)');
     },
   );
+});
+
+/**
+ * `--budget` turns the report into a ceiling. The command stays a report in every other
+ * respect: nothing is estimated, and the comparison is against the same recorded
+ * `aid.cost.usd` the report prints.
+ */
+describe('aid cost --budget', () => {
+  it('exits 0 and says "within" when the measured spend is at or under the ceiling', () => {
+    const made = scratch();
+    made.write('traces/trace-1.jsonl', jsonl([call('a', { cost: 0.25 })]));
+
+    const run = aid(made, ['cost', 'traces', '--budget', '0.25'], { env: {} });
+
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain('budget: $0.250000 (within)');
+    expect(codes(made, ['cost', 'traces', '--budget', '0.25'])).toEqual([]);
+
+    const json = aid(made, ['cost', 'traces', '--budget', '1', '--json'], {
+      env: {},
+    }).json<{ budgetUsd: number; overBudget: boolean; costUsd: number }>();
+    expect(json.budgetUsd).toBe(1);
+    expect(json.overBudget).toBe(false);
+    expect(json.costUsd).toBeCloseTo(0.25, 10);
+  });
+
+  it('exits 1 with an error when the measured spend exceeds the ceiling', () => {
+    const made = scratch();
+    made.write(
+      'traces/trace-1.jsonl',
+      jsonl([call('expensive', { cost: 0.4 }), call('expensive', { cost: 0.1 })]),
+    );
+
+    const run = aid(made, ['cost', 'traces', '--budget', '0.1'], { env: {} });
+
+    expect(run.code).toBe(1);
+    expect(run.stdout).toContain('budget: $0.100000 (over by $0.400000)');
+    expect(codes(made, ['cost', 'traces', '--budget', '0.1'])).toEqual(['cli/cost-over-budget']);
+    expect(severityOf(made, ['cost', 'traces', '--budget', '0.1'], 'cli/cost-over-budget')).toBe(
+      'error',
+    );
+
+    const json = aid(made, ['cost', 'traces', '--budget', '0.1', '--json'], {
+      env: {},
+    }).json<{ overBudget: boolean; budgetUsd: number }>();
+    expect(json.overBudget).toBe(true);
+    expect(json.budgetUsd).toBe(0.1);
+  });
+
+  it('compares the filtered total when --since is also given', () => {
+    const made = scratch();
+    made.write(
+      'traces/trace-1.jsonl',
+      jsonl([
+        call('a', { at: STARTED, cost: 5 }),
+        call('a', { at: LATER, cost: 0.05, trace: 'trace-2' }),
+      ]),
+    );
+
+    const run = aid(made, ['cost', 'traces', '--since', '2026-10-02', '--budget', '0.1'], {
+      env: {},
+    });
+
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain('budget: $0.100000 (within)');
+  });
+
+  it('treats an empty directory as zero spend, which is within any ceiling', () => {
+    const made = scratch();
+    made.write('traces/notes.txt', 'not a trace');
+
+    const run = aid(made, ['cost', 'traces', '--budget', '0'], { env: {} });
+
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain('budget: $0.000000 (within)');
+  });
+
+  it('rejects a value that is not a non-negative decimal before reading any trace', () => {
+    const made = scratch();
+    made.write('traces/trace-1.jsonl', jsonl([call('a', { cost: 0.01 })]));
+    for (const value of ['abc', '-1', '', '1,5', 'NaN']) {
+      const argv = ['cost', 'traces', '--budget', value];
+      const run = aid(made, argv, { env: {} });
+
+      expect(run.code, value).toBe(2);
+      expect(codes(made, argv), value).toEqual(['cli/cost-budget-invalid']);
+      expect(run.stdout, value).toContain('is not a non-negative amount in USD');
+    }
+  });
+
+  it('says the total is a lower bound when unpriced spans were present', () => {
+    const made = scratch();
+    made.write(
+      'traces/trace-1.jsonl',
+      jsonl([call('a', { cost: 0.5 }), call('a', { input: 10, output: 5 })]),
+    );
+
+    const run = aid(made, ['cost', 'traces', '--budget', '0.1'], { env: {} });
+
+    expect(run.code).toBe(1);
+    const diagnostic = diagnosticsOf(jsonRun(made, ['cost', 'traces', '--budget', '0.1'])).find(
+      (entry) => entry.code === 'cli/cost-over-budget',
+    );
+    expect(diagnostic?.hint).toContain('lower bound');
+  });
 });

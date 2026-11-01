@@ -68,6 +68,11 @@ export const CLI_DIAGNOSTIC_CODES = {
   traceUnreadable: 'cli/trace-unreadable',
   traceMalformed: 'cli/trace-malformed',
   traceEmpty: 'cli/trace-empty',
+  // `--budget` turns the report into a ceiling: a value that is not a non-negative
+  // number is a wrong invocation (`2`), and measured spend above it is a verdict on the
+  // traces (`1`) rather than on the project.
+  costBudgetInvalid: 'cli/cost-budget-invalid',
+  costOverBudget: 'cli/cost-over-budget',
   // `aid trace` selects one run out of those files. A selector that matches nothing, or
   // more than one, is a wrong invocation (`2`), not a verdict on the project.
   traceRunNotFound: 'cli/trace-run-not-found',
