@@ -199,7 +199,7 @@
           "minLength": 1
         },
         "capabilities": {
-          "description": "Declared model capabilities. json-schema is negotiated within a prompt (a structured-output prompt must bind a model that declares it) and embeddings within a retriever (a retriever's embedModel must declare it); the others are recorded in the IR for the capability gate to use in later phases.",
+          "description": "Declared model capabilities. json-schema is negotiated within a prompt (a structured-output prompt must bind a model that declares it) and embeddings within a retriever (a retriever's embedModel must declare it); the others are recorded in the IR for the capability gate to use in later phases. The embeddings capability additionally requires a provider that serves an embeddings endpoint: the runtime routes embedding calls by provider, so declaring it on anthropic is refused rather than silently sent over the OpenAI-compatible wire.",
           "type": "array",
           "uniqueItems": true,
           "items": { "enum": ["json-schema", "tools", "streaming", "embeddings"] }

@@ -38,7 +38,7 @@ import {
 
 import { PY_FASTAPI_MANIFEST, supportsIrVersion } from './manifest.js';
 import { isRetrievalEval, judgeAlias, mapMetric } from './metrics.js';
-import { isUsableIdentifier, moduleName, providerAdapter } from './names.js';
+import { ADAPTER_CAPABILITIES, isUsableIdentifier, moduleName, providerAdapter } from './names.js';
 import { scanTemplate, templatePlaceholders } from './placeholders.js';
 import { streamablePipeline } from './streaming.js';
 
@@ -308,6 +308,30 @@ export function checkModels(ir: IR): PlanProblem[] {
     // IR's, and the emitted pinned spec advertises the intersection of the two. What
     // the intersection dropped is recorded in the generated capability report, so a
     // narrower vocabulary never quietly rewrites what the spec declared.
+    //
+    // `embeddings` is the exception, because it is the one declared capability the
+    // runtime routes by *provider* rather than by the pinned spec. `embedder_for`
+    // sends every non-`fake` embedding model to `OpenAICompatibleEmbedder`, so a model
+    // declaring it on a provider with no embeddings endpoint would POST an
+    // OpenAI-shaped payload to a vendor that has no such route -- and it would do so
+    // from `bindings.py`, far from the declaration that caused it. The other four are
+    // negotiated by `ModelGateway` against the pinned capabilities, so a shortfall
+    // there already fails at the one call site with a readable error.
+    if (
+      adapter !== undefined &&
+      model.capabilities.includes('embeddings') &&
+      !ADAPTER_CAPABILITIES[adapter].includes('Capability.EMBEDDINGS')
+    ) {
+      problems.push(
+        problem(
+          'unsupported-capability',
+          `${path}.capabilities`,
+          `model '${model.id}' declares 'embeddings', but provider '${model.provider}' is ` +
+            `served by ${adapter}, which has no embeddings endpoint; the runtime would ` +
+            'embed through the OpenAI-compatible wire regardless of provider',
+        ),
+      );
+    }
     checkParams(model.params, `${path}.params`, problems);
     const contextTokens = model.limits?.contextTokens;
     if (contextTokens === undefined || !(contextTokens > 0)) {
