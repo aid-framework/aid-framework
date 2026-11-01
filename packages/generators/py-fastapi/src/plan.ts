@@ -20,6 +20,7 @@ import {
   scaffoldCi,
   scaffoldEvals,
   scaffoldInfraPlan,
+  scaffoldRelease,
 } from '@aid-framework/generator-sdk';
 import type { IR } from '@aid-framework/ir';
 
@@ -27,7 +28,7 @@ import { emitAgents, hasAgents } from './emit/agents.js';
 import { emitBusinessToolSeed, emitContractsInit, emitToolContract } from './emit/contracts.js';
 import { emitControl, hasComposite } from './emit/control.js';
 import { emitDeps } from './emit/deps.js';
-import { emitDockerfile, hasContainerDeployment } from './emit/dockerfile.js';
+import { DOCKERFILE_PATH, emitDockerfile, hasContainerDeployment } from './emit/dockerfile.js';
 import { emitEval, emitEvalsInit, evalModulePath } from './emit/evals.js';
 import { emitGatewayInit, emitGatewayModels } from './emit/gateway.js';
 import { emitGuardrails, hasGuardrails } from './emit/guardrails.js';
@@ -97,6 +98,7 @@ export function filesFor(ir: IR): GeneratedFile[] {
     emitBusinessPromptsInit(),
     scaffoldCi(ciProfile(), cliRangeFor(GENERATOR_VERSION)),
     ...evalsScaffold(ir),
+    ...releaseScaffold(ir),
     scaffoldInfraPlan({ target: PY_FASTAPI_MANIFEST.target }, cliRangeFor(GENERATOR_VERSION)),
   ].sort(byPath);
 }
@@ -157,6 +159,53 @@ function evalsScaffold(ir: IR): readonly GeneratedFile[] {
       cliRangeFor(GENERATOR_VERSION),
     ),
   ];
+}
+
+/**
+ * The release workflow, for specs that name a registry for at least one image.
+ *
+ * The workflow is planned only when a deployment declares `image`: a project that never
+ * declared one has nothing to publish, and a workflow that pushed to a repository the
+ * spec does not name would be an invented artifact. Deployments that name the same
+ * repository collapse into one matrix entry -- publishing the same tags twice in one run
+ * would race with itself.
+ */
+function releaseScaffold(ir: IR): readonly GeneratedFile[] {
+  const byRepository = new Map<string, { registry: string; ids: string[] }>();
+  for (const deployment of ir.deployments) {
+    const image = deployment.image;
+    if (image === undefined) continue;
+    const entry = byRepository.get(image.name) ?? { registry: image.registry, ids: [] };
+    entry.ids.push(deployment.id);
+    byRepository.set(image.name, entry);
+  }
+  if (byRepository.size === 0) return [];
+  const images = [...byRepository.entries()]
+    .map(([name, entry]) => ({
+      registry: entry.registry,
+      name,
+      deploymentIds: [...entry.ids].sort(),
+    }))
+    .sort((left, right) => compareCodeUnits(left.name, right.name));
+  const profile = ciProfile();
+  return [
+    scaffoldRelease(
+      {
+        target: profile.target,
+        specPath: profile.specPath,
+        dockerfile: DOCKERFILE_PATH,
+        images,
+      },
+      cliRangeFor(GENERATOR_VERSION),
+    ),
+  ];
+}
+
+/** Code-unit order, so the matrix is byte-identical regardless of locale. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 /**

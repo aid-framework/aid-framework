@@ -357,6 +357,147 @@ export function scaffoldEvals(profile: EvalProfile, cliRange: string): Generated
   return { path: EVALS_WORKFLOW_PATH, content, owner: 'scaffold' };
 }
 
+/**
+ * The image release. Manual in the sense that a tag is a human decision, but a tag push
+ * is the trigger, because the artifact it builds is named by the deployment.
+ */
+export const RELEASE_WORKFLOW_PATH = '.github/workflows/release.yml';
+
+export interface ReleaseImage {
+  /** The registry the spec declared, e.g. `ghcr.io`. */
+  readonly registry: string;
+  /** The repository path inside the registry, e.g. `acme/support-copilot`. */
+  readonly name: string;
+  /** The deployments that declared it, in code-unit order, for the reader. */
+  readonly deploymentIds: readonly string[];
+}
+
+export interface ReleaseProfile {
+  /** The target name, used in the workflow's title so a reader knows what generated it. */
+  readonly target: string;
+  /** Spec path relative to the repository root. */
+  readonly specPath: string;
+  /** The Dockerfile, relative to the repository root; the build context is the root. */
+  readonly dockerfile: string;
+  /** At least one image: the workflow is not emitted otherwise. */
+  readonly images: readonly ReleaseImage[];
+}
+
+/**
+ * The release workflow, for a project whose spec names a registry for an image.
+ *
+ * A tag push publishes, because an image tag is a release artifact: two commits cannot
+ * push the same tag without one of them being the one a consumer pulls. The registry is
+ * whatever the spec declared, and the credential is the `GITHUB_TOKEN` the run already
+ * holds -- writing packages with it is why the workflow asks for `packages: write` and
+ * nothing else. No long-lived registry password is stored, and there is no `apply` step:
+ * publishing an image is not deploying it.
+ *
+ * The build is the one the Dockerfile's own header documents, so the workflow and the
+ * file agree by construction: the context is the repository root and the file is named
+ * with `-f`. Each image is a matrix entry, so a project publishing two cannot have one
+ * failure hide the other; a spec that names the same repository twice is one entry, not
+ * two racing pushes.
+ */
+export function scaffoldRelease(profile: ReleaseProfile, cliRange: string): GeneratedFile {
+  const matrix = profile.images.flatMap((image) => [
+    `          # ${image.deploymentIds.map((id) => `deployments.${id}`).join(', ')}`,
+    `          - registry: ${image.registry}`,
+    `            image: ${image.name}`,
+  ]);
+
+  const content = [
+    `# Generated once by \`aid gen\` for the \`${profile.target}\` target, then yours.`,
+    '# A scaffold file is never overwritten and never recorded in aid.manifest.json.',
+    '# A tag push publishes the image the spec names. The registry is the one declared in',
+    '# `deployments[].image`, and the credential is the token GitHub already issues, so',
+    '# there is no registry password to store. Publishing is not deploying: nothing here',
+    '# applies infrastructure or restarts a service.',
+    'name: Release',
+    '',
+    'on:',
+    '  push:',
+    '    tags: [v*]',
+    '',
+    'concurrency:',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
+    '  group: release-${{ github.workflow }}-${{ github.ref }}',
+    '  # A cancelled run can leave a tag pushed and a second one not, so a publish is never',
+    '  # cancelled by a later one.',
+    '  cancel-in-progress: false',
+    '',
+    'permissions:',
+    '  contents: read',
+    '  packages: write',
+    '',
+    'jobs:',
+    '  guard:',
+    '    name: Spec gates',
+    '    runs-on: ubuntu-latest',
+    '    timeout-minutes: 15',
+    '    steps:',
+    `      - uses: ${ACTION_PINS.checkout}`,
+    `      - uses: ${ACTION_PINS.setupNode}`,
+    '        with:',
+    "          node-version: '22'",
+    '      - name: Install the AID CLI',
+    `        run: npm install --global @aid-framework/cli@${cliRange}`,
+    '      - name: Validate the spec',
+    `        run: aid validate ${profile.specPath}`,
+    '      # A tag can point at any commit, so the tagged tree is checked against the spec',
+    '      # before an image is built from it.',
+    '      - name: The committed tree matches the spec',
+    `        run: aid gen ${profile.specPath} --check`,
+    '',
+    '  publish:',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
+    '    name: Publish ${{ matrix.image }}',
+    '    runs-on: ubuntu-latest',
+    '    timeout-minutes: 25',
+    '    needs: guard',
+    '    strategy:',
+    '      fail-fast: false',
+    '      matrix:',
+    '        include:',
+    ...matrix,
+    '    env:',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
+    '      REGISTRY: ${{ matrix.registry }}',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
+    '      IMAGE: ${{ matrix.image }}',
+    '    steps:',
+    `      - uses: ${ACTION_PINS.checkout}`,
+    '      - name: Log in to the registry',
+    '        env:',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
+    '          REGISTRY_TOKEN: ${{ github.token }}',
+    '        # The password reaches docker on stdin, so it is not part of the process list.',
+    '        run: echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" --username "$GITHUB_ACTOR" --password-stdin',
+    '      - name: Build and publish',
+    '        run: |',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell variable, emitted literally.
+    '          tag="${GITHUB_REF_NAME}"',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell variable, emitted literally.
+    '          sha="sha-${GITHUB_SHA::7}"',
+    '          docker build \\',
+    `            -f ${profile.dockerfile} \\`,
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell variable, emitted literally.
+    '            -t "${REGISTRY}/${IMAGE}:${tag}" \\',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell variable, emitted literally.
+    '            -t "${REGISTRY}/${IMAGE}:${sha}" .',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell variable, emitted literally.
+    '          docker push "${REGISTRY}/${IMAGE}:${tag}"',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell variable, emitted literally.
+    '          docker push "${REGISTRY}/${IMAGE}:${sha}"',
+    '      - name: Summarise',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell variable, emitted literally.
+    '        run: echo "Published ${REGISTRY}/${IMAGE}:${GITHUB_REF_NAME} from $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"',
+    '',
+  ].join('\n');
+
+  return { path: RELEASE_WORKFLOW_PATH, content, owner: 'scaffold' };
+}
+
 export interface InfraPlanProfile {
   /** The target name, used in the workflow's title so a reader knows what generated it. */
   readonly target: string;

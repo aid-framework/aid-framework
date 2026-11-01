@@ -28,10 +28,13 @@ import {
   ownerForPath,
   type Plan,
   planRegeneration,
+  RELEASE_WORKFLOW_PATH,
+  type ReleaseProfile,
   regenerate,
   scaffoldCi,
   scaffoldEvals,
   scaffoldInfraPlan,
+  scaffoldRelease,
   TOFU_VERSION,
 } from '../src/index.js';
 
@@ -274,6 +277,87 @@ describe('scaffoldInfraPlan', () => {
 
   it('installs the pinned CLI, so the plan runs the released command', () => {
     expect(file.content).toContain('@aid-framework/cli@0.1');
+  });
+});
+
+describe('scaffoldRelease', () => {
+  const RELEASE_PROFILE: ReleaseProfile = {
+    target: 'py-fastapi',
+    specPath: 'app/app.spec.yaml',
+    dockerfile: 'app/generated/Dockerfile',
+    images: [
+      { registry: 'ghcr.io', name: 'acme/support-copilot', deploymentIds: ['api'] },
+      { registry: 'ghcr.io', name: 'acme/handbook-worker', deploymentIds: ['worker'] },
+    ],
+  };
+
+  const file = scaffoldRelease(RELEASE_PROFILE, '0.1');
+
+  it('emits the workflow at the path the scaffold tier owns', () => {
+    expect(file.path).toBe(RELEASE_WORKFLOW_PATH);
+    expect(file.owner).toBe('scaffold');
+    expect(ownerForPath(file.path)).toBe('scaffold');
+  });
+
+  it('is triggered by a tag, so only a release publishes an image', () => {
+    expect(file.content).toContain('    tags: [v*]');
+    expect(file.content).not.toContain('branches:');
+    // A cancelled run can leave one tag pushed and the other not.
+    expect(file.content).toContain('  cancel-in-progress: false');
+  });
+
+  it('asks for the one token scope a package push needs, and no stored password', () => {
+    expect(file.content).toContain('  contents: read');
+    expect(file.content).toContain('  packages: write');
+    expect(file.content).not.toContain('contents: write');
+    // The run's own token authenticates the push, so no registry secret is referenced.
+    expect(file.content).not.toContain('secrets.');
+  });
+
+  it('checks the tagged tree against the spec before an image is built from it', () => {
+    expect(file.content).toContain(`aid validate ${RELEASE_PROFILE.specPath}`);
+    expect(file.content).toContain(`aid gen ${RELEASE_PROFILE.specPath} --check`);
+    expect(file.content).toContain('@aid-framework/cli@0.1');
+    expect(file.content).toContain('    needs: guard');
+  });
+
+  it('publishes each image as its own matrix entry, so one failure cannot hide another', () => {
+    expect(file.content).toContain('      fail-fast: false');
+    for (const image of RELEASE_PROFILE.images) {
+      expect(file.content).toContain(`          - registry: ${image.registry}`);
+      expect(file.content).toContain(`            image: ${image.name}`);
+    }
+    // The matrix names the deployments an entry came from, so a reader can trace it back.
+    expect(file.content).toContain('          # deployments.api');
+    expect(file.content).toContain('          # deployments.worker');
+  });
+
+  it('builds the Dockerfile from the repository root, tagging the release and the commit', () => {
+    expect(file.content).toContain(`-f ${RELEASE_PROFILE.dockerfile}`);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the emitted shell variable, asserted literally.
+    expect(file.content).toContain('sha="sha-${GITHUB_SHA::7}"');
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the emitted shell variable, asserted literally.
+    expect(file.content).toContain('docker push "${REGISTRY}/${IMAGE}:${tag}"');
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the emitted shell variable, asserted literally.
+    expect(file.content).toContain('docker push "${REGISTRY}/${IMAGE}:${sha}"');
+  });
+
+  it('publishes an image and stops there, because a release is not a deployment', () => {
+    expect(file.content).not.toContain('infra plan --apply');
+    expect(file.content).not.toContain('aws-access-key-id');
+    expect(file.content).not.toContain('kubectl');
+    expect(file.content).toContain('# applies infrastructure or restarts a service.');
+  });
+
+  it('pins every action to a full commit SHA rather than a moving tag', () => {
+    const uses = file.content
+      .split('\n')
+      .filter((line) => line.includes('uses:'))
+      .map((line) => line.slice(line.indexOf('uses:') + 'uses:'.length).trim());
+    expect(uses.length).toBeGreaterThan(0);
+    for (const reference of uses) {
+      expect(reference, reference).toMatch(/^[^@]+@[0-9a-f]{40}$/);
+    }
   });
 });
 

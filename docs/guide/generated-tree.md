@@ -52,12 +52,14 @@ app/
     ci.yml                              scaffold
     evals.yml                           scaffold, when a `gate.ci` eval is declared
     infra-plan.yml                      scaffold
+    release.yml                         scaffold, when a deployment declares `image`
 ```
 
 `evals.yml` is scaffolded when the spec declares an eval with `gate.ci: true`;
 `examples/support-copilot` has two, the tutorial has none. `infra-plan.yml` is scaffolded
 for every project, because it detects its own inputs instead of assuming an `infra/`
-directory exists.
+directory exists. `release.yml` is scaffolded when a deployment declares `deployments[].image`
+(spec `0.4`), because a project that never named a registry repository has nothing to publish.
 
 ## The three owned tiers
 
@@ -76,7 +78,12 @@ directory exists.
   against. The infra plan is manual for the same reason the eval run is: it assumes a cloud role
   through OIDC (`AID_INFRA_ROLE_ARN`, `AID_INFRA_REGION`), and a plan against a real account is
   something a human dispatches. It initialises the environment root before calling
-  `aid infra plan`, which drives `tofu` or `cdk` but does not run `init` itself.
+  `aid infra plan`, which drives `tofu` or `cdk` but does not run `init` itself. The release
+  workflow is the one pipeline a tag pushes: it re-checks the tagged tree against the spec,
+  then builds the image the deployment named and pushes it to that registry, tagged with both
+  the release name and the commit. Its credential is the token the run already holds, which is
+  why it asks for `packages: write` and nothing wider, and publishing an image is not deploying
+  it - no infrastructure is applied and no service restarts.
 
 Every file carries the tier in its first line, so a reader can tell without consulting the
 manifest:
