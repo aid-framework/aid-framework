@@ -192,6 +192,7 @@ export interface SpawnCall {
   readonly command: string;
   readonly args: readonly string[];
   readonly stdin: string | undefined;
+  readonly cwd: string | undefined;
 }
 
 export interface FakeSpawnOptions {
@@ -220,7 +221,7 @@ export function recordingSpawn(
   const config = typeof options === 'number' ? { status: options } : options;
   const calls: SpawnCall[] = [];
   const spawn: Spawn = (command, args, spawnOptions) => {
-    calls.push({ command, args, stdin: spawnOptions.stdin });
+    calls.push({ command, args, stdin: spawnOptions.stdin, cwd: spawnOptions.cwd });
     // An explicit `null` is a status, not an absence: it is how `spawnSync` reports a
     // program that is not there, so `?? 0` would turn "no interpreter" into a passing
     // probe and make the missing-interpreter test assert nothing.

@@ -17,6 +17,7 @@ import { booleanFlag, JSON_FLAG, parseArguments, valueFlag } from './args.js';
 import { doctor } from './commands/doctor.js';
 import { evaluate } from './commands/eval.js';
 import { generate } from './commands/gen.js';
+import { infra } from './commands/infra.js';
 import { ingest } from './commands/ingest.js';
 import { init } from './commands/init.js';
 import { validate } from './commands/validate.js';
@@ -31,6 +32,8 @@ import { commandUsage, globalUsage } from './usage.js';
 
 interface Command extends CommandSpec {
   readonly run: (context: CliContext, args: ParsedArguments) => CommandOutcome;
+  /** Positional arguments this command accepts. Defaults to one. */
+  readonly maxPositionals?: number;
 }
 
 const TARGET_FLAG = valueFlag(
@@ -134,6 +137,31 @@ export const COMMANDS: readonly Command[] = [
         target: args.values.get('target'),
       }),
   },
+  {
+    name: 'infra',
+    summary: 'derive the deployment wiring from the spec and drive OpenTofu',
+    usage: 'infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--force]',
+    maxPositionals: 2,
+    flags: [
+      booleanFlag('dry-run', 'gen: report what would change, and write nothing'),
+      booleanFlag('check', 'gen: exit non-zero when the generated tree is out of date'),
+      valueFlag('env', 'name', 'environment root under infra/envs; plan, apply and drift use dev'),
+      booleanFlag('confirm-prod', 'required to apply to prod'),
+      booleanFlag('force', 'gen: overwrite generated files that were edited by hand'),
+      JSON_FLAG,
+    ],
+    run: (context, args) =>
+      infra(context, {
+        subcommand: args.positionals[0],
+        spec: args.positionals[1],
+        dryRun: args.booleans.has('dry-run'),
+        check: args.booleans.has('check'),
+        force: args.booleans.has('force'),
+        env: args.values.get('env'),
+        confirmProd: args.booleans.has('confirm-prod'),
+        json: args.booleans.has('json'),
+      }),
+  },
 ];
 
 function usageError(context: CliContext, message: string, usage?: string): ExitCode {
@@ -183,12 +211,18 @@ export function run(argv: readonly string[], context: CliContext): ExitCode {
     return EXIT_OK;
   }
 
-  // Every command takes at most one positional (a spec, or the directory to scaffold
-  // into), so the arity rule lives here rather than four times in four commands.
-  if (parsed.args.positionals.length > 1) {
+  // Every other command takes at most one positional (a spec, or the directory to
+  // scaffold into); `infra` is the exception because it takes a subcommand and a spec. The
+  // arity rule lives here rather than five times in five commands, and each command
+  // declares its own bound rather than this list naming commands.
+  const maxPositionals = command.maxPositionals ?? 1;
+  if (parsed.args.positionals.length > maxPositionals) {
+    // `one path` rather than `1 path` keeps the message this command has always printed for
+    // the single-positional commands; only commands with a larger bound read as a count.
+    const bound = maxPositionals === 1 ? 'one path' : `${maxPositionals} arguments`;
     return usageError(
       context,
-      `\`aid ${command.name}\` takes at most one path, got ${parsed.args.positionals.length}`,
+      `\`aid ${command.name}\` takes at most ${bound}, got ${parsed.args.positionals.length}`,
       commandUsage(command),
     );
   }

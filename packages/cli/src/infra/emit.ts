@@ -1,0 +1,175 @@
+/**
+ * The OpenTofu wiring, derived from the deployment plan.
+ *
+ * This emits the *derived* layer only: the plan itself, the tfvars an env root consumes,
+ * and a README that says who owns what. Provider HCL (the `modules/` and `envs/` trees)
+ * is not emitted here, because it carries no information the IR has -- and because an
+ * emitter that wrote AWS resources it could not `tofu validate` would be guessing.
+ *
+ * The load-bearing rule is enforced by construction: nothing in this file accepts an
+ * account id, a region, a CIDR, a domain, or a sizing number, so none can appear in the
+ * output (design §12.2). An env root is the same for dev and prod; only its inputs differ.
+ */
+
+import type { DeployPlan } from '@aid-framework/ir';
+
+/** Where every derived infrastructure file lives, relative to the project root. */
+export const INFRA_GENERATED_DIR = 'infra/generated';
+
+/** The manifest recording what this emitter wrote, so a hand edit is never overwritten. */
+export const INFRA_MANIFEST_PATH = 'infra/aid.infra.manifest.json';
+
+export interface InfraFile {
+  /** Repository-relative, POSIX-separated. */
+  readonly path: string;
+  readonly contents: string;
+}
+
+/**
+ * A tfvars document: the plan in the spelling an env root reads. Keys are snake_case
+ * because that is what a Terraform variable is called; values are the plan's, unchanged.
+ *
+ * Deliberately absent: any value a person must choose. `instance_class`, `min_size`,
+ * `region`, `domain` and `account_id` are business inputs, and an env root supplies them
+ * from its own `business/` file.
+ */
+export interface DeployTfvars {
+  readonly project: { readonly name: string; readonly namespace: string };
+  readonly services: Readonly<
+    Record<
+      string,
+      {
+        readonly target: string;
+        readonly streaming: boolean;
+        readonly routes: readonly { pipeline: string; method: string; path: string }[];
+        readonly env: readonly {
+          name: string;
+          secret: boolean;
+          from: string;
+          value?: string;
+        }[];
+        readonly secret_names: readonly string[];
+        readonly providers: readonly string[];
+        readonly ingest: readonly string[];
+      }
+    >
+  >;
+  readonly data_stores: Readonly<
+    Record<
+      string,
+      {
+        readonly kind: string;
+        readonly secret_ref?: string;
+        readonly requires_extension?: string;
+        readonly retrievers: readonly string[];
+      }
+    >
+  >;
+  readonly tasks: readonly { id: string; kind: string; source: string; schedule?: string }[];
+  readonly alarms: readonly { id: string; metric: string; source: string }[];
+}
+
+/**
+ * Every derived file, in a stable order. Pure: the same plan always yields the same bytes,
+ * so `aid infra gen --check` can compare content instead of trusting a timestamp.
+ */
+export function emitInfra(plan: DeployPlan): InfraFile[] {
+  return [
+    { path: `${INFRA_GENERATED_DIR}/deploy.plan.json`, contents: json(plan) },
+    { path: `${INFRA_GENERATED_DIR}/deploy.auto.tfvars.json`, contents: json(tfvars(plan)) },
+    { path: `${INFRA_GENERATED_DIR}/README.md`, contents: readme(plan) },
+  ];
+}
+
+export function tfvars(plan: DeployPlan): DeployTfvars {
+  const services: Record<string, DeployTfvars['services'][string]> = {};
+  for (const service of plan.services) {
+    services[service.id] = {
+      target: service.target,
+      streaming: service.streaming,
+      routes: service.endpoints.map((endpoint) => ({
+        pipeline: endpoint.pipeline,
+        method: endpoint.method,
+        path: endpoint.path,
+      })),
+      env: service.env.map((variable) => ({
+        name: variable.name,
+        secret: variable.secret,
+        from: variable.from,
+        ...(variable.value === undefined ? {} : { value: variable.value }),
+      })),
+      secret_names: [...service.secrets],
+      providers: [...service.providers],
+      ingest: [...service.ingest],
+    };
+  }
+
+  const dataStores: Record<string, DeployTfvars['data_stores'][string]> = {};
+  for (const store of plan.stores) {
+    dataStores[store.id] = {
+      kind: store.kind,
+      ...(store.secretRef === undefined ? {} : { secret_ref: store.secretRef }),
+      ...(store.requiresExtension === undefined
+        ? {}
+        : { requires_extension: store.requiresExtension }),
+      retrievers: [...store.retrievers],
+    };
+  }
+
+  return {
+    project: { name: plan.project.name, namespace: plan.project.namespace },
+    services,
+    data_stores: dataStores,
+    tasks: plan.tasks.map((task) => ({
+      id: task.id,
+      kind: task.kind,
+      source: task.source,
+      ...(task.schedule === undefined ? {} : { schedule: task.schedule }),
+    })),
+    alarms: plan.alarms.map((alarm) => ({
+      id: alarm.id,
+      metric: alarm.metric,
+      source: alarm.source,
+    })),
+  };
+}
+
+function readme(plan: DeployPlan): string {
+  const routes = plan.services.reduce((total, service) => total + service.endpoints.length, 0);
+  return [
+    '# Generated infrastructure',
+    '',
+    'Derived from the spec by `aid infra gen`. Do not edit: the next run compares content',
+    'and refuses to overwrite a file you changed by hand (`--force` overrides).',
+    '',
+    '| File | What it is |',
+    '| --- | --- |',
+    '| `deploy.plan.json` | The provider-neutral deployment plan both backends render. |',
+    '| `deploy.auto.tfvars.json` | The same plan spelled as Terraform inputs. |',
+    '',
+    '## Using it',
+    '',
+    'An env root consumes the tfvars directly, so dev and prod share one module tree:',
+    '',
+    '```sh',
+    'tofu -chdir=infra/envs/dev plan -var-file=../../generated/deploy.auto.tfvars.json',
+    '```',
+    '',
+    '## What is here, and what is not',
+    '',
+    `- Services: ${plan.services.length}`,
+    `- Routes: ${routes}`,
+    `- Data stores: ${plan.stores.length}`,
+    `- Tasks: ${plan.tasks.length}`,
+    `- Alarm hooks: ${plan.alarms.length}`,
+    '',
+    'This directory holds derived *shape* only. Sizing, regions, accounts, domains, CIDRs',
+    'and secret values are business inputs and live in your env root, never here — which is',
+    'what lets one generated set run in more than one account.',
+    '',
+  ].join('\n');
+}
+
+function json(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}

@@ -18,7 +18,7 @@ stack-independent IR, the generator SDK, the Python and TypeScript runtimes, two
 `aid` CLI, and three worked examples. Start with the [quickstart](#quickstart) below, or read
 [`docs/design.md`](docs/design.md) for the architecture and the IR.
 
-The CLI ships six commands: `init`, `validate`, `gen`, `ingest`, `eval`, and `doctor`.
+The CLI ships seven commands: `init`, `validate`, `gen`, `ingest`, `eval`, `doctor`, and `infra`.
 Six more are designed but not implemented yet: `dev`, `trace`, `cost`, `guard`, `migrate`, and `eject`.
 See [`packages/cli/`](packages/cli/) for the surface each command supports.
 
@@ -49,7 +49,7 @@ flowchart TD
     B["2. IR<br/>stack-independent, normalized, versioned"]
     C["3. Generator plugins<br/>py-fastapi (Python) · ts-vercel (TypeScript)"]
     D["4. Runtime libraries (per stack)<br/>gateway · prompt registry · retrieval · agent loop<br/>tool executor · memory · guardrails · evals · o11y/cost"]
-    E["5. CLI<br/>init · validate · gen · ingest · eval · doctor"]
+    E["5. CLI<br/>init · validate · gen · ingest · eval · doctor · infra"]
     A -->|parse, validate, capability-check| B
     B -->|plan, emit| C
     C -->|imports| D
