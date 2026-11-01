@@ -27,7 +27,7 @@ export interface TraceSpan {
   readonly started_at: string;
   readonly duration_ms?: number;
   readonly attributes?: Readonly<Record<string, unknown>>;
-  readonly status?: { readonly code?: string } | null;
+  readonly status?: { readonly code?: string; readonly message?: string | null } | null;
 }
 
 export interface ParsedTrace {
@@ -275,4 +275,222 @@ export function summariseSpans(
         }),
   };
   return summary;
+}
+
+/** A span's start as epoch milliseconds, or `undefined` when the timestamp is unreadable. */
+function instantOf(value: string): number | undefined {
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+/** Start order, with the span id as a tiebreak so equal timestamps still print one way. */
+function byStart(left: TraceSpan, right: TraceSpan): number {
+  const leftAt = instantOf(left.started_at);
+  const rightAt = instantOf(right.started_at);
+  if (leftAt !== undefined && rightAt !== undefined && leftAt !== rightAt) return leftAt - rightAt;
+  if (leftAt === undefined && rightAt !== undefined) return 1;
+  if (leftAt !== undefined && rightAt === undefined) return -1;
+  return left.span_id < right.span_id ? -1 : left.span_id > right.span_id ? 1 : 0;
+}
+
+/** Wall time the run covered: earliest start to latest end, not the sum of the spans. */
+function runDurationOf(spans: readonly TraceSpan[]): number {
+  let earliest = Number.POSITIVE_INFINITY;
+  let latest = Number.NEGATIVE_INFINITY;
+  let longest = 0;
+
+  for (const span of spans) {
+    const duration =
+      typeof span.duration_ms === 'number' &&
+      Number.isFinite(span.duration_ms) &&
+      span.duration_ms > 0
+        ? span.duration_ms
+        : 0;
+    if (duration > longest) longest = duration;
+    const begun = instantOf(span.started_at);
+    if (begun === undefined) continue;
+    earliest = Math.min(earliest, begun);
+    latest = Math.max(latest, begun + duration);
+  }
+
+  const measured = earliest === Number.POSITIVE_INFINITY ? longest : latest - earliest;
+  return Math.round(measured * 1000) / 1000;
+}
+
+/** One trace: the spans that share a `trace_id`, and what a reader asks about it. */
+export interface TraceRun {
+  readonly traceId: string;
+  readonly spans: readonly TraceSpan[];
+  /**
+   * The span the others hang from, when the trace has exactly one. A trace assembled
+   * from several exports can have none, or several; a reader that guessed would draw a
+   * hierarchy the data does not claim.
+   */
+  readonly root?: TraceSpan;
+  /** The earliest `started_at` in the run, in the sink's own format. */
+  readonly startedAt: string;
+  /** Wall time from the earliest start to the latest end. */
+  readonly durationMs: number;
+  readonly errors: number;
+  readonly costUsd: number;
+  readonly unpricedSpans: number;
+}
+
+/**
+ * Group spans into runs, newest first.
+ *
+ * A run is **one `trace_id`**, because that is the only identifier the sink writes that
+ * covers a whole request: `span_id` is one step, and there is no separate run record. The
+ * cost, error and unpriced counts come from {@link summariseSpans} rather than a second
+ * summation here, so one span set can never price two ways.
+ *
+ * A span whose parent is absent is treated as top-level. That happens legitimately -- a
+ * trace can be exported in pieces, or a parent can fail before it records -- and the
+ * alternative, dropping it, would hide a span that did run.
+ */
+export function runsOf(spans: readonly TraceSpan[]): readonly TraceRun[] {
+  const grouped = new Map<string, TraceSpan[]>();
+  for (const span of spans) {
+    const members = grouped.get(span.trace_id);
+    if (members === undefined) grouped.set(span.trace_id, [span]);
+    else members.push(span);
+  }
+
+  const runs: TraceRun[] = [];
+  for (const [traceId, members] of grouped) {
+    const ordered = [...members].sort(byStart);
+    const ids = new Set(members.map((span) => span.span_id));
+    const tops = ordered.filter(
+      (span) => span.parent_span_id == null || !ids.has(span.parent_span_id),
+    );
+    const summary = summariseSpans(members);
+    const first = ordered[0];
+
+    runs.push({
+      traceId,
+      spans: ordered,
+      ...(tops.length === 1 && tops[0] !== undefined ? { root: tops[0] } : {}),
+      startedAt: first?.started_at ?? '',
+      durationMs: runDurationOf(members),
+      errors: summary.errors,
+      costUsd: summary.costUsd,
+      unpricedSpans: summary.unpricedSpans,
+    });
+  }
+
+  // Newest first, then by id, so two runs over one directory list in one order whatever
+  // order their files happened to be read in.
+  return runs.sort((left, right) => {
+    const leftAt = instantOf(left.startedAt) ?? Number.NEGATIVE_INFINITY;
+    const rightAt = instantOf(right.startedAt) ?? Number.NEGATIVE_INFINITY;
+    if (leftAt !== rightAt) return rightAt - leftAt;
+    return left.traceId < right.traceId ? -1 : left.traceId > right.traceId ? 1 : 0;
+  });
+}
+
+/** Children of each span in one run, keyed by parent id, in start order. */
+export function childrenOf(spans: readonly TraceSpan[]): ReadonlyMap<string, readonly TraceSpan[]> {
+  const ids = new Set(spans.map((span) => span.span_id));
+  const children = new Map<string, TraceSpan[]>();
+
+  for (const span of [...spans].sort(byStart)) {
+    const parent = span.parent_span_id;
+    if (parent == null || !ids.has(parent)) continue;
+    const existing = children.get(parent);
+    if (existing === undefined) children.set(parent, [span]);
+    else existing.push(span);
+  }
+
+  return children;
+}
+
+/**
+ * One span as a tree row: where it sits, when it began relative to the run, and what the
+ * record says about it.
+ */
+export interface SpanRow {
+  readonly span: TraceSpan;
+  /** Nesting level; a span whose parent is missing sits at the top, not in limbo. */
+  readonly depth: number;
+  /** Milliseconds after the run's earliest start; absent when the timestamp is unusable. */
+  readonly offsetMs?: number;
+  readonly facts: SpanFacts;
+}
+
+/**
+ * Flatten a run into print order: depth first, every child after its parent.
+ *
+ * Roots are spans with no parent *in this run*. Anything unreachable from a root -- only
+ * possible when parent links form a cycle, which a writer bug could produce -- is appended
+ * at depth zero rather than dropped, because a span that recorded is a span that ran.
+ */
+export function treeRowsOf(run: TraceRun): readonly SpanRow[] {
+  const children = childrenOf(run.spans);
+  const ids = new Set(run.spans.map((span) => span.span_id));
+  const roots = run.spans.filter(
+    (span) => span.parent_span_id == null || !ids.has(span.parent_span_id),
+  );
+
+  const earliest = Math.min(
+    ...run.spans.map((span) => instantOf(span.started_at) ?? Number.POSITIVE_INFINITY),
+  );
+  const base = Number.isFinite(earliest) ? earliest : undefined;
+
+  const rows: SpanRow[] = [];
+  const seen = new Set<string>();
+
+  const walk = (span: TraceSpan, depth: number): void => {
+    if (seen.has(span.span_id)) return;
+    seen.add(span.span_id);
+    const begun = instantOf(span.started_at);
+    rows.push({
+      span,
+      depth,
+      ...(base === undefined || begun === undefined ? {} : { offsetMs: begun - base }),
+      facts: factsOf(span),
+    });
+    for (const child of children.get(span.span_id) ?? []) walk(child, depth + 1);
+  };
+
+  for (const root of roots) walk(root, 0);
+  for (const span of run.spans) walk(span, 0);
+
+  return rows;
+}
+
+/**
+ * What one span line can say without guessing.
+ *
+ * The attribute keys stay in this module so a reader never has to know them: `trace`
+ * prints usage and cost from the same fields `cost` sums, which is what makes the two
+ * commands agree about a run.
+ */
+export interface SpanFacts {
+  readonly durationMs?: number;
+  readonly costUsd?: number;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  /** The pinned alias, else the model the provider served. Absent when neither is recorded. */
+  readonly model?: string;
+  readonly error: boolean;
+}
+
+export function factsOf(span: TraceSpan): SpanFacts {
+  const attributes = span.attributes ?? {};
+  const duration = span.duration_ms;
+  const input = numeric(attributes[ATTRIBUTES.inputTokens]);
+  const output = numeric(attributes[ATTRIBUTES.outputTokens]);
+  const cost = numeric(attributes[ATTRIBUTES.costUsd]);
+  const model = modelOf(span);
+
+  return {
+    ...(typeof duration === 'number' && Number.isFinite(duration) && duration >= 0
+      ? { durationMs: duration }
+      : {}),
+    ...(cost === undefined ? {} : { costUsd: cost }),
+    ...(input === undefined ? {} : { inputTokens: input }),
+    ...(output === undefined ? {} : { outputTokens: output }),
+    ...(model === UNKNOWN_MODEL ? {} : { model }),
+    error: span.status?.code === 'ERROR',
+  };
 }

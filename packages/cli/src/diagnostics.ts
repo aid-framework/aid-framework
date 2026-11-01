@@ -68,6 +68,12 @@ export const CLI_DIAGNOSTIC_CODES = {
   traceUnreadable: 'cli/trace-unreadable',
   traceMalformed: 'cli/trace-malformed',
   traceEmpty: 'cli/trace-empty',
+  // `aid trace` selects one run out of those files. A selector that matches nothing, or
+  // more than one, is a wrong invocation (`2`), not a verdict on the project.
+  traceRunNotFound: 'cli/trace-run-not-found',
+  traceRunAmbiguous: 'cli/trace-run-ambiguous',
+  traceNoRuns: 'cli/trace-no-runs',
+  traceFlagsConflict: 'cli/trace-flags-conflict',
   // `aid dev` starts the application's own server, so every failure here is about the
   // environment it needs or the address it was given -- not about the spec, which `gen`
   // has already validated by the time any of these can fire.

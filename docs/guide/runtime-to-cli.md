@@ -21,12 +21,10 @@ somewhere else.
 | `aid ingest` | Runs the generated ingest module for one retriever or all of them. |
 | `aid eval` | Runs one generated eval module, or records its baseline. |
 | `aid cost` | Reports cost, token and latency totals from the runtime's local trace sink. Reads; never reprices. |
+| `aid trace` | Prints a run's span tree from the same sink, with model, tokens, cost and time per span. Reads; replays nothing. |
 | `aid doctor` | Diagnoses the tree against the spec: hand-edited generated files, provenance and version mismatches, and missing or outdated generated files. Reports; writes nothing. |
 | `aid eject` | Takes ownership of a generated file: moves it to `business/` and excludes it from generation. |
 | `aid infra` | Emits deployment infrastructure for the spec's declared environments. |
-
-One more is specified and not implemented - `trace` - so a stack trace naming it is not a
-bug in the CLI you are holding.
 
 ## The exit taxonomy
 
@@ -165,6 +163,32 @@ The taxonomy holds here too. A missing directory, or one that is not a directory
 unparseable `--since` are **2**; a trace file that exists but cannot be read is **1**, with the
 readable rest still reported; an empty directory is **0** with a warning, because zero spans is a
 true statement rather than a failure.
+
+## `trace` shows the shape of a run; it does not replay it
+
+`aid trace` reads the same spans as `aid cost` and shows what a single request actually did - the
+span tree, in start order, with each span's parent, model, tokens, cost and elapsed time:
+
+```bash
+aid trace .aid/traces                    # list runs, newest first
+aid trace .aid/traces --all              # every run's tree
+aid trace .aid/traces 4f2a                # one run, by id or unambiguous prefix
+aid trace .aid/traces 4f2a --json
+```
+
+A run is the set of spans sharing a `trace_id`. The listing gives each run's id, start time, span
+count, duration, tokens and cost, so the expensive and the slow requests are visible without
+opening a file. Selecting by prefix is allowed because trace ids are long; a prefix matching more
+than one run is **2** and names the candidates rather than picking one.
+
+The command is **inspect-only**: it never re-executes a model call, and no flag can. The sink
+records spans - names, timings, and the attribute set above - and deliberately records no prompt or
+response payload, so there is nothing to replay. Showing the tree is the honest scope of a reader
+over that file, and a `--replay` flag would have to be a lie or a second, unbounded feature.
+
+The taxonomy is `cost`'s: a missing or non-directory path, an unknown run selector, an ambiguous
+selector, and `--all` combined with a run selector are **2**; an unreadable file is **1** with the
+readable rest still shown; an empty sink and a sink holding no spans are **0** with a warning.
 
 ## `guard` measures the table the app ships, not the detectors
 
