@@ -100,6 +100,29 @@ describe('adapter capabilities', () => {
     expect(reported.dropped).toEqual([]);
   });
 
+  it('refuses an anthropic model that declares embeddings instead of planning one', () => {
+    // Omitting `EMBEDDINGS` from the adapter table only keeps the pinned spec honest.
+    // It does not stop the IR from deriving an embedding entry from the declared
+    // capability, and `embedder_for` picks the OpenAI wire for every non-fake provider,
+    // so without this refusal the app would POST to an endpoint Anthropic does not have.
+    const spec = anthropicSpecText().replace(
+      '    capabilities: [json-schema, tools, streaming]',
+      '    capabilities: [json-schema, tools, streaming, embeddings]',
+    );
+
+    expect(() => buildForSpecText(spec)).toThrow(/unsupported-capability/);
+    expect(() => buildForSpecText(spec)).toThrow(/embeddings endpoint/);
+  });
+
+  it('still plans an embeddings model on a provider that serves the endpoint', () => {
+    const spec = exampleSpecText().replace(
+      '  embed:\n    provider: fake\n    modelId: text-embedding-3-small',
+      '  embed:\n    provider: openai\n    modelId: text-embedding-3-small\n    apiKeyEnv: OPENAI_API_KEY',
+    );
+
+    expect(() => buildForSpecText(spec)).not.toThrow();
+  });
+
   it('does not advertise embeddings on the pinned anthropic model', () => {
     const models = files().get('app/generated/gateway/models.py') ?? '';
     const pinned = aliasBlock(models, 'fast');
