@@ -81,7 +81,10 @@
 #
 # Re-runs are safe. Both registries are asked for the exact version first, and a version that
 # is already there is reported as skipped rather than retried, so a release that died halfway
-# can simply be dispatched again.
+# can simply be dispatched again. That first look can lose a race with registry read lag: npm
+# briefly 404s a version it has just accepted. So a rejected upload is followed by a second,
+# retried look, and the upload is reported as skipped when the version is in fact present. An
+# upload that genuinely failed still fails the job.
 name: Publish
 
 on:
@@ -264,6 +267,19 @@ jobs:
           echo "### npm ($VERSION)" >> "$GITHUB_STEP_SUMMARY"
           echo >> "$GITHUB_STEP_SUMMARY"
 
+          # Whether the registry now serves `name@version`, retried briefly. Registry reads
+          # lag behind writes, so a single immediate lookup can be a false negative.
+          registry_has() {
+            local name="$1" version="$2" delay
+            for delay in 0 2 4 8; do
+              [ "$delay" = 0 ] || sleep "$delay"
+              if npm view "$name@$version" version --prefer-online >/dev/null 2>&1; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
           failed=0
           for pkg_dir in "${packages[@]}"; do
             name="$(jq -r .name "$pkg_dir/package.json")"
@@ -275,8 +291,9 @@ jobs:
               continue
             fi
             # Re-runs and post-bootstrap publishes must not fail on a version that is already
-            # on the registry.
-            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+            # on the registry. `--prefer-online` keeps npm from answering this from its own
+            # cache, which is what made a retry see a freshly published version as absent.
+            if npm view "$name@$VERSION" version --prefer-online >/dev/null 2>&1; then
               echo "$name@$VERSION is already on the registry; skipping."
               echo "- skipped, already published: $name@$VERSION" >> "$GITHUB_STEP_SUMMARY"
               continue
@@ -289,6 +306,13 @@ jobs:
             # builds the attestation against this run's OIDC identity.
             if ( cd "$pkg_dir" && pnpm publish --access public --provenance --no-git-checks ); then
               echo "- published: $name@$VERSION" >> "$GITHUB_STEP_SUMMARY"
+            elif registry_has "$name" "$VERSION"; then
+              # The registry rejected the upload because the version is already there: the
+              # pre-check above lost a race with registry read lag. The version this run
+              # wanted is on the registry, so the artifact is correct and the run is not a
+              # failure. This is the same outcome the pre-check exists to produce.
+              echo "$name@$VERSION appeared on the registry while publishing; treating the rejection as a skip."
+              echo "- skipped, already published: $name@$VERSION" >> "$GITHUB_STEP_SUMMARY"
             else
               echo "::error::failed to publish $name@$VERSION"
               echo "- **failed**: $name@$VERSION" >> "$GITHUB_STEP_SUMMARY"
@@ -367,9 +391,13 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         # Trusted publishing: the action demands `id-token: write` and no password, and
         # exchanges the OIDC identity for an upload token. `packages-dir` is workspace-relative.
+        # `skip-existing` is the PyPI half of the same read-lag guard the npm job carries: if
+        # the check above missed a version PyPI already holds, this reports it as skipped
+        # instead of failing on "File already exists".
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: runtimes/python/dist/
+          skip-existing: true
 
       - name: Summarize
         if: always()
