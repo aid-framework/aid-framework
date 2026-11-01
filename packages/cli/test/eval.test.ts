@@ -1,22 +1,38 @@
 /**
- * `aid eval` is a shell around the Python runtime, so the contract under test is the
- * contract between the two processes: which command is run, from where, with what exit
- * code propagated, and what happens when Python is not there at all.
+ * `aid eval` is a shell around whichever runtime the target uses, so the contract under
+ * test is the contract between the two processes: which command is run, from where, with
+ * what exit code propagated, and what happens when the runtime is not there at all.
  *
- * The interpreter is injected, so these tests never run Python. That is deliberate: the
- * E2E job and `examples/support-copilot`'s own test suite are where generated code is
- * actually executed, and a unit test that skipped itself when Python was missing would
+ * Python dispatches `-m app.generated.evals.<id>`; a Node target dispatches the emitted
+ * file itself, because `process.argv[1]` is how the module knows to run its gate. Both
+ * drivers are injected, so these tests never run a runtime. That is deliberate: the E2E
+ * job and `examples/support-copilot{,-ts}`'s own test suites are where generated code is
+ * actually executed, and a unit test that skipped itself when a runtime was missing would
  * report coverage it did not have.
  */
 
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { aid, diagnosticsOf, project, recordingSpawn, SPEC_PATH } from './helpers.js';
+import {
+  aid,
+  diagnosticsOf,
+  project,
+  recordingSpawn,
+  SPEC_PATH,
+  TS_EXAMPLE_SPEC,
+} from './helpers.js';
 
 const created: ReturnType<typeof project>[] = [];
 
 function scratch() {
   const made = project();
+  created.push(made);
+  return made;
+}
+
+/** A scratch project built from the committed TypeScript example's spec. */
+function tsScratch() {
+  const made = project(TS_EXAMPLE_SPEC);
   created.push(made);
   return made;
 }
@@ -166,14 +182,87 @@ describe('aid eval', () => {
     aid(made, ['gen']);
     const report = aid(made, ['eval', '--json'], recordingSpawn()).json<{
       suites: string[];
-      interpreter: string;
+      driver: string;
       results: { suite: string; status: number }[];
     }>();
     expect(report.suites).toEqual(['classify_quality', 'handbook_quality']);
-    expect(report.interpreter).toBeTruthy();
+    expect(report.driver).toBeTruthy();
     expect(report.results).toEqual([
       { suite: 'classify_quality', module: expect.any(String), status: 0 },
       { suite: 'handbook_quality', module: expect.any(String), status: 0 },
     ]);
+  });
+});
+
+describe('aid eval on a Node target', () => {
+  it('runs each generated file, because argv[1] is how it knows to run its gate', () => {
+    const made = tsScratch();
+    aid(made, ['gen', '--target', 'ts-vercel']);
+    const spawn = recordingSpawn();
+
+    expect(aid(made, ['eval', '--target', 'ts-vercel'], spawn).code).toBe(0);
+
+    // No `-m`: the file is what `process.argv[1]` names, and the emitted module compares
+    // that against its own URL before running. A module name here would start Node on a
+    // file called `app.generated.evals.classify_quality`.
+    const runs = spawn.calls.filter((call) => !call.args.includes('-e'));
+    expect(runs.map((call) => call.args.at(-1))).toEqual([
+      expect.stringMatching(/app[\\/]generated[\\/]evals[\\/]classify_quality\.ts$/),
+      expect.stringMatching(/app[\\/]generated[\\/]evals[\\/]handbook_quality\.ts$/),
+      expect.stringMatching(/app[\\/]generated[\\/]evals[\\/]triage_quality\.ts$/),
+    ]);
+    // The TypeScript resolve hook is passed as `--import`: the emitted modules use NodeNext
+    // `.js` specifiers, and Node will not rewrite `../deps.js` to `../deps.ts` on its own.
+    for (const call of runs) {
+      expect(call.command).toBe(process.execPath);
+      expect(call.args.slice(0, 2)).toEqual([
+        '--import',
+        expect.stringMatching(/ts-loader\.(ts|js)$/),
+      ]);
+    }
+  });
+
+  it('says node when it reports the driver', () => {
+    const made = tsScratch();
+    aid(made, ['gen', '--target', 'ts-vercel']);
+    const report = aid(made, ['eval', '--target', 'ts-vercel', '--json'], recordingSpawn()).json<{
+      driver: string;
+      suites: string[];
+    }>();
+    expect(report.driver).toBe('node');
+    expect(report.suites).toEqual(['classify_quality', 'handbook_quality', 'triage_quality']);
+  });
+
+  it('fails as a usage error when the process cannot be started', () => {
+    const made = tsScratch();
+    aid(made, ['gen', '--target', 'ts-vercel']);
+    const run = aid(
+      made,
+      ['eval', '--target', 'ts-vercel', '--json'],
+      recordingSpawn({ status: null }),
+    );
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run)[0]?.code).toBe('cli/runner-failed');
+  });
+
+  it("records a baseline with the module's own recordBaseline", () => {
+    const made = tsScratch();
+    aid(made, ['gen', '--target', 'ts-vercel']);
+    const spawn = recordingSpawn();
+
+    expect(aid(made, ['eval', '--target', 'ts-vercel', '--baseline'], spawn).code).toBe(0);
+
+    const call = spawn.calls.at(-1);
+    // `-e` carries the driver as text: a recording run must not write a script into the
+    // project. It imports each module by file URL and calls `recordBaseline()`, which
+    // already samples `SAMPLES` times and writes the file `loadBaseline()` reads.
+    expect(call?.args).toContain('-e');
+    expect(call?.args).toContain('--input-type=module');
+    expect(call?.stdin).toBeUndefined();
+    const script = call?.args.at(-1) ?? '';
+    expect(script).toContain('recordBaseline');
+    expect(script).toContain('BASELINE_PATH');
+    expect(script).toContain('pathToFileURL');
   });
 });

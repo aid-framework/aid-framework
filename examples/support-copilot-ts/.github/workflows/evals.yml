@@ -1,0 +1,84 @@
+# Generated once by `aid gen` for the `ts-vercel` target, then yours.
+# A scaffold file is never overwritten and never recorded in aid.manifest.json.
+# Evals measure a real model, so this workflow needs the model credential; it runs
+# on demand and nightly rather than on pull requests, which cannot hold a secret.
+name: Evals
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'
+
+concurrency:
+  group: evals-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    name: Eval gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install the AID CLI
+        run: npm install --global @aid-framework/cli@0.1
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: Build the app
+        run: |
+          npm run build --if-present
+      - name: Check the model credential
+        id: creds
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          missing=0
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::warning::OPENAI_API_KEY is not set"
+            missing=1
+          fi
+          if [ "$missing" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: classify_quality
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          AID_TRACE_DIR: .aid-traces
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: node app/generated/evals/run-evals.mjs classify_quality
+      - name: handbook_quality
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          AID_TRACE_DIR: .aid-traces
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: node app/generated/evals/run-evals.mjs handbook_quality
+      - name: triage_quality
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          AID_TRACE_DIR: .aid-traces
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: node app/generated/evals/run-evals.mjs triage_quality
+      - name: Cost ceiling
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          BUDGET: ${{ vars.AID_COST_BUDGET }}
+        run: |
+          if [ -n "$BUDGET" ]; then
+            aid cost .aid-traces --budget "$BUDGET"
+          else
+            aid cost .aid-traces
+          fi
+      - name: Report a skipped gate
+        if: steps.creds.outputs.ready != 'true'
+        run: |
+          echo "::error::The eval gate could not run: set OPENAI_API_KEY as a repository secret."
+          exit 1

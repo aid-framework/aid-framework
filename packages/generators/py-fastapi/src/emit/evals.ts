@@ -479,6 +479,10 @@ function emitRetrievalEval(ir: IR, evaluation: EvalShape): EmittedFile {
   const constants = [
     `EVAL_ID = ${pythonString(evaluation.id)}`,
     `RETRIEVER = ${pythonString(retriever)}`,
+    // A baseline records what it measured under `model`, and `aid eval --baseline` reads
+    // the constant from every suite. A retrieval eval measures a retriever, so naming it
+    // under MODEL keeps that reader uniform instead of special-casing this module.
+    'MODEL = RETRIEVER',
     `SAMPLES = ${pythonNumber(evaluation.gate.samples)}`,
     `MAX_REGRESSION = ${pythonNumber(evaluation.gate.maxRegression)}`,
     `EXPECT_DOCS = ${tupleLiteral(

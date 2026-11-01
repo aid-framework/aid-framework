@@ -238,14 +238,21 @@ describe('the IR contract', () => {
       }
     }
 
-    // One hit is expected, and it is pinned rather than tolerated. The scan is a
+    // Four hits are expected, and they are pinned rather than tolerated. The scan is a
     // source-text lint, so it cannot tell a read from a string that spells one: the
     // gateway emitter renders `process.env[apiKeyEnv]` into the *generated* provider
-    // factory, where the emitted app reads its own key at run time. Pinning the path and
-    // the text keeps the assertion honest -- a genuine read anywhere, or a second string
+    // factory, where the emitted app reads its own key at run time; the two eval and
+    // retrieval emitters render `node:fs` imports into the *generated* modules that read
+    // a baseline file and check a corpus directory; and the eval-driver emitter renders
+    // `process.env.AID_EVAL_MODULES` into the generated driver, which lets a project
+    // point the suite at a build directory other than `dist`. Pinning the paths and the
+    // texts keeps the assertion honest -- a genuine read anywhere, or a further string
     // that looks like one, changes this and fails.
     expect(offenders).toEqual([
+      "src/emit/business.ts:341: importStatement('node:fs', [",
+      "src/emit/eval-driver.ts:49: \"const modules = process.env.AID_EVAL_MODULES ?? join(root, 'dist', 'app', 'generated');\",",
       "src/emit/infrastructure.ts:102: '  const apiKey = process.env[apiKeyEnv];',",
+      "src/emit/retrieval.ts:208: importStatement('node:fs', [{ name: 'existsSync', type: false }]),",
     ]);
 
     expect(sources.map(([path]) => path)).toContain('index.ts');

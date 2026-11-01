@@ -10,7 +10,13 @@
  * compile and fail loudly rather than compile and return a plausible lie.
  */
 
-import type { EvalShape, IR, MetricShape, ToolShape } from '@aid-framework/ir';
+import {
+  type EvalShape,
+  evalSubject,
+  type IR,
+  type MetricShape,
+  type ToolShape,
+} from '@aid-framework/ir';
 import { className, literal, propertyKey, toSnakeCase } from '../names.js';
 import {
   business,
@@ -104,7 +110,7 @@ function loadDataset(evalShape: EvalShape): string[] {
       `  throw new ConfigurationError(${literal(`eval ${evalShape.id} declares no dataset file`)});`,
     ];
   }
-  return [`  return Dataset.fromPath(new URL(${literal(`../../${uri}`)}, import.meta.url));`];
+  return [`  return Dataset.fromPath(asset(${literal(uri)}));`];
 }
 
 function datasetBody(evalShape: EvalShape): string[] {
@@ -166,42 +172,209 @@ function gateBody(evalShape: EvalShape, metrics: readonly string[]): string[] {
 }
 
 /**
+ * The baseline and entry-point blocks every generated eval ends with.
+ *
+ * Shared rather than repeated: the exit status is the verdict `aid eval` and the `evals`
+ * CI job both read, so a retrieval eval that exited differently from a classification
+ * eval would make the two disagree about the same failure. The baseline lives under
+ * `app/evals/` at the same path the Python target writes, so the two targets' committed
+ * `evals/` directories are the same shape.
+ *
+ * `model` is the expression naming what the baseline records as measured: `MODEL` for a
+ * prediction eval, `RETRIEVER` for a retrieval eval. `EvalBaseline.model` is descriptive
+ * -- the gate never compares it -- but leaving it empty would make a committed baseline
+ * say less than the one beside it.
+ */
+function evalConstants(evalShape: EvalShape): string[] {
+  const stem = toSnakeCase(evalShape.id);
+  const baseline = `asset(${literal(`evals/${stem}.baseline.json`)})`;
+  return [
+    '/** The eval id: it names the baseline file and every diagnostic about it. */',
+    `export const EVAL_ID = ${literal(evalShape.id)};`,
+    '/** The stored measurement this eval is compared against. */',
+    ...(fits('', `export const BASELINE_PATH = ${baseline};`)
+      ? [`export const BASELINE_PATH = ${baseline};`]
+      : [
+          'export const BASELINE_PATH = asset(',
+          `  ${literal(`evals/${stem}.baseline.json`)},`,
+          ');',
+        ]),
+    '/** How many runs one sample takes; the baseline records the same count. */',
+    `export const SAMPLES = ${literal(evalShape.gate.samples)};`,
+  ];
+}
+
+/**
+ * The baseline loader, the recorder and the entry point every generated eval ends with.
+ *
+ * Shared rather than repeated: the exit status is the verdict `aid eval` and the `evals`
+ * CI job both read, so a retrieval eval that exited differently from a classification
+ * eval would make the two disagree about the same failure. The baseline lives under
+ * `app/evals/` at the same path the Python target writes, so the two targets' committed
+ * `evals/` directories are the same shape.
+ *
+ * `model` is the expression naming what the baseline records as measured: `MODEL` for a
+ * prediction eval, `RETRIEVER` for a retrieval eval. `EvalBaseline.model` is descriptive
+ * -- the gate never compares it -- but leaving it empty would make a committed baseline
+ * say less than the one beside it.
+ *
+ * `deps` is the one argument every entry point takes and none of them require. It is the
+ * same seam the generated pipelines expose, so a test records and checks a committed
+ * baseline against a deterministic provider instead of a live one -- which is the only way
+ * a stored measurement can be reproducible.
+ */
+function evalEntrypoints(model: string): string[] {
+  return [
+    '/**',
+    ' * A checked-in input, resolved from the project root rather than from this file.',
+    ' *',
+    ' * The eval runs from build output, and `dist/` carries no `evals/` beside it: the',
+    ' * dataset and the baseline are inputs, kept in the tree. The nearest ancestor',
+    ' * `package.json` is the root above both `app/` and `dist/`, so the same call finds',
+    ' * the same file from source and from a build, and a recorded baseline lands in the',
+    ' * tree rather than inside `dist/`.',
+    ' */',
+    'function asset(relative: string): URL {',
+    '  let directory = dirname(fileURLToPath(import.meta.url));',
+    "  while (!existsSync(join(directory, 'package.json'))) {",
+    '    const parent = dirname(directory);',
+    '    if (parent === directory) break;',
+    '    directory = parent;',
+    '  }',
+    "  return pathToFileURL(join(directory, 'app', relative));",
+    '}',
+    '',
+    '/**',
+    ' * The baseline this module compares against. Record one from a run you accept rather',
+    ' * than writing one by hand.',
+    ' */',
+    'export function loadBaseline(): EvalBaseline {',
+    '  if (!existsSync(BASELINE_PATH)) {',
+    '    throw new ConfigurationError(',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: this is emitted source, not interpolation
+    '      `${EVAL_ID} has no baseline at ${fileURLToPath(BASELINE_PATH)}; record one with ` +',
+    "        '`aid eval --baseline`',",
+    '    );',
+    '  }',
+    '  return EvalBaseline.fromPath(BASELINE_PATH);',
+    '}',
+    '',
+    '/** Sample the suite and write the baseline `loadBaseline()` reads back. */',
+    'export async function recordBaseline(',
+    '  options: { readonly note?: string; readonly deps?: Deps | undefined } = {},',
+    '): Promise<EvalBaseline> {',
+    '  const measured = await sample({ deps: options.deps });',
+    '  const baseline = EvalBaseline.fromRun(measured, {',
+    `    model: ${model},`,
+    "    note: options.note ?? '',",
+    '  });',
+    '  mkdirSync(dirname(fileURLToPath(BASELINE_PATH)), { recursive: true });',
+    '  writeFileSync(BASELINE_PATH, baseline.toJson());',
+    '  return baseline;',
+    '}',
+    '',
+    '/** Measure the app and compare the result against the stored baseline. */',
+    'export async function runGate(deps?: Deps): Promise<GateResult> {',
+    '  return evaluate(await sample({ deps }), loadBaseline());',
+    '}',
+    '',
+    '// The gate runs only as the entry point, never when the index re-exports this module:',
+    '// Node sets `argv[1]` to the file it was asked to run.',
+    ...(() => {
+      const condition =
+        'if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {';
+      return fits('', condition)
+        ? [condition]
+        : [
+            'if (',
+            '  process.argv[1] !== undefined &&',
+            '  resolve(process.argv[1]) === fileURLToPath(import.meta.url)',
+            ') {',
+          ];
+    })(),
+    '  try {',
+    '    const result = await runGate();',
+    '    console.log(result.summary());',
+    '    process.exitCode = result.failures().length === 0 ? 0 : 1;',
+    '  } catch (error) {',
+    '    // A crash is not a metric that came in under threshold. Say what broke in one',
+    '    // line, because a stack trace standing in for a verdict reads as a gate failure.',
+    '    const message = error instanceof Error ? error.message : String(error);',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: this is emitted source, not interpolation
+    '    console.error(`${EVAL_ID}: ${message}`);',
+    '    process.exitCode = 1;',
+    '  }',
+    '}',
+  ];
+}
+
+/**
  * The `@aid-framework/runtime` names a plain eval module needs: only the metrics the spec
  * actually asks for, because the emitted module has no other way to use one.
  */
-function plainEvalImports(
-  evalShape: EvalShape,
-  metrics: readonly MetricShape[],
-): { name: string; type: boolean }[] {
+function plainEvalImports(metrics: readonly MetricShape[]): { name: string; type: boolean }[] {
   const names = metrics.map((metric) => metric.kind);
   return [
     ...(names.includes('assert') ? [{ name: 'AssertMetric', type: false }] : []),
     { name: 'BaselineGate', type: false },
-    ...(evalShape.dataset.uri === undefined ? [{ name: 'ConfigurationError', type: false }] : []),
+    { name: 'ConfigurationError', type: false },
     { name: 'Dataset', type: false },
+    { name: 'EvalBaseline', type: false },
     ...(names.includes('exact') ? [{ name: 'ExactMatch', type: false }] : []),
     { name: 'GatewayRunner', type: false },
     ...(names.includes('json-schema') ? [{ name: 'JsonSchemaValid', type: false }] : []),
     ...(names.includes('contains') ? [{ name: 'NormalizedContains', type: false }] : []),
     { name: 'Threshold', type: false },
     { name: 'runEvaluation', type: false },
-    { name: 'EvalBaseline', type: true },
     { name: 'EvalRun', type: true },
     { name: 'GateResult', type: true },
     { name: 'Metric', type: true },
   ];
 }
 
-function plainEvalModule(evalShape: EvalShape): string {
+/**
+ * The Node builtins a generated eval needs: the baseline file it reads, writes and
+ * locates, and the entry-point test that keeps an import from running the gate.
+ */
+function nodeEvalImports(): string {
+  return [
+    importStatement('node:fs', [
+      { name: 'existsSync', type: false },
+      { name: 'mkdirSync', type: false },
+      { name: 'writeFileSync', type: false },
+    ]),
+    importStatement('node:path', [
+      { name: 'dirname', type: false },
+      { name: 'join', type: false },
+      { name: 'resolve', type: false },
+    ]),
+    importStatement('node:url', [
+      { name: 'fileURLToPath', type: false },
+      { name: 'pathToFileURL', type: false },
+    ]),
+  ].join('\n');
+}
+
+function plainEvalModule(ir: IR, evalShape: EvalShape): string {
   const metrics = evalShape.metrics.filter((metric) => metric.kind !== 'retrieval');
   const names = metrics.map((metric) => metric.kind);
   const asserted = metrics.find((metric) => metric.kind === 'assert');
+  const subject = evalSubject(ir, evalShape);
+  if (!subject.ok) {
+    throw new Error(`eval '${evalShape.id}' has no single subject: ${subject.message}`);
+  }
   const header = [
-    importStatement('@aid-framework/runtime', plainEvalImports(evalShape, metrics)),
-    importStatement('../gateway/index.js', [{ name: 'buildGateway', type: false }]),
+    nodeEvalImports(),
+    importStatement('@aid-framework/runtime', plainEvalImports(metrics)),
+    importStatement('../deps.js', [
+      { name: 'Deps', type: true },
+      { name: 'buildDeps', type: false },
+    ]),
   ].join('\n');
   const body = [
-    ...datasetBody(evalShape),
+    '/** The model alias this eval measures: the one the app pins for its prompt. */',
+    `export const MODEL = ${literal(subject.subject.model)};`,
+    ...evalConstants(evalShape),
     '',
     ...(asserted === undefined || asserted.kind !== 'assert'
       ? []
@@ -213,6 +386,8 @@ function plainEvalModule(evalShape: EvalShape): string {
           `const ASSERT_EXPR = ${jsonLiteral(asserted.expr, '')};`,
           '',
         ]),
+    ...datasetBody(evalShape),
+    '',
     '/** The metrics the spec asks for, in declaration order. */',
     'export function metrics(): readonly Metric[] {',
     ...(() => {
@@ -227,11 +402,13 @@ function plainEvalModule(evalShape: EvalShape): string {
     ...gateBody(evalShape, names),
     '',
     '/** Sample the suite and return the run a baseline gate compares against. */',
-    'export async function sample(options: { readonly runs?: number } = {}): Promise<EvalRun> {',
-    '  const gateway = buildGateway();',
-    `  const runner = new GatewayRunner(gateway, ${literal('default')}, {});`,
+    'export async function sample(',
+    '  options: { readonly runs?: number; readonly deps?: Deps | undefined } = {},',
+    '): Promise<EvalRun> {',
+    '  const deps = options.deps ?? buildDeps();',
+    `  const runner = new GatewayRunner(deps.gateway, ${literal(subject.subject.model)}, {});`,
     '  return await runEvaluation(dataset(), (entry) => runner.run(entry), metrics(), {',
-    `    runs: options.runs ?? ${literal(evalShape.gate.samples)},`,
+    '    runs: options.runs ?? SAMPLES,',
     '  });',
     '}',
     '',
@@ -239,6 +416,7 @@ function plainEvalModule(evalShape: EvalShape): string {
     'export function evaluate(run: EvalRun, baseline: EvalBaseline): GateResult {',
     '  return gate().evaluate(run, baseline);',
     '}',
+    ...evalEntrypoints(literal(subject.subject.model)),
   ].join('\n');
   return moduleText(header, body);
 }
@@ -248,19 +426,23 @@ function retrievalEvalModule(ir: IR, evalShape: EvalShape, metric: MetricShape):
   const expectDocs = metric.kind === 'retrieval' ? [...metric.expectDocs] : [];
   const k = metric.kind === 'retrieval' ? metric.k : 5;
   const header = [
+    nodeEvalImports(),
     importStatement('@aid-framework/runtime', [
       { name: 'ConfigurationError', type: false },
       { name: 'Dataset', type: false },
+      { name: 'EvalBaseline', type: false },
       { name: 'RetrievalCase', type: false },
       { name: 'RetrievalGate', type: false },
       { name: 'RetrievalMetricSpec', type: false },
       { name: 'Threshold', type: false },
       { name: 'retrievalMetrics', type: false },
-      { name: 'EvalBaseline', type: true },
       { name: 'EvalRun', type: true },
       { name: 'GateResult', type: true },
     ]),
-    importStatement('../retrieval/index.js', [{ name: 'buildRetrievers', type: false }]),
+    importStatement('../deps.js', [
+      { name: 'Deps', type: true },
+      { name: 'buildDeps', type: false },
+    ]),
   ].join('\n');
   const body = [
     "// The expected documents and `k` are the IR's `retrieval` metric node, so every case",
@@ -271,10 +453,18 @@ function retrievalEvalModule(ir: IR, evalShape: EvalShape, metric: MetricShape):
       expectDocs.map((doc) => literal(doc)),
       '',
     )};`,
-    `const TOP_K = ${literal(k)};`,
-    `const RETRIEVER = ${literal(retriever ?? '')};`,
+    `/** How many ranked results count as an answer. */
+export const TOP_K = ${literal(k)};
+/** The retriever this eval measures, by the id the app binds it under. */
+export const RETRIEVER = ${literal(retriever ?? '')};`,
+    ...evalConstants(evalShape),
     '',
     ...datasetBody(evalShape),
+    '',
+    "/** The `app/` directory: the base the spec's relative source uris resolve against. */",
+    'function appDir(): string {',
+    "  return dirname(fileURLToPath(asset('.')));",
+    '}',
     '',
     '/** One ranked, cited result per case, scored by the metrics retrieval ships. */',
     'export function cases(data: Dataset): readonly RetrievalCase[] {',
@@ -306,14 +496,13 @@ function retrievalEvalModule(ir: IR, evalShape: EvalShape, metric: MetricShape):
     '}',
     '',
     '/** Sample the suite and return the run a baseline gate compares against. */',
-    'export async function sample(options: { readonly runs?: number } = {}): Promise<EvalRun> {',
-    '  const retriever = buildRetrievers().get(RETRIEVER);',
-    '  if (retriever === undefined) {',
-    `    throw new ConfigurationError(\`retriever \${RETRIEVER} is not built\`);`,
-    '  }',
+    'export async function sample(',
+    '  options: { readonly runs?: number; readonly deps?: Deps | undefined } = {},',
+    '): Promise<EvalRun> {',
+    '  const retriever = (options.deps ?? buildDeps({ baseDir: appDir() })).retriever(RETRIEVER);',
     '  const data = dataset();',
     '  return await gate().sample(cases(data), retriever, {',
-    `    runs: options.runs ?? ${literal(evalShape.gate.samples)},`,
+    '    runs: options.runs ?? SAMPLES,',
     '    dataset: data.name,',
     '    datasetVersion: data.version,',
     '  });',
@@ -323,6 +512,7 @@ function retrievalEvalModule(ir: IR, evalShape: EvalShape, metric: MetricShape):
     'export function evaluate(run: EvalRun, baseline: EvalBaseline): GateResult {',
     '  return gate().evaluate(run, baseline);',
     '}',
+    ...evalEntrypoints('RETRIEVER'),
   ].join('\n');
   return moduleText(header, body);
 }
@@ -330,7 +520,7 @@ function retrievalEvalModule(ir: IR, evalShape: EvalShape, metric: MetricShape):
 function evalModule(ir: IR, evalShape: EvalShape): string {
   const retrieval = evalShape.metrics.find((metric) => metric.kind === 'retrieval');
   if (retrieval !== undefined) return retrievalEvalModule(ir, evalShape, retrieval);
-  return plainEvalModule(evalShape);
+  return plainEvalModule(ir, evalShape);
 }
 
 export function emitEvalModules(ir: IR): EmittedFile[] {

@@ -89,6 +89,11 @@ export interface EvalProfile {
   readonly toolchain: readonly string[];
   /** Shell lines that install the app's dependencies. */
   readonly install: readonly string[];
+  /**
+   * Shell lines that make the app runnable, for a target whose evals execute compiled
+   * output rather than source. Python's evals import source modules, so it passes none.
+   */
+  readonly prepare?: readonly string[];
   /** The CI-gated evals, in declaration order. Never empty when a workflow is emitted. */
   readonly suites: readonly EvalSuite[];
   /**
@@ -329,6 +334,9 @@ export function scaffoldEvals(profile: EvalProfile, cliRange: string): Generated
     '      - name: Install dependencies',
     '        run: |',
     ...lines(profile.install, '          '),
+    ...(profile.prepare === undefined
+      ? []
+      : ['      - name: Build the app', '        run: |', ...lines(profile.prepare, '          ')]),
     ...credentialSteps,
     ...suiteSteps,
     '      - name: Cost ceiling',

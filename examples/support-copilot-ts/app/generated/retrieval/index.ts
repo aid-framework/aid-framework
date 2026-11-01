@@ -4,6 +4,15 @@
 import { bindingFromSpec, ConfigurationError, Retriever } from '@aid-framework/runtime';
 import { EMBEDDINGS, RETRIEVERS, STORES } from './bindings.js';
 
+export interface BuildRetrieversOptions {
+  /**
+   * The directory a relative source uri resolves against. Defaults to the process
+   * cwd, which is right for a route handler in a deployment and wrong for a CLI step
+   * run from the project root -- those pass the `app/` directory instead.
+   */
+  readonly baseDir?: string | null;
+}
+
 /**
  * Build every declared retriever.
  *
@@ -11,7 +20,9 @@ import { EMBEDDINGS, RETRIEVERS, STORES } from './bindings.js';
  * `embedModel` or `store` id is a startup error naming both ids, not an empty corpus
  * discovered much later.
  */
-export function buildRetrievers(): ReadonlyMap<string, Retriever> {
+export function buildRetrievers(
+  options: BuildRetrieversOptions = {},
+): ReadonlyMap<string, Retriever> {
   const built = new Map<string, Retriever>();
   for (const spec of Object.values(RETRIEVERS)) {
     const embedding = EMBEDDINGS[spec.embedModel];
@@ -26,7 +37,12 @@ export function buildRetrievers(): ReadonlyMap<string, Retriever> {
         `retriever ${JSON.stringify(spec.id)} names store ${JSON.stringify(spec.store)}, which is not declared`,
       );
     }
-    built.set(spec.id, new Retriever(bindingFromSpec(spec, { embedding, store })));
+    built.set(
+      spec.id,
+      new Retriever(bindingFromSpec(spec, { embedding, store }), {
+        baseDir: options.baseDir ?? null,
+      }),
+    );
   }
   return built;
 }

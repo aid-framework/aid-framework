@@ -154,8 +154,12 @@ function summarize(success: GenerateSuccess): CommandOutcome {
     ? hasErrors(diagnostics) || pending.length > 0 || report.drifted.length > 0
     : hasErrors(diagnostics) || (!force && hasDrift(report));
 
+  const discarded = force && !dryRun && !check;
   const text: string[] = [
-    `${target.name}: ${check ? 'check, ' : dryRun ? 'dry run, ' : ''}${formatRegenerationSummary(report)}`,
+    `${target.name}: ${check ? 'check, ' : dryRun ? 'dry run, ' : ''}${formatRegenerationSummary(
+      report,
+      { forced: discarded },
+    )}`,
   ];
   if (check && pending.length > 0) {
     text.push('the tree does not match the spec; run `aid gen` and commit the result:');
@@ -165,12 +169,16 @@ function summarize(success: GenerateSuccess): CommandOutcome {
   text.push(...lines('updated:', report.updated));
   if (report.drifted.length > 0) {
     text.push(
-      dryRun || check
-        ? 'would refuse to overwrite:'
-        : 'refused to overwrite, the new content is beside it:',
+      discarded
+        ? 'rewritten, discarding your edits:'
+        : dryRun || check
+          ? 'would refuse to overwrite:'
+          : 'refused to overwrite, the new content is beside it:',
     );
     for (const drift of report.drifted) {
-      text.push(`  ${drift.path}  ->  ${rejectionPath(drift.path)}`);
+      text.push(
+        discarded ? `  ${drift.path}` : `  ${drift.path}  ->  ${rejectionPath(drift.path)}`,
+      );
     }
   }
   text.push(...lines('scaffold kept (yours):', report.scaffoldKept));

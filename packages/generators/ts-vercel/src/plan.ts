@@ -9,7 +9,13 @@
  */
 
 import type { GeneratedFile, Plan } from '@aid-framework/generator-sdk';
-import { ACTION_PINS, cliRangeFor, scaffoldCi, sortByPath } from '@aid-framework/generator-sdk';
+import {
+  ACTION_PINS,
+  cliRangeFor,
+  scaffoldCi,
+  scaffoldEvals,
+  sortByPath,
+} from '@aid-framework/generator-sdk';
 import type { IR } from '@aid-framework/ir';
 import { emitAgents } from './emit/agents.js';
 import {
@@ -22,7 +28,9 @@ import {
   emitGeneratedIndex,
 } from './emit/business.js';
 import { emitControl } from './emit/control.js';
+import { emitEvalDriver } from './emit/eval-driver.js';
 import type { EmittedFile } from './emit/file.js';
+import { paths } from './emit/file.js';
 import { emitGuardrails } from './emit/guardrails.js';
 import {
   emitDeps,
@@ -73,6 +81,67 @@ function ciProfile() {
   } as const;
 }
 
+/**
+ * The env vars the generated gateway reads a model key from. A fake model has no key, and
+ * `apiKeyEnv` is absent for it, so a fake-only project's gate runs unguarded.
+ */
+function declaredSecrets(ir: IR): readonly string[] {
+  const names = new Set<string>();
+  for (const model of ir.models) {
+    if (model.provider !== 'fake' && model.apiKeyEnv !== undefined) names.add(model.apiKeyEnv);
+  }
+  return [...names].sort();
+}
+
+/**
+ * The driver, when the spec declares any eval at all.
+ *
+ * Every eval suite runs it, CI-gated or not, because it is the only way a retrieval eval
+ * can be measured in a project whose store is `kind: memory`. Emitting it only alongside
+ * the workflow would leave the developer without a runnable command.
+ */
+function evalDriverFiles(ir: IR): readonly EmittedFile[] {
+  return ir.evals.length === 0 ? [] : [emitEvalDriver()];
+}
+
+/**
+ * The eval workflow, for specs that declare a `gate.ci` eval.
+ *
+ * The suites run the emitted driver rather than a published CLI command, so the gate in
+ * CI is the gate a developer runs by hand: same module, same driver, same index. A spec
+ * with no CI gate gets no workflow -- an empty one would be a green check that measures
+ * nothing.
+ */
+function evalsScaffold(ir: IR): readonly GeneratedFile[] {
+  const suites = ir.evals.filter((evaluation) => evaluation.gate.ci);
+  if (suites.length === 0) return [];
+  const profile = ciProfile();
+  return [
+    scaffoldEvals(
+      {
+        target: profile.target,
+        specPath: profile.specPath,
+        /*
+         * The workflow already installs Node to run the CLI, and `npm i -g` needs it
+         * before any step here could; a second setup-node step would only be a cache
+         * reset. Python passes its setup-python step because Node alone cannot run its
+         * eval modules.
+         */
+        toolchain: [],
+        install: profile.install,
+        /* The driver loads compiled modules, so the workflow builds before it measures. */
+        prepare: [profile.build],
+        suites: suites.map((evaluation) => ({
+          id: evaluation.id,
+          command: `node ${paths.evalsDriver} ${evaluation.id}`,
+        })),
+        secrets: declaredSecrets(ir),
+      },
+      cliRangeFor(GENERATOR_VERSION),
+    ),
+  ];
+}
+
 /** Every file the IR implies, in a fixed order, unsorted. */
 function collect(ir: IR): EmittedFile[] {
   const files: EmittedFile[] = [];
@@ -114,6 +183,7 @@ function collect(ir: IR): EmittedFile[] {
 
   files.push(...emitEvalModules(ir));
   files.push(emitEvalsIndex(ir));
+  files.push(...evalDriverFiles(ir));
 
   files.push(...emitBusinessToolSeeds(ir));
   files.push(emitBusinessToolsIndex(ir));
@@ -122,6 +192,7 @@ function collect(ir: IR): EmittedFile[] {
 
   files.push(emitGeneratedIndex(ir));
   files.push(scaffoldCi(ciProfile(), cliRangeFor(GENERATOR_VERSION)));
+  files.push(...evalsScaffold(ir));
 
   return files;
 }

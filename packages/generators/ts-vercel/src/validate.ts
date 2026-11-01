@@ -14,6 +14,7 @@ import {
   type BranchStep,
   type EmitStep,
   type EvalShape,
+  evalSubject,
   type GenerateStep,
   type GuardrailShape,
   type GuardStep,
@@ -71,6 +72,7 @@ export type PlanProblemCode =
   | 'retriever-embedding-unresolved'
   | 'retriever-filters-unsupported'
   | 'eval-target-unresolved'
+  | 'eval-target-unsupported'
   | 'eval-metric-unsupported'
   | 'eval-dataset-unsupported'
   | 'deployment-unsupported';
@@ -936,6 +938,23 @@ export function checkEvals(ir: IR): PlanProblem[] {
             'eval-metric-unsupported',
             at,
             `metric ${metric.kind} has no emitted binding; supported: ${[...SUPPORTED_METRICS].join(', ')}`,
+          ),
+        );
+      }
+    }
+    // The module pins one model alias in its `GatewayRunner`; a target that renders two
+    // prompts, or one prompt under two aliases, has no single alias to pin. Refused here
+    // rather than emitted with whichever pair happened to come first.
+    if (!evaluation.metrics.some((metric) => metric.kind === 'retrieval')) {
+      const subject = evalSubject(ir, evaluation);
+      if (!subject.ok) {
+        problems.push(
+          problem(
+            subject.code === 'unresolved-reference'
+              ? 'eval-target-unresolved'
+              : 'eval-target-unsupported',
+            at,
+            subject.message,
           ),
         );
       }

@@ -1,0 +1,14 @@
+{
+  "dataset": "classify_quality",
+  "dataset_version": "1",
+  "model": "fast",
+  "metrics": [
+    {
+      "metric": "json-schema",
+      "runs": 5,
+      "mean": 1,
+      "stdev": 0
+    }
+  ],
+  "note": "Recorded from the offline fake provider at accuracy 1.0."
+}

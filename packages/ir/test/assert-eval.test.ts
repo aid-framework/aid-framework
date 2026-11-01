@@ -47,7 +47,7 @@ describe('the assert metric in the IR', () => {
     // The message is what a failing case reports, so trimming or re-casing it here
     // would change user-visible output.
     expect(metric.message).toContain('the answer must mention');
-    expect(metric.message).not.toBe(metric.message.trim() + ' ');
+    expect(metric.message).not.toBe(`${metric.message.trim()} `);
   });
 
   it('keeps the declared floor and leaves it unset where the spec declared none', () => {

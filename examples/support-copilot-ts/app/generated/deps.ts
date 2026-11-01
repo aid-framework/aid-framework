@@ -21,6 +21,8 @@ export interface BuildDepsOptions {
   /** The same adapters `tools` wraps; the agent loop needs them by value. */
   readonly toolList?: readonly Tool[];
   readonly retrievers?: ReadonlyMap<string, Retriever>;
+  /** The directory relative retrieval source uris resolve against. */
+  readonly baseDir?: string | null;
 }
 
 /**
@@ -33,6 +35,7 @@ export class Deps {
   readonly tools: ToolExecutor;
   readonly toolList: readonly Tool[];
   private readonly _retrievers: ReadonlyMap<string, Retriever>;
+  readonly baseDir: string | null;
 
   constructor(init: Required<BuildDepsOptions>) {
     this.gateway = init.gateway;
@@ -40,6 +43,7 @@ export class Deps {
     this.tools = init.tools;
     this.toolList = init.toolList;
     this._retrievers = init.retrievers;
+    this.baseDir = init.baseDir;
   }
 
   /** One bound retriever, or a configuration error naming the missing id. */
@@ -62,7 +66,8 @@ export function buildDeps(options: BuildDepsOptions = {}): Deps {
     prompts: options.prompts ?? buildPrompts(),
     tools: options.tools ?? new ToolExecutor(toolList),
     toolList,
-    retrievers: options.retrievers ?? buildRetrievers(),
+    retrievers: options.retrievers ?? buildRetrievers({ baseDir: options.baseDir ?? null }),
+    baseDir: options.baseDir ?? null,
   });
 }
 

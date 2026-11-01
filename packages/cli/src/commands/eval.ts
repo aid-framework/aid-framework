@@ -19,35 +19,58 @@
  * assignment says not to modify it. A missing runtime entry point is this layer's problem
  * to route around, not a reason to change a shipped one.
  *
+ * **A TypeScript target runs its source directly.** The emitted `.ts` module carries the
+ * same contract and the same entry guard, so `aid eval` runs the file with Node, whose
+ * type stripping loads it without a build. One thing does not survive that: the generator
+ * emits NodeNext `.js` specifiers because the compiled tree needs them, and Node will not
+ * rewrite `../deps.js` to `../deps.ts`. `ts-loader.ts` supplies exactly that rewrite, as
+ * the `--import` hook of the process, so no `dist/` has to exist first and a project that
+ * has one still runs it.
+ *
  * **`--baseline` delegates the sampling.** The gate is statistical (`maxRegression` against
  * a stored distribution), so a baseline from a single run is noise shaped like a fact. The
- * generated module's `run()` already samples the dataset `SAMPLES` times -- the N the spec
- * declares -- so recording a baseline calls that, then the runtime's own documented recipe
- * (`EvalBaseline.from_run(await run(), model=...).to_json()`, which is literally the string
- * in the generated `load_baseline`'s error message). Re-sampling here would invent a second
- * N and let the CLI and the module disagree about how many runs a baseline means.
+ * generated module's `run()` (or `sample()`) already samples the dataset `SAMPLES` times --
+ * the N the spec declares -- so recording a baseline calls that, then the runtime's own
+ * documented recipe (`EvalBaseline.fromRun` / `from_run`, which is literally the string in
+ * the generated `loadBaseline`'s error message). Re-sampling here would invent a second N
+ * and let the CLI and the module disagree about how many runs a baseline means.
  *
- * That recipe is the one place in the CLI that writes Python. It is a script piped to the
- * interpreter over stdin rather than an API call because the runtime has no such entry
- * point, and it is deliberately short: anything longer would be this layer reimplementing
- * the runtime's measurement.
+ * Each recipe is the only place in the CLI that writes its language. The Python one is a
+ * script piped to the interpreter over stdin, and the Node one a script passed to `-e`,
+ * because neither runtime has such an entry point; both are deliberately short, since
+ * anything longer would be this layer reimplementing the runtime's measurement.
  */
 
 import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import type { IR } from '@aid-framework/ir';
 import { sortDiagnostics } from '@aid-framework/spec';
 
-import type { CliContext } from '../context.js';
+import type { CliContext, SpawnResult } from '../context.js';
 import type { CliDiagnostic } from '../diagnostics.js';
 import { CLI_DIAGNOSTIC_CODES, cliError, cliWarning } from '../diagnostics.js';
 import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE } from '../exit.js';
+import { invokeNode, invokeNodeFile, NODE } from '../node.js';
 import type { CommandOutcome } from '../output.js';
 import { outcome } from '../output.js';
 import { absolutePath } from '../paths.js';
 import { lowerSpec, readSpec } from '../pipeline.js';
 import { discoverInterpreter, INTERPRETERS, interpreterCommand, invoke } from '../python.js';
 import { resolveTarget, unknownTargetDiagnostic } from '../targets.js';
+
+/**
+ * The TypeScript resolve hook, as a URL, because `--import` parses its argument as a
+ * specifier: a bare `C:\...` path reads as a `c:` URL scheme.
+ *
+ * The `.ts` fallback exists for the same reason the hook does -- so this command works
+ * from source as well as from `dist/`.
+ */
+const TS_LOADER = ((): string => {
+  const compiled = new URL('../ts-loader.js', import.meta.url);
+  if (existsSync(fileURLToPath(compiled))) return compiled.href;
+  return new URL('../ts-loader.ts', import.meta.url).href;
+})();
 
 export interface EvalOptions {
   readonly spec: string | undefined;
@@ -113,6 +136,30 @@ interface SuiteResult {
   readonly suite: string;
   readonly module: string;
   readonly status: number;
+}
+
+/**
+ * The TypeScript baseline recorder, run as `node -e`.
+ *
+ * It imports each module by absolute URL so the module's own imports resolve from the
+ * project tree, and it calls `recordBaseline()` rather than re-deriving a baseline: that
+ * function already samples `SAMPLES` times, builds the `EvalBaseline`, and writes the file
+ * `loadBaseline()` reads back -- the same constant, so the two cannot disagree.
+ */
+function nodeBaselineScript(files: readonly string[]): string {
+  return [
+    "import { fileURLToPath, pathToFileURL } from 'node:url';",
+    '',
+    `const MODULES = ${JSON.stringify(files)};`,
+    '',
+    'for (const file of MODULES) {',
+    '  const module = await import(pathToFileURL(file).href);',
+    "  await module.recordBaseline({ note: 'recorded by `aid eval --baseline`' });",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: this is emitted source, not interpolation
+    '  console.log(`wrote ${fileURLToPath(module.BASELINE_PATH)}`);',
+    '}',
+    '',
+  ].join('\n');
 }
 
 export function evaluate(context: CliContext, options: EvalOptions): CommandOutcome {
@@ -181,47 +228,51 @@ export function evaluate(context: CliContext, options: EvalOptions): CommandOutc
     });
   }
 
-  if (target.runner !== 'python') {
-    return outcome({
-      command,
-      // Exit 2, not 1: this command has no runner for this target, so no eval ran and
-      // nothing about the project was judged. `1` would read as "the evals failed".
-      exitCode: EXIT_USAGE,
-      fields: { ...fields, suites },
-      diagnostics: [
-        cliError({
-          code: CLI_DIAGNOSTIC_CODES.runnerUnsupported,
-          message: `\`aid eval\` runs generated Python modules, and ${target.name} emits TypeScript.`,
-          hint: 'The emitted eval module exports `sample()` and `evaluate(run, baseline)`; run it with Node.',
-        }),
-      ],
-    });
+  // A Python target names its module (`app.generated.evals.<id>`, importable from the
+  // project root); a Node target names the file, because `process.argv[1]` is how the
+  // emitted module knows it is the entry point and should run its gate.
+  const modules = suites.map((id) =>
+    target.runner === 'node'
+      ? absolutePath(context.cwd, target.evalModuleFile(id))
+      : target.evalModule(id),
+  );
+
+  let driver: string;
+  let runModule: (module: string) => SpawnResult | undefined;
+  let recordBaseline: () => SpawnResult | undefined;
+
+  if (target.runner === 'node') {
+    driver = NODE;
+    runModule = (module) => invokeNodeFile(context, module, { import: TS_LOADER });
+    recordBaseline = () => invokeNode(context, nodeBaselineScript(modules), { import: TS_LOADER });
+  } else {
+    const interpreter = discoverInterpreter(context);
+    if (interpreter === undefined) {
+      return outcome({
+        command,
+        // Exit 2, not 1: nothing about the project was judged. The gate has no verdict when
+        // the thing that would run it cannot start, and `1` would read as "the evals failed".
+        exitCode: EXIT_USAGE,
+        fields: { ...fields, suites },
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.pythonMissing,
+            message: `No interpreter could import aid_runtime (tried ${INTERPRETERS.join(', ')}).`,
+            hint: 'Install the runtime into the interpreter you run with, or run the generated eval modules yourself.',
+          }),
+        ],
+      });
+    }
+    driver = interpreter;
+    const base = interpreterCommand(interpreter);
+    runModule = (module) => invoke(context, [...base, '-m', module]);
+    recordBaseline = () => invoke(context, [...base, '-'], baselineScript(modules));
   }
 
-  const interpreter = discoverInterpreter(context);
-  if (interpreter === undefined) {
-    return outcome({
-      command,
-      // Exit 2, not 1: nothing about the project was judged. The gate has no verdict when
-      // the thing that would run it cannot start, and `1` would read as "the evals failed".
-      exitCode: EXIT_USAGE,
-      fields: { ...fields, suites },
-      diagnostics: [
-        cliError({
-          code: CLI_DIAGNOSTIC_CODES.pythonMissing,
-          message: `No interpreter could import aid_runtime (tried ${INTERPRETERS.join(', ')}).`,
-          hint: 'Install the runtime into the interpreter you run with, or run the generated eval modules yourself.',
-        }),
-      ],
-    });
-  }
-
-  const modules = suites.map((id) => target.evalModule(id));
-  const base = interpreterCommand(interpreter);
-  const common = { ...fields, suites, interpreter };
+  const common = { ...fields, suites, driver };
 
   if (options.baseline) {
-    const recorded = invoke(context, [...base, '-'], baselineScript(modules));
+    const recorded = recordBaseline();
     if (recorded === undefined || recorded.status !== 0) {
       return outcome({
         command,
@@ -230,7 +281,7 @@ export function evaluate(context: CliContext, options: EvalOptions): CommandOutc
         diagnostics: [
           cliError({
             code: CLI_DIAGNOSTIC_CODES.runnerFailed,
-            message: `Could not record a baseline with ${interpreter}.`,
+            message: `Could not record a baseline with ${driver}.`,
             hint: 'Recording a baseline runs the evals, so it needs whatever they need; see the output for why they did not run.',
           }),
         ],
@@ -253,7 +304,8 @@ export function evaluate(context: CliContext, options: EvalOptions): CommandOutc
   const diagnostics: CliDiagnostic[] = [...declared.warnings];
 
   for (const [index, module] of modules.entries()) {
-    const run = invoke(context, [...base, '-m', module]);
+    const suite = suites[index] ?? module;
+    const run = runModule(module);
     if (run === undefined) {
       return outcome({
         command,
@@ -262,12 +314,11 @@ export function evaluate(context: CliContext, options: EvalOptions): CommandOutc
         diagnostics: [
           cliError({
             code: CLI_DIAGNOSTIC_CODES.runnerFailed,
-            message: `Could not start ${interpreter} to run "${module}".`,
+            message: `Could not start ${driver} to run "${suite}".`,
           }),
         ],
       });
     }
-    const suite = suites[index] ?? module;
     results.push({ suite, module, status: run.status ?? EXIT_FAILURE });
     if (run.stdout.trim() !== '') output.push(run.stdout.trimEnd());
     // The generated `main()` prints its summary to stdout and exits non-zero on a
