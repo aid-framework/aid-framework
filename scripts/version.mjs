@@ -18,11 +18,17 @@
  *
  * `stamp` is the counterweight to the tag being the source of truth: it writes a
  * version into every manifest `release.config.json` lists, so `release.yml` tagging
- * `v0.1.39` and the manifests declaring `0.1.39` cannot drift apart. A pypi package
+ * `v0.1.39` and the manifests declaring `0.1.39` agree. A pypi package
  * that also exposes a module-level `__version__` gets that literal stamped too, since
  * the runtime's own tests pin it to `[project].version`. It is a maintainer command
  * run before the release commit, deliberately not a CI step -- a workflow that rewrote
  * manifests could publish a version nobody reviewed.
+ *
+ * Stamping alone does not keep the two in step, because nothing forces a maintainer to
+ * run it. `verify` is the enforcement: `release.yml` calls it with the version it is
+ * about to tag and refuses to create the tag when any manifest disagrees. Without it
+ * the tag is still minted, `publish.yml`'s `detect` step rejects it, both publish jobs
+ * skip, and the run reports success while the registries never move.
  */
 
 import { appendFileSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -92,6 +98,7 @@ const USAGE = [
   '                                     [--force] [--github-output <file>]',
   '       node scripts/version.mjs latest  --config <file> (--tags-file <file> | --tags a,b)',
   '       node scripts/version.mjs stamp   --version x.y.z [--config <file>]',
+  '       node scripts/version.mjs verify  --version x.y.z [--config <file>]',
 ].join('\n');
 
 /** A released version as a manifest declares it: bare, no tag prefix. */
@@ -279,6 +286,91 @@ export function stamp({ config, root, version }) {
   }
 
   return { version, written, unchanged };
+}
+
+/**
+ * Read the version each manifest `release.config.json` lists declares.
+ *
+ * This is the read side of `stamp`, and it exists because the two halves of the
+ * release pipeline disagreed: `decide` derives the tag from tags alone, while
+ * `publish.yml`'s `detect` step refuses a tag unless every manifest on that commit
+ * declares the same version. A tag whose manifests lag is therefore unpublishable,
+ * yet `decision.release` still says true -- the tag and the GitHub Release are minted,
+ * `detect` rejects them, both publish jobs skip, and the run reports success. Nothing
+ * downstream can notice, so the check has to happen before the tag exists.
+ *
+ * @param {{ config: ReleaseConfig, root: string }} options
+ * @returns {{ path: string, name: string, registry: string, declared: string | null }[]}
+ */
+export function readManifestVersions({ config, root }) {
+  /** @type {{ path: string, name: string, registry: string, declared: string | null }[]} */
+  const versions = [];
+  for (const entry of config.packages) {
+    const directory = join(root, ...entry.path.split('/'));
+    if (entry.registry === 'npm') {
+      const path = `${entry.path}/package.json`;
+      const source = readFileIfPresent(join(directory, 'package.json'));
+      const manifest = source === null ? null : JSON.parse(source);
+      versions.push({
+        path,
+        name: entry.name,
+        registry: entry.registry,
+        declared: typeof manifest?.version === 'string' ? manifest.version : null,
+      });
+    } else if (entry.registry === 'pypi') {
+      const path = `${entry.path}/pyproject.toml`;
+      const source = readFileIfPresent(join(directory, 'pyproject.toml'));
+      versions.push({
+        path,
+        name: entry.name,
+        registry: entry.registry,
+        declared: source === null ? null : projectVersion(source),
+      });
+    } else {
+      throw new Error(
+        `release.config.json lists "${entry.name}" with unknown registry "${entry.registry}"`,
+      );
+    }
+  }
+  return versions;
+}
+
+/**
+ * The static `[project] version` of a `pyproject.toml`, or `null` when it declares
+ * none. The same four lines of parsing `stampProjectVersion` edits, used read-only so
+ * a read cannot disagree with the write about which line is the version.
+ *
+ * @param {string} text
+ * @returns {string | null}
+ */
+export function projectVersion(text) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  let inProject = false;
+  for (const line of text.split(eol)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('[')) {
+      inProject = /^\[\s*project\s*\]$/.test(trimmed);
+      continue;
+    }
+    if (!inProject) continue;
+    const match = /^\s*version\s*=\s*"([^"]*)"/.exec(line);
+    if (match?.[1] !== undefined) return match[1];
+  }
+  return null;
+}
+
+/**
+ * Manifests whose declared version differs from the one about to be tagged.
+ *
+ * An absent or unparsable manifest is drift too: `publish.yml` would refuse it just
+ * the same, and silently treating "cannot read" as "fine" is how the empty releases
+ * went unnoticed.
+ *
+ * @param {{ config: ReleaseConfig, root: string, version: string }} options
+ * @returns {{ path: string, name: string, registry: string, declared: string | null }[]}
+ */
+export function stampDrift({ config, root, version }) {
+  return readManifestVersions({ config, root }).filter((entry) => entry.declared !== version);
 }
 
 /** @param {string} value */
@@ -686,6 +778,49 @@ function stampCommand(args) {
   for (const path of result.unchanged) process.stdout.write(`  unchanged ${path}\n`);
 }
 
+/**
+ * `verify --version x.y.z [--config <file>]`.
+ *
+ * Fails when any manifest `release.config.json` lists declares a different version,
+ * which is the condition under which `publish.yml` refuses a freshly minted tag. The
+ * message names the fix, because the alternative -- a green run that ships nothing --
+ * is how four consecutive releases ended up empty.
+ *
+ * @param {Record<string, string | undefined>} args
+ */
+function verifyCommand(args) {
+  const requested = args['version'];
+  if (requested === undefined) throw new StampVersionError(`--version is required\n${USAGE}`);
+  const version = parseStampVersion(requested);
+
+  const configPath = resolve(args['config'] ?? join(REPO_ROOT, 'release.config.json'));
+  const config = parseConfig(JSON.parse(readFileSync(configPath, 'utf8')));
+  const drift = stampDrift({ config, root: dirname(configPath), version });
+
+  if (drift.length === 0) {
+    const total = config.packages.length;
+    process.stdout.write(`[verify] all ${total} manifests declare ${version}\n`);
+    return;
+  }
+
+  const lines = drift.map((entry) =>
+    entry.declared === null
+      ? `  ${entry.path} (${entry.name}): no version found`
+      : `  ${entry.path} (${entry.name}): declares ${entry.declared}, expected ${version}`,
+  );
+  throw new StampVersionError(
+    [
+      `[verify] refusing to release ${version}: ${drift.length} of ${config.packages.length} manifests disagree`,
+      ...lines,
+      '',
+      'publish.yml only publishes a tag whose commit declares that exact version, so this',
+      'tag would create an empty release. Stamp first, then commit the result:',
+      '',
+      `  node scripts/version.mjs stamp --version ${version}`,
+    ].join('\n'),
+  );
+}
+
 function main() {
   const argv = process.argv.slice(2);
   const hasCommand = argv[0] !== undefined && !argv[0].startsWith('--');
@@ -694,6 +829,11 @@ function main() {
 
   if (command === 'stamp') {
     stampCommand(args);
+    return;
+  }
+
+  if (command === 'verify') {
+    verifyCommand(args);
     return;
   }
 

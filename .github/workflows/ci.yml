@@ -383,6 +383,63 @@ jobs:
       - name: Lint workflows
         run: actionlint -color -shellcheck=shellcheck
 
+  # release.yml tags whatever commit a releasable merge produces, and publish.yml only
+  # publishes a tag whose manifests declare that exact version. Nothing used to check
+  # the two agreed, so a releasable merge without a stamp minted an empty release and
+  # both publish jobs skipped -- four times in a row before it was noticed. Checking
+  # here, on the pull request, makes the failure land on the author instead of on main.
+  release-plan:
+    name: release-plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      # version.mjs has no dependencies, so this needs no install step.
+      - name: Manifests declare the version this PR would release
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --quiet
+          # The default checkout refspec does not guarantee a remote-tracking ref for
+          # the base branch, and the diff range needs one.
+          git fetch --quiet origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+          git tag --list > tags.txt
+          git diff --name-only --no-renames \
+            "$(git merge-base "origin/$BASE_REF" HEAD)" HEAD > changed-files.txt
+
+          node scripts/version.mjs decide \
+            --config release.config.json \
+            --tags-file tags.txt \
+            --changed-files-file changed-files.txt \
+            --github-output plan.out > release-plan.json
+          cat release-plan.json
+
+          # Same output contract release.yml consumes, so the two cannot disagree
+          # about which version a change set produces.
+          release=$(sed -n 's/^release=//p' plan.out)
+          # The output carries the tag form (v0.1.52); verify takes the bare semver.
+          version=$(sed -n 's/^version=//p' plan.out)
+
+          if [ "$release" != "true" ]; then
+            echo "no release for this change set; nothing to stamp"
+            exit 0
+          fi
+
+          node scripts/version.mjs verify --version "${version#v}" --config release.config.json
+
   licenses:
     name: licenses
     runs-on: ubuntu-latest
