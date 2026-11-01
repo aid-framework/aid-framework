@@ -119,16 +119,25 @@ export type {
   PlanValidationOptions,
 } from './plan.js';
 export { isRecord, validatePlan } from './plan.js';
-export type { CiProfile, EvalProfile, EvalSuite, InfraPlanProfile } from './scaffold.js';
+export type {
+  CiProfile,
+  EvalProfile,
+  EvalSuite,
+  InfraPlanProfile,
+  ReleaseImage,
+  ReleaseProfile,
+} from './scaffold.js';
 export {
   ACTION_PINS,
   CI_WORKFLOW_PATH,
   cliRangeFor,
   EVALS_WORKFLOW_PATH,
   INFRA_PLAN_WORKFLOW_PATH,
+  RELEASE_WORKFLOW_PATH,
   scaffoldCi,
   scaffoldEvals,
   scaffoldInfraPlan,
+  scaffoldRelease,
   TOFU_VERSION,
 } from './scaffold.js';
 export type { Version } from './semver.js';
