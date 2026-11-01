@@ -21,6 +21,7 @@ Every command accepts `-h` / `--help` for its own usage. All except `dev` accept
 | [`gen`](#gen) | compile the spec and reconcile the tree with it |
 | [`dev`](#dev) | regenerate the tree and run the application on a local server |
 | [`guard`](#guard) | measure the guardrails against a red-team corpus |
+| [`migrate`](#migrate) | emit the SQL the declared vector stores need, for an operator to apply |
 | [`ingest`](#ingest) | index a retriever corpus into the store the spec declares |
 | [`eval`](#eval) | run the eval gate, or record the baseline it measures against |
 | [`cost`](#cost) | report cost and latency from the local trace sink |
@@ -102,6 +103,22 @@ aid guard [spec] [--target <name>] [--red-team <file>]
 | --- | --- |
 | `--target <name>` | generator target; one of py-fastapi, ts-vercel |
 | `--red-team <file>` | the corpus to measure against; defaults to redteam.json beside the spec, then at the project root |
+| `--json` | print one JSON document on stdout |
+| `-h`, `--help` | print this command's usage |
+
+## `migrate`
+
+emit the SQL the declared vector stores need, for an operator to apply
+
+```sh
+aid migrate [spec] [--out <dir>] [--check] [--dry-run]
+```
+
+| Option | Description |
+| --- | --- |
+| `--out <dir>` | directory for the migration file; defaults to `migrations` |
+| `--check` | fail when the committed file does not match the spec; writes nothing |
+| `--dry-run` | report what would change, and write nothing |
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |
 
