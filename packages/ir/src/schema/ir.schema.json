@@ -1137,6 +1137,19 @@
             }
           }
         },
+        "image": {
+          "description": "Where the image for this deployment is published; only a container deployment can carry one.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["registry", "name"],
+          "properties": {
+            "registry": { "enum": ["ghcr.io"] },
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$"
+            }
+          }
+        },
         "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
       }
     }

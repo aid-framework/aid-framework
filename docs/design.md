@@ -263,6 +263,7 @@ deployments:
     target: container
     streaming: true
     observability: { tracing: otel, redact: [customer_email] }
+    image: { registry: ghcr.io, name: acme/support-copilot }   # spec 0.4
 ```
 
 ### 6.2 Spec surface, easiest -> hardest to abstract
@@ -635,6 +636,7 @@ type DeploymentShape = {
   autoscale?: { min: number; max: number; metric: string };
   secrets: string[];
   env: { name: string; value?: string; secret?: boolean }[];
+  image?: { registry: 'ghcr.io'; name: string };
   traits: Trait[];
 };
 ```

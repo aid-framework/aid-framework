@@ -37,6 +37,7 @@ export const DIAGNOSTIC_CODES = {
   deploymentAutoscaleRange: 'spec/deployment-autoscale-range',
   deploymentEnvDuplicate: 'spec/deployment-env-duplicate',
   deploymentEnvValueAndSecret: 'spec/deployment-env-value-and-secret',
+  deploymentImageWithoutContainer: 'spec/deployment-image-without-container',
 } as const;
 
 /** Codes are namespaced `<layer>/<slug>`. This layer's own codes are `spec/*`. */

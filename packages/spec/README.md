@@ -99,8 +99,9 @@ const diagnostics = [
 | `memory` | 0.2 | Conversation, user and global memory scopes |
 | `deployments` | 0.2 | Trigger, concurrency and streaming declarations |
 
-The build reads spec versions `0.1`, `0.2` and `0.3`. A section listed as `0.2` is rejected in a 0.1 document,
-with a diagnostic naming the version that accepts it.
+The build reads spec versions `0.1` through `0.4`. A section listed as `0.2` is rejected in a 0.1 document,
+with a diagnostic naming the version that accepts it. `deployments[].image` is a 0.4 construct and needs
+`target: container`; both rules are reported at `deployments.<id>.image`.
 
 ## Pipeline step kinds
 

@@ -28,6 +28,7 @@ import {
   DEFAULT_OBSERVABILITY,
   DEFAULT_RUNTIME,
   DEPLOY_TARGETS,
+  type DeploymentImageShape,
   type DeploymentShape,
   type EmbeddingShape,
   type ErrorPolicy,
@@ -37,6 +38,7 @@ import {
   type GuardrailShape,
   type GuardStep,
   type Idempotency,
+  IMAGE_REGISTRIES,
   type IR,
   IR_VERSION,
   isGuardrailPolicyKind,
@@ -998,8 +1000,44 @@ function buildDeployments(raw: unknown, context: BuildContext): DeploymentShape[
       }
       deployment.autoscale = { min: min ?? 0, max: max ?? 1, metric: metric ?? '' };
     }
+    const image: DeploymentImageShape | undefined = buildDeploymentImage(entry.image, id, context);
+    if (image !== undefined) deployment.image = image;
     return deployment;
   });
+}
+
+function buildDeploymentImage(
+  raw: unknown,
+  id: string,
+  context: BuildContext,
+): DeploymentImageShape | undefined {
+  const image = asRecord(raw);
+  if (image === undefined) return undefined;
+  const registry = asString(image.registry);
+  const name = asString(image.name);
+  const knownRegistry =
+    registry !== undefined && (IMAGE_REGISTRIES as readonly string[]).includes(registry);
+  if (registry === undefined || name === undefined || !knownRegistry) {
+    // The spec schema and its version gate both reject this, so reaching it means the
+    // document bypassed validation. Dropping the image would make a deployment look
+    // unpublishable when it declared otherwise, so the builder reports instead.
+    const problem =
+      registry === undefined
+        ? 'no registry'
+        : !knownRegistry
+          ? `registry "${registry}", which is not one of ${IMAGE_REGISTRIES.join(', ')}`
+          : 'no name';
+    context.diagnostics.push(
+      errorDiagnostic({
+        code: IR_DIAGNOSTIC_CODES.deployImageIncomplete,
+        message: `deployment "${id}" declares an image with ${problem}`,
+        path: ['deployments', id, 'image'],
+        hint: `declare \`registry: ${IMAGE_REGISTRIES[0]}\` and a repository \`name\`; the builder will not choose a registry on your behalf`,
+      }),
+    );
+    return undefined;
+  }
+  return { registry: registry as DeploymentImageShape['registry'], name };
 }
 
 function buildDeploymentEnv(raw: unknown): DeploymentShape['env'] {

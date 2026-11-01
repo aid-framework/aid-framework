@@ -3,6 +3,7 @@ import {
   checkSpecText,
   DEFERRED_SECTIONS,
   DEFERRED_STEP_KINDS,
+  DEPLOYMENT_IMAGE_MIN_VERSION,
   DIAGNOSTIC_CODES,
   type Diagnostic,
   formatPath,
@@ -629,6 +630,13 @@ describe('deployments', () => {
     deployments: { prod: { target: 'container', secrets: [], ...extra } },
   });
 
+  /** A container deployment at a named version, so version-gated fields stay testable. */
+  const at = (specVersion: string, extra: Record<string, unknown> = {}) => ({
+    specVersion,
+    project: { name: 'p' },
+    deployments: { prod: { target: 'container', secrets: [], ...extra } },
+  });
+
   it('accepts a scaling range whose floor sits at its ceiling', () => {
     const diagnostics = validateSpec(spec({ autoscale: { min: 2, max: 2, metric: 'cpu' } }));
     expect(diagnostics).toEqual([]);
@@ -674,6 +682,44 @@ describe('deployments', () => {
   it('accepts a secret entry that carries no literal value', () => {
     const diagnostics = validateSpec(spec({ env: [{ name: 'TOKEN', secret: true }] }));
     expect(diagnostics).toEqual([]);
+  });
+
+  it('accepts an image on a 0.4 container deployment', () => {
+    const diagnostics = validateSpec(
+      at('0.4', { image: { registry: 'ghcr.io', name: 'acme/support-copilot' } }),
+    );
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('refuses an image below spec 0.4 and names the version it needs', () => {
+    const diagnostics = validateSpec(at('0.3', { image: { registry: 'ghcr.io', name: 'acme/p' } }));
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.image']);
+    expect(diagnostics[0]?.message).toContain("'deployments.prod.image' requires specVersion 0.4");
+    expect(diagnostics[0]?.hint).toContain(`set specVersion: "${DEPLOYMENT_IMAGE_MIN_VERSION}"`);
+  });
+
+  it('refuses an image on a deployment whose target builds no image', () => {
+    const diagnostics = validateSpec(
+      at('0.4', { target: 'serverless', image: { registry: 'ghcr.io', name: 'acme/p' } }),
+    );
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.deploymentImageWithoutContainer]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.image']);
+    expect(diagnostics[0]?.message).toContain("targets 'serverless'");
+  });
+
+  it('refuses an image name a registry would reject', () => {
+    const diagnostics = validateSpec(at('0.4', { image: { registry: 'ghcr.io', name: 'Acme/P' } }));
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.image.name']);
+  });
+
+  it('refuses a registry it cannot push to', () => {
+    const diagnostics = validateSpec(
+      at('0.4', { image: { registry: 'docker.io', name: 'acme/p' } }),
+    );
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.image.registry']);
   });
 });
 

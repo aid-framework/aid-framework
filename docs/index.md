@@ -38,7 +38,7 @@ Every package here is published — seven on npm
 `@aid-framework/generator-sdk`, `@aid-framework/generator-py-fastapi`,
 `@aid-framework/generator-ts-vercel`, `@aid-framework/runtime`) and one on PyPI
 (`aid-runtime-python`) — at version **{{ AID_VERSION }}**. The spec language is at
-v0.3, and the two generator targets cover the surface this repository tests.
+v0.4, and the two generator targets cover the surface this repository tests.
 
 What that means in practice: the spec surface, the IR and the two generators are
 implemented and pinned by a conformance suite (73 cases over 40 operations). The project

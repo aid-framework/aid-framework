@@ -658,6 +658,25 @@ export const DEPLOY_TARGETS = ['serverless', 'container', 'batch', 'edge'] as co
 
 export type DeploymentTarget = (typeof DEPLOY_TARGETS)[number];
 
+/**
+ * The registries a container image may be published to.
+ *
+ * Closed, and `ghcr.io` is the only entry for now: a generated release workflow pushes
+ * with the `GITHUB_TOKEN` it already holds, while every other registry needs a
+ * credential (an ECR role, a Docker Hub token) the spec cannot hold without inventing
+ * one. Extending this list means adding the push path that makes the new entry true.
+ */
+export const IMAGE_REGISTRIES = ['ghcr.io'] as const;
+
+export type ImageRegistry = (typeof IMAGE_REGISTRIES)[number];
+
+/** Where the image for a container deployment is published; there is one image per project. */
+export interface DeploymentImageShape {
+  registry: ImageRegistry;
+  /** Repository path under the registry, without the host: `acme/support-copilot`. */
+  name: string;
+}
+
 export interface DeploymentShape {
   id: string;
   target: DeploymentTarget;
@@ -666,6 +685,12 @@ export interface DeploymentShape {
   autoscale?: { min: number; max: number; metric: string };
   secrets: string[];
   env: { name: string; value?: string; secret?: boolean }[];
+  /**
+   * Where a container image is published. Present only on a `target: container`
+   * deployment, and only from spec 0.4: the registry is a closed set (`ghcr.io`), so a
+   * release workflow can push with a token the repository already has.
+   */
+  image?: DeploymentImageShape;
   traits: Trait[];
 }
 

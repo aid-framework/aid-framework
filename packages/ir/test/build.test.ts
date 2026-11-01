@@ -430,6 +430,40 @@ describe('deployments', () => {
     );
   });
 
+  it('carries a declared image through unchanged', () => {
+    const { ir, diagnostics } = buildIR({
+      specVersion: '0.4',
+      project: { name: 'p' },
+      deployments: {
+        api: { target: 'container', secrets: [], image: { registry: 'ghcr.io', name: 'acme/p' } },
+      },
+    });
+    expect(diagnostics).toEqual([]);
+    expect(ir.deployments[0]?.image).toEqual({ registry: 'ghcr.io', name: 'acme/p' });
+  });
+
+  it('omits the image key entirely when none is declared', () => {
+    // Serialized IR is compared byte-for-byte against goldens, so an `image: undefined`
+    // that still enumerates would rewrite every fixture that has a deployment.
+    const { ir } = buildIR(spec({ target: 'container', secrets: [] }));
+    expect(ir.deployments[0]).toBeDefined();
+    expect(ir.deployments[0]).not.toHaveProperty('image');
+  });
+
+  it('reports an image it would otherwise have to invent a registry for', () => {
+    const { ir, diagnostics } = buildIR({
+      specVersion: '0.4',
+      project: { name: 'p' },
+      deployments: {
+        api: { target: 'container', secrets: [], image: { registry: 'docker.io', name: 'acme/p' } },
+      },
+    });
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      IR_DIAGNOSTIC_CODES.deployImageIncomplete,
+    );
+    expect(ir.deployments[0]?.image).toBeUndefined();
+  });
+
   it('keeps the accepted targets identical to the spec schema enum', () => {
     // The coercion this pins down is silent by construction: a target present in the
     // schema but absent here would be projected as `serverless` with no diagnostic.
