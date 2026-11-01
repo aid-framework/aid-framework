@@ -1081,7 +1081,7 @@ Because prompts, tools, and rubrics are *code-reviewed artifacts*, they live in 
 | `aid ingest [--retriever <id>]` | Run/refresh RAG ingestion pipelines. |
 | `aid eval [--suite <id>] [--baseline]` | Run eval suites; diff vs. baseline; enforce gates. |
 | `aid trace <run-id>` | Open/replay a traced run (replay with mocked model calls). |
-| `aid cost [--since <date>]` | Cost/latency report from traces. |
+| `aid cost [--since <date>] [--budget <usd>]` | Cost/latency report from traces; `--budget` makes it a gate. |
 | `aid guard --red-team <corpus>` | Run the safety/guardrail suite. |
 | `aid migrate` | Generate/apply schema + vector-index migrations. |
 | `aid eject <path>` | Take ownership of a generated artifact. |

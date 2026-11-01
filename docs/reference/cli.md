@@ -162,12 +162,13 @@ aid eval [spec] [--target <name>] [--suite <id>] [--baseline]
 report cost and latency from the local trace sink
 
 ```sh
-aid cost [dir] [--since <date>]
+aid cost [dir] [--since <date>] [--budget <usd>]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--since <date>` | only count spans that started at or after this date (YYYY-MM-DD or an ISO 8601 instant) |
+| `--budget <usd>` | fail when the measured cost exceeds this ceiling |
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |
 

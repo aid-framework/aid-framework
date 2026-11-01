@@ -131,19 +131,22 @@ function evalsScaffold(ir: IR): readonly GeneratedFile[] {
   if (suites.length === 0) return [];
   const profile = ciProfile();
   return [
-    scaffoldEvals({
-      target: profile.target,
-      specPath: profile.specPath,
-      toolchain: profile.toolchain,
-      install: profile.install,
-      suites: suites.map((evaluation) => ({
-        id: evaluation.id,
-        command: `python -m ${evalModulePath(evaluation.id)
-          .replace(/\.py$/, '')
-          .replace(/\//g, '.')}`,
-      })),
-      secrets: declaredSecrets(ir),
-    }),
+    scaffoldEvals(
+      {
+        target: profile.target,
+        specPath: profile.specPath,
+        toolchain: profile.toolchain,
+        install: profile.install,
+        suites: suites.map((evaluation) => ({
+          id: evaluation.id,
+          command: `python -m ${evalModulePath(evaluation.id)
+            .replace(/\.py$/, '')
+            .replace(/\//g, '.')}`,
+        })),
+        secrets: declaredSecrets(ir),
+      },
+      cliRangeFor(GENERATOR_VERSION),
+    ),
   ];
 }
 

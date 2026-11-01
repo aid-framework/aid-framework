@@ -66,7 +66,10 @@ app/
   workflow runs the determinism gate (`aid gen --check`), lint, build and tests on every pull
   request, and plans infrastructure when the project has an `infra/` directory. The eval
   workflow runs on demand and nightly, because it measures a real model and a pull request
-  from a fork cannot hold the credential it needs.
+  from a fork cannot hold the credential it needs. That same workflow records the spans each eval
+  run produces (`.aid-traces`) and reads them back with `aid cost`, so a run reports what it spent;
+  setting the repository variable `AID_COST_BUDGET` turns that report into a ceiling the run fails
+  against.
 
 Every file carries the tier in its first line, so a reader can tell without consulting the
 manifest:

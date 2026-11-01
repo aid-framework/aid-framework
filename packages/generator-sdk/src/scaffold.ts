@@ -223,9 +223,19 @@ export function scaffoldCi(profile: CiProfile, cliRange: string): GeneratedFile 
  * runs on `workflow_dispatch` and nightly instead, and a missing key is an **error**
  * rather than a silent skip: a gate that is green because it never ran is the failure
  * mode this whole tier exists to avoid.
+ *
+ * The eval steps name `AID_TRACE_DIR`, which is how the same run also measures spend:
+ * the runtime writes one JSONL span per model call when that variable is set, and the
+ * last step hands the directory to `aid cost`. The ceiling is the repository variable
+ * `AID_COST_BUDGET` rather than a number the generator invents -- a budget is a project
+ * decision, and an emitted default would silently fail a project that legitimately
+ * spends more. Unset means the step reports and does not fail.
  */
-export function scaffoldEvals(profile: EvalProfile): GeneratedFile {
+export function scaffoldEvals(profile: EvalProfile, cliRange: string): GeneratedFile {
   const guarded = profile.secrets.length > 0;
+
+  /** Every eval step writes spans here; the cost step then reads the same directory. */
+  const traceDir = '.aid-traces';
 
   const credentialSteps = guarded
     ? [
@@ -252,12 +262,9 @@ export function scaffoldEvals(profile: EvalProfile): GeneratedFile {
   const suiteSteps = profile.suites.flatMap((suite) => [
     `      - name: ${suite.id}`,
     ...(guarded ? ["        if: steps.creds.outputs.ready == 'true'"] : []),
-    ...(guarded
-      ? [
-          '        env:',
-          ...profile.secrets.map((name) => `          ${name}: \${{ secrets.${name} }}`),
-        ]
-      : []),
+    '        env:',
+    `          AID_TRACE_DIR: ${traceDir}`,
+    ...(guarded ? profile.secrets.map((name) => `          ${name}: \${{ secrets.${name} }}`) : []),
     `        run: ${suite.command}`,
   ]);
 
@@ -298,12 +305,28 @@ export function scaffoldEvals(profile: EvalProfile): GeneratedFile {
     '    timeout-minutes: 30',
     '    steps:',
     `      - uses: ${ACTION_PINS.checkout}`,
+    `      - uses: ${ACTION_PINS.setupNode}`,
+    '        with:',
+    "          node-version: '22'",
+    '      - name: Install the AID CLI',
+    `        run: npm install --global @aid-framework/cli@${cliRange}`,
     ...lines(profile.toolchain, '      '),
     '      - name: Install dependencies',
     '        run: |',
     ...lines(profile.install, '          '),
     ...credentialSteps,
     ...suiteSteps,
+    '      - name: Cost ceiling',
+    ...(guarded ? ["        if: steps.creds.outputs.ready == 'true'"] : []),
+    '        env:',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
+    '          BUDGET: ${{ vars.AID_COST_BUDGET }}',
+    '        run: |',
+    '          if [ -n "$BUDGET" ]; then',
+    `            aid cost ${traceDir} --budget "$BUDGET"`,
+    '          else',
+    `            aid cost ${traceDir}`,
+    '          fi',
     ...skippedSteps,
     '',
   ].join('\n');
