@@ -17,6 +17,7 @@ somewhere else.
 | `aid gen` | Compiles and reconciles the tree. `dev` runs the same generator before serving. |
 | `aid dev` | Regenerates, then runs the application's own server on loopback, for the targets that have one. |
 | `aid guard` | Measures the app's declared guardrail table against a red-team corpus and gates on recall and false positives. |
+| `aid migrate` | Emits the SQL the declared vector stores need, for an operator to apply once. |
 | `aid ingest` | Runs the generated ingest module for one retriever or all of them. |
 | `aid eval` | Runs one generated eval module, or records its baseline. |
 | `aid cost` | Reports cost, token and latency totals from the runtime's local trace sink. Reads; never reprices. |
@@ -24,8 +25,8 @@ somewhere else.
 | `aid eject` | Takes ownership of a generated file: moves it to `business/` and excludes it from generation. |
 | `aid infra` | Emits deployment infrastructure for the spec's declared environments. |
 
-Two more are specified and not implemented - `trace` and `migrate` - so
-a stack trace naming one of them is not a bug in the CLI you are holding.
+One more is specified and not implemented - `trace` - so a stack trace naming it is not a
+bug in the CLI you are holding.
 
 ## The exit taxonomy
 
@@ -207,6 +208,58 @@ The taxonomy holds: a missing, malformed, or too-small corpus, and a target with
 are **2**; no guardrails declared, a tree with no `app/generated/guardrails.py`, a failed
 run, and a recall or false-positive rate that misses the corpus's threshold are **1**. The
 command never regenerates: it measures the tree it is given, so run `aid gen` first.
+
+## `migrate` moves schema creation to the operator
+
+Both runtimes create their own schema on first connect, with `CREATE ... IF NOT EXISTS`. That
+makes a fresh deployment work with no setup, and it is also why a production role needs
+`CREATE TABLE`: the first request may arrive before the table does. `aid migrate` is how you
+stop needing that. It emits the same DDL as a reviewable file, an operator applies it once
+with a role that can create tables, and the application's `IF NOT EXISTS` becomes a no-op
+under a role that can only `INSERT` and `SELECT`.
+
+```bash
+aid migrate                                  # writes migrations/aid-schema.sql
+aid migrate --out db/migrations
+aid migrate --check                          # fails when the committed file is stale
+aid migrate --dry-run                        # prints, writes nothing
+```
+
+Four decisions the command makes, and why:
+
+- **Bootstrap only.** Every statement is idempotent, so re-applying is harmless. The file
+  creates and never alters: once `aid_chunks` exists, `IF NOT EXISTS` skips the table, so an
+  edited vector dimension would report success while the column kept its old type. A changed
+  dimension is a *new* migration, and the header says so where the person editing the file
+  will read it.
+- **No `--target`.** The SQL is identical for both runtimes - same table, same columns, same
+  operators - so a per-target flag would imply a difference that does not exist.
+- **One file, whatever the store count.** The runtimes share a single `aid_chunks` table and
+  do not key rows by store id, so a second `pgvector` store is not a second table. One file
+  per store would print the same DDL twice and invite the reader to believe the stores are
+  isolated.
+- **The file is identified by its own header.** `migrations/` is a directory people keep
+  their own migrations in, so the command only rewrites or deletes a file carrying the
+  header it writes. A hand-written `aid-schema.sql` is refused with
+  `cli/refusing-to-overwrite` and left byte-identical.
+
+Two details are worth knowing before you read the output. The embedding column is pinned
+when the spec pins a dimension, taken from the store or, failing that, from the embedder that
+writes to it; when neither says, the column stays bare, as both runtimes declare it. And the
+index - HNSW with `vector_cosine_ops`, `vector_ip_ops` or `vector_l2_ops` per the retriever's
+metric - is emitted by this command rather than by the runtimes, which create no index at all;
+without it a `pgvector` retrieval is a sequential scan.
+
+The table DDL is a **third copy** of a statement that already lives in
+`runtimes/python/.../pgvector.py` and `runtimes/typescript/.../pgvector.ts`, because neither
+publishes it as an importable value. `migrate.test.ts` reads both sources and fails when
+either stops agreeing with the CLI's copy, so the duplication is guarded rather than hoped
+for.
+
+The taxonomy holds: `--out` that escapes the repository, and a target with no driver, are
+**2**; `--check` against a stale file, and an existing file this command does not own, are
+**1**; a spec with no `pgvector` store is **0** and removes a file this command previously
+wrote, because the declared state is now "no schema".
 
 ## The pattern to copy
 

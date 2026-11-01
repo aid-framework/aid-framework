@@ -86,6 +86,13 @@ export const CLI_DIAGNOSTIC_CODES = {
   guardRecall: 'cli/guard-recall',
   guardFalsePositives: 'cli/guard-false-positives',
   guardFixtureError: 'cli/guard-fixture-error',
+  // `aid migrate` emits one shared table for every `pgvector` store, so two stores pinning
+  // different dimensions cannot both be honoured; the warning names the conflict rather
+  // than letting the file quietly pick one.
+  migrateDimensionAmbiguous: 'cli/migrate-dimension-ambiguous',
+  // `--out` is the only path the CLI lets a caller choose, so naming one outside the
+  // project is an invocation error (exit 2) rather than something the tree can express.
+  migrateOutEscapes: 'cli/migrate-out-escapes',
 } as const;
 
 export type CliDiagnosticCode = (typeof CLI_DIAGNOSTIC_CODES)[keyof typeof CLI_DIAGNOSTIC_CODES];

@@ -24,6 +24,7 @@ import { guard } from './commands/guard.js';
 import { infra } from './commands/infra.js';
 import { ingest } from './commands/ingest.js';
 import { init } from './commands/init.js';
+import { migrate } from './commands/migrate.js';
 import { validate } from './commands/validate.js';
 import type { CliContext } from './context.js';
 import type { ExitCode } from './exit.js';
@@ -131,6 +132,24 @@ export const COMMANDS: readonly Command[] = [
         spec: args.positionals[0],
         target: args.values.get('target'),
         redTeam: args.values.get('red-team'),
+      }),
+  },
+  {
+    name: 'migrate',
+    summary: 'emit the SQL the declared vector stores need, for an operator to apply',
+    usage: 'migrate [spec] [--out <dir>] [--check] [--dry-run]',
+    flags: [
+      valueFlag('out', 'dir', 'directory for the migration file; defaults to `migrations`'),
+      booleanFlag('check', 'fail when the committed file does not match the spec; writes nothing'),
+      booleanFlag('dry-run', 'report what would change, and write nothing'),
+      JSON_FLAG,
+    ],
+    run: (context, args) =>
+      migrate(context, {
+        spec: args.positionals[0],
+        out: args.values.get('out'),
+        check: args.booleans.has('check'),
+        dryRun: args.booleans.has('dry-run'),
       }),
   },
   {

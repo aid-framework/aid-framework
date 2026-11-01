@@ -31,6 +31,8 @@ export type { IngestOptions } from './commands/ingest.js';
 export { ingest } from './commands/ingest.js';
 export type { InitOptions } from './commands/init.js';
 export { init, projectNameFor, starterSpec } from './commands/init.js';
+export type { MigrateOptions } from './commands/migrate.js';
+export { migrate } from './commands/migrate.js';
 export type { ValidateOptions } from './commands/validate.js';
 export { validate } from './commands/validate.js';
 export type { CliContext, Spawn, SpawnOptions, SpawnResult } from './context.js';
