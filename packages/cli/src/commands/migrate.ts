@@ -227,6 +227,13 @@ function plan(ir: IR, specPath: string): Plan {
 
 type Action = 'created' | 'updated' | 'unchanged' | 'removed' | 'none';
 
+/** Strip trailing path separators, falling back to the default when nothing is left. */
+function stripTrailingSeparators(directory: string): string {
+  let end = directory.length;
+  while (end > 0 && (directory[end - 1] === '/' || directory[end - 1] === '\\')) end -= 1;
+  return end === 0 ? DEFAULT_OUT_DIR : directory.slice(0, end);
+}
+
 /** Whether `relative`, resolved against `cwd`, lands outside the project. */
 function escapes(cwd: string, relative: string): boolean {
   const root = resolve(cwd);
@@ -260,7 +267,7 @@ function describe(plan: Plan): string[] {
 export function migrate(context: CliContext, options: MigrateOptions): CommandOutcome {
   const command = 'migrate';
   const specPath = options.spec ?? DEFAULT_SPEC_PATH;
-  const outDir = (options.out ?? DEFAULT_OUT_DIR).replace(/[\\/]+$/, '') || DEFAULT_OUT_DIR;
+  const outDir = stripTrailingSeparators(options.out ?? DEFAULT_OUT_DIR);
   const path = `${outDir}/${FILE_NAME}`;
   const fields = { spec: specPath, path, check: options.check, dryRun: options.dryRun };
 

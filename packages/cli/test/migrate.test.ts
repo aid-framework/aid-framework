@@ -337,7 +337,7 @@ describe('aid migrate', () => {
   it('accepts --out, and refuses one that leaves the project', () => {
     const made = project(spec({ stores: pgvectorStore() }));
     try {
-      const run = aid(made, ['migrate', '--out', 'db', '--json']);
+      const run = aid(made, ['migrate', '--out', 'db/', '--json']);
       expect(run.code).toBe(0);
       expect(json(run).path).toBe('db/aid-schema.sql');
       expect(made.exists('db/aid-schema.sql')).toBe(true);
