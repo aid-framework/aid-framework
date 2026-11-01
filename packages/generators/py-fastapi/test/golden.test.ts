@@ -65,10 +65,13 @@ describe('the committed example', () => {
     // step renders a prompt of its own for the instruction it carries. The scaffold tier
     // is 3 since W5: the CI workflow, the eval workflow two `gate.ci` evals earn, and the
     // manual infra plan, which is emitted for every project and detects its own inputs.
-    expect(generated().length).toBe(35);
+    // 36 since the container image: a deployment with `target: container` adds
+    // `generated/Dockerfile`, the only artifact that depends on where the app runs rather
+    // than on what it does.
+    expect(generated().length).toBe(36);
     expect(planFilesByOwner('business').length).toBe(5);
     expect(planFilesByOwner('scaffold').length).toBe(3);
-    expect(shipped.size).toBe(43);
+    expect(shipped.size).toBe(44);
   });
 
   it('records every generated file in aid.manifest.json at the hash of its bytes', () => {

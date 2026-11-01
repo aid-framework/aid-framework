@@ -978,7 +978,8 @@ app/
 │   ├── agents/             # agent loop wiring, tool schemas
 │   ├── pipelines/          # step graph + entrypoints
 │   ├── guardrails/         # staged middleware
-│   └── evals/              # eval harness + datasets wiring
+│   ├── evals/              # eval harness + datasets wiring
+│   └── Dockerfile          # container image, when a deployment declares target: container
 ├── business/               # developer-owned — generated once, never touched
 │   ├── prompts/            # prompt overrides / variants
 │   ├── tools/              # domain tool implementations (the seam)
