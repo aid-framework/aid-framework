@@ -51,10 +51,10 @@ hint: Run `aid eject app/generated/routes/answer_ticket.py` to own the file, or 
 --force to discard the edits. The new content is written to app/generated/rejected/....
 ```
 
-`aid eject` is specified and **not implemented** - the CLI has six commands and it is not one of
-them. Use `--force` to discard your edit, or move the change into the spec (or into a business-owned
-file) so regeneration cannot touch it. The rejected content is written to disk either way, so the
-edit is not lost.
+`aid eject app/generated/routes/answer_ticket.py` moves the file to `app/business/` and records the
+generated path as permanently excluded, so the edit survives every later `aid gen`. Use `--force`
+instead to discard your edit. The rejected content is written to disk either way, so nothing is lost
+before you choose.
 
 ## An agent needs a priced model
 

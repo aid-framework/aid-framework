@@ -55,10 +55,17 @@ export interface AidManifest {
   manifestVersion: number;
   generatedBy: AidManifestProvenance;
   files: readonly AidManifestFile[];
+  /**
+   * Generated paths a developer took ownership of with `aid eject`. The exclusion is
+   * permanent: the planner drops these paths from every plan, and a regeneration that
+   * would otherwise forget them carries them forward. Absent in older manifests, which
+   * read as an empty list.
+   */
+  ejected: readonly string[];
 }
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
-const TOP_LEVEL_KEYS = new Set(['manifestVersion', 'generatedBy', 'files']);
+const TOP_LEVEL_KEYS = new Set(['manifestVersion', 'generatedBy', 'files', 'ejected']);
 const FILE_KEYS = new Set(['path', 'owner', 'sha256', 'generator', 'generatorVersion']);
 const PROVENANCE_KEYS = new Set(['generator', 'generatorVersion', 'irVersion']);
 
@@ -76,7 +83,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function emptyAidManifest(provenance: AidManifestProvenance): AidManifest {
-  return { manifestVersion: AID_MANIFEST_VERSION, generatedBy: provenance, files: [] };
+  return {
+    manifestVersion: AID_MANIFEST_VERSION,
+    generatedBy: provenance,
+    files: [],
+    ejected: [],
+  };
 }
 
 /**
@@ -97,6 +109,7 @@ export function manifestFor(
       generator: provenance.generator,
       generatorVersion: provenance.generatorVersion,
     })),
+    ejected: [],
   };
 }
 
@@ -156,6 +169,26 @@ export function parseAidManifest(
 
   const generatedBy = parseProvenance(value.generatedBy, diagnostics);
   const files = parseFiles(value.files, diagnostics, options);
+  const ejected = parseEjected(value.ejected, diagnostics, options);
+
+  if (files !== undefined && ejected !== undefined) {
+    // A path cannot be both generator-owned and permanently excluded. Reading such a
+    // manifest would have to pick a winner, and the two readers that pick differently is
+    // exactly the class of bug this file exists to prevent.
+    const generated = new Set(
+      files.filter((file) => file.owner === 'generated').map((file) => file.path),
+    );
+    for (const path of ejected) {
+      if (generated.has(path)) {
+        diagnostics.push(
+          invalid(
+            `"${path}" is recorded as a generated file and also listed in "ejected"; a path cannot be both.`,
+            'ejected',
+          ),
+        );
+      }
+    }
+  }
 
   if (diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
     return { diagnostics: sortDiagnostics(diagnostics) };
@@ -166,6 +199,7 @@ export function parseAidManifest(
       manifestVersion: AID_MANIFEST_VERSION,
       generatedBy: generatedBy as AidManifestProvenance,
       files: files as readonly AidManifestFile[],
+      ejected: ejected as readonly string[],
     },
     diagnostics: sortDiagnostics(diagnostics),
   };
@@ -335,6 +369,60 @@ function parseFiles(
   return sortByPath(records);
 }
 
+/**
+ * The ejection ledger: generated paths a developer took ownership of. Only a path under
+ * the generated root can be ejected — the entry exists to *stop* generation, and a
+ * business path is already unmanaged.
+ */
+function parseEjected(
+  value: unknown,
+  diagnostics: GeneratorDiagnostic[],
+  options: AidManifestPathOptions,
+): readonly string[] | undefined {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    diagnostics.push(invalid('aid.manifest.json "ejected" must be an array of paths.', 'ejected'));
+    return undefined;
+  }
+
+  const paths: string[] = [];
+  const seen = new Set<string>();
+
+  for (const [index, entry] of value.entries()) {
+    const at = `ejected[${index}]`;
+    if (typeof entry !== 'string') {
+      diagnostics.push(invalid(`${at} must be a repo-relative path string.`, at));
+      continue;
+    }
+
+    const path = normalizeRelativePath(entry);
+    if (path === undefined) {
+      diagnostics.push(invalid(`${at} "${entry}" is not a usable relative path.`, at));
+      continue;
+    }
+
+    if (ownerForPath(path, options) !== 'generated') {
+      diagnostics.push(
+        invalid(
+          `${at} "${path}" is not under the generated root; only a generated path can be ejected.`,
+          at,
+        ),
+      );
+      continue;
+    }
+
+    if (seen.has(path)) {
+      diagnostics.push(invalid(`${at} "${path}" is listed twice.`, at));
+      continue;
+    }
+
+    seen.add(path);
+    paths.push(path);
+  }
+
+  return paths;
+}
+
 /** Canonical serialization: sorted keys, sorted records, LF, exactly one trailing newline. */
 export function serializeAidManifest(manifest: AidManifest): string {
   return `${canonicalJson({
@@ -351,5 +439,8 @@ export function serializeAidManifest(manifest: AidManifest): string {
       generator: file.generator,
       generatorVersion: file.generatorVersion,
     })),
+    // Omitted when empty so a manifest written before ejections existed keeps its exact
+    // bytes on the next regeneration.
+    ...(manifest.ejected.length === 0 ? {} : { ejected: [...manifest.ejected].sort() }),
   })}\n`;
 }

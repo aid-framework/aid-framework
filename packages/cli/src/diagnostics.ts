@@ -55,6 +55,10 @@ export const CLI_DIAGNOSTIC_CODES = {
   infraCdkFailed: 'cli/infra-cdk-failed',
   infraDriftDetected: 'cli/infra-drift-detected',
   infraConfirmProdRequired: 'cli/infra-confirm-prod-required',
+  // `aid eject` answers a path it cannot place. Every other refusal comes from the SDK
+  // with a `generator/` code, so a reader can tell "you named the wrong tree" from
+  // "this file cannot be ejected".
+  ejectUnmanagedPath: 'cli/eject-unmanaged-path',
 } as const;
 
 export type CliDiagnosticCode = (typeof CLI_DIAGNOSTIC_CODES)[keyof typeof CLI_DIAGNOSTIC_CODES];

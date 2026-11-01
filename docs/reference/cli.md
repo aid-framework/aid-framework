@@ -22,6 +22,7 @@ Every command accepts `-h` / `--help` for its own usage, and `--json` for one JS
 | [`ingest`](#ingest) | index a retriever corpus into the store the spec declares |
 | [`eval`](#eval) | run the eval gate, or record the baseline it measures against |
 | [`doctor`](#doctor) | diagnose the tree against the spec: drift, versions, missing files |
+| [`eject`](#eject) | take ownership of a generated file: move it to business/ and stop generating it |
 
 ## `init`
 
@@ -113,6 +114,21 @@ aid doctor [spec] [--target <name>]
 | Option | Description |
 | --- | --- |
 | `--target <name>` | generator target; one of py-fastapi, ts-vercel |
+| `--json` | print one JSON document on stdout |
+| `-h`, `--help` | print this command's usage |
+
+## `eject`
+
+take ownership of a generated file: move it to business/ and stop generating it
+
+```sh
+aid eject <path> [--target <name>] [--dry-run]
+```
+
+| Option | Description |
+| --- | --- |
+| `--target <name>` | generator target; one of py-fastapi, ts-vercel |
+| `--dry-run` | report the move, and write nothing |
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |
 

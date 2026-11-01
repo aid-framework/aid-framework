@@ -1,11 +1,11 @@
 ---
-description: "The CLI's six commands, its exit taxonomy, and its refusal to own rules that already live in the IR or the generators."
+description: "The CLI's eight commands, its exit taxonomy, and its refusal to own rules that already live in the IR or the generators."
 ---
 
 # Runtime to CLI
 
 The CLI is the smallest layer and the one with the strictest contract, because CI reads it. It is
-six commands, one exit taxonomy, and a deliberate refusal to own any rule that already lives
+eight commands, one exit taxonomy, and a deliberate refusal to own any rule that already lives
 somewhere else.
 
 ## The commands
@@ -18,8 +18,10 @@ somewhere else.
 | `aid ingest` | Runs the generated ingest module for one retriever or all of them. |
 | `aid eval` | Runs one generated eval module, or records its baseline. |
 | `aid doctor` | Diagnoses the tree against the spec: hand-edited generated files, provenance and version mismatches, and missing or outdated generated files. Reports; writes nothing. |
+| `aid eject` | Takes ownership of a generated file: moves it to `business/` and excludes it from generation. |
+| `aid infra` | Emits deployment infrastructure for the spec's declared environments. |
 
-Six more are specified and not implemented - `dev`, `trace`, `cost`, `guard`, `migrate`, `eject` - so
+Five more are specified and not implemented - `dev`, `trace`, `cost`, `guard`, `migrate` - so
 a stack trace naming one of them is not a bug in the CLI you are holding.
 
 ## The exit taxonomy

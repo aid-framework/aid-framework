@@ -81,6 +81,12 @@ export interface RegenerationReport {
   stale: string[];
   /** Subset of {@link stale} that this run deleted, when `prune` was set. */
   pruned: string[];
+  /**
+   * Planned paths skipped because the developer ejected them. Reported rather than
+   * silently dropped: a generator that stops emitting a file it still plans for no visible
+   * reason is indistinguishable from a bug.
+   */
+  ejected: string[];
   diagnostics: GeneratorDiagnostic[];
 }
 
@@ -103,9 +109,18 @@ export function planRegeneration(plan: Plan, options: RegenerationOptions): Rege
   const unchanged: string[] = [];
   const kept: string[] = [];
   const drifted: DriftedFile[] = [];
+  const ejections: string[] = [];
+  const ejectedPaths = new Set(manifest?.ejected ?? []);
   const actions: RegenerationAction[] = [];
 
   for (const file of sortByPath(plan.files)) {
+    // Ejection is permanent by contract (§10): the developer's copy lives in the business
+    // tier now, so writing this path again would resurrect the file they took over.
+    if (ejectedPaths.has(file.path)) {
+      ejections.push(file.path);
+      continue;
+    }
+
     const actual = options.sink.read(file.path);
 
     if (file.owner === 'business') {
@@ -188,6 +203,7 @@ export function planRegeneration(plan: Plan, options: RegenerationOptions): Rege
     drifted,
     stale,
     pruned: [],
+    ejected: ejections,
     diagnostics: sortDiagnostics(diagnostics),
   };
 }
@@ -200,8 +216,13 @@ export function planRegeneration(plan: Plan, options: RegenerationOptions): Rege
 export function staleGeneratedFiles(plan: Plan, manifest: AidManifest | undefined): string[] {
   if (manifest === undefined) return [];
   const planned = new Set(plan.files.map((file) => file.path));
+  // An ejected path is expected to disappear from the tree; it is neither stale nor
+  // missing, so it must not be flagged as either.
+  const ejected = new Set(manifest.ejected);
   return sortByPath(
-    manifest.files.filter((file) => file.owner === 'generated' && !planned.has(file.path)),
+    manifest.files.filter(
+      (file) => file.owner === 'generated' && !planned.has(file.path) && !ejected.has(file.path),
+    ),
   ).map((file) => file.path);
 }
 
@@ -295,9 +316,13 @@ interface NextManifestInput {
  */
 function nextManifest(input: NextManifestInput): AidManifest {
   const records: AidManifestFile[] = [];
+  const ejectedPaths = new Set(input.previous?.ejected ?? []);
 
   for (const file of sortByPath(input.plan.files)) {
     if (input.prunedPaths.has(file.path)) continue;
+    // The ledger outlives the plan. A generator that keeps planning an ejected path must
+    // not re-add the record that makes the next run regenerate it.
+    if (ejectedPaths.has(file.path)) continue;
 
     const previous = manifestRecordFor(input.previous, file.path);
 
@@ -335,6 +360,9 @@ function nextManifest(input: NextManifestInput): AidManifest {
     manifestVersion: AID_MANIFEST_VERSION,
     generatedBy: input.provenance,
     files: sortByPath(records),
+    // Carried verbatim: `nextManifest` only ever sees the plan, so anything the plan
+    // cannot express has to be copied forward explicitly or it is lost on the next run.
+    ejected: [...ejectedPaths].sort(),
   };
 }
 
@@ -357,6 +385,7 @@ export function formatRegenerationSummary(report: RegenerationReport): string {
   ];
   if (report.drifted.length > 0) parts.push(`${report.drifted.length} conflicts`);
   if (report.stale.length > 0) parts.push(`${report.stale.length} stale`);
+  if (report.ejected.length > 0) parts.push(`${report.ejected.length} ejected`);
   return parts.join(', ');
 }
 

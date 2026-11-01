@@ -15,6 +15,7 @@
 import type { ParsedArguments } from './args.js';
 import { booleanFlag, JSON_FLAG, parseArguments, valueFlag } from './args.js';
 import { doctor } from './commands/doctor.js';
+import { eject } from './commands/eject.js';
 import { evaluate } from './commands/eval.js';
 import { generate } from './commands/gen.js';
 import { infra } from './commands/infra.js';
@@ -135,6 +136,18 @@ export const COMMANDS: readonly Command[] = [
       doctor(context, {
         spec: args.positionals[0],
         target: args.values.get('target'),
+      }),
+  },
+  {
+    name: 'eject',
+    summary: 'take ownership of a generated file: move it to business/ and stop generating it',
+    usage: 'eject <path> [--target <name>] [--dry-run]',
+    flags: [TARGET_FLAG, booleanFlag('dry-run', 'report the move, and write nothing'), JSON_FLAG],
+    run: (context, args) =>
+      eject(context, {
+        path: args.positionals[0],
+        target: args.values.get('target'),
+        dryRun: args.booleans.has('dry-run'),
       }),
   },
   {

@@ -156,6 +156,7 @@ function summarize(success: GenerateSuccess): CommandOutcome {
     }
   }
   text.push(...lines('no longer generated:', report.stale));
+  text.push(...lines('ejected, skipped:', report.ejected));
 
   return outcome({
     command: 'gen',
@@ -179,6 +180,7 @@ function summarize(success: GenerateSuccess): CommandOutcome {
         conflicts: report.drifted.map((file) => file.path),
         stale: report.stale,
         pruned: report.pruned,
+        ejected: report.ejected,
       },
     },
   });

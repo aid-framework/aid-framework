@@ -35,6 +35,10 @@ export const GENERATOR_DIAGNOSTIC_CODES = {
   manifestVersionUnsupported: 'generator/manifest-version-unsupported',
   determinismViolation: 'generator/determinism-violation',
   generatedDrift: 'generator/generated-drift',
+  ejectInvalidPath: 'generator/eject-invalid-path',
+  ejectNotGenerated: 'generator/eject-not-generated',
+  ejectMissingFile: 'generator/eject-missing-file',
+  ejectDestinationExists: 'generator/eject-destination-exists',
 } as const;
 
 export type GeneratorDiagnosticCode =
