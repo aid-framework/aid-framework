@@ -24,7 +24,7 @@ somewhere else.
 | `aid trace` | Prints a run's span tree from the same sink, with model, tokens, cost and time per span. Reads; replays nothing. |
 | `aid doctor` | Diagnoses the tree against the spec: hand-edited generated files, provenance and version mismatches, and missing or outdated generated files. Reports; writes nothing. |
 | `aid eject` | Takes ownership of a generated file: moves it to `business/` and excludes it from generation. |
-| `aid infra` | Emits deployment infrastructure for the spec's declared environments. |
+| `aid infra` | Emits, plans and applies deployment infrastructure for the spec's declared environments, through `tofu` or `cdk`. `plan`/`apply` spawn the binary in the environment root, so `tofu -chdir=infra/envs/<env> init` comes first. |
 
 ## The exit taxonomy
 

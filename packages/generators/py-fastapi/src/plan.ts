@@ -14,7 +14,13 @@
  */
 
 import type { GeneratedFile, Plan } from '@aid-framework/generator-sdk';
-import { ACTION_PINS, cliRangeFor, scaffoldCi, scaffoldEvals } from '@aid-framework/generator-sdk';
+import {
+  ACTION_PINS,
+  cliRangeFor,
+  scaffoldCi,
+  scaffoldEvals,
+  scaffoldInfraPlan,
+} from '@aid-framework/generator-sdk';
 import type { IR } from '@aid-framework/ir';
 
 import { emitAgents, hasAgents } from './emit/agents.js';
@@ -89,6 +95,7 @@ export function filesFor(ir: IR): GeneratedFile[] {
     emitBusinessPromptsInit(),
     scaffoldCi(ciProfile(), cliRangeFor(GENERATOR_VERSION)),
     ...evalsScaffold(ir),
+    scaffoldInfraPlan({ target: PY_FASTAPI_MANIFEST.target }, cliRangeFor(GENERATOR_VERSION)),
   ].sort(byPath);
 }
 

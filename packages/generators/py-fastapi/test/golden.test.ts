@@ -63,11 +63,12 @@ describe('the committed example', () => {
     // 34 since L5b: a composite adds `generated/control.py`, and the example's parallel
     // pulls in the two prompt modules its arms render. 35 since L5c: the example's agent
     // step renders a prompt of its own for the instruction it carries. The scaffold tier
-    // is 2 since W5: the CI workflow, and the eval workflow two `gate.ci` evals earn.
+    // is 3 since W5: the CI workflow, the eval workflow two `gate.ci` evals earn, and the
+    // manual infra plan, which is emitted for every project and detects its own inputs.
     expect(generated().length).toBe(35);
     expect(planFilesByOwner('business').length).toBe(5);
-    expect(planFilesByOwner('scaffold').length).toBe(2);
-    expect(shipped.size).toBe(42);
+    expect(planFilesByOwner('scaffold').length).toBe(3);
+    expect(shipped.size).toBe(43);
   });
 
   it('records every generated file in aid.manifest.json at the hash of its bytes', () => {

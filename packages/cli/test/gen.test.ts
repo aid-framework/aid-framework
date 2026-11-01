@@ -16,7 +16,11 @@
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
-import { CI_WORKFLOW_PATH, EVALS_WORKFLOW_PATH } from '@aid-framework/generator-sdk';
+import {
+  CI_WORKFLOW_PATH,
+  EVALS_WORKFLOW_PATH,
+  INFRA_PLAN_WORKFLOW_PATH,
+} from '@aid-framework/generator-sdk';
 import { afterAll, describe, expect, it } from 'vitest';
 import { aid, cloneExample, EXAMPLE_ROOT, isBuildArtifact, project, SPEC_PATH } from './helpers.js';
 
@@ -167,8 +171,13 @@ describe('aid gen', () => {
     expect(changes.created).toEqual([]);
     expect(changes.updated).toEqual([]);
     // The scaffold files are the caller's now: reported as kept, never as drift. The eval
-    // workflow is present because the example declares `gate.ci` evals.
-    expect(changes.scaffold).toEqual([CI_WORKFLOW_PATH, EVALS_WORKFLOW_PATH]);
+    // workflow is present because the example declares `gate.ci` evals; the infra plan is
+    // always present because it detects its own inputs.
+    expect(changes.scaffold).toEqual([
+      CI_WORKFLOW_PATH,
+      EVALS_WORKFLOW_PATH,
+      INFRA_PLAN_WORKFLOW_PATH,
+    ]);
     expect(made.walk()).toEqual(before);
   });
 

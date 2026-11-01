@@ -50,10 +50,14 @@ app/
 .github/
   workflows/
     ci.yml                              scaffold
+    evals.yml                           scaffold, when a `gate.ci` eval is declared
+    infra-plan.yml                      scaffold
 ```
 
-`.github/workflows/evals.yml` is scaffolded as well when the spec declares an eval with
-`gate.ci: true`; `examples/support-copilot` has two, the tutorial has none.
+`evals.yml` is scaffolded when the spec declares an eval with `gate.ci: true`;
+`examples/support-copilot` has two, the tutorial has none. `infra-plan.yml` is scaffolded
+for every project, because it detects its own inputs instead of assuming an `infra/`
+directory exists.
 
 ## The three owned tiers
 
@@ -64,12 +68,15 @@ app/
 - **`.github/workflows/**`** is scaffolded once and then yours. It is the only thing outside
   `app/`, and it exists because a generated project is not deployable without a pipeline: the
   workflow runs the determinism gate (`aid gen --check`), lint, build and tests on every pull
-  request, and plans infrastructure when the project has an `infra/` directory. The eval
-  workflow runs on demand and nightly, because it measures a real model and a pull request
+  request, and checks the committed `infra/` tree against the spec when the project has one.
+  The eval workflow runs on demand and nightly, because it measures a real model and a pull request
   from a fork cannot hold the credential it needs. That same workflow records the spans each eval
   run produces (`.aid-traces`) and reads them back with `aid cost`, so a run reports what it spent;
   setting the repository variable `AID_COST_BUDGET` turns that report into a ceiling the run fails
-  against.
+  against. The infra plan is manual for the same reason the eval run is: it assumes a cloud role
+  through OIDC (`AID_INFRA_ROLE_ARN`, `AID_INFRA_REGION`), and a plan against a real account is
+  something a human dispatches. It initialises the environment root before calling
+  `aid infra plan`, which drives `tofu` or `cdk` but does not run `init` itself.
 
 Every file carries the tier in its first line, so a reader can tell without consulting the
 manifest:
@@ -156,7 +163,7 @@ Regenerating an unmodified tree is a no-op, and the summary says so:
 
 ```console
 $ aid gen
-py-fastapi: 0 created, 0 updated, 17 unchanged, 3 kept, 1 scaffold kept
+py-fastapi: 0 created, 0 updated, 17 unchanged, 3 kept, 2 scaffold kept
 ```
 
 `kept` is the important word: it is a `business/` file that already existed, and the generator
