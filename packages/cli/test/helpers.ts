@@ -151,14 +151,31 @@ export interface Run {
   json<T = Record<string, unknown>>(): T;
 }
 
+export interface AidOptions {
+  readonly spawn?: Spawn;
+  /**
+   * The environment a command sees. Omitted, the real one is inherited -- which is what
+   * every test wants except the ones covering a variable the command reads, where an
+   * inherited `AID_TRACE_DIR` would make the test depend on the machine it runs on.
+   */
+  readonly env?: Readonly<Record<string, string | undefined>>;
+}
+
 /** Run the CLI against `project`, capturing both streams. */
-export function aid(project: Project, argv: readonly string[], spawn?: Spawn): Run {
+export function aid(
+  project: Project,
+  argv: readonly string[],
+  options: Spawn | AidOptions = {},
+): Run {
+  const { spawn, env } =
+    typeof options === 'function' ? { spawn: options, env: undefined } : options;
   const out: string[] = [];
   const err: string[] = [];
   const context: CliContext = createContext({
     cwd: project.root,
     stdout: (text) => out.push(text),
     stderr: (text) => err.push(text),
+    ...(env === undefined ? {} : { env }),
     ...(spawn === undefined ? {} : { spawn }),
   });
   const code = run(argv, context);

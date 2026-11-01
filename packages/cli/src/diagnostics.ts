@@ -59,6 +59,15 @@ export const CLI_DIAGNOSTIC_CODES = {
   // with a `generator/` code, so a reader can tell "you named the wrong tree" from
   // "this file cannot be ejected".
   ejectUnmanagedPath: 'cli/eject-unmanaged-path',
+  // `aid cost` reads the runtime's local trace sink. The first two mean there is
+  // nothing to read (exit 2); the last three describe a report that is incomplete or
+  // empty, which is a fact about the traces rather than about the invocation.
+  traceDirMissing: 'cli/trace-dir-missing',
+  traceDirNotFound: 'cli/trace-dir-not-found',
+  traceSinceInvalid: 'cli/trace-since-invalid',
+  traceUnreadable: 'cli/trace-unreadable',
+  traceMalformed: 'cli/trace-malformed',
+  traceEmpty: 'cli/trace-empty',
 } as const;
 
 export type CliDiagnosticCode = (typeof CLI_DIAGNOSTIC_CODES)[keyof typeof CLI_DIAGNOSTIC_CODES];

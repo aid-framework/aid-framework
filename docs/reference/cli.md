@@ -21,6 +21,7 @@ Every command accepts `-h` / `--help` for its own usage, and `--json` for one JS
 | [`gen`](#gen) | compile the spec and reconcile the tree with it |
 | [`ingest`](#ingest) | index a retriever corpus into the store the spec declares |
 | [`eval`](#eval) | run the eval gate, or record the baseline it measures against |
+| [`cost`](#cost) | report cost and latency from the local trace sink |
 | [`doctor`](#doctor) | diagnose the tree against the spec: drift, versions, missing files |
 | [`eject`](#eject) | take ownership of a generated file: move it to business/ and stop generating it |
 
@@ -101,6 +102,20 @@ aid eval [spec] [--target <name>] [--suite <id>] [--baseline]
 | `--suite <id>` | run one eval instead of all of them |
 | `--target <name>` | generator target; one of py-fastapi, ts-vercel |
 | `--baseline` | record a fresh baseline instead of gating |
+| `--json` | print one JSON document on stdout |
+| `-h`, `--help` | print this command's usage |
+
+## `cost`
+
+report cost and latency from the local trace sink
+
+```sh
+aid cost [dir] [--since <date>]
+```
+
+| Option | Description |
+| --- | --- |
+| `--since <date>` | only count spans that started at or after this date (YYYY-MM-DD or an ISO 8601 instant) |
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |
 

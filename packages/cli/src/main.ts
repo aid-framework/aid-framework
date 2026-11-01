@@ -14,6 +14,7 @@
 
 import type { ParsedArguments } from './args.js';
 import { booleanFlag, JSON_FLAG, parseArguments, valueFlag } from './args.js';
+import { cost } from './commands/cost.js';
 import { doctor } from './commands/doctor.js';
 import { eject } from './commands/eject.js';
 import { evaluate } from './commands/eval.js';
@@ -127,6 +128,24 @@ export const COMMANDS: readonly Command[] = [
         target: args.values.get('target'),
         suite: args.values.get('suite'),
         baseline: args.booleans.has('baseline'),
+      }),
+  },
+  {
+    name: 'cost',
+    summary: 'report cost and latency from the local trace sink',
+    usage: 'cost [dir] [--since <date>]',
+    flags: [
+      valueFlag(
+        'since',
+        'date',
+        'only count spans that started at or after this date (YYYY-MM-DD or an ISO 8601 instant)',
+      ),
+      JSON_FLAG,
+    ],
+    run: (context, args) =>
+      cost(context, {
+        dir: args.positionals[0],
+        since: args.values.get('since'),
       }),
   },
   {
