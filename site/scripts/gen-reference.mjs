@@ -390,8 +390,19 @@ function cliPage() {
   lines.push('npx @aid-framework/cli --help');
   lines.push('```');
   lines.push('');
+  // Most commands report a finished run, and a single JSON document describes one. The
+  // exceptions are the commands that hold the terminal -- a server or a stream -- so the
+  // sentence names them from the flags rather than claiming `--json` everywhere and being
+  // wrong the moment such a command ships.
+  const withoutJson = commands
+    .filter((command) => !command.flags.some((flag) => flag.label === '--json'))
+    .map((command) => `\`${command.name}\``);
+  const jsonSentence =
+    withoutJson.length === 0
+      ? 'Every command accepts `-h` / `--help` for its own usage, and `--json` for one JSON document on stdout.'
+      : `Every command accepts \`-h\` / \`--help\` for its own usage. All except ${withoutJson.join(', ')} accept \`--json\` for one JSON document on stdout; a running server or stream is not a finished run.`;
   lines.push(
-    'Every command accepts `-h` / `--help` for its own usage, and `--json` for one JSON document on stdout. Human-readable text and progress go to stderr, so `aid validate --json | jq` needs no filtering.',
+    `${jsonSentence} Human-readable text and progress go to stderr, so \`aid validate --json | jq\` needs no filtering.`,
   );
   lines.push('');
   lines.push('## Commands at a glance');

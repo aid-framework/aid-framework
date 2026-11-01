@@ -1,5 +1,5 @@
 /**
- * `@aid-framework/cli` - the `aid` command: init, validate, gen, ingest, eval, cost and doctor.
+ * `@aid-framework/cli` - the `aid` command: init, validate, gen, dev, ingest, eval, cost, doctor, eject and infra.
  *
  * The CLI is glue. Every judgement it reports -- whether a spec parses, what the IR is,
  * what a target can emit, which generated file was hand-edited, whether an eval regressed
@@ -15,6 +15,8 @@ export type { FlagSpec, ParsedArguments, ParseOutcome } from './args.js';
 export { booleanFlag, JSON_FLAG, parseArguments, valueFlag } from './args.js';
 export type { CostOptions } from './commands/cost.js';
 export { cost } from './commands/cost.js';
+export type { DevOptions } from './commands/dev.js';
+export { dev } from './commands/dev.js';
 export type { DoctorOptions } from './commands/doctor.js';
 export { doctor } from './commands/doctor.js';
 export type { EvalOptions } from './commands/eval.js';
@@ -54,8 +56,14 @@ export type {
   ReadSpec,
 } from './pipeline.js';
 export { compile, lowerSpec, provenanceFor, readManifest, readSpec } from './pipeline.js';
-export { discoverInterpreter, INTERPRETERS, interpreterCommand, invoke } from './python.js';
-export type { Target } from './targets.js';
+export {
+  DEV_PROBE,
+  discoverInterpreter,
+  INTERPRETERS,
+  interpreterCommand,
+  invoke,
+} from './python.js';
+export type { Target, TargetDev } from './targets.js';
 export {
   DEFAULT_SPEC_PATH,
   DEFAULT_TARGET,

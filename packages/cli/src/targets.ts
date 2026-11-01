@@ -65,6 +65,19 @@ interface PlanProblemLike {
  */
 export type TargetRunner = 'python' | 'node';
 
+/**
+ * How `aid dev` starts this target, or why it has nothing to start.
+ *
+ * A target that emits handlers for a platform (Next mounts the route, Vercel serves it)
+ * has no server of its own; the CLI says so instead of inventing one, because a dev
+ * server invented here would be a second, drifting way to run the same application.
+ * `entry` is the application's own file, not a generated one -- the generator emits
+ * routers and the application decides what to mount and how to run it.
+ */
+export type TargetDev =
+  | { readonly kind: 'asgi'; readonly module: string; readonly entry: string }
+  | { readonly kind: 'none'; readonly reason: string };
+
 export interface Target {
   /** The target id, as a spec's `project.targets` spells it. */
   readonly name: string;
@@ -79,6 +92,8 @@ export interface Target {
   readonly generator: Generator;
   /** Which toolchain `aid eval` and `aid ingest` would need to run this target. */
   readonly runner: TargetRunner;
+  /** How `aid dev` serves this target, or why it cannot. */
+  readonly dev: TargetDev;
   /** Everything that stops this target compiling the IR, as diagnostics. */
   check(ir: IR): readonly CliDiagnostic[];
   plan(ir: IR): Plan;
@@ -104,6 +119,7 @@ interface TargetModule {
   readonly manifest: GeneratorManifest;
   readonly generator: Generator;
   readonly runner: TargetRunner;
+  readonly dev: TargetDev;
   readonly extension: string;
   readonly evalsIndexPath: string;
   readonly evalModulePath: (evalId: string) => string;
@@ -131,6 +147,7 @@ function targetFor(module: TargetModule): Target {
     manifest,
     generator: module.generator,
     runner: module.runner,
+    dev: module.dev,
     // `checkPlan` is the target's own compiler, and it throws the same problems
     // `plan` does. Reporting them through it means the CLI prints the target's codes
     // and paths verbatim: no catching, no renaming, no second opinion about what is
@@ -175,6 +192,13 @@ export const TARGETS: readonly Target[] = [
     manifest: PY_FASTAPI_MANIFEST,
     generator: pyFastApiGenerator,
     runner: 'python',
+    // Derived from the manifest's own root so a generator that moves the tree moves the
+    // dev entry point with it, exactly as every other path in this registry does.
+    dev: {
+      kind: 'asgi',
+      module: `${PY_FASTAPI_MANIFEST.output.root}.main:app`,
+      entry: `${PY_FASTAPI_MANIFEST.output.root}/main.py`,
+    },
     extension: '.py',
     evalsIndexPath: EVALS_INIT_PATH,
     evalModulePath: pyFastApiEvalModulePath,
@@ -185,6 +209,11 @@ export const TARGETS: readonly Target[] = [
     manifest: TS_VERCEL_MANIFEST,
     generator: tsVercelGenerator,
     runner: 'node',
+    dev: {
+      kind: 'none',
+      reason:
+        'it is a deployment target -- the emitted route handlers are mounted by Next, and it ships no server of its own',
+    },
     // The generated modules are `.ts` on disk and `.js` once compiled; the dotted name
     // is the same either way, and the path helpers hand back the file that exists.
     extension: '.ts',

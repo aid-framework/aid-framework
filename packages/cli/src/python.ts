@@ -56,10 +56,23 @@ export function invoke(
 }
 
 /** The first interpreter that can import the runtime, or `undefined` when none can. */
-export function discoverInterpreter(context: CliContext): string | undefined {
+export function discoverInterpreter(
+  context: CliContext,
+  probe: string = RUNTIME_PROBE,
+): string | undefined {
   for (const interpreter of INTERPRETERS) {
-    const probe = invoke(context, [...interpreterCommand(interpreter), '-c', RUNTIME_PROBE]);
-    if (probe !== undefined && probe.status === 0) return interpreter;
+    const attempt = invoke(context, [...interpreterCommand(interpreter), '-c', probe]);
+    if (attempt !== undefined && attempt.status === 0) return interpreter;
   }
   return undefined;
 }
+
+/**
+ * What `aid dev` needs on top of the runtime: a server to run it with.
+ *
+ * Asked as one import statement rather than two probes because a single command either
+ * can start the app or cannot; a machine where uvicorn exists in one interpreter and the
+ * runtime in another has no interpreter that serves the app, and two probes that each
+ * pass somewhere would name one that does not.
+ */
+export const DEV_PROBE = 'import aid_runtime, uvicorn';

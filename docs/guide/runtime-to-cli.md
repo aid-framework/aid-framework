@@ -1,11 +1,11 @@
 ---
-description: "The CLI's nine commands, its exit taxonomy, and its refusal to own rules that already live in the IR or the generators."
+description: "The CLI's ten commands, its exit taxonomy, and its refusal to own rules that already live in the IR or the generators."
 ---
 
 # Runtime to CLI
 
 The CLI is the smallest layer and the one with the strictest contract, because CI reads it. It is
-nine commands, one exit taxonomy, and a deliberate refusal to own any rule that already lives
+ten commands, one exit taxonomy, and a deliberate refusal to own any rule that already lives
 somewhere else.
 
 ## The commands
@@ -14,7 +14,8 @@ somewhere else.
 | --- | --- |
 | `aid init` | Scaffolds `app/app.spec.yaml` and a root `README.md`, refusing to overwrite either. |
 | `aid validate` | Parses, validates and runs every IR gate. Reports; writes nothing. |
-| `aid gen` | Compiles and reconciles the tree. The only command that writes an app. |
+| `aid gen` | Compiles and reconciles the tree. `dev` runs the same generator before serving. |
+| `aid dev` | Regenerates, then runs the application's own server on loopback, for the targets that have one. |
 | `aid ingest` | Runs the generated ingest module for one retriever or all of them. |
 | `aid eval` | Runs one generated eval module, or records its baseline. |
 | `aid cost` | Reports cost, token and latency totals from the runtime's local trace sink. Reads; never reprices. |
@@ -22,7 +23,7 @@ somewhere else.
 | `aid eject` | Takes ownership of a generated file: moves it to `business/` and excludes it from generation. |
 | `aid infra` | Emits deployment infrastructure for the spec's declared environments. |
 
-Four more are specified and not implemented - `dev`, `trace`, `guard`, `migrate` - so
+Three more are specified and not implemented - `trace`, `guard`, `migrate` - so
 a stack trace naming one of them is not a bug in the CLI you are holding.
 
 ## The exit taxonomy
@@ -83,6 +84,38 @@ file is the SDK's.
 One divergence is documented as a choice: **the manifest is written even when the run reports
 drift**, so a run that refuses an edit and a run that discards one cannot disagree about what is on
 the tree.
+
+## `dev` serves the application, not a second application
+
+`aid dev` regenerates the tree and then starts the server the application already declares:
+
+```bash
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Generation is part of the command because the promise is "the spec you just edited is what is
+serving requests". A `dev` that served a tree compiled from an older spec would answer from code
+the developer is no longer looking at, so a generation failure stops the command before any server
+starts -- it is the same failure `aid gen` would have reported, carried through unchanged.
+
+The server is the target's, not the CLI's. `py-fastapi` emits routers and the **application** owns
+`app/main.py`, which decides what to mount and how to run it; a dev server implemented in the CLI
+would be a second, drifting way to run the same app. `ts-vercel` is a deployment target - Next
+mounts its route handlers and it ships no server of its own - so `Target.dev` declares
+`{ kind: 'none', reason }` for it and the command **refuses** with that reason as exit **2** rather
+than inventing one.
+
+Two smaller decisions are pinned by tests. `-m uvicorn` rather than the `uvicorn` binary, because
+the probe that proves an interpreter can import the runtime also proves it can import uvicorn - a
+`uvicorn` script on `PATH` proves neither, and the two can be different interpreters. And the host
+is `127.0.0.1`: a `0.0.0.0` default would quietly expose a half-built app to the network.
+
+The banner is printed *before* the child starts, unlike every other command's text, because the
+dispatcher prints only after the command returns and the server runs for an unbounded time. A
+signal-terminated child (Ctrl-C) is reported as a clean stop, since that is how a foreground server
+ends. `--json` is refused: a JSON document describes a finished run, and this one produces a
+stream. Editing the *spec* is not watched - uvicorn reloads code, and regenerating needs the
+generator to run again - so restart `aid dev` after a spec change.
 
 ## `eval` and `ingest` are thin wrappers
 
