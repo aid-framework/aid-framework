@@ -34,6 +34,9 @@ export const DIAGNOSTIC_CODES = {
   nestedEmitStep: 'spec/nested-emit-step',
   fanoutWithoutConcurrency: 'spec/fanout-without-concurrency',
   branchArmBindingMismatch: 'spec/branch-arm-binding-mismatch',
+  deploymentAutoscaleRange: 'spec/deployment-autoscale-range',
+  deploymentEnvDuplicate: 'spec/deployment-env-duplicate',
+  deploymentEnvValueAndSecret: 'spec/deployment-env-value-and-secret',
 } as const;
 
 /** Codes are namespaced `<layer>/<slug>`. This layer's own codes are `spec/*`. */

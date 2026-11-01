@@ -621,6 +621,62 @@ describe('rule-level unit tests', () => {
   });
 });
 
+describe('deployments', () => {
+  /** A deployment the schema admits, so each test varies exactly one field. */
+  const spec = (extra: Record<string, unknown> = {}) => ({
+    specVersion: '0.2',
+    project: { name: 'p' },
+    deployments: { prod: { target: 'container', secrets: [], ...extra } },
+  });
+
+  it('accepts a scaling range whose floor sits at its ceiling', () => {
+    const diagnostics = validateSpec(spec({ autoscale: { min: 2, max: 2, metric: 'cpu' } }));
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('refuses a scaling range whose floor sits above its ceiling', () => {
+    const diagnostics = validateSpec(spec({ autoscale: { min: 10, max: 1, metric: 'cpu' } }));
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.deploymentAutoscaleRange]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.autoscale']);
+  });
+
+  it('accepts one env entry per distinct name', () => {
+    const diagnostics = validateSpec(
+      spec({
+        env: [
+          { name: 'A', value: '1' },
+          { name: 'B', value: '2' },
+        ],
+      }),
+    );
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('refuses two env entries sharing a name, naming the second', () => {
+    const diagnostics = validateSpec(
+      spec({
+        env: [
+          { name: 'A', value: '1' },
+          { name: 'A', value: '2' },
+        ],
+      }),
+    );
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.deploymentEnvDuplicate]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.env[1]']);
+  });
+
+  it('refuses an env entry that is both a literal and a secret reference', () => {
+    const diagnostics = validateSpec(spec({ env: [{ name: 'TOKEN', value: 'x', secret: true }] }));
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.deploymentEnvValueAndSecret]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.env[0]']);
+  });
+
+  it('accepts a secret entry that carries no literal value', () => {
+    const diagnostics = validateSpec(spec({ env: [{ name: 'TOKEN', secret: true }] }));
+    expect(diagnostics).toEqual([]);
+  });
+});
+
 /** Renders the message alone, so a failure diff stays readable. */
 function formatDiagnosticLine(diagnostic: Diagnostic): string {
   return `${formatPath(diagnostic.path)}:${diagnostic.code}: ${diagnostic.message}`;

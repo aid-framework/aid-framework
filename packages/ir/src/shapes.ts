@@ -650,9 +650,20 @@ export function isGuardrailPolicyKind(value: string): value is GuardrailPolicyKi
   return (GUARDRAIL_POLICY_KINDS as readonly string[]).includes(value);
 }
 
+/**
+ * The deployment targets the spec schema admits, in the order it lists them.
+ *
+ * This is the single runtime list: `buildDeployments` reads it to refuse a target it
+ * cannot represent, and a test pins it against the schema's `target` enum so a target
+ * added to one side cannot be silently coerced on the other.
+ */
+export const DEPLOY_TARGETS = ['serverless', 'container', 'batch', 'edge'] as const;
+
+export type DeploymentTarget = (typeof DEPLOY_TARGETS)[number];
+
 export interface DeploymentShape {
   id: string;
-  target: 'serverless' | 'container' | 'batch' | 'edge';
+  target: DeploymentTarget;
   streaming: boolean;
   concurrency?: number;
   autoscale?: { min: number; max: number; metric: string };
