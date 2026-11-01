@@ -53,6 +53,16 @@ export {
   PHASE_0_TARGET_CAPABILITIES,
   phase0TargetCapabilities,
 } from './catalog/index.js';
+export type {
+  DeployAlarm,
+  DeployEndpoint,
+  DeployEnvVar,
+  DeployPlan,
+  DeployService,
+  DeployStore,
+  DeployTask,
+} from './deploy-plan.js';
+export { buildDeployPlan, DEPLOY_PLAN_VERSION } from './deploy-plan.js';
 export type { IrDiagnostic, IrDiagnosticCode } from './diagnostics.js';
 export {
   IR_DIAGNOSTIC_CODES,
@@ -105,7 +115,6 @@ export type {
   PolicyToken,
   PolicyTokenType,
 } from './policy/index.js';
-
 export {
   COMPARISON_OPERATORS,
   formatPolicyExpr,
