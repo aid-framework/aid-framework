@@ -276,6 +276,13 @@ describe('aid gen', () => {
     expect(run.code).toBe(0);
     expect(made.read(GENERATED)).toBe(original);
     expect(made.exists(`${GENERATED}.aid-rej`)).toBe(false);
+    // A forced run resolves the drift, so it must not report the state it just changed:
+    // "refused to overwrite" beside a file that was overwritten is a report that cannot
+    // be trusted about anything else either.
+    expect(run.stdout).toContain('rewritten, discarding your edits:');
+    expect(run.stdout).not.toContain('refused to overwrite');
+    expect(run.stdout).toContain('1 rewritten');
+    expect(run.stdout).not.toContain('conflicts');
   });
 
   it('leaves a hand-edited business file alone, byte for byte', () => {

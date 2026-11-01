@@ -18,9 +18,13 @@
 import {
   type AgentShape,
   type EvalShape,
+  type EvalSubject,
+  type EvalSubjectResult,
+  evalSubject,
   type IR,
   type ModelParams,
   type ModelShape,
+  modelsUnderTest,
   PHASE_0_PROVIDERS,
   type PipelineShape,
   type PromptShape,
@@ -2123,133 +2127,14 @@ export function checkPipelines(ir: IR): PlanProblem[] {
   return problems;
 }
 
+export type { EvalSubject, EvalSubjectResult };
 /**
- * The model aliases a prompt is rendered against, sorted.
- *
- * Neither the IR's `EvalShape` nor its `PromptShape` carries a model, so the model
- * under test is read from the steps that call the prompt. That is also the honest
- * measurement: the eval exercises the prompt where the app actually renders it, against
- * the model the app actually pins.
+ * The model aliases a prompt is rendered against, sorted, and the prompt and model an
+ * eval measures. Both are pure functions of the IR, so `@aid-framework/ir` owns them and
+ * every generator asks the same question; they are re-exported here because callers
+ * import them from the validator that used to define them.
  */
-export function modelsUnderTest(ir: IR, promptId: string): string[] {
-  const aliases = new Set<string>();
-  for (const pipeline of ir.pipelines) {
-    for (const step of pipeline.steps) {
-      if (step.kind === 'generate' && step.prompt === promptId) aliases.add(step.model);
-    }
-  }
-  return [...aliases].sort(compareIds);
-}
-
-/** The prompt an eval measures, and the one model it is measured against. */
-export interface EvalSubject {
-  /** The prompt the eval renders, and whose single variable a dataset row fills. */
-  readonly prompt: PromptShape;
-  /** The model alias the app pins for that prompt, which is what the eval samples. */
-  readonly model: string;
-}
-
-/** Either the subject of an eval, or the single reason it has none. */
-export type EvalSubjectResult =
-  | { readonly ok: true; readonly subject: EvalSubject }
-  | { readonly ok: false; readonly code: PlanProblemCode; readonly message: string };
-
-/** `prompt@model`, deduplicated and sorted, so a repeated step is one subject. */
-function distinctSubjects(
-  ir: IR,
-  target: EvalShape['target'],
-): { prompt: string; model: string }[] {
-  const pairs: { prompt: string; model: string }[] = [];
-  if (target.kind === 'prompt') {
-    for (const model of modelsUnderTest(ir, target.id)) pairs.push({ prompt: target.id, model });
-  } else {
-    const pipeline = ir.pipelines.find((item) => item.id === target.id);
-    for (const step of pipeline?.steps ?? []) {
-      if (step.kind === 'generate') pairs.push({ prompt: step.prompt, model: step.model });
-    }
-  }
-  const seen = new Set<string>();
-  const distinct: { prompt: string; model: string }[] = [];
-  for (const pair of pairs) {
-    const key = `${pair.prompt}\u0000${pair.model}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    distinct.push(pair);
-  }
-  return distinct.sort(
-    (left, right) => compareIds(left.prompt, right.prompt) || compareIds(left.model, right.model),
-  );
-}
-
-/**
- * The prompt and model an eval measures, or why it measures none.
- *
- * The spec language can only name a pipeline (`evals.<id>.target` is validated against
- * `pipeline:<id>` by `@aid-framework/spec`), while the IR can also name a prompt directly, so both
- * forms have to resolve here -- and both resolve to the same thing, because an eval
- * measures a prompt through the step that renders it.
- *
- * `Phase 0` gates one prompt against one model per eval. A pipeline that renders two
- * prompts, or one prompt against two models, is a pipeline whose score is a blend of two
- * measurements: the failures of either half would be reported against the other's id, so
- * the target is refused rather than averaged.
- *
- * A pure function of the IR on purpose: every rejection below is a branch a unit test can
- * reach without a spec file, a model or a filesystem.
- */
-export function evalSubject(ir: IR, evaluation: EvalShape): EvalSubjectResult {
-  const target = evaluation.target;
-  if (target === undefined || !target.valid) {
-    return {
-      ok: false,
-      code: 'unsupported-eval-target',
-      message:
-        `Phase 0 evaluates a 'pipeline:' or 'prompt:' target, and ` +
-        `'${target?.qualified ?? '<none>'}' is neither`,
-    };
-  }
-  const declared =
-    target.kind === 'prompt'
-      ? ir.prompts.some((prompt) => prompt.id === target.id)
-      : ir.pipelines.some((pipeline) => pipeline.id === target.id);
-  if (!declared) {
-    return {
-      ok: false,
-      code: 'unresolved-reference',
-      message: `${target.kind} '${target.id}' is not declared`,
-    };
-  }
-  const subjects = distinctSubjects(ir, target);
-  if (subjects.length > 1) {
-    const rendered = subjects.map((pair) => `${pair.prompt} on ${pair.model}`).join(', ');
-    return {
-      ok: false,
-      code: 'unsupported-eval-target',
-      message:
-        `'${target.qualified}' renders ${subjects.length} prompts (${rendered}), and Phase 0 gates ` +
-        'one prompt on one model per eval; declare a separate eval per prompt',
-    };
-  }
-  const only = subjects[0];
-  if (only === undefined) {
-    return {
-      ok: false,
-      code: 'unresolved-reference',
-      message:
-        `'${target.qualified}' renders no prompt, so there is nothing to measure: an eval reads ` +
-        "the dataset's input as the one variable the prompt renders",
-    };
-  }
-  const prompt = ir.prompts.find((item) => item.id === only.prompt);
-  if (prompt === undefined) {
-    return {
-      ok: false,
-      code: 'unresolved-reference',
-      message: `prompt '${only.prompt}' is not declared`,
-    };
-  }
-  return { ok: true, subject: { prompt, model: only.model } };
-}
+export { evalSubject, modelsUnderTest };
 
 /**
  * Whether a dataset URI is a safe path under `app/evals/`.
@@ -2257,7 +2142,7 @@ export function evalSubject(ir: IR, evaluation: EvalShape): EvalSubjectResult {
  * The generated loader resolves the URI against the app directory, so a traversal or an
  * absolute path would let the spec read a file the app does not own, and a URI outside
  * `evals/` would put a dataset somewhere the design says the developer owns nothing.
- * Checked by scanning rather than by an anchored regex: `docs/design.md` §12 and layer
+ * Checked by scanning rather than by an anchored regex: `docs/design.md` Â§12 and layer
  * 3's CodeQL findings both say an anchored quantifier over path characters is a
  * denial-of-service bug.
  */

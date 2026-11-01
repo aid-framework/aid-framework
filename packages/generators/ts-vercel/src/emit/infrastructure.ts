@@ -209,6 +209,8 @@ export function emitDeps(ir: IR): EmittedFile {
     withAgents && '  /** The same adapters `tools` wraps; the agent loop needs them by value. */',
     withAgents && '  readonly toolList?: readonly Tool[];',
     hasRetrieval && '  readonly retrievers?: ReadonlyMap<string, Retriever>;',
+    hasRetrieval && '  /** The directory relative retrieval source uris resolve against. */',
+    hasRetrieval && '  readonly baseDir?: string | null;',
     '}',
     '',
     '/**',
@@ -221,6 +223,7 @@ export function emitDeps(ir: IR): EmittedFile {
     '  readonly tools: ToolExecutor;',
     withAgents && '  readonly toolList: readonly Tool[];',
     hasRetrieval && '  private readonly _retrievers: ReadonlyMap<string, Retriever>;',
+    hasRetrieval && '  readonly baseDir: string | null;',
     '',
     '  constructor(init: Required<BuildDepsOptions>) {',
     '    this.gateway = init.gateway;',
@@ -228,6 +231,7 @@ export function emitDeps(ir: IR): EmittedFile {
     '    this.tools = init.tools;',
     withAgents && '    this.toolList = init.toolList;',
     hasRetrieval && '    this._retrievers = init.retrievers;',
+    hasRetrieval && '    this.baseDir = init.baseDir;',
     '  }',
     hasRetrieval && [
       '',
@@ -255,7 +259,9 @@ export function emitDeps(ir: IR): EmittedFile {
       ? '    tools: options.tools ?? new ToolExecutor(toolList),'
       : '    tools: options.tools ?? buildExecutor(),',
     withAgents && '    toolList,',
-    hasRetrieval && '    retrievers: options.retrievers ?? buildRetrievers(),',
+    hasRetrieval &&
+      '    retrievers: options.retrievers ?? buildRetrievers({ baseDir: options.baseDir ?? null }),',
+    hasRetrieval && '    baseDir: options.baseDir ?? null,',
     '  });',
     '}',
     '',

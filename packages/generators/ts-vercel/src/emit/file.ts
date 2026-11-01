@@ -55,6 +55,7 @@ export const paths = {
   retrievalIndex: `${GENERATED_ROOT}/retrieval/index.ts`,
   retrievalIngestIndex: `${GENERATED_ROOT}/retrieval/ingest/index.ts`,
   evalsIndex: `${GENERATED_ROOT}/evals/index.ts`,
+  evalsDriver: `${GENERATED_ROOT}/evals/run-evals.mjs`,
   businessIndex: `${BUSINESS_ROOT}/index.ts`,
   businessToolsIndex: `${BUSINESS_ROOT}/tools/index.ts`,
   businessPromptsIndex: `${BUSINESS_ROOT}/prompts/index.ts`,

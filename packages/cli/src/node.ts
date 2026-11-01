@@ -25,8 +25,50 @@ export const NODE = 'node';
  * a bug rather than a machine state, but the contract is the same one `invoke` keeps for
  * Python so callers handle both drivers identically.
  */
-export function invokeNode(context: CliContext, script: string): SpawnResult | undefined {
-  const result = context.spawn(process.execPath, ['--input-type=module', '-e', script], {
+export function invokeNode(
+  context: CliContext,
+  script: string,
+  options: NodeOptions = {},
+): SpawnResult | undefined {
+  const result = context.spawn(
+    process.execPath,
+    [...nodeArgs(options), '--input-type=module', '-e', script],
+    {
+      cwd: context.cwd,
+      stdio: 'pipe',
+      env: context.env,
+    },
+  );
+  return result.error === undefined ? result : undefined;
+}
+
+/** Options shared by the two ways this CLI runs a Node process. */
+export interface NodeOptions {
+  /**
+   * A module to load before the driver, as a file URL. The CLI passes its TypeScript
+   * resolve hook here, so a driver that imports a generated `.ts` module can resolve the
+   * NodeNext `.js` specifiers that module emits.
+   */
+  readonly import?: string;
+}
+
+function nodeArgs(options: NodeOptions = {}): string[] {
+  return options.import === undefined ? [] : ['--import', options.import];
+}
+
+/**
+ * Run one file with the Node that is running this CLI.
+ *
+ * A file rather than `-e`, because `process.argv[1]` is how a generated module knows it
+ * is the entry point: the eval modules run their gate only when they are the file Node
+ * was asked to run, and never when an index merely re-exports them.
+ */
+export function invokeNodeFile(
+  context: CliContext,
+  file: string,
+  options: NodeOptions = {},
+): SpawnResult | undefined {
+  const result = context.spawn(process.execPath, [...nodeArgs(options), file], {
     cwd: context.cwd,
     stdio: 'pipe',
     env: context.env,

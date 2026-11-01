@@ -398,8 +398,20 @@ export function checkDrift(plan: Plan, options: RegenerationOptions): GeneratorD
   return planRegeneration(plan, options).diagnostics;
 }
 
+export interface RegenerationSummaryOptions {
+  /**
+   * The run discarded hand edits instead of refusing them. A forced run resolves drift,
+   * so counting those files as "conflicts" would describe the state it just changed
+   * rather than the state it left behind.
+   */
+  readonly forced?: boolean;
+}
+
 /** Human-readable one-line summary of what a run did, in reporting order. */
-export function formatRegenerationSummary(report: RegenerationReport): string {
+export function formatRegenerationSummary(
+  report: RegenerationReport,
+  options: RegenerationSummaryOptions = {},
+): string {
   const parts = [
     `${report.created.length} created`,
     `${report.updated.length} updated`,
@@ -407,7 +419,9 @@ export function formatRegenerationSummary(report: RegenerationReport): string {
     `${report.kept.length} kept`,
   ];
   if (report.scaffoldKept.length > 0) parts.push(`${report.scaffoldKept.length} scaffold kept`);
-  if (report.drifted.length > 0) parts.push(`${report.drifted.length} conflicts`);
+  if (report.drifted.length > 0) {
+    parts.push(`${report.drifted.length} ${options.forced === true ? 'rewritten' : 'conflicts'}`);
+  }
   if (report.stale.length > 0) parts.push(`${report.stale.length} stale`);
   if (report.ejected.length > 0) parts.push(`${report.ejected.length} ejected`);
   return parts.join(', ');

@@ -16,7 +16,12 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AidManifest, AidManifestProvenance, Plan } from '@aid-framework/generator-sdk';
-import { CI_WORKFLOW_PATH, parseAidManifestJson, sortByPath } from '@aid-framework/generator-sdk';
+import {
+  CI_WORKFLOW_PATH,
+  EVALS_WORKFLOW_PATH,
+  parseAidManifestJson,
+  sortByPath,
+} from '@aid-framework/generator-sdk';
 import type { IR } from '@aid-framework/ir';
 import { buildIR, runGates } from '@aid-framework/ir';
 import { checkSpecText } from '@aid-framework/spec';
@@ -161,8 +166,10 @@ export function shippedManagedTree(): Map<string, string> {
     }
   }
 
-  const scaffold = join(EXAMPLE_ROOT, CI_WORKFLOW_PATH);
-  if (existsSync(scaffold)) managed.set(CI_WORKFLOW_PATH, readFileSync(scaffold, 'utf8'));
+  for (const path of [CI_WORKFLOW_PATH, EVALS_WORKFLOW_PATH]) {
+    const scaffold = join(EXAMPLE_ROOT, path);
+    if (existsSync(scaffold)) managed.set(path, readFileSync(scaffold, 'utf8'));
+  }
 
   return managed;
 }

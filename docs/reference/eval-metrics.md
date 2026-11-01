@@ -88,11 +88,21 @@ otherwise absorb a drop it must never absorb - which is why a spec-local rule re
 
 `aid eval --baseline` records the baseline the gate measures against. It delegates the sampling to
 the eval module's own recipe rather than re-sampling in the CLI, so the CLI and the module cannot
-disagree about how many runs a baseline means. The module's own `BASELINE_PATH` decides where the
-file goes - the same constant `load_baseline()` reads back.
+disagree about how many runs a baseline means. Python's recipe calls `run()` and
+`EvalBaseline.from_run`; Node's calls the generated `recordBaseline()`. Either way the module's own
+`BASELINE_PATH` decides where the file goes - the same constant `load_baseline()` / `loadBaseline()`
+reads back.
+
+A baseline is a recorded run, not a number you type. Recording it twice with nothing changed writes
+the same means, and that stability is the property a gate needs: a hand-tuned number is a target,
+while a measurement is a description.
 
 The committed files are `app/evals/<id>.baseline.json`. Commit them: a gate with no baseline has
 nothing to regress against.
+
+A retrieval baseline is only meaningful over a corpus that was indexed when it was recorded. With a
+`kind: memory` store that means recording in the same process that ingests - otherwise the baseline
+faithfully records the score of an empty index.
 
 ## Coverage
 

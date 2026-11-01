@@ -11,11 +11,13 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const expected = 10;
+const expected = 18;
 const root = fileURLToPath(new URL('..', import.meta.url));
-const entry = fileURLToPath(new URL('../dist/tests/app.test.js', import.meta.url));
+const entries = ['app.test.js', 'evals.test.js'].map((name) =>
+  fileURLToPath(new URL(`../dist/tests/${name}`, import.meta.url)),
+);
 
-const run = spawnSync(process.execPath, ['--test', '--test-reporter=tap', entry], {
+const run = spawnSync(process.execPath, ['--test', '--test-reporter=tap', ...entries], {
   cwd: root,
   encoding: 'utf8',
 });

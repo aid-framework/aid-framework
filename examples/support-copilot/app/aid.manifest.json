@@ -110,7 +110,7 @@
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/evals/handbook_quality.py",
-      "sha256": "d65471c6d96d4293753a7221448bdd813a8e81a4025df943c57eae33f592cc22"
+      "sha256": "c721f41709721784513cd05d70c245d0000faaebf65979b7ea85b8071774c8ea"
     },
     {
       "generator": "@aid-framework/generator-py-fastapi",

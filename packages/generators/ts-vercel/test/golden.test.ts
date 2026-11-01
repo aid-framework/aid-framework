@@ -57,10 +57,10 @@ describe('the committed example', () => {
 
   it('holds the whole of every tier, and only those', () => {
     const shipped = shippedManagedTree();
-    expect(generated().length).toBe(31);
+    expect(generated().length).toBe(32);
     expect(planFilesByOwner('business').length).toBe(4);
-    expect(planFilesByOwner('scaffold').length).toBe(1);
-    expect(shipped.size).toBe(36);
+    expect(planFilesByOwner('scaffold').length).toBe(2);
+    expect(shipped.size).toBe(38);
   });
 
   it('records every generated file in aid.manifest.json at the hash of its bytes', () => {

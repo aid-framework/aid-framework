@@ -71,6 +71,13 @@ export {
   offsetPosition,
   withPosition,
 } from './diagnostics.js';
+export {
+  type EvalSubject,
+  type EvalSubjectProblemCode,
+  type EvalSubjectResult,
+  evalSubject,
+  modelsUnderTest,
+} from './eval-subject.js';
 export type {
   EvalCostEstimate,
   Gate,

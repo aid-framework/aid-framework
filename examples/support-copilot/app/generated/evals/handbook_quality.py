@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 EVAL_ID = "handbook_quality"
 RETRIEVER = "handbook"
+MODEL = RETRIEVER
 SAMPLES = 5
 MAX_REGRESSION = 0.05
 EXPECT_DOCS = ("billing.md", "exports.md")

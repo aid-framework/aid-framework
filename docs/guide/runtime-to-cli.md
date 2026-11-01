@@ -127,9 +127,32 @@ python -m app.generated.retrieval.ingest.handbook
 ```
 
 That is also what a person would type by hand, and it is why neither command re-derives chunking,
-store configuration or metrics. `python.ts` exists so both commands share **one** definition of "a
-usable interpreter" - the active project interpreter first, `uv` last. If each command carried its
-own discovery, an environment could work for one and not the other with nothing explaining why.
+store configuration or metrics.
+
+A Node target runs the **file**, not a module name: the emitted module compares `process.argv[1]`
+against its own URL before running its gate, so the file is the only thing that makes it an entry
+point. The emitted code also uses NodeNext `.js` specifiers, which a `.ts` source tree does not
+have, so `aid eval` passes `ts-loader.ts` as Node's `--import` hook:
+
+```bash
+node --import ./packages/cli/dist/ts-loader.js app/generated/evals/classify_quality.ts
+```
+
+That rewrites `../deps.js` to `../deps.ts` in the resolve hook, so no `dist/` has to exist first.
+`python.ts` exists so the Python driver has **one** definition of "a usable interpreter" - the
+active project interpreter first, `uv` last. The Node driver is `process.execPath`, because the CLI
+is already a Node program and a second, discovered Node could be older than the one running the
+command.
+
+`--baseline` delegates the sampling to the module: Python's recipe calls `run()` and
+`EvalBaseline.from_run`, Node's calls `recordBaseline()`. Both sample the spec's `samples` count
+once, so the CLI and the module cannot disagree about how many runs a baseline means.
+
+One thing the command cannot fix for you: a retrieval eval measures the store as it is, and a
+`kind: memory` store is per process. `aid eval handbook_quality` in a fresh process therefore sees
+an empty index and scores 0.0 - a true measurement of nothing. Index in the same process that
+scores, as the generated `app/generated/evals/run-evals.mjs` driver does, or point the retriever at
+a store that outlives the process.
 
 The error split follows the taxonomy: `--retriever` and `--all` together, or neither, is **2**
 before the spec is even read, and an id the spec does not declare is also **2** with a message
