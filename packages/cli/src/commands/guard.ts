@@ -3,7 +3,8 @@
  *
  * **What is measured, and why it is measured here.** The runtime's `GuardrailEngine` is
  * the thing that decides whether text is a jailbreak, a secret, or an injection, and the
- * generated `generated/guardrails.py` is the table of declarations the routes enforce.
+ * table the generator emitted -- `generated/guardrails.py`, or `generated/guardrails.ts`
+ * for the TypeScript target -- is the declarations the routes enforce.
  * This command joins the two and reports, per fixture, whether the table the app actually
  * shipped caught it. Detection is not reimplemented: a second implementation here would
  * drift from the one the routes run, and the number it produced would describe the CLI
@@ -32,26 +33,34 @@
  * line and in the `--json` document.
  *
  * **Why nothing is regenerated.** A gate measures the tree it is given, and `aid eval`
- * already sets that precedent: this command reads `generated/guardrails.py`, and a tree
- * that predates the spec is reported as a missing or stale module rather than silently
+ * already sets that precedent: this command reads the emitted table, and a tree that
+ * predates the spec is reported as a missing or stale module rather than silently
  * replaced. Run `aid gen` first, as CI does.
  *
+ * **Two drivers, one join.** Which program imports the table is the target's business,
+ * not this command's. A Python target is measured by an interpreter that can import
+ * `aid_runtime`, because that is what the emitted module is; a TypeScript target is
+ * measured by the Node that is running the CLI, because `aid` is a Node program and the
+ * emitted module is TypeScript it loads directly. Both drivers do the same four things --
+ * import the table, pick the stage method, turn the verdict into a row, print JSON -- so
+ * no part of detection is written twice.
+ *
  * **When it does not run, and what it exits with.** Exit 2 is "this command could not
- * judge the project": an unknown target, a target with no driver, a corpus that is
- * missing or malformed, or no interpreter that can import the runtime. Exit 1 is a
- * verdict about the project: it declares no guardrails, its tree has no guardrail module,
- * the run failed, or the measured recall / false-positive rate misses what the corpus
- * asks for.
+ * judge the project": an unknown target, a corpus that is missing or malformed, or (for a
+ * Python target) no interpreter that can import the runtime. Exit 1 is a verdict about the
+ * project: it declares no guardrails, its tree has no guardrail module, the run failed, or
+ * the measured recall / false-positive rate misses what the corpus asks for.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
 
 import { sortDiagnostics } from '@aid-framework/spec';
 
-import type { CliContext } from '../context.js';
+import type { CliContext, SpawnResult } from '../context.js';
 import type { CliDiagnostic } from '../diagnostics.js';
 import { CLI_DIAGNOSTIC_CODES, cliError, cliWarning } from '../diagnostics.js';
 import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE } from '../exit.js';
+import { invokeNode, NODE } from '../node.js';
 import type { CommandOutcome } from '../output.js';
 import { outcome } from '../output.js';
 import { absolutePath, parentPath } from '../paths.js';
@@ -95,13 +104,13 @@ interface Thresholds {
 }
 
 interface Corpus {
-  /** The repo-relative path, which is also what the interpreter is handed. */
+  /** The repo-relative path, which is also what the driver is handed. */
   readonly path: string;
   readonly fixtures: readonly Fixture[];
   readonly thresholds: Thresholds;
 }
 
-/** One row the interpreter reported, before it is joined to its fixture. */
+/** One row the driver reported, before it is joined to its fixture. */
 interface RunnerRow {
   readonly id: string;
   readonly declared?: number;
@@ -190,6 +199,71 @@ for fixture in corpus["fixtures"]:
 
 print(json.dumps({"rows": rows}))
 `;
+
+/**
+ * The Node side of the same contract, for a target whose table is TypeScript.
+ *
+ * It is the same four steps as `GUARD_SCRIPT` and nothing more, which is the point: the
+ * measurement a TypeScript app gets is produced by the engine the Next app runs, over the
+ * table the generator emitted, exactly as the Python app's is. `GUARDRAILS`, `ENGINE` and
+ * the camelCase stage methods are the generated module's exports, so this driver is
+ * written against the emit contract rather than against any one app.
+ *
+ * The paths are spliced in as string literals instead of arriving as argv: `node -e` has
+ * no script name, so `process.argv` is off by one relative to a script file, and a literal
+ * removes that whole class of bug (and quoting on Windows with it). Both are absolute, and
+ * the module is imported by URL so Node resolves its own imports from the app tree.
+ */
+const NODE_GUARD_SCRIPT = `import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+
+const corpus = JSON.parse(readFileSync(CORPUS_PATH, 'utf8'));
+const emitted = await import(pathToFileURL(MODULE_PATH).href);
+const definitions = emitted.GUARDRAILS ?? [];
+const engine = emitted.ENGINE;
+
+function measure(fixture) {
+  const stage = fixture.stage;
+  const declared = definitions.filter((item) => item.stages.includes(stage));
+  const text = fixture.text ?? '';
+  if (stage === 'input') return [declared, engine.checkInput(declared, text)];
+  if (stage === 'output') return [declared, engine.checkOutput(declared, text)];
+  if (stage === 'retrieval') return [declared, engine.checkRetrieval(declared, [text])];
+  const args = { ...(fixture.arguments ?? {}) };
+  if (text) args.text = text;
+  return [declared, engine.checkToolCall(declared, fixture.tool ?? 'search', args)];
+}
+
+const rows = [];
+for (const fixture of corpus.fixtures) {
+  try {
+    const [declared, verdict] = measure(fixture);
+    rows.push({
+      id: fixture.id,
+      declared: declared.length,
+      covered: declared.some((item) => item.policies.includes(fixture.policy)),
+      caught: verdict.records.length > 0,
+      deciding: verdict.deciding?.guardrail ?? null,
+      actions: [...new Set(verdict.records.map((record) => record.action))].sort(),
+    });
+  } catch (error) {
+    rows.push({
+      id: fixture.id,
+      error: (error?.constructor?.name ?? 'Error') + ': ' + error?.message,
+    });
+  }
+}
+
+process.stdout.write(JSON.stringify({ rows }));
+`;
+
+/** The driver with its two absolute paths spliced in, safely for any path text. */
+function nodeGuardScript(corpusPath: string, modulePath: string): string {
+  return NODE_GUARD_SCRIPT.replace('CORPUS_PATH', () => JSON.stringify(corpusPath)).replace(
+    'MODULE_PATH',
+    () => JSON.stringify(modulePath),
+  );
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -487,24 +561,9 @@ export function guard(context: CliContext, options: GuardOptions): CommandOutcom
   const specPath = options.spec ?? target.specPath;
   const named = { target: target.name, spec: specPath };
 
-  // Before the project is read: a target with no driver cannot be measured however
-  // healthy its spec is, and saying "no guardrails" about a target nothing ran against
-  // would be a verdict this command has no evidence for.
+  // Which program imports the table is the target's business; both drivers report the
+  // same rows, so nothing below this block branches on the language again.
   const surface = target.guard;
-  if (surface.kind === 'none') {
-    return outcome({
-      command,
-      exitCode: EXIT_USAGE,
-      fields: { ...named, corpus: options.redTeam ?? null },
-      diagnostics: [
-        cliError({
-          code: CLI_DIAGNOSTIC_CODES.runnerUnsupported,
-          message: `\`aid guard\` cannot measure ${target.name}: ${surface.reason}.`,
-          hint: 'Run the corpus against the emitted TypeScript guardrails with the runtime they already import.',
-        }),
-      ],
-    });
-  }
 
   const read = readCorpus(context, specPath, options.redTeam);
   if (!read.ok) {
@@ -576,39 +635,52 @@ export function guard(context: CliContext, options: GuardOptions): CommandOutcom
     });
   }
 
-  const interpreter = discoverInterpreter(context);
-  if (interpreter === undefined) {
-    return outcome({
-      command,
-      // Exit 2, not 1: nothing about the project was judged. The corpus cannot run
-      // without the runtime, so there is no recall to report and no gate to fail.
-      exitCode: EXIT_USAGE,
-      fields,
-      diagnostics: [
-        cliError({
-          code: CLI_DIAGNOSTIC_CODES.pythonMissing,
-          message: `No interpreter could import aid_runtime (tried ${INTERPRETERS.join(', ')}).`,
-          hint: 'Install the runtime into the interpreter you run with, or measure the corpus yourself.',
-        }),
-      ],
-    });
+  let driver: string;
+  let run: SpawnResult | undefined;
+  if (surface.runner === 'python') {
+    const interpreter = discoverInterpreter(context);
+    if (interpreter === undefined) {
+      return outcome({
+        command,
+        // Exit 2, not 1: nothing about the project was judged. The corpus cannot run
+        // without the runtime, so there is no recall to report and no gate to fail.
+        exitCode: EXIT_USAGE,
+        fields,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.pythonMissing,
+            message: `No interpreter could import aid_runtime (tried ${INTERPRETERS.join(', ')}).`,
+            hint: 'Install the runtime into the interpreter you run with, or measure the corpus yourself.',
+          }),
+        ],
+      });
+    }
+    driver = interpreter;
+    run = invoke(
+      context,
+      [...interpreterCommand(interpreter), '-', corpus.path, surface.module],
+      GUARD_SCRIPT,
+    );
+  } else {
+    driver = NODE;
+    run = invokeNode(
+      context,
+      nodeGuardScript(
+        absolutePath(context.cwd, corpus.path),
+        absolutePath(context.cwd, surface.file),
+      ),
+    );
   }
-
-  const run = invoke(
-    context,
-    [...interpreterCommand(interpreter), '-', corpus.path, surface.module],
-    GUARD_SCRIPT,
-  );
 
   if (run === undefined) {
     return outcome({
       command,
       exitCode: EXIT_USAGE,
-      fields: { ...fields, interpreter },
+      fields: { ...fields, driver },
       diagnostics: [
         cliError({
           code: CLI_DIAGNOSTIC_CODES.runnerFailed,
-          message: `Could not start ${interpreter} to measure "${surface.module}".`,
+          message: `Could not start ${driver} to measure "${surface.file}".`,
         }),
       ],
     });
@@ -618,12 +690,12 @@ export function guard(context: CliContext, options: GuardOptions): CommandOutcom
     return outcome({
       command,
       exitCode: EXIT_FAILURE,
-      fields: { ...fields, interpreter },
+      fields: { ...fields, driver },
       diagnostics: [
         cliError({
           code: CLI_DIAGNOSTIC_CODES.runnerFailed,
-          message: `Measuring "${surface.module}" with ${interpreter} exited ${run.status ?? 'without a status'}.`,
-          hint: "The table could not be imported or a declaration failed to evaluate; the interpreter's own output says which.",
+          message: `Measuring "${surface.file}" with ${driver} exited ${run.status ?? 'without a status'}.`,
+          hint: "The table could not be imported or a declaration failed to evaluate; the driver's own output says which.",
         }),
       ],
       stderr: run.stderr,
@@ -641,7 +713,7 @@ export function guard(context: CliContext, options: GuardOptions): CommandOutcom
     return outcome({
       command,
       exitCode: EXIT_FAILURE,
-      fields: { ...fields, interpreter },
+      fields: { ...fields, driver },
       diagnostics: [
         cliError({
           code: CLI_DIAGNOSTIC_CODES.runnerFailed,
@@ -664,7 +736,7 @@ export function guard(context: CliContext, options: GuardOptions): CommandOutcom
         deciding: undefined,
         actions: [],
         verdict: verdictOf(fixture.knownBad, false),
-        error: 'the interpreter reported no row for this fixture',
+        error: 'the driver reported no row for this fixture',
       };
     }
     const caught = row.caught === true;
@@ -823,7 +895,7 @@ export function guard(context: CliContext, options: GuardOptions): CommandOutcom
     exitCode: passed ? EXIT_OK : EXIT_FAILURE,
     fields: {
       ...fields,
-      interpreter,
+      driver,
       declarations: declarations.map((entry) => ({
         id: entry.id,
         stages: entry.stages,

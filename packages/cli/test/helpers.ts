@@ -44,6 +44,12 @@ export const SPEC_PATH = 'app/app.spec.yaml';
 /** The committed example spec: the fixture every generation test generates from. */
 export const EXAMPLE_SPEC = readFileSync(join(EXAMPLE_ROOT, 'app', 'app.spec.yaml'), 'utf8');
 
+/** The committed TypeScript example's spec: the fixture the TS-target tests generate from. */
+export const TS_EXAMPLE_SPEC = readFileSync(
+  join(REPO_ROOT, 'examples', 'support-copilot-ts', 'app', 'app.spec.yaml'),
+  'utf8',
+);
+
 export interface Project {
   readonly root: string;
   /** Replace the spec. Pass text that does not parse to test a failure path. */
