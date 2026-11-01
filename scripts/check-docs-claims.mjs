@@ -93,6 +93,25 @@ function lineContaining(text, needle, file, description) {
 }
 
 /**
+ * Like `lineContaining`, but returns `undefined` when the text is absent. Used
+ * for claims the README is allowed to omit once they no longer hold.
+ *
+ * @param {string} text
+ * @param {string} needle
+ * @returns {{ line: number; text: string } | undefined}
+ */
+function maybeLineContaining(text, needle) {
+  const index = text.indexOf(needle);
+  if (index < 0) return undefined;
+  const start = text.lastIndexOf('\n', index) + 1;
+  const end = text.indexOf('\n', index);
+  return {
+    line: lineAt(text, index),
+    text: text.slice(start, end < 0 ? text.length : end),
+  };
+}
+
+/**
  * @param {string} line
  * @returns {string[]}
  */
@@ -215,12 +234,7 @@ if (readme !== undefined) {
           );
         }
 
-        const unimplemented = lineContaining(
-          readme,
-          'not implemented yet',
-          README,
-          'the sentence listing unimplemented CLI commands',
-        );
+        const unimplemented = maybeLineContaining(readme, 'not implemented yet');
         if (unimplemented !== undefined) {
           const claimed = unique(backticked(unimplemented.text));
           claimsChecked += 1;

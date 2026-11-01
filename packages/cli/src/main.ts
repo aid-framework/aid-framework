@@ -25,6 +25,7 @@ import { infra } from './commands/infra.js';
 import { ingest } from './commands/ingest.js';
 import { init } from './commands/init.js';
 import { migrate } from './commands/migrate.js';
+import { trace } from './commands/trace.js';
 import { validate } from './commands/validate.js';
 import type { CliContext } from './context.js';
 import type { ExitCode } from './exit.js';
@@ -206,6 +207,22 @@ export const COMMANDS: readonly Command[] = [
       cost(context, {
         dir: args.positionals[0],
         since: args.values.get('since'),
+      }),
+  },
+  {
+    name: 'trace',
+    summary: 'inspect a traced run: the span tree, timings, models, tokens and cost',
+    usage: 'trace [run] [--dir <dir>] [--all]',
+    flags: [
+      valueFlag('dir', 'dir', 'the trace directory to read (default: $AID_TRACE_DIR)'),
+      booleanFlag('all', 'print every run in the directory, not just the run list'),
+      JSON_FLAG,
+    ],
+    run: (context, args) =>
+      trace(context, {
+        run: args.positionals[0],
+        dir: args.values.get('dir'),
+        all: args.booleans.has('all'),
       }),
   },
   {

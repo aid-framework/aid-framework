@@ -41,6 +41,36 @@ export interface OutcomeInit {
   readonly stderr?: string;
 }
 
+/**
+ * Group digits so a reader can count them: `1234567` becomes `1,234,567`.
+ *
+ * `toLocaleString` would follow the host's locale, which makes a golden test — and a
+ * pasted CI log — depend on where the machine thinks it is. This does not.
+ */
+export function group(value: number): string {
+  const digits = String(Math.trunc(Math.abs(value)));
+  const sign = value < 0 ? '-' : '';
+  let out = '';
+  for (let index = 0; index < digits.length; index += 1) {
+    if (index > 0 && (digits.length - index) % 3 === 0) out += ',';
+    out += digits[index];
+  }
+  return sign + out;
+}
+
+/**
+ * Money, rounded for reading. `digits` is the default of two cents for a total, and callers
+ * showing a single cheap model call pass more, because `$0.00` for a real charge is a lie.
+ */
+export function usd(value: number, digits = 2): string {
+  const scale = 10 ** digits;
+  const rounded = Math.round(Math.abs(value) * scale) / scale;
+  const [whole = '0', fraction = ''] = rounded.toFixed(digits).split('.');
+  const negative = value < 0 && rounded !== 0;
+  const tail = digits === 0 ? '' : `.${fraction}`;
+  return `${negative ? '-' : ''}$${group(Number(whole))}${tail}`;
+}
+
 export function outcome(init: OutcomeInit): CommandOutcome {
   const diagnostics = init.diagnostics ?? [];
   return {

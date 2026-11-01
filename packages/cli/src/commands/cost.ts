@@ -1,5 +1,5 @@
 /**
- * `aid cost` — a cost and latency report read from the local trace sink.
+ * `aid cost` Ã¢â‚¬â€ a cost and latency report read from the local trace sink.
  *
  * The numbers already exist. `runtimes/{python,typescript}` write one JSONL span per line
  * whenever `AID_TRACE_DIR` is set, and those spans carry the GenAI token attributes and
@@ -19,40 +19,20 @@
  *   the warning on stderr says why it is zero.
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-
 import type { CliContext } from '../context.js';
 import type { CliDiagnostic } from '../diagnostics.js';
 import { CLI_DIAGNOSTIC_CODES, cliError, cliWarning } from '../diagnostics.js';
 import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE } from '../exit.js';
 import type { CommandOutcome } from '../output.js';
-import { outcome } from '../output.js';
-import type { CostSummary, ModelSpend, TraceSpan } from '../trace.js';
-import { parseSince, parseTraceLines, summariseSpans } from '../trace.js';
-
-/** The variable the runtimes read. Named here, not imported, because it is a runtime knob. */
-const TRACE_DIR_ENV = 'AID_TRACE_DIR';
+import { group, outcome, usd } from '../output.js';
+import type { CostSummary, ModelSpend } from '../trace.js';
+import { parseSince, summariseSpans } from '../trace.js';
+import { confirmTraceDir, locateTraceDir, readTraceDir, TRACE_DIR_ENV } from '../trace-dir.js';
 
 export interface CostOptions {
   /** The directory to read; defaults to `$AID_TRACE_DIR`. */
   readonly dir: string | undefined;
   readonly since: string | undefined;
-}
-
-function displayPath(cwd: string, absolute: string): string {
-  const path = relative(cwd, absolute);
-  if (path === '') return '.';
-  if (path.startsWith('..') || isAbsolute(path)) return absolute;
-  return path.split(sep).join('/');
-}
-
-function group(value: number): string {
-  return String(Math.trunc(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-}
-
-function usd(value: number): string {
-  return `$${value.toFixed(6)}`;
 }
 
 function modelLines(models: readonly ModelSpend[]): string[] {
@@ -67,7 +47,7 @@ function modelLines(models: readonly ModelSpend[]): string[] {
         `${String(model.calls).padStart(4)} calls`,
         `${group(model.inputTokens).padStart(9)} in`,
         `${group(model.outputTokens).padStart(9)} out`,
-        usd(model.costUsd).padStart(14),
+        usd(model.costUsd, 6).padStart(14),
         unpriced,
       ].join('  '),
     );
@@ -81,8 +61,8 @@ function reportLines(summary: CostSummary, dir: string, since: string | undefine
     `dir: ${dir}`,
     `spans: ${group(summary.spans)} in ${group(summary.traces)} trace(s)${scope}`,
     summary.unpricedSpans === 0
-      ? `cost: ${usd(summary.costUsd)}`
-      : `cost: ${usd(summary.costUsd)} (${summary.unpricedSpans} unpriced span(s) not included)`,
+      ? `cost: ${usd(summary.costUsd, 6)}`
+      : `cost: ${usd(summary.costUsd, 6)} (${summary.unpricedSpans} unpriced span(s) not included)`,
     `tokens: ${group(summary.inputTokens)} input, ${group(summary.outputTokens)} output`,
   ];
   if (summary.latency !== undefined) {
@@ -98,21 +78,9 @@ function reportLines(summary: CostSummary, dir: string, since: string | undefine
 export function cost(context: CliContext, options: CostOptions): CommandOutcome {
   const command = 'cost';
 
-  const configured = options.dir ?? context.env[TRACE_DIR_ENV]?.trim();
-  if (configured === undefined || configured === '') {
-    return outcome({
-      command,
-      exitCode: EXIT_USAGE,
-      diagnostics: [
-        cliError({
-          code: CLI_DIAGNOSTIC_CODES.traceDirMissing,
-          message: `no trace directory: \`aid cost\` needs one to read.`,
-          hint: `Pass it as \`aid ${command} <dir>\`, or set ${TRACE_DIR_ENV} to the directory the runtime writes to.`,
-        }),
-      ],
-      text: `aid: no trace directory. Pass one, or set ${TRACE_DIR_ENV}.\n`,
-    });
-  }
+  const located = locateTraceDir(context, options.dir, command);
+  if (located.kind === 'refused') return located.outcome;
+  const shown = located.shown;
 
   let since: string | undefined;
   if (options.since !== undefined) {
@@ -133,52 +101,11 @@ export function cost(context: CliContext, options: CostOptions): CommandOutcome 
     }
   }
 
-  const absolute = resolve(context.cwd, configured);
-  const shown = displayPath(context.cwd, absolute);
+  const confirmed = confirmTraceDir(located, command);
+  if (confirmed.kind === 'refused') return confirmed.outcome;
+
   const diagnostics: CliDiagnostic[] = [];
-  let isDirectory = false;
-  try {
-    isDirectory = statSync(absolute).isDirectory();
-  } catch {
-    isDirectory = false;
-  }
-  if (!isDirectory) {
-    return outcome({
-      command,
-      exitCode: EXIT_USAGE,
-      diagnostics: [
-        cliError({
-          code: CLI_DIAGNOSTIC_CODES.traceDirNotFound,
-          message: `"${shown}" is not a directory.`,
-          hint: `Point \`aid ${command}\` at the directory ${TRACE_DIR_ENV} names, or unset it to be told which is missing.`,
-        }),
-      ],
-      text: `aid: "${shown}" is not a directory.\n`,
-    });
-  }
-
-  const names = readdirSync(absolute, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.jsonl'))
-    .map((entry) => entry.name)
-    .sort();
-
-  let skipped = 0;
-  const all: TraceSpan[] = [];
-  let unreadable = 0;
-
-  for (const name of names) {
-    let text: string;
-    try {
-      text = readFileSync(join(absolute, name), 'utf8');
-    } catch {
-      // Counted, not thrown: one unreadable file should not hide the spans in the rest.
-      unreadable += 1;
-      continue;
-    }
-    const parsed = parseTraceLines(text);
-    all.push(...parsed.spans);
-    skipped += parsed.skipped;
-  }
+  const { files: names, spans: all, skipped, unreadable } = readTraceDir(confirmed.absolute);
 
   if (unreadable > 0) {
     diagnostics.push(

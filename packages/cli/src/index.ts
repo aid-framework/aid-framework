@@ -1,5 +1,6 @@
 /**
- * `@aid-framework/cli` - the `aid` command: init, validate, gen, dev, ingest, eval, cost, doctor, eject and infra.
+ * `@aid-framework/cli` - the `aid` command: init, validate, gen, dev, ingest, eval, cost, trace,
+ * doctor, eject and infra.
  *
  * The CLI is glue. Every judgement it reports -- whether a spec parses, what the IR is,
  * what a target can emit, which generated file was hand-edited, whether an eval regressed
@@ -33,6 +34,8 @@ export type { InitOptions } from './commands/init.js';
 export { init, projectNameFor, starterSpec } from './commands/init.js';
 export type { MigrateOptions } from './commands/migrate.js';
 export { migrate } from './commands/migrate.js';
+export type { TraceOptions } from './commands/trace.js';
+export { trace } from './commands/trace.js';
 export type { ValidateOptions } from './commands/validate.js';
 export { validate } from './commands/validate.js';
 export type { CliContext, Spawn, SpawnOptions, SpawnResult } from './context.js';
@@ -77,7 +80,26 @@ export {
   targetNames,
   unknownTargetDiagnostic,
 } from './targets.js';
-export type { CostSummary, Latency, ModelSpend, ParsedTrace, TraceSpan } from './trace.js';
-export { parseSince, parseTraceLines, summariseSpans } from './trace.js';
+export type {
+  CostSummary,
+  Latency,
+  ModelSpend,
+  ParsedTrace,
+  SpanFacts,
+  SpanRow,
+  TraceRun,
+  TraceSpan,
+} from './trace.js';
+export {
+  childrenOf,
+  factsOf,
+  parseSince,
+  parseTraceLines,
+  runsOf,
+  summariseSpans,
+  treeRowsOf,
+} from './trace.js';
+export type { TraceDir } from './trace-dir.js';
+export { readTraceDir, resolveTraceDir, TRACE_DIR_ENV } from './trace-dir.js';
 export type { CommandSpec } from './usage.js';
 export { commandUsage, globalUsage } from './usage.js';
