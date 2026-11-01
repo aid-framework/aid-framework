@@ -66,6 +66,8 @@ export {
   regenerate,
   staleGeneratedFiles,
 } from './drift.js';
+export type { EjectRequest, EjectResult, EjectStatus, ManagedPathOptions } from './eject.js';
+export { businessPathFor, eject } from './eject.js';
 export type {
   EmitsAgainst,
   GeneratorManifest,

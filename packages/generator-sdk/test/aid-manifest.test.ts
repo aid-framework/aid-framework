@@ -48,6 +48,7 @@ describe('emptyAidManifest', () => {
       manifestVersion: AID_MANIFEST_VERSION,
       generatedBy: PROVENANCE,
       files: [],
+      ejected: [],
     });
   });
 

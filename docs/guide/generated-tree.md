@@ -150,10 +150,9 @@ recorded hash, the generator treats it as a human edit and:
 2. writes the new bytes beside it as `app/generated/routes/hello.py.aid-rej`,
 3. exits non-zero with guidance naming the path.
 
-`--force` discards the edit and rewrites the file. It does **not** touch `business/`. The
-guidance mentions `aid eject` for taking ownership of a generated file permanently - that
-command is specified but not implemented, so today `--force` or moving the code to
-`business/` are the two real options.
+`--force` discards the edit and rewrites the file. It does **not** touch `business/`. To keep the
+edit instead, run `aid eject <path>`: it moves the file to `business/` and stops the generator from
+ever planning that path again.
 
 Files that are no longer in the plan are reported as "no longer generated" and left on disk.
 Deletion needs an explicit `prune`, because it is the one operation with no recovery.

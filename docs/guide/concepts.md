@@ -68,8 +68,8 @@ that plan is where the ownership model lives, and it is the same algorithm for e
 - **`app/generated/**` belongs to the generator.** It is rewritten on every run, except when
   its hash no longer matches the manifest. That mismatch means a human edited generated code.
   The generator then refuses to overwrite, writes the new bytes beside the file as
-  `<path>.aid-rej`, and fails with guidance. `--force` discards the edits; that is the one
-  escape that exists today, because `aid eject` is specified and not implemented.
+  `<path>.aid-rej`, and fails with guidance. `--force` discards the edits; `aid eject <path>`
+  keeps them by moving the file to `app/business/` and excluding it from generation forever.
 - **`app/business/**` belongs to you.** It is created once if missing and never touched again,
   not even under `--force`. This is where a tool body, a prompt override or an evaluator goes.
 - **Files that are no longer planned** are reported as "no longer generated" but not deleted,
