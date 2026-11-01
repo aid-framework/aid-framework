@@ -22,6 +22,8 @@ import {
   packageFor,
   parseConfig,
   parseVersionTag,
+  projectVersion,
+  stampDrift,
 } from './version.mjs';
 
 const root = new URL('../', import.meta.url);
@@ -614,6 +616,143 @@ describe('the stamp subcommand', () => {
       const text = readFileSync(path, 'utf8');
       expect(text).toContain('version = "0.1.39"');
       expect(text).toContain('version = "9.9.9"');
+    });
+  });
+});
+
+describe('the verify subcommand', () => {
+  const script = fileURLToPath(new URL('version.mjs', import.meta.url));
+
+  /**
+   * The shape that broke: manifests declaring an older version while `decide` derives
+   * a newer tag from tags alone. `publish.yml` then refuses the tag and the release
+   * stays empty, so the disagreement has to be caught before the tag is pushed.
+   *
+   * @param {{ npm?: string | null, pypi?: string | null }} [versions]
+   * @returns {string} the fixture root
+   */
+  function fixture({ npm = '0.1.51', pypi = '0.1.51' } = {}) {
+    const dir = mkdtempSync(join(tmpdir(), 'aid-verify-'));
+    mkdirSync(join(dir, 'packages/spec'), { recursive: true });
+    mkdirSync(join(dir, 'runtimes/python'), { recursive: true });
+    if (npm !== null) {
+      writeFileSync(
+        join(dir, 'packages/spec/package.json'),
+        `${JSON.stringify({ name: '@aid-framework/spec', version: npm }, null, 2)}\n`,
+      );
+    }
+    if (pypi !== null) {
+      writeFileSync(
+        join(dir, 'runtimes/python/pyproject.toml'),
+        `[project]\nname = "aid-runtime-python"\nversion = "${pypi}"\n`,
+      );
+    }
+    writeFileSync(
+      join(dir, 'release.config.json'),
+      JSON.stringify({
+        ...baseConfig(),
+        packages: [
+          { name: '@aid-framework/spec', path: 'packages/spec', registry: 'npm' },
+          { name: 'aid-runtime-python', path: 'runtimes/python', registry: 'pypi' },
+        ],
+      }),
+    );
+    return dir;
+  }
+
+  /**
+   * @param {string} dir
+   * @param {string[]} extra
+   * @returns {{ status: number | null, stdout: string, stderr: string }}
+   */
+  function runVerify(dir, extra) {
+    const result = spawnSync(
+      process.execPath,
+      [script, 'verify', '--config', join(dir, 'release.config.json'), ...extra],
+      { encoding: 'utf8' },
+    );
+    return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+  }
+
+  /** @param {{ npm?: string | null, pypi?: string | null }} options @param {(dir: string) => void} body */
+  function withFixture(options, body) {
+    const dir = fixture(options);
+    try {
+      body(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('passes when every manifest declares the version about to be tagged', () => {
+    withFixture({}, (dir) => {
+      const result = runVerify(dir, ['--version', '0.1.51']);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('all 2 manifests declare 0.1.51');
+      expect(result.stderr).toBe('');
+    });
+  });
+
+  it('fails and names the fix when a manifest lags the tag', () => {
+    withFixture({ npm: '0.1.48', pypi: '0.1.48' }, (dir) => {
+      const result = runVerify(dir, ['--version', '0.1.51']);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('refusing to release 0.1.51');
+      expect(result.stderr).toContain('packages/spec/package.json');
+      expect(result.stderr).toContain('declares 0.1.48, expected 0.1.51');
+      // The message has to be actionable on its own; the failure is otherwise a
+      // green release that ships nothing.
+      expect(result.stderr).toContain('stamp --version 0.1.51');
+    });
+  });
+
+  it('treats a missing manifest as drift rather than as agreement', () => {
+    withFixture({ npm: null }, (dir) => {
+      const result = runVerify(dir, ['--version', '0.1.51']);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('no version found');
+    });
+  });
+
+  it('rejects a tag-prefixed version the way stamp does', () => {
+    withFixture({}, (dir) => {
+      const result = runVerify(dir, ['--version', 'v0.1.51']);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('use 0.1.51 instead of v0.1.51');
+    });
+  });
+
+  it('reads the [project] version, not a version-like field elsewhere', () => {
+    const text = [
+      '[build-system]',
+      'requires = ["hatchling"]',
+      '',
+      '[tool.hatch.version]',
+      'version = "9.9.9"',
+      '',
+      '[project]',
+      'version = "0.1.51"',
+      '',
+    ].join('\n');
+
+    expect(projectVersion(text)).toBe('0.1.51');
+    expect(projectVersion('[build-system]\nversion = "9.9.9"\n')).toBeNull();
+  });
+
+  it('reports drift per manifest so the CLI can name each offender', () => {
+    withFixture({ npm: '0.1.48', pypi: '0.1.51' }, (dir) => {
+      const drift = stampDrift({
+        config: parseConfig(JSON.parse(readFileSync(join(dir, 'release.config.json'), 'utf8'))),
+        root: dir,
+        version: '0.1.51',
+      });
+
+      expect(drift.map((entry) => entry.path)).toEqual(['packages/spec/package.json']);
+      expect(drift[0]?.declared).toBe('0.1.48');
     });
   });
 });

@@ -123,6 +123,18 @@ jobs:
 
           cat release-plan.json
 
+      # A tag whose commit declares a different version publishes nothing: publish.yml's
+      # detect step rejects it, both publish jobs skip, and the run still reports
+      # success while the registries never move. Refuse it before the tag exists.
+      - name: Verify manifests declare the planned version
+        if: steps.plan.outputs.release == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          node scripts/version.mjs verify --version "${VERSION#v}"
+
       - name: Create tag and GitHub Release
         id: publish
         if: steps.plan.outputs.release == 'true'
