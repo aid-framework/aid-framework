@@ -1,11 +1,11 @@
 ---
-description: "The CLI's eight commands, its exit taxonomy, and its refusal to own rules that already live in the IR or the generators."
+description: "The CLI's nine commands, its exit taxonomy, and its refusal to own rules that already live in the IR or the generators."
 ---
 
 # Runtime to CLI
 
 The CLI is the smallest layer and the one with the strictest contract, because CI reads it. It is
-eight commands, one exit taxonomy, and a deliberate refusal to own any rule that already lives
+nine commands, one exit taxonomy, and a deliberate refusal to own any rule that already lives
 somewhere else.
 
 ## The commands
@@ -17,11 +17,12 @@ somewhere else.
 | `aid gen` | Compiles and reconciles the tree. The only command that writes an app. |
 | `aid ingest` | Runs the generated ingest module for one retriever or all of them. |
 | `aid eval` | Runs one generated eval module, or records its baseline. |
+| `aid cost` | Reports cost, token and latency totals from the runtime's local trace sink. Reads; never reprices. |
 | `aid doctor` | Diagnoses the tree against the spec: hand-edited generated files, provenance and version mismatches, and missing or outdated generated files. Reports; writes nothing. |
 | `aid eject` | Takes ownership of a generated file: moves it to `business/` and excludes it from generation. |
 | `aid infra` | Emits deployment infrastructure for the spec's declared environments. |
 
-Five more are specified and not implemented - `dev`, `trace`, `cost`, `guard`, `migrate` - so
+Four more are specified and not implemented - `dev`, `trace`, `guard`, `migrate` - so
 a stack trace naming one of them is not a bug in the CLI you are holding.
 
 ## The exit taxonomy
@@ -101,6 +102,34 @@ The error split follows the taxonomy: `--retriever` and `--all` together, or nei
 before the spec is even read, and an id the spec does not declare is also **2** with a message
 naming the ids that exist. A missing generated module is **1**, because the invocation was right
 and the project is not.
+
+## `cost` reads the sink; it does not price
+
+Both runtimes write one JSONL span per line whenever `AID_TRACE_DIR` is set. That is the directory
+`aid cost` reads, which is why the command defaults to the same variable rather than inventing a
+path of its own:
+
+```bash
+AID_TRACE_DIR=.aid/traces python -m app.server
+AID_TRACE_DIR=.aid/traces node .next/standalone/server.js
+
+aid cost .aid/traces
+aid cost .aid/traces --since 2026-10-01 --json
+```
+
+Each span carries `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, the model the provider
+served, and `aid.cost.usd` - the price the runtime gateway computed for that call. `aid cost` sums
+those fields and reports nearest-rank p50/p95 latency over model-call spans. It contains **no
+pricing table**: the build-time estimate is the IR's cost gate, and a second rule in the CLI would
+be a second answer to the same question.
+
+A span with tokens but no `aid.cost.usd` is counted under `unpricedSpans` and kept out of the total.
+It is not summed as zero, because a missing price would otherwise read as a cheap run.
+
+The taxonomy holds here too. A missing directory, or one that is not a directory, and an
+unparseable `--since` are **2**; a trace file that exists but cannot be read is **1**, with the
+readable rest still reported; an empty directory is **0** with a warning, because zero spans is a
+true statement rather than a failure.
 
 ## The pattern to copy
 

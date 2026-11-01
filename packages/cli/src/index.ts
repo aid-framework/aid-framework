@@ -1,5 +1,5 @@
 /**
- * `@aid-framework/cli` - the `aid` command: init, validate, gen, ingest, eval and doctor.
+ * `@aid-framework/cli` - the `aid` command: init, validate, gen, ingest, eval, cost and doctor.
  *
  * The CLI is glue. Every judgement it reports -- whether a spec parses, what the IR is,
  * what a target can emit, which generated file was hand-edited, whether an eval regressed
@@ -13,6 +13,8 @@
 
 export type { FlagSpec, ParsedArguments, ParseOutcome } from './args.js';
 export { booleanFlag, JSON_FLAG, parseArguments, valueFlag } from './args.js';
+export type { CostOptions } from './commands/cost.js';
+export { cost } from './commands/cost.js';
 export type { DoctorOptions } from './commands/doctor.js';
 export { doctor } from './commands/doctor.js';
 export type { EvalOptions } from './commands/eval.js';
@@ -63,5 +65,7 @@ export {
   targetNames,
   unknownTargetDiagnostic,
 } from './targets.js';
+export type { CostSummary, Latency, ModelSpend, ParsedTrace, TraceSpan } from './trace.js';
+export { parseSince, parseTraceLines, summariseSpans } from './trace.js';
 export type { CommandSpec } from './usage.js';
 export { commandUsage, globalUsage } from './usage.js';
