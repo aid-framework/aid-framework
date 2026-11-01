@@ -16,6 +16,7 @@ somewhere else.
 | `aid validate` | Parses, validates and runs every IR gate. Reports; writes nothing. |
 | `aid gen` | Compiles and reconciles the tree. `dev` runs the same generator before serving. |
 | `aid dev` | Regenerates, then runs the application's own server on loopback, for the targets that have one. |
+| `aid guard` | Measures the app's declared guardrail table against a red-team corpus and gates on recall and false positives. |
 | `aid ingest` | Runs the generated ingest module for one retriever or all of them. |
 | `aid eval` | Runs one generated eval module, or records its baseline. |
 | `aid cost` | Reports cost, token and latency totals from the runtime's local trace sink. Reads; never reprices. |
@@ -23,7 +24,7 @@ somewhere else.
 | `aid eject` | Takes ownership of a generated file: moves it to `business/` and excludes it from generation. |
 | `aid infra` | Emits deployment infrastructure for the spec's declared environments. |
 
-Three more are specified and not implemented - `trace`, `guard`, `migrate` - so
+Two more are specified and not implemented - `trace` and `migrate` - so
 a stack trace naming one of them is not a bug in the CLI you are holding.
 
 ## The exit taxonomy
@@ -163,6 +164,49 @@ The taxonomy holds here too. A missing directory, or one that is not a directory
 unparseable `--since` are **2**; a trace file that exists but cannot be read is **1**, with the
 readable rest still reported; an empty directory is **0** with a warning, because zero spans is a
 true statement rather than a failure.
+
+## `guard` measures the table the app ships, not the detectors
+
+`aid guard` answers one question: given a corpus of payloads, would **this app** have caught
+them? The detectors are not reimplemented here. The command imports the same
+`generated/guardrails.py` the routes import, hands the engine every declaration covering a
+fixture's stage, and asks which one fired:
+
+```bash
+aid guard                              # corpus discovered beside the spec, then at the root
+aid guard --red-team corpora/owasp.json
+aid guard --json
+```
+
+That is deliberately a different measurement from `runtimes/python/tests/redteam/`, which
+builds one `GuardrailDefinition` per fixture and runs it alone because it is testing the
+detectors themselves. A second implementation in the CLI would drift from the one the
+routes run, and the number it produced would describe the CLI rather than the
+application.
+
+The corpus is an input rather than something the CLI ships. `--red-team` names a file;
+without it the command looks for `redteam.json` beside the spec and then at the project
+root. The framework's own corpus lives in the runtime's test suite because that is where
+`test_redteam.py` gates on it - shipping a copy inside the CLI would be a second copy to
+keep in step.
+
+A corpus is `version: 1`, an optional `threshold` block, and a `fixtures` array. Each
+fixture names one `stage` (`input`, `output`, `retrieval`, `tool-call`), one `policy`, the
+payload, and `known_bad`. `expect` may restate `known_bad`; a fixture where the two
+disagree is refused rather than resolved in one direction.
+
+Two facts are reported separately, and the separation is the point:
+
+- **Undeclared** (`input/secret-scan`) means no guardrail names that policy at that stage.
+  It is a spec fix, and the command warns rather than fails - the fixture was never
+  eligible to be caught.
+- **Missed** means a declaration covers the policy and the detector did not match. It is a
+  detector fix, and it fails the run.
+
+The taxonomy holds: a missing, malformed, or too-small corpus, and a target with no driver
+are **2**; no guardrails declared, a tree with no `app/generated/guardrails.py`, a failed
+run, and a recall or false-positive rate that misses the corpus's threshold are **1**. The
+command never regenerates: it measures the tree it is given, so run `aid gen` first.
 
 ## The pattern to copy
 

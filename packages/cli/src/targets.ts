@@ -16,6 +16,7 @@
 import {
   checkPlan as checkPyFastApi,
   EVALS_INIT_PATH,
+  GUARDRAILS_PATH,
   PY_FASTAPI_MANIFEST,
   evalModulePath as pyFastApiEvalModulePath,
   pyFastApiGenerator,
@@ -78,6 +79,21 @@ export type TargetDev =
   | { readonly kind: 'asgi'; readonly module: string; readonly entry: string }
   | { readonly kind: 'none'; readonly reason: string };
 
+/**
+ * How `aid guard` reaches this target's guardrail table, or why it cannot.
+ *
+ * `aid guard` drives the runtime's `GuardrailEngine`; it does not re-implement detection.
+ * That makes the question "is there a declared table in a language this command can
+ * import", and the answer is per target: the Python target emits `generated/guardrails.py`
+ * with `GUARDRAILS` and `BY_ID`, while the TypeScript target emits modules the Next app
+ * imports and has no driver here yet -- a gap worth naming rather than hiding behind a
+ * Python traceback. `file` is what the command checks for before it spawns anything, so a
+ * stale tree is reported as a stale tree.
+ */
+export type TargetGuard =
+  | { readonly kind: 'engine'; readonly module: string; readonly file: string }
+  | { readonly kind: 'none'; readonly reason: string };
+
 export interface Target {
   /** The target id, as a spec's `project.targets` spells it. */
   readonly name: string;
@@ -94,6 +110,8 @@ export interface Target {
   readonly runner: TargetRunner;
   /** How `aid dev` serves this target, or why it cannot. */
   readonly dev: TargetDev;
+  /** How `aid guard` runs this target's guardrail table, or why it cannot. */
+  readonly guard: TargetGuard;
   /** Everything that stops this target compiling the IR, as diagnostics. */
   check(ir: IR): readonly CliDiagnostic[];
   plan(ir: IR): Plan;
@@ -120,6 +138,7 @@ interface TargetModule {
   readonly generator: Generator;
   readonly runner: TargetRunner;
   readonly dev: TargetDev;
+  readonly guard: TargetGuard;
   readonly extension: string;
   readonly evalsIndexPath: string;
   readonly evalModulePath: (evalId: string) => string;
@@ -148,6 +167,7 @@ function targetFor(module: TargetModule): Target {
     generator: module.generator,
     runner: module.runner,
     dev: module.dev,
+    guard: module.guard,
     // `checkPlan` is the target's own compiler, and it throws the same problems
     // `plan` does. Reporting them through it means the CLI prints the target's codes
     // and paths verbatim: no catching, no renaming, no second opinion about what is
@@ -199,6 +219,13 @@ export const TARGETS: readonly Target[] = [
       module: `${PY_FASTAPI_MANIFEST.output.root}.main:app`,
       entry: `${PY_FASTAPI_MANIFEST.output.root}/main.py`,
     },
+    // The table's module name is derived from the path the generator emits to, so a
+    // generator that moves the file moves the import with it.
+    guard: {
+      kind: 'engine',
+      module: dotted(GUARDRAILS_PATH, '.py'),
+      file: GUARDRAILS_PATH,
+    },
     extension: '.py',
     evalsIndexPath: EVALS_INIT_PATH,
     evalModulePath: pyFastApiEvalModulePath,
@@ -213,6 +240,11 @@ export const TARGETS: readonly Target[] = [
       kind: 'none',
       reason:
         'it is a deployment target -- the emitted route handlers are mounted by Next, and it ships no server of its own',
+    },
+    guard: {
+      kind: 'none',
+      reason:
+        'its guardrails are TypeScript modules the Next app imports, and `aid guard` has no TypeScript driver yet',
     },
     // The generated modules are `.ts` on disk and `.js` once compiled; the dotted name
     // is the same either way, and the path helpers hand back the file that exists.

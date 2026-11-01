@@ -57,6 +57,15 @@ export {
 /** The roots the plan writes into, read from the manifest rather than restated. */
 export { APP_ROOT, BUSINESS_ROOT, GENERATED_ROOT, MANIFEST_PATH } from './emit/file.js';
 export { GATEWAY_INIT_PATH, GATEWAY_MODELS_PATH } from './emit/gateway.js';
+/**
+ * Where the guardrail table lives, and the predicate the plan uses to decide whether to
+ * emit it at all.
+ *
+ * `hasGuardrails` is the plan's own gate, exported so `aid guard` asks the same question
+ * the generator asked: a command that decided for itself would eventually disagree about
+ * whether an app declares guardrails.
+ */
+export { GUARDRAILS_PATH, hasGuardrails } from './emit/guardrails.js';
 export { OBSERVABILITY_PATH } from './emit/observability.js';
 export { BUSINESS_INIT_PATH, GENERATED_INIT_PATH } from './emit/package.js';
 export {

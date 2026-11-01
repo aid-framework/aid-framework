@@ -74,6 +74,18 @@ export const CLI_DIAGNOSTIC_CODES = {
   devPortInvalid: 'cli/dev-port-invalid',
   devEntryMissing: 'cli/dev-entry-missing',
   devUvicornMissing: 'cli/dev-uvicorn-missing',
+  // `aid guard` measures detection, so these separate a corpus the command could not
+  // read or judge (`redTeam*`, `guardModuleMissing` -- exit 2 territory) from a measured
+  // result that failed the gate (`guardRecall`, `guardFalsePositives`, exit 1).
+  redTeamMissing: 'cli/red-team-missing',
+  redTeamMalformed: 'cli/red-team-malformed',
+  redTeamTooSmall: 'cli/red-team-too-small',
+  guardNotDeclared: 'cli/guard-not-declared',
+  guardModuleMissing: 'cli/guard-module-missing',
+  guardPolicyUndeclared: 'cli/guard-policy-undeclared',
+  guardRecall: 'cli/guard-recall',
+  guardFalsePositives: 'cli/guard-false-positives',
+  guardFixtureError: 'cli/guard-fixture-error',
 } as const;
 
 export type CliDiagnosticCode = (typeof CLI_DIAGNOSTIC_CODES)[keyof typeof CLI_DIAGNOSTIC_CODES];
