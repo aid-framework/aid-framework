@@ -16,6 +16,7 @@ Writing must never fail a request, so every failure to record is swallowed.
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import math
 import os
@@ -42,7 +43,6 @@ TRACE_DIR_ENV = "AID_TRACE_DIR"
 _OPEN: ContextVar[tuple[tuple[str, str], ...]] = ContextVar("aid_local_trace_open", default=())
 
 _lock = threading.Lock()
-_sink: tuple[str, Path] | None = None
 
 
 def local_trace_enabled() -> bool:
@@ -92,26 +92,25 @@ def _jsonable(value: Any) -> Any:
     return str(value)
 
 
-def _sink_path() -> Path | None:
-    """The file for this process, creating its directory on first use.
+@functools.lru_cache(maxsize=4)
+def _sink_path_for(configured: str) -> Path:
+    """The file for one configured directory, created on first use.
 
-    Cached per configured directory so one process writes one file, while a test
-    that points ``AID_TRACE_DIR`` somewhere else still gets a fresh file.
+    Cached per directory so one process writes one file, while a caller that
+    points ``AID_TRACE_DIR`` somewhere else still gets a fresh file.
     """
-    global _sink
+    directory = Path(configured)
+    with contextlib.suppress(OSError):
+        directory.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    return directory / f"trace-{stamp}-{os.getpid()}.jsonl"
+
+
+def _sink_path() -> Path | None:
     configured = _configured_dir()
     if not configured:
         return None
-    with _lock:
-        if _sink is not None and _sink[0] == configured:
-            return _sink[1]
-        directory = Path(configured)
-        with contextlib.suppress(OSError):
-            directory.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-        path = directory / f"trace-{stamp}-{os.getpid()}.jsonl"
-        _sink = (configured, path)
-        return path
+    return _sink_path_for(configured)
 
 
 def _write(record: dict[str, Any]) -> None:

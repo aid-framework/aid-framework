@@ -32,6 +32,10 @@ class BoomError(Exception):
     """A failure with an unmistakable message."""
 
 
+def _raise_boom() -> None:
+    raise BoomError("boom")
+
+
 def _lines(directory: Path) -> list[dict[str, Any]]:
     (path,) = directory.glob("trace-*.jsonl")
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
@@ -93,7 +97,7 @@ def test_a_failure_is_recorded_once_with_an_error_status(
     monkeypatch.setenv(TRACE_DIR_ENV, str(tmp_path))
 
     with pytest.raises(BoomError, match="boom"), llm_span(model="m", provider="p"):
-        raise BoomError("boom")
+        _raise_boom()
 
     (record,) = _lines(tmp_path)
     assert record["status"]["code"] == "ERROR"
