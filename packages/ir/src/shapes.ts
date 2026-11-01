@@ -767,8 +767,12 @@ export const IR_ONLY_COLLECTIONS = ['embeddings'] as const;
  */
 export const NON_COLLECTION_SECTIONS = ['specVersion', 'project'] as const;
 
-/** Providers Phase 0 can actually serve. The IR's `Provider` union is wider. */
-export const PHASE_0_PROVIDERS = ['openai', 'openai-compatible', 'fake'] as const;
+/**
+ * Providers the shipped runtime adapters can actually serve. The IR's `Provider`
+ * union is wider on purpose: the spec may declare any of them, and the `normalize`
+ * gate is what refuses one nothing can serve.
+ */
+export const SERVED_PROVIDERS = ['anthropic', 'openai', 'openai-compatible', 'fake'] as const;
 
 /** Phase 0 defaults for the two IR objects that are not collections. */
 export const DEFAULT_OBSERVABILITY: ObservabilityShape = { trace: true, redact: [] };

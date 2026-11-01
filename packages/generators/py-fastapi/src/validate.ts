@@ -25,10 +25,10 @@ import {
   type ModelParams,
   type ModelShape,
   modelsUnderTest,
-  PHASE_0_PROVIDERS,
   type PipelineShape,
   type PromptShape,
   type RetrieverShape,
+  SERVED_PROVIDERS,
   type StepInput,
   type StepShape,
   type ToolShape,
@@ -298,8 +298,8 @@ export function checkModels(ir: IR): PlanProblem[] {
         problem(
           'unsupported-provider',
           `${path}.provider`,
-          `no runtime adapter for provider '${model.provider}'; Phase 0 wires ` +
-            `${PHASE_0_PROVIDERS.join(', ')}`,
+          `no runtime adapter for provider '${model.provider}'; the shipped adapters serve ` +
+            `${SERVED_PROVIDERS.join(', ')}`,
         ),
       );
     }

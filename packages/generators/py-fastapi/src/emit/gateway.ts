@@ -75,7 +75,8 @@ function providerEntry(ir: IR, provider: string): string {
   const adapter = providerAdapter(provider);
   const env = apiKeyEnv(ir, provider);
   const arguments_: string[] = [];
-  if (adapter === 'OpenAICompatibleProvider') {
+  // Both HTTP adapters take a `name` and an optional key; only the fake takes neither.
+  if (adapter === 'OpenAICompatibleProvider' || adapter === 'AnthropicProvider') {
     arguments_.push(`${INDENT}${INDENT}${INDENT}name=${pythonString(provider)},`);
     if (env !== undefined) {
       arguments_.push(`${INDENT}${INDENT}${INDENT}api_key=os.environ.get(${pythonString(env)}),`);
@@ -168,9 +169,9 @@ export function emitGatewayModels(ir: IR): EmittedFile {
       [
         'def default_providers() -> dict[str, Provider]:',
         pythonDoc(
-          'One provider per provider key the spec uses. An OpenAI-compatible provider ' +
-            'reads its key from the environment variable the spec names, or from none when ' +
-            'the spec names none.',
+          'One provider per provider key the spec uses. A network provider reads its key ' +
+            'from the environment variable the spec names, or from none when the spec ' +
+            'names none.',
           INDENT,
         ),
         `${INDENT}return {`,

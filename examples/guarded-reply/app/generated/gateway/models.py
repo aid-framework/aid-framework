@@ -32,8 +32,8 @@ FALLBACKS: dict[str, tuple[str, ...]] = {}
 
 
 def default_providers() -> dict[str, Provider]:
-    """One provider per provider key the spec uses. An OpenAI-compatible provider reads its key from
-    the environment variable the spec names, or from none when the spec names none.
+    """One provider per provider key the spec uses. A network provider reads its key from the
+    environment variable the spec names, or from none when the spec names none.
     """
 
     return {

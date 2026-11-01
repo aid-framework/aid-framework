@@ -249,11 +249,11 @@ export {
   MAX_STEP_DEPTH,
   modelIdentity,
   NON_COLLECTION_SECTIONS,
-  PHASE_0_PROVIDERS,
   POPULATED_COLLECTION_BY_SECTION,
   PRIMITIVE_TYPES,
   PROVIDERS,
   pipelineIdentity,
   promptIdentity,
+  SERVED_PROVIDERS,
   toolIdentity,
 } from './shapes.js';
