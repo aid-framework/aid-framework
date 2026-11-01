@@ -75,7 +75,7 @@
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/gateway/models.py",
-      "sha256": "5cc9580b26ce42565a314d771b1660b86df1cce08230a42c831d70bb366aab04"
+      "sha256": "e0c1692b3d0b97b1244cc48e42d3241c95abe4a59ad8b84726c6880e0c833df4"
     },
     {
       "generator": "@aid-framework/generator-py-fastapi",

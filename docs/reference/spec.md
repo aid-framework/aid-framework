@@ -70,7 +70,7 @@ Semantic cache settings. `threshold` is the minimum cosine similarity (0..1) a n
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `provider` | `openai`, `openai-compatible`, `fake` | yes | The Phase 0 provider set. `fake` is deterministic and keyless, which is what lets the eval gate run offline in CI. |
+| `provider` | `openai`, `openai-compatible`, `anthropic`, `fake` | yes | The provider set the shipped adapters serve. `fake` is deterministic and keyless, which is what lets the eval gate run offline in CI. |
 | `modelId` | `string` | yes | Pinned vendor model id. Never an alias or a moving target: the resolved id is recorded in the IR so a run is reproducible. |
 | `capabilities` | array of `json-schema`, `tools`, `streaming`, `embeddings` | no | Declared model capabilities. json-schema is negotiated within a prompt (a structured-output prompt must bind a model that declares it) and embeddings within a retriever (a retriever's embedModel must declare it); the others are recorded in the IR for the capability gate to use in later phases. |
 | `params` | object | no | — |

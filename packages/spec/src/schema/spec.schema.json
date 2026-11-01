@@ -190,8 +190,8 @@
       "additionalProperties": false,
       "properties": {
         "provider": {
-          "description": "The Phase 0 provider set. `fake` is deterministic and keyless, which is what lets the eval gate run offline in CI.",
-          "enum": ["openai", "openai-compatible", "fake"]
+          "description": "The provider set the shipped adapters serve. `fake` is deterministic and keyless, which is what lets the eval gate run offline in CI.",
+          "enum": ["openai", "openai-compatible", "anthropic", "fake"]
         },
         "modelId": {
           "description": "Pinned vendor model id. Never an alias or a moving target: the resolved id is recorded in the IR so a run is reproducible.",
@@ -264,7 +264,7 @@
         },
         {
           "if": {
-            "properties": { "provider": { "enum": ["openai", "openai-compatible"] } },
+            "properties": { "provider": { "enum": ["openai", "openai-compatible", "anthropic"] } },
             "required": ["provider"]
           },
           "then": { "required": ["apiKeyEnv"], "properties": { "apiKeyEnv": true } }

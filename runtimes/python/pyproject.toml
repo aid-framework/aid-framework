@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aid-runtime-python"
-version = "0.1.74"
+version = "0.1.75"
 description = "The AID Framework Python runtime: model gateway with pinning and cost budgets, prompt registry, tool executor, OTel GenAI tracing, plain-async pipeline, and an eval harness that gates on statistical regression against a stored baseline."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,9 +20,10 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Typing :: Typed",
 ]
-# Deliberately narrow. One HTTP provider adapter ships here; provider breadth is
-# out of scope. `pydantic-ai-slim` is used only for structured output, not as an
-# orchestration dependency -- pipeline control flow is plain async.
+# Deliberately narrow. Two HTTP provider dialects ship here (OpenAI-compatible and
+# Anthropic); Bedrock and Vertex are transport adapters over the same seam and are
+# still out of scope. `pydantic-ai-slim` is used only for structured output, not as
+# an orchestration dependency -- pipeline control flow is plain async.
 dependencies = [
   "httpx>=0.27,<1",
   "opentelemetry-api>=1.24,<2",

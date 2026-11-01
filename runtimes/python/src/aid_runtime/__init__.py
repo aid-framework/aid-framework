@@ -139,7 +139,10 @@ from aid_runtime.pipeline import (
 )
 from aid_runtime.prompts import Example, PromptRegistry, PromptTemplate, RenderedPrompt
 from aid_runtime.providers import (
+    ANTHROPIC_VERSION,
+    DEFAULT_ANTHROPIC_BASE_URL,
     DEFAULT_BASE_URL,
+    AnthropicProvider,
     FakeProvider,
     OpenAICompatibleProvider,
     Provider,
@@ -269,10 +272,12 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.74"
+__version__ = "0.1.75"
 
 __all__ = [
+    "ANTHROPIC_VERSION",
     "ATTRIBUTES",
+    "DEFAULT_ANTHROPIC_BASE_URL",
     "DEFAULT_BASE_URL",
     "DEFAULT_CANDIDATE_FACTOR",
     "DEPTH_KEY",
@@ -294,6 +299,7 @@ __all__ = [
     "AgentRuntime",
     "AgentTransferCycleError",
     "AidRuntimeError",
+    "AnthropicProvider",
     "BaselineGate",
     "Budget",
     "BudgetExceededError",

@@ -23,11 +23,11 @@ import {
   type ModelShape,
   modelIdentity,
   type ObservabilityShape,
-  PHASE_0_PROVIDERS,
   type PipelineShape,
   pipelineIdentity,
   promptIdentity,
   type RetrieverShape,
+  SERVED_PROVIDERS,
   type StepShape,
   type ToolShape,
   toolIdentity,
@@ -225,11 +225,11 @@ export function normalizeGate(ir: IR, options: GateOptions): GateResult {
 }
 
 function checkModel(model: ModelShape, diagnostics: IrDiagnostic[], report: Reporter): void {
-  if (!(PHASE_0_PROVIDERS as readonly string[]).includes(model.provider)) {
+  if (!(SERVED_PROVIDERS as readonly string[]).includes(model.provider)) {
     diagnostics.push(
       report.error({
         code: IR_DIAGNOSTIC_CODES.providerUnsupported,
-        message: `the normalize gate rejected this model: provider "${model.provider}" is not one of the providers Phase 0 serves (${PHASE_0_PROVIDERS.join(', ')})`,
+        message: `the normalize gate rejected this model: provider "${model.provider}" is not one the shipped adapters serve (${SERVED_PROVIDERS.join(', ')})`,
         path: ['models', model.id, 'provider'],
       }),
     );

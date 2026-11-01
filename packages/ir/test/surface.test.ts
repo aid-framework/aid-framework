@@ -26,7 +26,6 @@ import {
   modelIdentity,
   NON_COLLECTION_SECTIONS,
   offsetPosition,
-  PHASE_0_PROVIDERS,
   PHASE_0_TARGET_CAPABILITIES,
   POPULATED_COLLECTION_BY_SECTION,
   PRIMITIVE_TYPES,
@@ -38,6 +37,7 @@ import {
   reporter,
   resolveRequiredCapability,
   runGates,
+  SERVED_PROVIDERS,
   SPEC_MODEL_CAPABILITY_MAP,
   TARGET_CAPABILITY_ALIASES,
   toolIdentity,
@@ -174,7 +174,7 @@ describe('IR shape constants', () => {
     expect(DEFAULT_TARGET).toBe('py-fastapi');
     for (const provider of PROVIDERS) expect(isProvider(provider)).toBe(true);
     expect(isProvider('teleportation')).toBe(false);
-    for (const provider of PHASE_0_PROVIDERS) {
+    for (const provider of SERVED_PROVIDERS) {
       expect(PROVIDERS as readonly string[]).toContain(provider);
     }
   });

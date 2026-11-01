@@ -638,7 +638,10 @@ describe('a spec with no agent and no memory', () => {
  * fixture's own contents rather than anything the generator decides.
  *
  * Every digest here was re-recorded once, when the package scope changed to `@aid-framework/*`:
- * the generator's name is written into each generated file, so that rename moved all 27. The
+ * the generator's name is written into each generated file, so that rename moved all 27. Two
+ * digests were then re-baselined individually -- `guardrails.py` by L5c and `gateway/models.py`
+ * when a second network provider adapter arrived -- each for a prose-only change and each
+ * recorded at the file it moved rather than by widening `DECLARATION_ONLY`. The
  * `observability.py` pin is deliberately left at its pre-rename value, so the exclusion below
  * still has exactly one file that has moved.
  */
@@ -663,6 +666,12 @@ describe('the pre-P7b example', () => {
    * module's id table went from private `_BY_ID` to public `BY_ID` and its docstring grew a
    * paragraph saying why. Re-recording is deliberate rather than tolerated -- a second
    * file moving would still fail, which is what the count below is for.
+   *
+   * `gateway/models.py` follows the same pattern for the same reason. Its `default_providers()`
+   * docstring said "An OpenAI-compatible provider reads its key", which stops being true once
+   * the spec can name `anthropic`; it now says "A network provider". Only that sentence moved
+   * -- the emitted table, its imports and its values are byte-identical -- so the pin is
+   * re-recorded at this file instead of being widened here.
    */
   const DECLARATION_ONLY = 'app/generated/observability.py';
 

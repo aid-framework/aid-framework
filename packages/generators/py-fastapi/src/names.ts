@@ -284,7 +284,7 @@ export function capabilityReport(capabilities: readonly string[]): CapabilityRep
   };
 }
 
-export type ProviderAdapter = 'OpenAICompatibleProvider' | 'FakeProvider';
+export type ProviderAdapter = 'OpenAICompatibleProvider' | 'AnthropicProvider' | 'FakeProvider';
 
 /** What each provider adapter can do at all, as `Capability` member expressions. */
 export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, readonly string[]>> = {
@@ -297,6 +297,13 @@ export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, readonly str
   ],
   OpenAICompatibleProvider: [
     'Capability.EMBEDDINGS',
+    'Capability.STREAMING',
+    'Capability.STRUCTURED_OUTPUT',
+    'Capability.TOOL_CALLING',
+  ],
+  // No `EMBEDDINGS`: the Messages API has no embeddings endpoint, so advertising it
+  // would let a spec bind an embedding model that can only fail at call time.
+  AnthropicProvider: [
     'Capability.STREAMING',
     'Capability.STRUCTURED_OUTPUT',
     'Capability.TOOL_CALLING',
@@ -327,14 +334,15 @@ export function modelCapabilities(
 }
 
 /**
- * The provider adapter for an IR provider, or `undefined` when Phase 0 ships none.
+ * The provider adapter for an IR provider, or `undefined` when none ships.
  *
- * Provider breadth is a ratified deferral, so an adapter is never guessed: a spec
- * asking for `anthropic` fails the plan with a readable message instead of
- * emitting an app that cannot start.
+ * An adapter is never guessed from a similar name: a spec asking for a provider with
+ * no adapter fails the plan with a readable message instead of emitting an app that
+ * cannot start.
  */
 export function providerAdapter(provider: string): ProviderAdapter | undefined {
   if (provider === 'fake') return 'FakeProvider';
+  if (provider === 'anthropic') return 'AnthropicProvider';
   if (provider === 'openai' || provider === 'openai-compatible') {
     return 'OpenAICompatibleProvider';
   }
