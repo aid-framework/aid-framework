@@ -41,6 +41,17 @@ export const CLI_DIAGNOSTIC_CODES = {
   filesMissing: 'cli/files-missing',
   businessMissing: 'cli/business-missing',
   filesOutdated: 'cli/files-outdated',
+  // `aid infra` originates these. A missing binary and a failed plan are separate codes
+  // because they need different fixes; reporting both as "infra failed" would hide which.
+  infraSubcommandRequired: 'cli/infra-subcommand-required',
+  infraUnknownSubcommand: 'cli/infra-unknown-subcommand',
+  infraGeneratedOutdated: 'cli/infra-generated-outdated',
+  infraNotGenerated: 'cli/infra-not-generated',
+  infraEnvRootMissing: 'cli/infra-env-root-missing',
+  infraTofuMissing: 'cli/infra-tofu-missing',
+  infraTofuFailed: 'cli/infra-tofu-failed',
+  infraDriftDetected: 'cli/infra-drift-detected',
+  infraConfirmProdRequired: 'cli/infra-confirm-prod-required',
 } as const;
 
 export type CliDiagnosticCode = (typeof CLI_DIAGNOSTIC_CODES)[keyof typeof CLI_DIAGNOSTIC_CODES];
