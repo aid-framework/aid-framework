@@ -1,17 +1,16 @@
 /**
  * IR v0.1 shapes (`docs/design.md` §7.2).
  *
- * Every top-level collection in §7.2 is present in the IR, always. Phase 0 populates
- * `types`, `models`, `prompts`, `tools`, `pipelines`, and `evals`; the retrieval
- * surface adds `stores` and `retrievers` and derives `embeddings` from the models that
- * declare the `embeddings` capability. The rest are **present and empty (`[]`)** by
- * design, never omitted and never `undefined`: that stability is what lets a later
- * phase fill them without a breaking reshape. They are empty for two different
- * reasons, and the difference matters. `agents`, `guardrails`, `memory`, and
- * `deployments` are spec sections the DSL defines but defers (`DEFERRED_SECTIONS`), so
- * a spec cannot populate them yet. `embeddings` has no spec section at all: it is
- * IR-only scaffolding, derived rather than declared, declared here so §7.2's shape is
- * complete. `observability` and `runtime` are objects carrying defaults, not arrays.
+ * Every top-level collection in §7.2 is present in the IR, always — never omitted and
+ * never `undefined`, even when the spec leaves it out. That stability is what let each
+ * phase fill a collection without a breaking reshape, and it is why an empty array means
+ * "the spec declared none" rather than "not implemented". Every spec section now
+ * populates: `types`, `models`, `prompts`, `tools`, `pipelines`, and `evals` from the
+ * start, the retrieval surface adds `stores`, `retrievers`, and `memory`, and the agent
+ * surface adds `agents`, `guardrails`, and `deployments`. `embeddings` is the exception:
+ * it has no spec section at all, derived instead from the models that declare the
+ * `embeddings` capability. `observability` and `runtime` are objects carrying defaults,
+ * not arrays.
  */
 
 import type { ModelCapability, RequiredCapability } from './capabilities.js';
@@ -485,10 +484,8 @@ export interface RuntimeShape {
 }
 
 /**
- * Shaped per design §7.2. Populated from the `retrievers` spec section as of the
- * retrieval surface; the collections that remain deferred (`agents`, `guardrails`,
- * `memory`, `deployments`) are empty, since an empty array is otherwise
- * indistinguishable from "not implemented".
+ * Shaped per design §7.2 and populated from the `retrievers` spec section. This is the
+ * declaration only; the generated runtime owns chunking, embedding, and search.
  */
 export interface RetrieverShape {
   id: string;

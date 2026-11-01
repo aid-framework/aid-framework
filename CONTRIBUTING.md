@@ -153,6 +153,63 @@ See the table in [`README.md`](README.md). In short:
    regenerates the example and boots it. Cost and latency gates are not wired up yet.
 7. **Be patient and kind.** This is a young project; reviewers may ask design questions before merging code.
 
+## Releasing
+
+Releases are cut **automatically from `main`**, and the git tag — not any manifest — is the source of
+truth (`docs/design.md` §13). A merged pull request is all it takes; there is no release commit and no
+release branch.
+
+After a successful `CI` run on `main`, `release.yml` resolves that exact commit (never a newer tip),
+decides whether to release, and — if it decides yes — tags it and opens a GitHub Release with generated
+notes. It then dispatches `publish.yml` on `main`, which publishes to npm and PyPI. Both registries trust
+the dispatching workflow's OIDC identity, and their environments admit deployments from `main` only, which
+is why publishing is a dispatch rather than a tag-triggered run.
+
+### The release decision is path-based
+
+`release.config.json` holds a denylist of paths that ship nothing to a consumer — `docs/`, `site/`,
+`.github/`, repository plumbing, and root-level `*.md`. A change set that touches only those paths does not
+release. A change set that touches any of them **and** a package path does release: the gate asks "did
+anything releasable change?", not "was this PR docs-only?".
+
+Consequences worth knowing before you merge:
+
+- A typo fix in `packages/ir/src/shapes.ts` releases, even if it is only a comment. Bumping a package
+  manifest is itself a releasable change.
+- `package.json` at the repository root is excluded, because it is private and ships nothing. Package
+  manifests under `packages/` and `runtimes/` are **not** excluded.
+- To cut a release with nothing releasable merged (a re-run, or a recovery), dispatch `release.yml` by hand
+  with `force_release`.
+
+### Bumping the manifests first
+
+The tag's version and the manifests' versions must agree. `release.yml` refuses to create the tag when they
+do not: without that check the tag is still minted, `detect` in `publish.yml` rejects it, both publish jobs
+skip, and the run reports success while the registries never move.
+
+So a maintainer bumping a version runs, **before** merging the releasable change:
+
+```bash
+node scripts/version.mjs stamp --version 0.1.69
+node scripts/version.mjs verify --version 0.1.69
+git add -A && git commit -s -m "Release 0.1.69"
+```
+
+`stamp` writes the version into every manifest `release.config.json` lists, plus any module-level
+`__version__` a PyPI package exposes — the runtime's own tests pin that literal to `[project].version`.
+`verify` reports every manifest that disagrees and exits non-zero if any does.
+
+All four commands the script supports are usable locally; none of them needs network access:
+
+| Command | What it does |
+| --- | --- |
+| `latest` | The highest release tag in the tags file, or empty when there is none |
+| `decide` | The release decision for a change set: `release`, `tag`, `version`, and `reason` |
+| `stamp` | Write a version into every configured manifest |
+| `verify` | Check that every configured manifest already declares a version |
+
+Bumping `.github/`-only, `docs/`-only, or root-markdown-only changes is pointless — they do not release.
+
 ## Reporting bugs
 
 Open a GitHub issue with a minimal reproduction (ideally a spec fragment), the expected vs. actual behavior,
