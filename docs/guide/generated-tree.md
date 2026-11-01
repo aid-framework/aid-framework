@@ -228,31 +228,55 @@ infra/
       variables.tf
       main.tf
       outputs.tf
+    modules/container/                  generated, when a deployment targets container
+      versions.tf
+      variables.tf
+      main.tf
+      outputs.tf
   envs/dev/                             yours
     main.tf
     variables.tf
 ```
 
-The plan and both spellings of it are always emitted. The OpenTofu module is emitted only when
-a deployment declares `target: serverless`, so a container-only project gains no directory to
-ignore. Its bytes are constant: it loops over the generated tfvars instead of naming services,
-which is what lets it be validated once and be correct for every project.
+The plan and both spellings of it are always emitted. A module is emitted only when a
+deployment declares its target, so a serverless-only project gains no `modules/container`
+directory to ignore. Either module's bytes are constant: it loops over the generated tfvars
+instead of naming services, which is what lets it be validated once and be correct for every
+project.
 
-The env root is yours and is never written by `aid infra gen`. `infra/envs/<env>/main.tf` calls
-`../../generated/modules/serverless`, and `variables.tf` declares the three inputs no spec can
-supply:
+The env root is yours and is never written by `aid infra gen`. `infra/envs/<env>/main.tf`
+calls one module per platform the plan targets - `../../generated/modules/serverless`,
+`../../generated/modules/container`, or both - and `variables.tf` declares the inputs no spec
+can supply:
 
 | Input | Why it cannot be derived |
 | --- | --- |
 | `image_uris` | `deployments[].image` is a `ghcr.io` registry, and Lambda cannot pull from it. |
 | `secret_arns` | An ARN names one account, so it belongs to the environment, not the spec. |
 | `sizing` | Memory and timeout are a cost decision, not an inference from the pipeline. |
+| `container_sizing` | CPU units, memory and task count are a budget decision. |
+| `vpc_cidr` | A private range is an operator decision; the module refuses to guess one. |
+| `public_subnet_ids`, `private_subnet_ids` | Only meaningful with `vpc_id`, when you bring a VPC. |
 
-The module turns a spec mistake into a plan-time refusal rather than a broken deploy: a
-`streaming` service (an HTTP API cannot stream a body), a service with no image, and a secret
-with no ARN are each a `precondition` whose message names the service. Generated AWS modules
-exist for `serverless` only; `container`, `batch` and `edge` still need a hand-written env root,
-and the plan document is the contract to write it against.
+The modules turn a spec mistake into a plan-time refusal rather than a broken deploy. The
+serverless module refuses a `streaming` service (an HTTP API cannot deliver a streamed body),
+a service with no image, and a secret with no ARN. The container module refuses those too,
+plus two services claiming one path - a load balancer routes by path, not by method - a load
+balancer with fewer than two public subnets, and a service with fewer than two private
+subnets. Each refusal is a `precondition` whose message names the input to fix.
+
+The container module runs each service as a Fargate task behind one load balancer, in private
+subnets with egress through a single NAT gateway and reachable only from the balancer. Tasks
+listen on 8080 because that is the port the generated `Dockerfile` exposes, and the target
+group probes `health_check_path` (default `/`) accepting any answer below 500: the generated
+app declares no health route, and a 404 still proves the task is serving.
+
+The module sets no registry credentials, so the tag in `image_uris` must be pullable without
+them: a public `ghcr.io` package, or the image copied to ECR. A private package needs a pull
+secret that belongs to your account, and the module will not invent one.
+
+Generated AWS modules exist for `serverless` and `container`; `batch` and `edge` still need a
+hand-written env root, and the plan document is the contract to write it against.
 
 `aid infra plan` and `aid infra apply` spawn the backend but never run `init`, because
 initialising is a decision about a backend and a lock table, not a consequence of the spec. Run

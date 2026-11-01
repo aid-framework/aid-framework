@@ -1,6 +1,8 @@
-# The one module call every environment makes. dev and prod differ only in the values
-# it is given, which is what lets one generated tree run in more than one account.
-module "app" {
+# The one module call per platform this plan targets. dev and prod differ only in
+# the values they supply, which is what lets one generated tree run in more than one
+# account.
+
+module "serverless" {
   source = "../../generated/modules/serverless"
 
   project     = var.project
@@ -11,6 +13,28 @@ module "app" {
   tags        = var.tags
 }
 
-output "api_endpoint" {
-  value = module.app.api_endpoint
+module "container" {
+  source = "../../generated/modules/container"
+
+  project            = var.project
+  services           = var.services
+  image_uris         = var.image_uris
+  secret_arns        = var.secret_arns
+  container_sizing   = var.container_sizing
+  vpc_id             = var.vpc_id
+  public_subnet_ids  = var.public_subnet_ids
+  private_subnet_ids = var.private_subnet_ids
+  vpc_cidr           = var.vpc_cidr
+  health_check_path  = var.health_check_path
+  idle_timeout       = var.idle_timeout
+  log_retention_days = var.log_retention_days
+  tags               = var.tags
+}
+
+output "serverless_endpoint" {
+  value = module.serverless.api_endpoint
+}
+
+output "container_endpoint" {
+  value = module.container.api_endpoint
 }

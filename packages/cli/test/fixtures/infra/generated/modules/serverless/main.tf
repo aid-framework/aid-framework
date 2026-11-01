@@ -21,9 +21,15 @@ locals {
     ]) : "${pair.service} ${pair.method} ${pair.path}" => pair
   }
 
+  # Lambda names allow letters, digits, hyphens and underscores, while a namespace may
+  # carry a dot; the replacement is what keeps `aid.test` a legal function name.
   name = {
     for id, service in local.serverless :
-    id => "${var.project.namespace}-${var.project.name}-${id}"
+    id => substr(
+      replace("${var.project.namespace}-${var.project.name}-${id}", "/[^A-Za-z0-9-_]/", "-"),
+      0,
+      64,
+    )
   }
 
   # A literal env value is copied; a secret reference becomes a Lambda dynamic
@@ -63,6 +69,24 @@ resource "aws_iam_role_policy_attachment" "logs" {
   for_each   = local.serverless
   role       = aws_iam_role.service[each.key].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# Lambda resolves a dynamic secret reference with the function's own role, so a
+# declared secret is unusable without this. `for_each` over an empty map rather than
+# `count`, because a policy with no resource is invalid rather than merely empty.
+resource "aws_iam_role_policy" "secrets" {
+  for_each = length(var.secret_arns) > 0 ? local.serverless : {}
+  name     = "${local.name[each.key]}-secrets"
+  role     = aws_iam_role.service[each.key].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = values(var.secret_arns)
+    }]
+  })
 }
 
 resource "aws_lambda_function" "service" {
