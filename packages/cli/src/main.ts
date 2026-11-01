@@ -15,6 +15,7 @@
 import type { ParsedArguments } from './args.js';
 import { booleanFlag, JSON_FLAG, parseArguments, valueFlag } from './args.js';
 import { cost } from './commands/cost.js';
+import { dev } from './commands/dev.js';
 import { doctor } from './commands/doctor.js';
 import { eject } from './commands/eject.js';
 import { evaluate } from './commands/eval.js';
@@ -90,6 +91,25 @@ export const COMMANDS: readonly Command[] = [
         dryRun: args.booleans.has('dry-run'),
         force: args.booleans.has('force'),
         check: args.booleans.has('check'),
+      }),
+  },
+  {
+    name: 'dev',
+    summary: 'regenerate the tree and run the application on a local server',
+    usage: 'dev [spec] [--target <name>] [--port <n>] [--no-gen] [--no-reload]',
+    flags: [
+      TARGET_FLAG,
+      valueFlag('port', 'n', 'the port to serve on; defaults to 8000, the uvicorn default'),
+      booleanFlag('no-gen', 'serve the tree as it is, without regenerating it first'),
+      booleanFlag('no-reload', 'turn off the reloader that restarts the server on code changes'),
+    ],
+    run: (context, args) =>
+      dev(context, {
+        spec: args.positionals[0],
+        target: args.values.get('target'),
+        port: args.values.get('port'),
+        noGen: args.booleans.has('no-gen'),
+        noReload: args.booleans.has('no-reload'),
       }),
   },
   {

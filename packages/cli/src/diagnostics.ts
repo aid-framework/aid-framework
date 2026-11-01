@@ -68,6 +68,12 @@ export const CLI_DIAGNOSTIC_CODES = {
   traceUnreadable: 'cli/trace-unreadable',
   traceMalformed: 'cli/trace-malformed',
   traceEmpty: 'cli/trace-empty',
+  // `aid dev` starts the application's own server, so every failure here is about the
+  // environment it needs or the address it was given -- not about the spec, which `gen`
+  // has already validated by the time any of these can fire.
+  devPortInvalid: 'cli/dev-port-invalid',
+  devEntryMissing: 'cli/dev-entry-missing',
+  devUvicornMissing: 'cli/dev-uvicorn-missing',
 } as const;
 
 export type CliDiagnosticCode = (typeof CLI_DIAGNOSTIC_CODES)[keyof typeof CLI_DIAGNOSTIC_CODES];

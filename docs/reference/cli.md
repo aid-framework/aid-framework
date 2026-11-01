@@ -10,7 +10,7 @@ The `aid` command, generated from the `COMMANDS` table in `packages/cli/src/main
 npx @aid-framework/cli --help
 ```
 
-Every command accepts `-h` / `--help` for its own usage, and `--json` for one JSON document on stdout. Human-readable text and progress go to stderr, so `aid validate --json | jq` needs no filtering.
+Every command accepts `-h` / `--help` for its own usage. All except `dev` accept `--json` for one JSON document on stdout; a running server or stream is not a finished run. Human-readable text and progress go to stderr, so `aid validate --json | jq` needs no filtering.
 
 ## Commands at a glance
 
@@ -19,6 +19,7 @@ Every command accepts `-h` / `--help` for its own usage, and `--json` for one JS
 | [`init`](#init) | scaffold a project: a starter spec and a README |
 | [`validate`](#validate) | parse the spec, build the IR, and run every build-time gate |
 | [`gen`](#gen) | compile the spec and reconcile the tree with it |
+| [`dev`](#dev) | regenerate the tree and run the application on a local server |
 | [`ingest`](#ingest) | index a retriever corpus into the store the spec declares |
 | [`eval`](#eval) | run the eval gate, or record the baseline it measures against |
 | [`cost`](#cost) | report cost and latency from the local trace sink |
@@ -70,6 +71,22 @@ aid gen [spec] [--target <name>] [--dry-run] [--check] [--force]
 | `--check` | fail when the committed tree does not match the spec; writes nothing |
 | `--force` | overwrite generated files that were edited by hand |
 | `--json` | print one JSON document on stdout |
+| `-h`, `--help` | print this command's usage |
+
+## `dev`
+
+regenerate the tree and run the application on a local server
+
+```sh
+aid dev [spec] [--target <name>] [--port <n>] [--no-gen] [--no-reload]
+```
+
+| Option | Description |
+| --- | --- |
+| `--target <name>` | generator target; one of py-fastapi, ts-vercel |
+| `--port <n>` | the port to serve on; defaults to 8000, the uvicorn default |
+| `--no-gen` | serve the tree as it is, without regenerating it first |
+| `--no-reload` | turn off the reloader that restarts the server on code changes |
 | `-h`, `--help` | print this command's usage |
 
 ## `ingest`
