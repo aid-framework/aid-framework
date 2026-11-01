@@ -139,13 +139,23 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'infra',
-    summary: 'derive the deployment wiring from the spec and drive OpenTofu',
-    usage: 'infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--force]',
+    summary: 'derive the deployment wiring from the spec and drive OpenTofu or AWS CDK',
+    usage:
+      'infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--iac <tofu|cdk>] [--force]',
     maxPositionals: 2,
     flags: [
       booleanFlag('dry-run', 'gen: report what would change, and write nothing'),
       booleanFlag('check', 'gen: exit non-zero when the generated tree is out of date'),
-      valueFlag('env', 'name', 'environment root under infra/envs; plan, apply and drift use dev'),
+      valueFlag(
+        'env',
+        'name',
+        'environment root (infra/envs/<name> or infra/cdk/<name>); plan, apply and drift use dev',
+      ),
+      valueFlag(
+        'iac',
+        'tofu|cdk',
+        'plan, apply and drift: which backend to drive; defaults to tofu',
+      ),
       booleanFlag('confirm-prod', 'required to apply to prod'),
       booleanFlag('force', 'gen: overwrite generated files that were edited by hand'),
       JSON_FLAG,
@@ -158,6 +168,7 @@ export const COMMANDS: readonly Command[] = [
         check: args.booleans.has('check'),
         force: args.booleans.has('force'),
         env: args.values.get('env'),
+        iac: args.values.get('iac'),
         confirmProd: args.booleans.has('confirm-prod'),
         json: args.booleans.has('json'),
       }),

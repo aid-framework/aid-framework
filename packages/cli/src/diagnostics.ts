@@ -45,11 +45,14 @@ export const CLI_DIAGNOSTIC_CODES = {
   // because they need different fixes; reporting both as "infra failed" would hide which.
   infraSubcommandRequired: 'cli/infra-subcommand-required',
   infraUnknownSubcommand: 'cli/infra-unknown-subcommand',
+  infraUnknownIac: 'cli/infra-unknown-iac',
   infraGeneratedOutdated: 'cli/infra-generated-outdated',
   infraNotGenerated: 'cli/infra-not-generated',
   infraEnvRootMissing: 'cli/infra-env-root-missing',
   infraTofuMissing: 'cli/infra-tofu-missing',
   infraTofuFailed: 'cli/infra-tofu-failed',
+  infraCdkMissing: 'cli/infra-cdk-missing',
+  infraCdkFailed: 'cli/infra-cdk-failed',
   infraDriftDetected: 'cli/infra-drift-detected',
   infraConfirmProdRequired: 'cli/infra-confirm-prod-required',
 } as const;

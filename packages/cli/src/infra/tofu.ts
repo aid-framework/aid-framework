@@ -51,6 +51,18 @@ export function tofuArgs(action: InfraAction, env: string): string[] {
   ];
 }
 
+/** What an exit status means for OpenTofu, kept beside the argv that produced it. */
+export function classifyTofu(
+  action: InfraAction,
+  status: number | null,
+): 'ok' | 'drift' | 'failed' {
+  if (status === 0) return 'ok';
+  // OpenTofu reserves exit 2 for "the plan is non-empty" under `-detailed-exitcode`, so
+  // drift is a distinguishable status rather than a guess over human output.
+  if (action === 'drift' && status === 2) return 'drift';
+  return 'failed';
+}
+
 export function tofuBinary(context: CliContext): string {
   const configured = context.env[TOFU_ENV];
   return configured === undefined || configured === '' ? DEFAULT_TOFU : configured;

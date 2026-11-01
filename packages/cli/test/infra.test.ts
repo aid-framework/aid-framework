@@ -30,6 +30,7 @@ afterAll(() => {
 
 const GENERATED = 'infra/generated';
 const TFVARS = `${GENERATED}/deploy.auto.tfvars.json`;
+const CDK_CONTEXT = `${GENERATED}/deploy.cdk-context.json`;
 const PLAN = `${GENERATED}/deploy.plan.json`;
 const MANIFEST = 'infra/aid.infra.manifest.json';
 
@@ -38,6 +39,7 @@ function emitted(made: ReturnType<typeof project>): Record<string, string> {
   return {
     [PLAN]: made.read(PLAN),
     [TFVARS]: made.read(TFVARS),
+    [CDK_CONTEXT]: made.read(CDK_CONTEXT),
     [`${GENERATED}/README.md`]: made.read(`${GENERATED}/README.md`),
   };
 }
@@ -112,6 +114,35 @@ describe('infra gen', () => {
     expect(aid(second, ['infra', 'gen']).code).toBe(0);
 
     expect(emitted(second)).toEqual(emitted(first));
+  });
+
+  it('spells the same plan for both backends', () => {
+    const made = scratch();
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+
+    const tfvars = JSON.parse(made.read(TFVARS));
+    const context = JSON.parse(made.read(CDK_CONTEXT));
+
+    expect(context.project).toEqual(tfvars.project);
+    expect(Object.keys(context.services)).toEqual(Object.keys(tfvars.services));
+    expect(Object.keys(context.services).length).toBeGreaterThan(0);
+    for (const id of Object.keys(tfvars.services)) {
+      // Routes and env are the facts a backend could silently drop; secrets are renamed
+      // rather than re-derived, so this asserts the rename kept every name.
+      expect(context.services[id].routes).toEqual(tfvars.services[id].routes);
+      expect(context.services[id].env).toEqual(tfvars.services[id].env);
+      expect(context.services[id].secrets).toEqual(tfvars.services[id].secret_names);
+    }
+    expect(Object.keys(context.stores)).toEqual(Object.keys(tfvars.data_stores));
+    for (const id of Object.keys(tfvars.data_stores)) {
+      expect(context.stores[id].kind).toBe(tfvars.data_stores[id].kind);
+    }
+    expect(context.tasks).toEqual(tfvars.tasks);
+    expect(context.alarms).toEqual(tfvars.alarms);
+    // The spelling really is camelCase: a snake_case key left behind would mean the
+    // CDK app is reading Terraform's vocabulary and the two could drift.
+    expect(made.read(CDK_CONTEXT)).not.toContain('secret_names');
+    expect(made.read(CDK_CONTEXT)).not.toContain('data_stores');
   });
 
   it('is idempotent: a second run changes nothing', () => {
@@ -297,5 +328,119 @@ describe('infra plan, apply and drift', () => {
     const [diagnostic] = diagnosticsOf(run);
     expect(diagnostic?.code).toBe('cli/infra-tofu-failed');
     expect(diagnostic?.hint).toContain('bad reference');
+  });
+});
+
+describe('infra with cdk', () => {
+  function cdkGenerated(): ReturnType<typeof project> {
+    const made = scratch();
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+    made.write('infra/cdk/dev/.keep', '');
+    return made;
+  }
+
+  it('drives the cdk app root with its own argv', () => {
+    const made = cdkGenerated();
+    const spawn = recordingSpawn({ status: 0 });
+    const run = aid(made, ['infra', 'plan', '--iac', 'cdk', '--json'], spawn);
+
+    expect(run.code).toBe(0);
+    expect(spawn.calls).toHaveLength(1);
+    const [call] = spawn.calls;
+    expect(call?.command).toBe('cdk');
+    expect(call?.args).toEqual(['diff', '--no-color']);
+    // CDK resolves its app from the nearest cdk.json, so the app root is the cwd.
+    expect(call?.cwd?.split(/[\\/]/).slice(-3).join('/')).toBe('infra/cdk/dev');
+  });
+
+  it('uses --fail only for drift, so plan mirrors tofu plan', () => {
+    const made = cdkGenerated();
+
+    const driftSpawn = recordingSpawn({ status: 0 });
+    aid(made, ['infra', 'drift', '--iac', 'cdk', '--json'], driftSpawn);
+    expect(driftSpawn.calls[0]?.args).toContain('--fail');
+
+    // `cdk diff` exits 0 for a non-empty plan without --fail, exactly as `tofu plan` does
+    // without -detailed-exitcode. `plan` reports that the plan ran; `drift` is the gate.
+    const planSpawn = recordingSpawn({ status: 0 });
+    const run = aid(made, ['infra', 'plan', '--iac', 'cdk', '--json'], planSpawn);
+    expect(planSpawn.calls[0]?.args).not.toContain('--fail');
+    expect(run.code).toBe(0);
+  });
+
+  it('never leaves an apply waiting for an interactive approval', () => {
+    const made = cdkGenerated();
+    const spawn = recordingSpawn({ status: 0 });
+    const run = aid(made, ['infra', 'apply', '--iac', 'cdk', '--json'], spawn);
+
+    expect(run.code).toBe(0);
+    expect(spawn.calls[0]?.args).toEqual(['deploy', '--require-approval', 'never', '--no-color']);
+  });
+
+  it('keeps the prod confirmation in front of the cdk binary', () => {
+    const made = cdkGenerated();
+    made.write('infra/cdk/prod/.keep', '');
+    const spawn = recordingSpawn({ status: 0 });
+    const run = aid(made, ['infra', 'apply', '--iac', 'cdk', '--env', 'prod', '--json'], spawn);
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run).map((d) => d.code)).toEqual(['cli/infra-confirm-prod-required']);
+    expect(spawn.calls).toHaveLength(0);
+  });
+
+  it('reads a cdk drift exit as drift, and everything else as a failure', () => {
+    const made = cdkGenerated();
+
+    const drifted = aid(
+      made,
+      ['infra', 'drift', '--iac', 'cdk', '--json'],
+      recordingSpawn({ status: 1 }),
+    );
+    expect(drifted.code).toBe(1);
+    expect(diagnosticsOf(drifted).map((d) => d.code)).toEqual(['cli/infra-drift-detected']);
+
+    // CDK has no -detailed-exitcode, so a crash that exits 2 must not read as clean.
+    const broken = aid(
+      made,
+      ['infra', 'drift', '--iac', 'cdk', '--json'],
+      recordingSpawn({ status: 2, stderr: 'boom' }),
+    );
+    expect(broken.code).toBe(1);
+    expect(diagnosticsOf(broken).map((d) => d.code)).toEqual(['cli/infra-cdk-failed']);
+    expect(diagnosticsOf(broken)[0]?.hint).toContain('boom');
+  });
+
+  it('reports a missing cdk as usage, not as a passing plan', () => {
+    const made = cdkGenerated();
+    const run = aid(
+      made,
+      ['infra', 'plan', '--iac', 'cdk', '--json'],
+      recordingSpawn({ status: null }),
+    );
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run).map((d) => d.code)).toEqual(['cli/infra-cdk-missing']);
+    expect(run.json<{ status?: number }>().status).toBeUndefined();
+  });
+
+  it('requires the cdk app root rather than running from the project root', () => {
+    const made = scratch();
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+    const spawn = recordingSpawn({ status: 0 });
+    const run = aid(made, ['infra', 'plan', '--iac', 'cdk', '--json'], spawn);
+
+    expect(run.code).toBe(1);
+    expect(diagnosticsOf(run).map((d) => d.code)).toEqual(['cli/infra-env-root-missing']);
+    expect(spawn.calls).toHaveLength(0);
+  });
+
+  it('rejects an unknown backend before spawning anything', () => {
+    const made = cdkGenerated();
+    const spawn = recordingSpawn({ status: 0 });
+    const run = aid(made, ['infra', 'plan', '--iac', 'pulumi', '--json'], spawn);
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run).map((d) => d.code)).toEqual(['cli/infra-unknown-iac']);
+    expect(spawn.calls).toHaveLength(0);
   });
 });
