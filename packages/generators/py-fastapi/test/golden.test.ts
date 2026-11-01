@@ -53,7 +53,7 @@ describe('the committed example', () => {
     expect(mismatches.length, formatMismatches(mismatches, shipped)).toBe(0);
   });
 
-  it('holds the whole of both managed tiers, and only those', () => {
+  it('holds the whole of every tier, and only those', () => {
     const shipped = shippedManagedTree();
     // 27 rather than 25 since P7a: an input guardrail adds `generated/guardrails.py`,
     // and a `streaming: true` deployment adds `generated/sse.py`. 31 since P7b: an agent
@@ -62,10 +62,12 @@ describe('the committed example', () => {
     // stopped writing one of them a failure rather than a smaller number nobody reads.
     // 34 since L5b: a composite adds `generated/control.py`, and the example's parallel
     // pulls in the two prompt modules its arms render. 35 since L5c: the example's agent
-    // step renders a prompt of its own for the instruction it carries.
+    // step renders a prompt of its own for the instruction it carries. The scaffold tier
+    // is 2 since W5: the CI workflow, and the eval workflow two `gate.ci` evals earn.
     expect(generated().length).toBe(35);
     expect(planFilesByOwner('business').length).toBe(5);
-    expect(shipped.size).toBe(40);
+    expect(planFilesByOwner('scaffold').length).toBe(2);
+    expect(shipped.size).toBe(42);
   });
 
   it('records every generated file in aid.manifest.json at the hash of its bytes', () => {
@@ -108,6 +110,14 @@ describe('the committed example', () => {
     const disagreements: string[] = [];
     for (const file of examplePlan().files) {
       const record = manifest.files.find((entry) => entry.path === file.path);
+      /* A scaffold file is created once and then the developer's, so the manifest must
+       * stay silent about it: a hash would turn every legitimate edit into drift. */
+      if (file.owner === 'scaffold') {
+        if (record !== undefined) {
+          disagreements.push(`${file.path}: plan says scaffold, but the manifest records it`);
+        }
+        continue;
+      }
       if (record?.owner !== file.owner) {
         disagreements.push(`${file.path}: plan says ${file.owner}, manifest says ${record?.owner}`);
       }

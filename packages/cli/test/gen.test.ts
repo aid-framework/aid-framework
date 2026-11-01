@@ -16,9 +16,8 @@
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
-
+import { CI_WORKFLOW_PATH, EVALS_WORKFLOW_PATH } from '@aid-framework/generator-sdk';
 import { afterAll, describe, expect, it } from 'vitest';
-
 import { aid, cloneExample, EXAMPLE_ROOT, isBuildArtifact, project, SPEC_PATH } from './helpers.js';
 
 const created: ReturnType<typeof project>[] = [];
@@ -136,6 +135,65 @@ describe('aid gen', () => {
     // The whole tree, so a dry run that created a file it did not report still fails.
     expect(made.walk()).toEqual(before);
     expect(made.walk()).toEqual([SPEC_PATH]);
+  });
+
+  it('fails --check on a tree that is missing files, and writes nothing', () => {
+    const made = scratch();
+    const before = made.walk();
+
+    const run = aid(made, ['gen', '--check', '--json']);
+    expect(run.code).toBe(1);
+    // The CLI is the gate the generated workflow runs, so "would change" has to be a
+    // failure; a dry run alone exits 0 here and cannot serve as a determinism gate.
+    expect(run.json<{ check: boolean; dryRun: boolean }>().check).toBe(true);
+    expect(run.json<{ dryRun: boolean }>().dryRun).toBe(false);
+    const { changes } = run.json<{ changes: { created: string[] } }>();
+    expect(changes.created).toContain(GENERATED);
+    // The whole tree, so a check that created what it was checking for fails too.
+    expect(made.walk()).toEqual(before);
+    expect(made.walk()).toEqual([SPEC_PATH]);
+  });
+
+  it('passes --check on the committed tree, and writes nothing', () => {
+    const made = scratch();
+    aid(made, ['gen']);
+    const before = made.walk();
+
+    const run = aid(made, ['gen', '--check', '--json']);
+    expect(run.code).toBe(0);
+    const { changes } = run.json<{
+      changes: { created: string[]; updated: string[]; scaffold: string[] };
+    }>();
+    expect(changes.created).toEqual([]);
+    expect(changes.updated).toEqual([]);
+    // The scaffold files are the caller's now: reported as kept, never as drift. The eval
+    // workflow is present because the example declares `gate.ci` evals.
+    expect(changes.scaffold).toEqual([CI_WORKFLOW_PATH, EVALS_WORKFLOW_PATH]);
+    expect(made.walk()).toEqual(before);
+  });
+
+  it('fails --check on a generated file a human edited, without writing a rejection file', () => {
+    const made = scratch();
+    aid(made, ['gen']);
+    made.write(GENERATED, `${made.read(GENERATED)}\n# hand-edited\n`);
+
+    const run = aid(made, ['gen', '--check', '--json']);
+    expect(run.code).toBe(1);
+    expect(run.json<{ changes: { conflicts: string[] } }>().changes.conflicts).toContain(GENERATED);
+    expect(made.exists(`${GENERATED}.aid-rej`)).toBe(false);
+  });
+
+  it('fails --check when the scaffold workflow was deleted, and does not recreate it', () => {
+    const made = scratch();
+    aid(made, ['gen']);
+    made.remove(CI_WORKFLOW_PATH);
+
+    const run = aid(made, ['gen', '--check', '--json']);
+    expect(run.code).toBe(1);
+    expect(run.json<{ changes: { created: string[] } }>().changes.created).toContain(
+      CI_WORKFLOW_PATH,
+    );
+    expect(made.exists(CI_WORKFLOW_PATH)).toBe(false);
   });
 
   it('refuses to overwrite an edited generated file, and keeps the new bytes beside it', () => {

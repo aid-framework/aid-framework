@@ -123,6 +123,13 @@ export function eject(request: EjectRequest): EjectResult {
     );
   }
 
+  // Scaffold content is authored once and owned by the developer from then on, so there
+  // is nothing to transfer and nothing to look up. Checked before the manifest guard: the
+  // answer does not depend on the tree ever having been generated.
+  if (ownerForPath(path, request) === 'scaffold') {
+    return { ok: true, status: 'already-owned', from: path, dryRun, diagnostics: [] };
+  }
+
   const manifest = request.manifest;
   if (manifest === undefined) {
     return refuse(
@@ -142,7 +149,8 @@ export function eject(request: EjectRequest): EjectResult {
     // asking to eject it is a no-op, not a mistake. The same is true of a generated path
     // already in the ledger: the file has moved, so there is no record left, and the
     // ledger is the only proof the transfer happened. Without this lookup a second eject
-    // would report "not generated" for a file this command ejected itself.
+    // would report "not generated" for a file this command ejected itself. Scaffold paths
+    // are handled above, before the manifest guard.
     if (ownerForPath(path, request) === 'business' || manifest.ejected.includes(path)) {
       return { ok: true, status: 'already-owned', from: path, dryRun, diagnostics: [] };
     }

@@ -10,7 +10,7 @@ import { managedRoots } from '@aid-framework/generator-sdk';
 import { PY_FASTAPI_MANIFEST } from '../manifest.js';
 
 /** Ownership as the SDK names it: `generated` is overwritten, `business` is not. */
-export type FileOwner = 'business' | 'generated';
+export type FileOwner = 'business' | 'generated' | 'scaffold';
 
 export interface EmittedFile {
   readonly path: string;

@@ -74,10 +74,11 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'gen',
     summary: 'compile the spec and reconcile the tree with it',
-    usage: 'gen [spec] [--target <name>] [--dry-run] [--force]',
+    usage: 'gen [spec] [--target <name>] [--dry-run] [--check] [--force]',
     flags: [
       TARGET_FLAG,
       booleanFlag('dry-run', 'report what would change, and write nothing'),
+      booleanFlag('check', 'fail when the committed tree does not match the spec; writes nothing'),
       booleanFlag('force', 'overwrite generated files that were edited by hand'),
       JSON_FLAG,
     ],
@@ -87,6 +88,7 @@ export const COMMANDS: readonly Command[] = [
         target: args.values.get('target'),
         dryRun: args.booleans.has('dry-run'),
         force: args.booleans.has('force'),
+        check: args.booleans.has('check'),
       }),
   },
   {

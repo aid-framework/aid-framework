@@ -82,7 +82,9 @@ describe('regenerating over the committed example', () => {
     expect(report.pruned).toEqual([]);
     expect(report.diagnostics).toEqual([]);
     expect(hasDrift(report)).toBe(false);
-    expect(formatRegenerationSummary(report)).toBe('0 created, 0 updated, 35 unchanged, 5 kept');
+    expect(formatRegenerationSummary(report)).toBe(
+      '0 created, 0 updated, 35 unchanged, 5 kept, 2 scaffold kept',
+    );
   });
 
   it('leaves every file of both tiers byte for byte as it was', () => {

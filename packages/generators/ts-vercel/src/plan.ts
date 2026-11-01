@@ -9,7 +9,7 @@
  */
 
 import type { GeneratedFile, Plan } from '@aid-framework/generator-sdk';
-import { sortByPath } from '@aid-framework/generator-sdk';
+import { ACTION_PINS, cliRangeFor, scaffoldCi, sortByPath } from '@aid-framework/generator-sdk';
 import type { IR } from '@aid-framework/ir';
 import { emitAgents } from './emit/agents.js';
 import {
@@ -51,7 +51,27 @@ import {
   emitToolsIndex,
 } from './emit/tools.js';
 import { TsVercelPlanError } from './errors.js';
+import { GENERATOR_VERSION, TS_VERCEL_MANIFEST } from './manifest.js';
 import { checkPlan } from './validate.js';
+
+/**
+ * The scaffold profile for this target. The spec path is derived from the manifest's
+ * output root rather than hardcoded, so the workflow points at the same file the CLI
+ * reads; both targets use `<root>/app.spec.yaml` today.
+ */
+function ciProfile() {
+  const root = TS_VERCEL_MANIFEST.output.root;
+  return {
+    target: TS_VERCEL_MANIFEST.target,
+    specPath: `${root}/app.spec.yaml`,
+    dependencyManifest: 'package.json',
+    toolchain: [`- uses: ${ACTION_PINS.setupNode}`, '  with:', "    node-version: '22'"],
+    install: ['if [ -f package-lock.json ]; then npm ci; else npm install; fi'],
+    lint: ['npx --no-install tsc --noEmit -p tsconfig.json'],
+    build: 'npm run build --if-present',
+    test: 'npm test --if-present',
+  } as const;
+}
 
 /** Every file the IR implies, in a fixed order, unsorted. */
 function collect(ir: IR): EmittedFile[] {
@@ -101,6 +121,7 @@ function collect(ir: IR): EmittedFile[] {
   files.push(emitBusinessIndex(ir));
 
   files.push(emitGeneratedIndex(ir));
+  files.push(scaffoldCi(ciProfile(), cliRangeFor(GENERATOR_VERSION)));
 
   return files;
 }

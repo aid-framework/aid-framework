@@ -1,15 +1,28 @@
 /**
  * Ownership and path rules (§8.3, §8.4, §10).
  *
- * The three-tier split is the whole reason regeneration is safe: `generated/` is
+ * The tier split is the whole reason regeneration is safe: `generated/` is
  * generator-owned and never hand-edited, `business/` is developer-owned and written
  * once, and the ownership of a path is decided by *where it lives*, not by what a
  * generator happens to say about it. Every path in a plan is normalized through this
  * module, so a generator cannot escape its own root or claim a business path as
  * generated (or the reverse).
+ *
+ * `scaffold` is the third tier: generator-authored content that lives *outside* the
+ * managed roots, which today means the repository's own CI workflows. It is written
+ * once and then belongs to the developer, so it is never recorded in the manifest --
+ * there is no hash to compare against, and claiming one would make every edit a drift
+ * conflict. The allowlist exists so that "outside the managed roots" does not become
+ * "anywhere": a generator may only reach paths it is explicitly permitted to own.
  */
 
-export type FileOwner = 'generated' | 'business';
+export type FileOwner = 'generated' | 'business' | 'scaffold';
+
+/**
+ * The only path prefixes a generator may scaffold. A prefix, not a glob, so the check
+ * stays a string comparison and a generator cannot smuggle a nested escape past it.
+ */
+export const SCAFFOLD_PREFIXES = ['.github/workflows/'] as const;
 
 export const DEFAULT_GENERATED_DIR = 'generated';
 export const DEFAULT_BUSINESS_DIR = 'business';
@@ -78,7 +91,20 @@ export function ownerForPath(
 
   if (normalized === generatedDir || normalized.startsWith(`${generatedDir}/`)) return 'generated';
   if (normalized === businessDir || normalized.startsWith(`${businessDir}/`)) return 'business';
+  if (isScaffoldPath(normalized)) return 'scaffold';
   return undefined;
+}
+
+/**
+ * True for a path inside the scaffold allowlist. Requires a file name after the
+ * prefix: `.github/workflows/` itself is the directory, not a workflow.
+ */
+export function isScaffoldPath(path: string): boolean {
+  const normalized = normalizeRelativePath(path);
+  if (normalized === undefined) return false;
+  return SCAFFOLD_PREFIXES.some(
+    (prefix) => normalized.startsWith(prefix) && normalized.length > prefix.length,
+  );
 }
 
 export function isGeneratedPath(

@@ -9,10 +9,10 @@ happens on the second run.
 
 ## Two numbers, one rule
 
-| Tree | Files on disk | Managed by the generator |
+| Tree | Files it ships | Managed by the generator |
 | --- | --- | --- |
-| The tutorial from [getting started](getting-started.md) | 22 | 20 |
-| `examples/support-copilot` | 58 | 40 |
+| The tutorial from [getting started](getting-started.md) | 24 | 21 |
+| `examples/support-copilot` | 60 | 42 |
 
 The difference is not the generator being inconsistent. It is the rule: **the generator only
 manages what it can reproduce from the spec.** A file you write - `app/main.py`, an eval
@@ -47,14 +47,26 @@ app/
     routes/hello.py                     generated
     schemas.py                          generated
     tools/__init__.py                   generated
+.github/
+  workflows/
+    ci.yml                              scaffold
 ```
 
-## The two owned tiers
+`.github/workflows/evals.yml` is scaffolded as well when the spec declares an eval with
+`gate.ci: true`; `examples/support-copilot` has two, the tutorial has none.
+
+## The three owned tiers
 
 - **`app/generated/**`** is the generator's. It is rewritten whenever the spec or the generator
   changes, so an edit here survives until the next run and then becomes drift.
 - **`app/business/**`** is yours. It is created once, never overwritten, never deleted - not
   even by `--force`. Tool bodies, prompt overrides and domain rules live here.
+- **`.github/workflows/**`** is scaffolded once and then yours. It is the only thing outside
+  `app/`, and it exists because a generated project is not deployable without a pipeline: the
+  workflow runs the determinism gate (`aid gen --check`), lint, build and tests on every pull
+  request, and plans infrastructure when the project has an `infra/` directory. The eval
+  workflow runs on demand and nightly, because it measures a real model and a pull request
+  from a fork cannot hold the credential it needs.
 
 Every file carries the tier in its first line, so a reader can tell without consulting the
 manifest:
@@ -67,6 +79,12 @@ manifest:
 ```text
 # Created once by AID Framework "@aid-framework/generator-py-fastapi" v0.1.0. Edit freely.
 # The generator never overwrites this file: it is yours. See aid.manifest.json.
+```
+
+```text
+# Generated once by `aid gen` for the `py-fastapi` target, then yours.
+# A scaffold file is never overwritten and never recorded in aid.manifest.json,
+# so edit it freely: a new runner, a cache, an extra toolchain.
 ```
 
 ## What each generated module is for
@@ -135,11 +153,13 @@ Regenerating an unmodified tree is a no-op, and the summary says so:
 
 ```console
 $ aid gen
-py-fastapi: 0 created, 0 updated, 17 unchanged, 3 kept
+py-fastapi: 0 created, 0 updated, 17 unchanged, 3 kept, 1 scaffold kept
 ```
 
 `kept` is the important word: it is a `business/` file that already existed, and the generator
-declined to touch it. `unchanged` means a generated file whose bytes already match the plan.
+declined to touch it. `scaffold kept` is the same promise for a workflow file: it was written
+once, it is yours now, and the generator will neither rewrite it nor count an edit as drift.
+`unchanged` means a generated file whose bytes already match the plan.
 
 ## When you edit a generated file
 

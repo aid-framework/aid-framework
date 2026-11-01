@@ -1,0 +1,74 @@
+# Generated once by `aid gen` for the `ts-vercel` target, then yours.
+# A scaffold file is never overwritten and never recorded in aid.manifest.json,
+# so edit it freely: a new runner, a cache, an extra toolchain.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  spec:
+    name: Spec gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install the AID CLI
+        run: npm install --global @aid-framework/cli@0.1
+      - name: Validate the spec
+        run: aid validate app/app.spec.yaml
+      - name: The committed tree matches the spec
+        run: aid gen app/app.spec.yaml --check
+      - name: Diagnose the tree
+        run: aid doctor app/app.spec.yaml
+
+  detect:
+    name: Detect the app
+    runs-on: ubuntu-latest
+    outputs:
+      has_app: ${{ steps.probe.outputs.has_app }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - id: probe
+        run: |
+          if [ -f package.json ]; then
+            echo "has_app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_app=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  app:
+    name: Lint, build, and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: detect
+    # Skipped, not green: without package.json there is nothing to
+    # build, and a passing check that never ran is worse than an explicit skip.
+    if: needs.detect.outputs.has_app == 'true'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: Lint
+        run: |
+          npx --no-install tsc --noEmit -p tsconfig.json
+      - name: Build
+        run: npm run build --if-present
+      - name: Test
+        run: npm test --if-present
