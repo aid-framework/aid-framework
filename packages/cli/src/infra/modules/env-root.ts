@@ -1,0 +1,205 @@
+/**
+ * The env root a project owns, rendered for the modules its plan actually needs.
+ *
+ * It is a function rather than a constant because a plan may target one platform or
+ * both: a serverless-only project should not be handed container variables it will
+ * never set. The output is still pure -- the same module set always yields the same
+ * bytes -- so the committed fixture can be asserted equal to it and CI's `tofu validate`
+ * then proves the exact text the README prints.
+ *
+ * The env root is never written by `aid infra gen`: it holds account ids, regions and
+ * CIDRs, which are the operator's decisions, not the spec's.
+ */
+
+import { hcl } from './hcl.js';
+
+export interface EnvRootModules {
+  readonly serverless: boolean;
+  readonly container: boolean;
+}
+
+/** The plan-shaped variables every env root declares, so the generated tfvars binds. */
+const PLAN_VARIABLES = [
+  '# Declared so the generated tfvars binds without an "undeclared variable" warning.',
+  'variable "project" {}',
+  'variable "services" {}',
+  'variable "data_stores" {}',
+  'variable "tasks" {}',
+  'variable "alarms" {}',
+];
+
+const IMAGE_URIS = [
+  '',
+  '# Business inputs. None of these is derivable from the spec, by design.',
+  'variable "image_uris" {',
+  '  description = "Service id -> the image it runs, pinned to a released tag."',
+  '  type        = map(string)',
+  '}',
+];
+
+const SECRET_ARNS = [
+  '',
+  'variable "secret_arns" {',
+  '  description = "Secret name -> Secrets Manager ARN. The module resolves these at runtime."',
+  '  type        = map(string)',
+  '  default     = {}',
+  '}',
+];
+
+const TAGS = ['', 'variable "tags" {', '  type    = map(string)', '  default = {}', '}'];
+
+const SERVERLESS_SIZING = [
+  '',
+  'variable "sizing" {',
+  '  description = "Service id -> memory and timeout. The module defaults are deliberately modest."',
+  '  type = map(object({',
+  '    memory_mb       = number',
+  '    timeout_seconds = number',
+  '  }))',
+  '  default = {}',
+  '}',
+];
+
+const CONTAINER_INPUTS = [
+  '',
+  'variable "container_sizing" {',
+  '  description = "Service id -> CPU units, memory and task count."',
+  '  type = map(object({',
+  '    cpu           = optional(number)',
+  '    memory_mb     = optional(number)',
+  '    desired_count = optional(number)',
+  '  }))',
+  '  default = {}',
+  '}',
+  '',
+  '# Networking. An empty vpc_id has the module build a two-AZ VPC; setting it, with both',
+  '# subnet lists, deploys into a VPC you already run.',
+  'variable "vpc_id" {',
+  '  type    = string',
+  '  default = ""',
+  '}',
+  '',
+  'variable "public_subnet_ids" {',
+  '  description = "Subnets the load balancer sits in. Two, in different AZs."',
+  '  type        = list(string)',
+  '  default     = []',
+  '}',
+  '',
+  'variable "private_subnet_ids" {',
+  '  description = "Subnets the tasks run in. They need egress to pull an image."',
+  '  type        = list(string)',
+  '  default     = []',
+  '}',
+  '',
+  'variable "vpc_cidr" {',
+  '  description = "Range for the VPC the module builds. Required when vpc_id is empty; ignored otherwise."',
+  '  type        = string',
+  '  default     = ""',
+  '}',
+  '',
+  'variable "health_check_path" {',
+  '  description = "Path the target group probes. Any 2xx-4xx counts as healthy."',
+  '  type        = string',
+  '  default     = "/"',
+  '}',
+  '',
+  'variable "idle_timeout" {',
+  '  description = "Load balancer idle timeout in seconds. Raise it for a long stream."',
+  '  type        = number',
+  '  default     = 300',
+  '}',
+  '',
+  'variable "log_retention_days" {',
+  '  type    = number',
+  '  default = 30',
+  '}',
+];
+
+/** One module call, with the inputs that module declares -- nothing it ignores. */
+function moduleCall(name: string, inputs: readonly string[]): string[] {
+  return [
+    `module "${name}" {`,
+    `  source = "../../generated/modules/${name}"`,
+    '',
+    ...inputs.map((input) => `  ${input}`),
+    '}',
+  ];
+}
+
+/** Blocks separated by one blank line, so a file reads as sections rather than a run of lines. */
+function blocks(sections: readonly string[][]): string[] {
+  return sections.flatMap((section, index) => (index === 0 ? section : ['', ...section]));
+}
+
+export function envRoot(modules: EnvRootModules): { variables: string; main: string } {
+  const any = modules.serverless || modules.container;
+
+  const variables = [
+    ...PLAN_VARIABLES,
+    ...(any ? IMAGE_URIS : []),
+    ...(any ? SECRET_ARNS : []),
+    ...(modules.serverless ? SERVERLESS_SIZING : []),
+    ...(modules.container ? CONTAINER_INPUTS : []),
+    ...(any ? TAGS : []),
+  ];
+
+  const calls: string[][] = [];
+  const outputs: string[][] = [];
+
+  if (modules.serverless) {
+    calls.push(
+      moduleCall('serverless', [
+        'project     = var.project',
+        'services    = var.services',
+        'image_uris  = var.image_uris',
+        'secret_arns = var.secret_arns',
+        'sizing      = var.sizing',
+        'tags        = var.tags',
+      ]),
+    );
+    outputs.push([
+      'output "serverless_endpoint" {',
+      '  value = module.serverless.api_endpoint',
+      '}',
+    ]);
+  }
+
+  if (modules.container) {
+    calls.push(
+      moduleCall('container', [
+        'project            = var.project',
+        'services           = var.services',
+        'image_uris         = var.image_uris',
+        'secret_arns        = var.secret_arns',
+        'container_sizing   = var.container_sizing',
+        'vpc_id             = var.vpc_id',
+        'public_subnet_ids  = var.public_subnet_ids',
+        'private_subnet_ids = var.private_subnet_ids',
+        'vpc_cidr           = var.vpc_cidr',
+        'health_check_path  = var.health_check_path',
+        'idle_timeout       = var.idle_timeout',
+        'log_retention_days = var.log_retention_days',
+        'tags               = var.tags',
+      ]),
+    );
+    outputs.push(['output "container_endpoint" {', '  value = module.container.api_endpoint', '}']);
+  }
+
+  const main = any
+    ? [
+        '# The one module call per platform this plan targets. dev and prod differ only in',
+        '# the values they supply, which is what lets one generated tree run in more than one',
+        '# account.',
+        '',
+        ...blocks(calls),
+        '',
+        ...blocks(outputs),
+      ]
+    : [
+        '# This plan targets neither `serverless` nor `container`, so no provider module was',
+        '# generated. Point a module call at `../../generated/modules/<platform>` once one',
+        '# exists for the targets you deploy.',
+      ];
+
+  return { variables: hcl(variables), main: hcl(main) };
+}

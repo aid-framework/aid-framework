@@ -14,7 +14,7 @@
 
 import type { DeployPlan } from '@aid-framework/ir';
 
-import { ENV_ROOT_MAIN_TF, ENV_ROOT_VARIABLES_TF, emitServerlessModule } from './modules.js';
+import { emitProviderModules, envRoot, modulesOf } from './modules/index.js';
 import { INFRA_CDK_CONTEXT_PATH, INFRA_GENERATED_DIR, INFRA_PLAN_PATH } from './paths.js';
 
 export {
@@ -128,7 +128,7 @@ export function emitInfra(plan: DeployPlan): InfraFile[] {
     { path: `${INFRA_GENERATED_DIR}/deploy.auto.tfvars.json`, contents: json(tfvars(plan)) },
     { path: INFRA_CDK_CONTEXT_PATH, contents: json(cdkContext(plan)) },
     { path: `${INFRA_GENERATED_DIR}/README.md`, contents: readme(plan) },
-    ...emitServerlessModule(plan),
+    ...emitProviderModules(plan),
   ];
 }
 
@@ -236,7 +236,9 @@ export function cdkContext(plan: DeployPlan): DeployContext {
 
 function readme(plan: DeployPlan): string {
   const routes = plan.services.reduce((total, service) => total + service.endpoints.length, 0);
-  const serverless = plan.services.some((service) => service.target === 'serverless');
+  const modules = modulesOf(plan);
+  const active = modules.serverless || modules.container;
+  const root = envRoot(modules);
   return [
     '# Generated infrastructure',
     '',
@@ -248,9 +250,14 @@ function readme(plan: DeployPlan): string {
     '| `deploy.plan.json` | The provider-neutral deployment plan both backends render. |',
     '| `deploy.auto.tfvars.json` | The same plan spelled as Terraform inputs. |',
     '| `deploy.cdk-context.json` | The same plan spelled for a CDK app, with camelCase keys. |',
-    ...(serverless
+    ...(modules.serverless
       ? [
           '| `modules/serverless/` | The Lambda + HTTP API module a `serverless` service deploys into. |',
+        ]
+      : []),
+    ...(modules.container
+      ? [
+          '| `modules/container/` | The ECS Fargate + load balancer module a `container` service deploys into. |',
         ]
       : []),
     '',
@@ -263,28 +270,39 @@ function readme(plan: DeployPlan): string {
     'tofu -chdir=infra/envs/dev plan -var-file=../../generated/deploy.auto.tfvars.json',
     '```',
     '',
-    ...(serverless
+    ...(active
       ? [
           'The env root is yours, not generated. `infra/envs/dev/variables.tf` declares the',
-          'three business inputs and the plan-shaped ones the tfvars already supplies:',
+          'business inputs alongside the plan-shaped ones the tfvars already supplies:',
           '',
           '```hcl',
-          ...ENV_ROOT_VARIABLES_TF.trimEnd().split('\n'),
+          ...root.variables.trimEnd().split('\n'),
           '```',
           '',
           'and `infra/envs/dev/main.tf` calls the module:',
           '',
           '```hcl',
-          ...ENV_ROOT_MAIN_TF.trimEnd().split('\n'),
+          ...root.main.trimEnd().split('\n'),
           '```',
           '',
-          'The module refuses a service it cannot size or an image it cannot pull, and names',
-          'the service in the error rather than failing at invoke time.',
-          '',
+          ...(modules.serverless
+            ? [
+                'The serverless module refuses a `streaming` service, since an HTTP API cannot',
+                'deliver a streamed body.',
+                '',
+              ]
+            : []),
+          ...(modules.container
+            ? [
+                'The container module refuses two services that claim one path, since a load',
+                'balancer routes by path rather than by method.',
+                '',
+              ]
+            : []),
         ]
       : [
           'No provider module is generated for this plan yet: AWS modules exist for',
-          '`serverless` only, so a container, batch or edge target needs a hand-written env',
+          '`serverless` and `container`, so a batch or edge target needs a hand-written env',
           'root. The plan document and tfvars above are still the contract to write it',
           'against.',
           '',
