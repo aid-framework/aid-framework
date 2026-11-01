@@ -52,6 +52,7 @@ export const IR_DIAGNOSTIC_CODES = {
   deployStreaming: 'ir/deploy-streaming',
   deployTargetUnknown: 'ir/deploy-target-unknown',
   deployAutoscaleIncomplete: 'ir/deploy-autoscale-incomplete',
+  deployImageIncomplete: 'ir/deploy-image-incomplete',
   orchestrationDeepagents: 'ir/orchestration-deepagents',
   evalUncovered: 'ir/eval-uncovered',
   gateFailed: 'ir/gate-failed',

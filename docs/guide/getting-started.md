@@ -46,6 +46,7 @@ original surface - and you raise it when you use a later construct:
 | `0.1` | The original surface: types, models, prompts, tools, stores, retrievers, pipelines, evals. |
 | `0.2` | The closed `agents`, `guardrails`, `memory` and `deployments` sections. |
 | `0.3` | `models[].cache` - prompt and semantic caching. |
+| `0.4` | `deployments[].image` - the registry and repository a container image is published to. |
 
 A section or construct that needs a later version is reported as `spec/not-supported` with
 the version it needs, so you get told rather than silently ignored. Raise the value yourself;

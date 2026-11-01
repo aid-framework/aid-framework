@@ -2,15 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aid-framework.dev/schemas/spec/0.3/spec.schema.json",
   "$comment": "Conditional branches (`then`, and a `not` inside one) that require a property also declare it as `\"properties\": { \"<name>\": true }`. That is deliberately not a constraint - a boolean `true` schema permits anything. It exists because the validator runs Ajv with `strict: true`, and Ajv's `strictRequired` rule rejects a `required` entry whose property is not declared in that same subschema object. Keeping the branch self-contained satisfies the rule without changing its meaning; the valid and invalid fixtures in packages/spec/test cover both directions.",
-  "title": "AID Framework spec v0.3",
+  "title": "AID Framework spec v0.4",
   "description": "The declarative source of truth for an AID application. Hand-authored against design doc §6, narrowed to the implemented surface (§14): the Phase 0 sections (models, prompts, tools, evals, pipelines) plus Phase 1 retrieval (stores, retrievers, the retrieve step and the retrieval metric). Top-level keys outside this set are rejected rather than ignored, so a feature that has not been implemented cannot be silently dropped. Within an implemented section, a sub-feature Phase 1 does not serve is rejected by a spec-local rule (`spec/not-supported`) rather than by the schema, so the enum stays the design doc's and the message can name the phase. See packages/spec/README.md for the scope boundary and the deferred keys.",
   "type": "object",
   "required": ["specVersion", "project"],
   "additionalProperties": false,
   "properties": {
     "specVersion": {
-      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
-      "enum": ["0.1", "0.2", "0.3"]
+      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
+      "enum": ["0.1", "0.2", "0.3", "0.4"]
     },
     "project": { "$ref": "#/$defs/project" },
     "types": {
@@ -1159,6 +1159,10 @@
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
         },
+        "image": {
+          "description": "Where the image is published. Spec 0.4, and only on a `target: container` deployment: another target builds no image to publish.",
+          "$ref": "#/$defs/image"
+        },
         "env": {
           "type": "array",
           "items": {
@@ -1171,6 +1175,23 @@
               "secret": { "type": "boolean" }
             }
           }
+        }
+      }
+    },
+    "image": {
+      "description": "Where the image for a `target: container` deployment is published. Only GitHub Container Registry is accepted: a generated release workflow can push there with the `GITHUB_TOKEN` it already has, while every other registry needs a credential the spec cannot hold without inventing one.",
+      "type": "object",
+      "required": ["registry", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "registry": {
+          "description": "The registry host. `ghcr.io` only, for the reason above.",
+          "enum": ["ghcr.io"]
+        },
+        "name": {
+          "description": "Repository path under the registry, without the host, e.g. `acme/support-copilot`. Lowercase, because a registry rejects the alternative.",
+          "type": "string",
+          "pattern": "^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$"
         }
       }
     }

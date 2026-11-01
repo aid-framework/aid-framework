@@ -44,7 +44,7 @@ export const SUPPORTED_SECTIONS = [
 export const DEFERRED_SECTIONS = [] as const;
 
 /** The spec language versions this build reads. A document declares one of them. */
-export const SUPPORTED_SPEC_VERSIONS = ['0.1', '0.2', '0.3'] as const;
+export const SUPPORTED_SPEC_VERSIONS = ['0.1', '0.2', '0.3', '0.4'] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
 
@@ -69,6 +69,14 @@ export const SECTION_MIN_VERSION: Partial<
  * document would silently drop it.
  */
 export const MODEL_CACHE_MIN_VERSION: SpecVersion = '0.3';
+
+/**
+ * The first spec version that accepts `deployments[].image`. Nested for the same reason
+ * as `models[].cache`: the section itself predates it, so the top-level gate cannot see
+ * it, and a 0.2/0.3 document that declares an image must be told which version it needs
+ * rather than have the key silently dropped by a schema it declared.
+ */
+export const DEPLOYMENT_IMAGE_MIN_VERSION: SpecVersion = '0.4';
 
 /** Pipeline step kinds implemented in spec v0.1. */
 export const SUPPORTED_STEP_KINDS = [
@@ -369,6 +377,7 @@ function scopeDiagnostics(
   }
 
   modelCacheDiagnostics(spec, diagnostics, reported);
+  deploymentImageDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
 }
 
@@ -402,6 +411,60 @@ function modelCacheDiagnostics(
       }),
     );
     reported.add(JSON.stringify(['models', name, 'cache']));
+  }
+}
+
+/**
+ * Nested version gating and the container-only rule for `deployments[].image`.
+ *
+ * The version half mirrors `models[].cache`: the `deployments` section exists from 0.2,
+ * but an image contract is a 0.4 construct, so a 0.2/0.3 document that declares one is
+ * refused with the version it needs instead of being read as if it always existed.
+ *
+ * The second half is a contradiction, not a version problem: only a `target: container`
+ * deployment produces an image, so an image on a `serverless`, `batch` or `edge`
+ * deployment names an artifact nothing builds. Reported here rather than in the schema so
+ * the message can say why, and so a document below 0.4 hears about the version first.
+ */
+function deploymentImageDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  const needsVersion =
+    declared !== undefined && known && !specVersionAtLeast(declared, DEPLOYMENT_IMAGE_MIN_VERSION);
+  // An unrecognised version is already a schema error at `specVersion`; saying "0.4
+  // needed" against it would bury the root cause.
+  if (declared === undefined || !known) return;
+
+  for (const [id, raw] of Object.entries(asRecord(spec.deployments))) {
+    const deployment = asRecord(raw);
+    if (deployment.image === undefined) continue;
+    if (needsVersion) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'deployments.${id}.image' requires specVersion ${DEPLOYMENT_IMAGE_MIN_VERSION}, but this specification declares version ${declared}`,
+          path: ['deployments', id, 'image'],
+          hint: `set specVersion: "${DEPLOYMENT_IMAGE_MIN_VERSION}"; a document that declares no image is unchanged`,
+        }),
+      );
+      reported.add(JSON.stringify(['deployments', id, 'image']));
+      continue;
+    }
+    if (deployment.target === 'container') continue;
+    const target = typeof deployment.target === 'string' ? deployment.target : 'unknown';
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.deploymentImageWithoutContainer,
+        message: `deployment '${id}' declares an image but targets '${target}', which builds no image`,
+        path: ['deployments', id, 'image'],
+        hint: 'set `target: container` to get a Dockerfile and a release workflow, or drop `image`; the generator will not publish an artifact it cannot build',
+      }),
+    );
   }
 }
 

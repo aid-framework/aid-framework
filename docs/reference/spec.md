@@ -6,7 +6,7 @@ description: "Every spec key, type and constraint, generated from the JSON Schem
 
 Every key, type, and constraint below is read from `packages/spec/src/schema/spec.schema.json`, the schema `aid validate` enforces. A `required` column of `yes` means `aid validate` rejects a spec that omits the key.
 
-Spec schema title: *AID Framework spec v0.3*.
+Spec schema title: *AID Framework spec v0.4*.
 
 **Required at the top level:** `specVersion`, `project`.
 
@@ -14,7 +14,7 @@ Spec schema title: *AID Framework spec v0.3*.
 
 | Key | Type | Description |
 | --- | --- | --- |
-| `specVersion` | `0.1`, `0.2`, `0.3` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
+| `specVersion` | `0.1`, `0.2`, `0.3`, `0.4` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
 | `project` | `project` | — |
 | `types` | map of `typeDef` | Named structured types referenced by prompts (structured output) and tools (input/output). |
 | `models` | map of `model` | Model aliases. The alias is what the rest of the spec refers to; the vendor id is pinned here and only here. |
@@ -367,7 +367,17 @@ Applies one prompt to every item of a bound list, concurrently, and binds the or
 | `concurrency` | `integer` | no | — |
 | `autoscale` | object | no | — |
 | `secrets` | array of `string` | yes | — |
+| `image` | `image` | no | Where the image is published. Spec 0.4, and only on a `target: container` deployment: another target builds no image to publish. |
 | `env` | array of object | no | — |
+
+## `image`
+
+Where the image for a `target: container` deployment is published. Only GitHub Container Registry is accepted: a generated release workflow can push there with the `GITHUB_TOKEN` it already has, while every other registry needs a credential the spec cannot hold without inventing one.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `registry` | `ghcr.io` | yes | The registry host. `ghcr.io` only, for the reason above. |
+| `name` | `string` | yes | Repository path under the registry, without the host, e.g. `acme/support-copilot`. Lowercase, because a registry rejects the alternative. |
 
 ---
 

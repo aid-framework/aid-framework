@@ -37,6 +37,7 @@ export {
   COMPOSITE_STEP_KINDS,
   DEFERRED_SECTIONS,
   DEFERRED_STEP_KINDS,
+  DEPLOYMENT_IMAGE_MIN_VERSION,
   MAX_STEP_DEPTH,
   MODEL_CACHE_MIN_VERSION,
   RETIRED_STEP_KINDS,
@@ -56,14 +57,14 @@ import { type ParseOptions, parseSpecDocument } from './parse.js';
 import { validateSpec } from './validate.js';
 
 /**
- * The version `aid init` writes and the version every v0.1 fixture stays on. This
- * build also reads 0.2 and 0.3 (`SUPPORTED_SPEC_VERSIONS`); 0.1 documents are
- * byte-identical under all three.
+ * The version `aid init` writes and the version every 0.1 fixture stays on. This
+ * build also reads 0.2, 0.3 and 0.4 (`SUPPORTED_SPEC_VERSIONS`); 0.1 documents are
+ * byte-identical under all four.
  */
 export const SPEC_VERSION = '0.1';
 
 /** The newest version this build reads. Sections above this are rejected, not ignored. */
-export const SPEC_VERSION_LATEST = '0.3';
+export const SPEC_VERSION_LATEST = '0.4';
 
 export interface SpecCheckResult {
   /** True when no diagnostic has `error` severity. Warnings do not fail a check. */
