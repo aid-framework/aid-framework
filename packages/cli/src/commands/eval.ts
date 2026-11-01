@@ -155,8 +155,9 @@ function nodeBaselineScript(files: readonly string[]): string {
     'for (const file of MODULES) {',
     '  const module = await import(pathToFileURL(file).href);',
     "  await module.recordBaseline({ note: 'recorded by `aid eval --baseline`' });",
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: this is emitted source, not interpolation
-    '  console.log(`wrote ${fileURLToPath(module.BASELINE_PATH)}`);',
+    // Concatenation, not a template literal: the emitted line is a plain string here, and
+    // CodeQL (rightly) reads `${fileURLToPath}` inside one as a mistake.
+    '  console.log("wrote " + fileURLToPath(module.BASELINE_PATH));',
     '}',
     '',
   ].join('\n');
