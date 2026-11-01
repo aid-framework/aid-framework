@@ -14,6 +14,7 @@ import {
   TS_VERCEL_CAPABILITIES,
   TS_VERCEL_MANIFEST,
   tsVercelGenerator,
+  paths as tsVercelPaths,
 } from '@aid-framework/generator-ts-vercel';
 import { buildIR, REQUIRED_CAPABILITIES, runGates } from '@aid-framework/ir';
 import { checkSpecText } from '@aid-framework/spec';
@@ -78,6 +79,14 @@ describe('the ts-vercel entry', () => {
     expect(target?.retrievalIngestModule('handbook')).toBe(
       'app.generated.retrieval.ingest.handbook',
     );
+  });
+
+  it('measures its guardrail table with the Node that runs the CLI', () => {
+    // The table is TypeScript, so there is no interpreter to discover and no module name
+    // to import: the driver imports the emitted file by URL. Pinning the path here is
+    // what keeps `aid guard` pointed at wherever the generator actually emits it.
+    expect(target?.guard).toEqual({ runner: 'node', file: tsVercelPaths.guardrails });
+    expect(tsVercelPaths.guardrails).toBe('app/generated/guardrails.ts');
   });
 
   it('declares the capabilities its package declares, and no others', () => {

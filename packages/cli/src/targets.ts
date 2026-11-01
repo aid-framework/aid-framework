@@ -80,19 +80,23 @@ export type TargetDev =
   | { readonly kind: 'none'; readonly reason: string };
 
 /**
- * How `aid guard` reaches this target's guardrail table, or why it cannot.
+ * How `aid guard` reaches this target's guardrail table.
  *
  * `aid guard` drives the runtime's `GuardrailEngine`; it does not re-implement detection.
  * That makes the question "is there a declared table in a language this command can
- * import", and the answer is per target: the Python target emits `generated/guardrails.py`
- * with `GUARDRAILS` and `BY_ID`, while the TypeScript target emits modules the Next app
- * imports and has no driver here yet -- a gap worth naming rather than hiding behind a
- * Python traceback. `file` is what the command checks for before it spawns anything, so a
- * stale tree is reported as a stale tree.
+ * import", and the answer is per target: the Python target emits
+ * `generated/guardrails.py` with `GUARDRAILS` and `BY_ID`, which an interpreter imports by
+ * module name, while the TypeScript target emits `generated/guardrails.ts` with
+ * `GUARDRAILS`, `BY_ID` and `ENGINE`, which the Node running this command imports by URL.
+ *
+ * There is no "no driver" case, deliberately. A target that cannot be measured would
+ * report a recall nothing earned, so a new target must bring the driver its table needs
+ * rather than declare the gap. `file` is what the command checks for before it spawns
+ * anything, so a stale tree is reported as a stale tree.
  */
 export type TargetGuard =
-  | { readonly kind: 'engine'; readonly module: string; readonly file: string }
-  | { readonly kind: 'none'; readonly reason: string };
+  | { readonly runner: 'python'; readonly module: string; readonly file: string }
+  | { readonly runner: 'node'; readonly file: string };
 
 export interface Target {
   /** The target id, as a spec's `project.targets` spells it. */
@@ -110,7 +114,7 @@ export interface Target {
   readonly runner: TargetRunner;
   /** How `aid dev` serves this target, or why it cannot. */
   readonly dev: TargetDev;
-  /** How `aid guard` runs this target's guardrail table, or why it cannot. */
+  /** How `aid guard` runs this target's guardrail table. */
   readonly guard: TargetGuard;
   /** Everything that stops this target compiling the IR, as diagnostics. */
   check(ir: IR): readonly CliDiagnostic[];
@@ -222,7 +226,7 @@ export const TARGETS: readonly Target[] = [
     // The table's module name is derived from the path the generator emits to, so a
     // generator that moves the file moves the import with it.
     guard: {
-      kind: 'engine',
+      runner: 'python',
       module: dotted(GUARDRAILS_PATH, '.py'),
       file: GUARDRAILS_PATH,
     },
@@ -242,9 +246,8 @@ export const TARGETS: readonly Target[] = [
         'it is a deployment target -- the emitted route handlers are mounted by Next, and it ships no server of its own',
     },
     guard: {
-      kind: 'none',
-      reason:
-        'its guardrails are TypeScript modules the Next app imports, and `aid guard` has no TypeScript driver yet',
+      runner: 'node',
+      file: tsVercelPaths.guardrails,
     },
     // The generated modules are `.ts` on disk and `.js` once compiled; the dotted name
     // is the same either way, and the path helpers hand back the file that exists.

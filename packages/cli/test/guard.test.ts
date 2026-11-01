@@ -12,7 +12,14 @@
 
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { aid, diagnosticsOf, project, recordingSpawn, SPEC_PATH } from './helpers.js';
+import {
+  aid,
+  diagnosticsOf,
+  project,
+  recordingSpawn,
+  SPEC_PATH,
+  TS_EXAMPLE_SPEC,
+} from './helpers.js';
 
 const created: ReturnType<typeof project>[] = [];
 
@@ -426,16 +433,46 @@ describe('aid guard', () => {
     expect(diagnostic?.hint).toContain('aid gen');
   });
 
-  it('refuses a target with no driver rather than measuring nothing', () => {
-    const { made, spawn } = measured();
+  it('measures a TypeScript table with Node, not an interpreter', () => {
+    // The table that needs importing is TypeScript, so the program that imports it is
+    // the Node running the CLI: `aid` is a Node program, and Node 24 loads a `.ts` module
+    // without a build step or a flag. No interpreter is probed at all.
+    const made = project(TS_EXAMPLE_SPEC);
+    created.push(made);
+    expect(aid(made, ['gen', '--target', 'ts-vercel']).code).toBe(0);
+    made.write(CORPUS_PATH, corpusText());
+
+    const spawn = recordingSpawn({ stdout: reportText() });
     const run = aid(made, ['guard', '--target', 'ts-vercel', '--json'], spawn);
 
-    expect(run.code).toBe(2);
+    expect(run.code).toBe(0);
+    expect(run.json<{ driver: string }>().driver).toBe('node');
+
+    const call = spawn.calls.at(-1);
+    expect(call?.command).toBe(process.execPath);
+    expect(call?.args.slice(0, 2)).toEqual(['--input-type=module', '-e']);
+    const script = call?.args[2] ?? '';
+    expect(script).toContain('pathToFileURL(');
+    expect(script).toContain('ENGINE');
+    // The driver imports the emitted table and reads the corpus, both by absolute path,
+    // because `node -e` runs wherever the CLI happens to be.
+    expect(script).toMatch(/app[\\/]+generated[\\/]+guardrails\.ts/);
+    expect(script).toMatch(/app[\\/]+redteam\.json/);
+    expect(spawn.calls.some((entry) => entry.args.includes('-c'))).toBe(false);
+  });
+
+  it('names the TypeScript table when the tree has not emitted it', () => {
+    const made = project(TS_EXAMPLE_SPEC);
+    created.push(made);
+    made.write(CORPUS_PATH, corpusText());
+
+    const run = aid(made, ['guard', '--target', 'ts-vercel', '--json'], recordingSpawn());
+
+    expect(run.code).toBe(1);
     const [diagnostic] = diagnosticsOf(run);
-    expect(diagnostic?.code).toBe('cli/runner-unsupported');
-    expect(diagnostic?.message).toContain('cannot measure ts-vercel');
-    // No interpreter is started for a target this command cannot drive.
-    expect(spawn.calls.length).toBe(0);
+    expect(diagnostic?.code).toBe('cli/guard-module-missing');
+    expect(diagnostic?.message).toContain('app/generated/guardrails.ts');
+    expect(diagnostic?.hint).toContain('aid gen');
   });
 
   it('refuses an unknown target', () => {

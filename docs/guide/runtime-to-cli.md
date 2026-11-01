@@ -201,9 +201,10 @@ readable rest still shown; an empty sink and a sink holding no spans are **0** w
 ## `guard` measures the table the app ships, not the detectors
 
 `aid guard` answers one question: given a corpus of payloads, would **this app** have caught
-them? The detectors are not reimplemented here. The command imports the same
-`generated/guardrails.py` the routes import, hands the engine every declaration covering a
-fixture's stage, and asks which one fired:
+them? The detectors are not reimplemented here. The command imports the same guardrail table
+the routes import - `app/generated/guardrails.py` on `py-fastapi`, `app/generated/guardrails.ts`
+on `ts-vercel` - hands the engine every declaration covering a fixture's stage, and asks
+which one fired:
 
 ```bash
 aid guard                              # corpus discovered beside the spec, then at the root
@@ -236,10 +237,18 @@ Two facts are reported separately, and the separation is the point:
 - **Missed** means a declaration covers the policy and the detector did not match. It is a
   detector fix, and it fails the run.
 
-The taxonomy holds: a missing, malformed, or too-small corpus, and a target with no driver
-are **2**; no guardrails declared, a tree with no `app/generated/guardrails.py`, a failed
-run, and a recall or false-positive rate that misses the corpus's threshold are **1**. The
-command never regenerates: it measures the tree it is given, so run `aid gen` first.
+Which program imports the table is the target's business. A Python target is measured by an
+interpreter that can import `aid_runtime`, because that is what the emitted module is. A
+TypeScript target is measured by the Node already running the CLI: `aid` is a Node program,
+and Node 24 loads the emitted `.ts` module directly, so there is no build step and no
+second toolchain to install. Both drivers do the same four things - import the table, pick
+the stage method, turn the verdict into a row, print JSON - so detection is written once.
+
+The taxonomy holds: a missing, malformed, or too-small corpus, and (for a Python target) no
+interpreter that can import the runtime are **2**; no guardrails declared, a tree with no
+emitted guardrail table, a failed run, and a recall or false-positive rate that misses the
+corpus's threshold are **1**. The command never regenerates: it measures the tree it is
+given, so run `aid gen` first.
 
 ## `migrate` moves schema creation to the operator
 
