@@ -118,6 +118,7 @@ export {
 } from './evals/runner.js';
 export type { AliasEntry, CallHook, ModelGatewayOptions } from './gateway.js';
 export { estimateUsage, ModelGateway } from './gateway.js';
+export { localTraceEnabled, TRACE_DIR_ENV } from './local-trace.js';
 export type { NamedStep, Step, StepResult } from './pipeline.js';
 export { Pipeline, PipelineContext, STEPS_KEY, StopPipeline } from './pipeline.js';
 export type { PolicyNode } from './policy.js';

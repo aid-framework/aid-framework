@@ -13,6 +13,7 @@
  */
 
 import { type Attributes, type Span, SpanStatusCode, trace } from '@opentelemetry/api';
+import { wrapSpan } from './local-trace.js';
 
 /** The operation name the chat completion span carries. */
 export const GEN_AI_OPERATION_CHAT = 'chat';
@@ -116,7 +117,13 @@ export interface LlmSpanHandle {
 /** Start a chat span with the standard attributes applied. */
 export function llmSpan(options: LlmSpanOptions): LlmSpanHandle {
   const tracer = getTracer(options.tracerName ?? DEFAULT_TRACER_NAME);
-  const span = tracer.startSpan(spanName(options), { attributes: spanAttributes(options) });
+  const name = spanName(options);
+  const attributes = spanAttributes(options);
+  const span = wrapSpan(tracer.startSpan(name, { attributes }), {
+    name,
+    kind: GEN_AI_OPERATION_CHAT,
+    attributes,
+  });
   let ended = false;
   return {
     span,
