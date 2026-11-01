@@ -28,6 +28,7 @@ Every command accepts `-h` / `--help` for its own usage. All except `dev` accept
 | [`trace`](#trace) | inspect a traced run: the span tree, timings, models, tokens and cost |
 | [`doctor`](#doctor) | diagnose the tree against the spec: drift, versions, missing files |
 | [`eject`](#eject) | take ownership of a generated file: move it to business/ and stop generating it |
+| [`infra`](#infra) | derive the deployment wiring from the spec and drive OpenTofu or AWS CDK |
 
 ## `init`
 
@@ -211,6 +212,25 @@ aid eject <path> [--target <name>] [--dry-run]
 | --- | --- |
 | `--target <name>` | generator target; one of py-fastapi, ts-vercel |
 | `--dry-run` | report the move, and write nothing |
+| `--json` | print one JSON document on stdout |
+| `-h`, `--help` | print this command's usage |
+
+## `infra`
+
+derive the deployment wiring from the spec and drive OpenTofu or AWS CDK
+
+```sh
+aid infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--iac <tofu|cdk>] [--force]
+```
+
+| Option | Description |
+| --- | --- |
+| `--dry-run` | gen: report what would change, and write nothing |
+| `--check` | gen: exit non-zero when the generated tree is out of date |
+| `--env <name>` | environment root (infra/envs/&lt;name&gt; or infra/cdk/&lt;name&gt;); plan, apply and drift use dev |
+| `--iac <tofu\|cdk>` | plan, apply and drift: which backend to drive; defaults to tofu |
+| `--confirm-prod` | required to apply to prod |
+| `--force` | gen: overwrite generated files that were edited by hand |
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |
 

@@ -338,8 +338,11 @@ function cliPage() {
   }
 
   const constants = flagConstants();
+  // `usage` may be wrapped onto its own line, and a command may declare
+  // `maxPositionals` between `usage` and `flags`; tolerate both rather than
+  // silently dropping such a command from the page.
   const blockPattern =
-    /\{\s*\n\s*name: '([^']+)',\s*\n\s*summary: '([^']*)',\s*\n\s*usage: '([^']*)',\s*\n\s*flags: \[([^\]]*)\]/g;
+    /\{\s*\n\s*name: '([^']+)',\s*\n\s*summary: '([^']*)',\s*\n\s*usage:\s*'([^']*)',[\s\S]*?flags: \[([^\]]*)\]/g;
 
   /** @type {{ name: string, summary: string, usage: string, flags: { label: string, summary: string }[] }[]} */
   const commands = [];
@@ -366,7 +369,13 @@ function cliPage() {
       }
       const [, kind = '', flagName = '', value = '', flagSummary = ''] = flagMatch;
       const label = kind === 'valueFlag' ? `--${flagName} <${value}>` : `--${flagName}`;
-      flags.push({ label, summary: flagSummary });
+      // A table cell cannot hold an unescaped pipe, and a value such as
+      // `tofu|cdk` is exactly the shape that needs one. Backslashes go first so
+      // an escape the input already contains is not read as escaping the pipe.
+      flags.push({
+        label: label.replace(/\\/g, '\\\\').replace(/\|/g, '\\|'),
+        summary: flagSummary,
+      });
     }
     if (flags.length === 0) {
       failures.push(`parsed no flags for the \`${name}\` command; expected at least one`);
@@ -377,6 +386,18 @@ function cliPage() {
   if (commands.length === 0) {
     failures.push('parsed no commands from the `COMMANDS` table');
     return '';
+  }
+
+  // A command whose entry does not match the block pattern would otherwise be
+  // dropped from the page without a word, so compare against the table itself.
+  const declared = [...(table[1] ?? '').matchAll(/\bname: '([^']+)'/g)].map(
+    (match) => match[1] ?? '',
+  );
+  const parsed = new Set(commands.map((command) => command.name));
+  for (const name of declared) {
+    if (!parsed.has(name)) {
+      failures.push(`cannot parse the \`${name}\` command from the \`COMMANDS\` table`);
+    }
   }
 
   const lines = [];
