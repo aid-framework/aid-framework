@@ -7,14 +7,14 @@
  * and reports `ir/*` diagnostics through the same shape every other gate uses.
  */
 
-import { SPEC_VERSION } from '@aid-framework/spec';
+import { errorDiagnostic, SPEC_VERSION } from '@aid-framework/spec';
 import {
   deriveRequiredCapabilities,
   isModelCapability,
   SPEC_MODEL_CAPABILITY_MAP,
 } from './capabilities.js';
 import { catalogCostProfile, catalogModel } from './catalog/index.js';
-import type { IrDiagnostic } from './diagnostics.js';
+import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from './diagnostics.js';
 import { parsePolicyExpr } from './policy/index.js';
 import { parsePredicateExpr } from './predicate/index.js';
 import {
@@ -27,6 +27,7 @@ import {
   DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_OBSERVABILITY,
   DEFAULT_RUNTIME,
+  DEPLOY_TARGETS,
   type DeploymentShape,
   type EmbeddingShape,
   type ErrorPolicy,
@@ -139,7 +140,7 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
   const memory = buildMemory(root.memory);
   const guardrails = buildGuardrails(root.guardrails);
   const agents = buildAgents(root.agents, context);
-  const deployments = buildDeployments(root.deployments);
+  const deployments = buildDeployments(root.deployments, context);
   const embeddings = buildEmbeddings(models);
   const sensitive = sensitiveNames({ types, prompts });
   const observability = buildObservability(root.observability, sensitive);
@@ -808,7 +809,6 @@ const MEMORY_KINDS = ['buffer', 'window', 'summary', 'semantic', 'episodic', 've
 const MEMORY_SCOPES = ['thread', 'user', 'global'] as const;
 const GUARDRAIL_STAGES = ['input', 'output', 'retrieval', 'tool-call'] as const;
 const GUARDRAIL_ACTIONS = ['block', 'redact', 'flag', 'escalate'] as const;
-const DEPLOY_TARGETS = ['serverless', 'container', 'batch', 'edge'] as const;
 
 function buildMemory(raw: unknown): MemoryShape[] {
   const record = asRecord(raw) ?? {};
@@ -946,16 +946,29 @@ function asAgentOnBudgetExhausted(raw: unknown): AgentOnBudgetExhausted | undefi
     : undefined;
 }
 
-function buildDeployments(raw: unknown): DeploymentShape[] {
+function buildDeployments(raw: unknown, context: BuildContext): DeploymentShape[] {
   const record = asRecord(raw) ?? {};
   return sortedKeys(record).map((id) => {
     const entry = asRecord(record[id]) ?? {};
     const target = asString(entry.target);
+    const known = target !== undefined && (DEPLOY_TARGETS as readonly string[]).includes(target);
+    if (!known) {
+      // The spec schema already rejects this, so reaching it means the document bypassed
+      // validation. Defaulting to `serverless` would let this projection invent the very
+      // thing an infrastructure generator provisions, so it reports instead.
+      context.diagnostics.push(
+        errorDiagnostic({
+          code: IR_DIAGNOSTIC_CODES.deployTargetUnknown,
+          message: `deployment "${id}" declares target "${target ?? ''}", which is not one of ${DEPLOY_TARGETS.join(', ')}`,
+          path: ['deployments', id, 'target'],
+          hint: 'name one of the supported targets; the builder will not choose a resource type on your behalf',
+        }),
+      );
+    }
+
     const deployment: DeploymentShape = {
       id,
-      target: (DEPLOY_TARGETS as readonly string[]).includes(target ?? '')
-        ? (target as DeploymentShape['target'])
-        : 'serverless',
+      target: known ? (target as DeploymentShape['target']) : 'serverless',
       streaming: asBoolean(entry.streaming) ?? false,
       secrets: asStringArray(entry.secrets),
       env: buildDeploymentEnv(entry.env),
@@ -965,11 +978,25 @@ function buildDeployments(raw: unknown): DeploymentShape[] {
     if (concurrency !== undefined) deployment.concurrency = concurrency;
     const autoscale = asRecord(entry.autoscale);
     if (autoscale !== undefined) {
-      deployment.autoscale = {
-        min: asNumber(autoscale.min) ?? 0,
-        max: asNumber(autoscale.max) ?? 1,
-        metric: asString(autoscale.metric) ?? '',
-      };
+      const min = asNumber(autoscale.min);
+      const max = asNumber(autoscale.max);
+      const metric = asString(autoscale.metric);
+      const missing = [
+        min === undefined ? '`min`' : undefined,
+        max === undefined ? '`max`' : undefined,
+        metric === undefined ? '`metric`' : undefined,
+      ].filter((name): name is string => name !== undefined);
+      if (missing.length > 0) {
+        context.diagnostics.push(
+          errorDiagnostic({
+            code: IR_DIAGNOSTIC_CODES.deployAutoscaleIncomplete,
+            message: `deployment "${id}" declares an autoscale block without ${missing.join(', ')}`,
+            path: ['deployments', id, 'autoscale'],
+            hint: 'declare `min`, `max` and `metric` together; a partial block would otherwise become a scaling policy this projection invented',
+          }),
+        );
+      }
+      deployment.autoscale = { min: min ?? 0, max: max ?? 1, metric: metric ?? '' };
     }
     return deployment;
   });

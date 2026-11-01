@@ -3,6 +3,7 @@ import {
   SPEC_VERSION,
   SUPPORTED_SECTIONS,
   SUPPORTED_STEP_KINDS,
+  specJsonSchema,
 } from '@aid-framework/spec';
 import { describe, expect, it } from 'vitest';
 
@@ -14,8 +15,10 @@ import {
   DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_OBSERVABILITY,
   DEFAULT_RUNTIME,
+  DEPLOY_TARGETS,
   deriveRequiredCapabilities,
   IR_COLLECTIONS,
+  IR_DIAGNOSTIC_CODES,
   IR_ONLY_COLLECTIONS,
   IR_VERSION,
   isBindingName,
@@ -392,5 +395,47 @@ describe('provider surface', () => {
   it('accepts Phase 0 providers and keeps the union wider', () => {
     expect(PROVIDERS).toContain('openai');
     expect(PROVIDERS).toContain('fake');
+  });
+});
+
+describe('deployments', () => {
+  /** A deployment the schema admits, so each test varies exactly one field. */
+  const spec = (deployment: Record<string, unknown>) => ({
+    specVersion: '0.2',
+    project: { name: 'p' },
+    deployments: { api: deployment },
+  });
+
+  it('accepts a deployment the schema admits without reporting', () => {
+    const { ir, diagnostics } = buildIR(
+      spec({ target: 'container', secrets: [], autoscale: { min: 1, max: 4, metric: 'cpu' } }),
+    );
+    expect(diagnostics).toEqual([]);
+    expect(ir.deployments[0]?.autoscale).toEqual({ min: 1, max: 4, metric: 'cpu' });
+  });
+
+  it('reports a target it cannot represent instead of choosing a resource type', () => {
+    const { diagnostics } = buildIR(spec({ target: 'contianer', secrets: [] }));
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      IR_DIAGNOSTIC_CODES.deployTargetUnknown,
+    );
+  });
+
+  it('reports an autoscale block it would otherwise fill in itself', () => {
+    const { diagnostics } = buildIR(
+      spec({ target: 'container', secrets: [], autoscale: { min: 1 } }),
+    );
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      IR_DIAGNOSTIC_CODES.deployAutoscaleIncomplete,
+    );
+  });
+
+  it('keeps the accepted targets identical to the spec schema enum', () => {
+    // The coercion this pins down is silent by construction: a target present in the
+    // schema but absent here would be projected as `serverless` with no diagnostic.
+    const schema = specJsonSchema() as {
+      $defs: { deployment: { properties: { target: { enum: string[] } } } };
+    };
+    expect(schema.$defs.deployment.properties.target.enum).toEqual([...DEPLOY_TARGETS]);
   });
 });

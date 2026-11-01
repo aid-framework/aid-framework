@@ -1142,6 +1142,69 @@ function retrievalDiagnostics(spec: Record<string, unknown>, diagnostics: Diagno
 }
 
 /**
+ * Deployment rules the JSON Schema cannot express.
+ *
+ * The schema types `autoscale` and `env[]` but cannot say that a scaling range is
+ * ordered, that a variable name is unique, or that an entry does not claim to be a
+ * literal and a secret reference at once. These matter once infrastructure is
+ * generated from the IR: each would otherwise become a fabricated scaling policy, a
+ * duplicated environment variable key, or an ambiguous credential.
+ */
+function deploymentDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnostic[]): void {
+  for (const [id, raw] of Object.entries(asRecord(spec.deployments))) {
+    const deployment = asRecord(raw);
+
+    const autoscale = asRecord(deployment.autoscale);
+    const min = typeof autoscale.min === 'number' ? autoscale.min : undefined;
+    const max = typeof autoscale.max === 'number' ? autoscale.max : undefined;
+    if (min !== undefined && max !== undefined && min > max) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.deploymentAutoscaleRange,
+          message: `deployment '${id}' declares autoscale.min ${min} above autoscale.max ${max}, so the range can never be honoured`,
+          path: ['deployments', id, 'autoscale'],
+          hint: 'set `min` at or below `max`; `min` is the floor the service keeps running and `max` is the ceiling it may scale to',
+        }),
+      );
+    }
+
+    const env = Array.isArray(deployment.env) ? deployment.env : [];
+    const firstIndex = new Map<string, number>();
+    env.forEach((rawEntry, index) => {
+      const entry = asRecord(rawEntry);
+      const name = typeof entry.name === 'string' ? entry.name : undefined;
+
+      if (name !== undefined) {
+        const first = firstIndex.get(name);
+        if (first === undefined) {
+          firstIndex.set(name, index);
+        } else {
+          diagnostics.push(
+            errorDiagnostic({
+              code: DIAGNOSTIC_CODES.deploymentEnvDuplicate,
+              message: `deployment '${id}' declares the env name '${name}' more than once (first at index ${first})`,
+              path: ['deployments', id, 'env', index],
+              hint: 'merge the entries into one; a repeated name would emit two environment variables with the same key',
+            }),
+          );
+        }
+      }
+
+      if (entry.value !== undefined && entry.secret === true) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.deploymentEnvValueAndSecret,
+            message: `deployment '${id}' env entry ${name === undefined ? `at index ${index}` : `'${name}'`} sets both a literal \`value\` and \`secret: true\``,
+            path: ['deployments', id, 'env', index],
+            hint: 'drop `value` to read the secret from the platform, or drop `secret: true` to declare a literal',
+          }),
+        );
+      }
+    });
+  }
+}
+
+/**
  * Validates an already-parsed spec value. Pure with respect to the filesystem:
  * position information is layered on afterwards once a `document` is supplied.
  */
@@ -1197,6 +1260,7 @@ export function validateSpec(value: unknown, options: ValidateOptions = {}): Dia
   metricDiagnostics(spec, diagnostics);
   assertMetricDiagnostics(spec, diagnostics);
   retrievalDiagnostics(spec, diagnostics);
+  deploymentDiagnostics(spec, diagnostics);
 
   return withPositions(diagnostics, options);
 }

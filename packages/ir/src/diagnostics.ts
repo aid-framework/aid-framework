@@ -50,6 +50,8 @@ export const IR_DIAGNOSTIC_CODES = {
   hitlSideEffect: 'ir/hitl-side-effect',
   memoryRef: 'ir/memory-ref',
   deployStreaming: 'ir/deploy-streaming',
+  deployTargetUnknown: 'ir/deploy-target-unknown',
+  deployAutoscaleIncomplete: 'ir/deploy-autoscale-incomplete',
   orchestrationDeepagents: 'ir/orchestration-deepagents',
   evalUncovered: 'ir/eval-uncovered',
   gateFailed: 'ir/gate-failed',
