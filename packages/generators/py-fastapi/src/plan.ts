@@ -27,6 +27,7 @@ import { emitAgents, hasAgents } from './emit/agents.js';
 import { emitBusinessToolSeed, emitContractsInit, emitToolContract } from './emit/contracts.js';
 import { emitControl, hasComposite } from './emit/control.js';
 import { emitDeps } from './emit/deps.js';
+import { emitDockerfile, hasContainerDeployment } from './emit/dockerfile.js';
 import { emitEval, emitEvalsInit, evalModulePath } from './emit/evals.js';
 import { emitGatewayInit, emitGatewayModels } from './emit/gateway.js';
 import { emitGuardrails, hasGuardrails } from './emit/guardrails.js';
@@ -89,6 +90,7 @@ export function filesFor(ir: IR): GeneratedFile[] {
     emitEvalsInit(ir),
     ...orderedEvals(ir).map((evaluation) => emitEval(ir, evaluation)),
     ...emitRetrieval(ir),
+    ...(hasContainerDeployment(ir) ? [emitDockerfile(ir)] : []),
     emitBusinessInit(ir),
     emitBusinessToolsInit(ir),
     ...tools.map((tool) => emitBusinessToolSeed(tool)),

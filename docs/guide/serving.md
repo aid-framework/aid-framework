@@ -154,6 +154,11 @@ calls it.
 
 A `deployments` entry with `target: container` is what a release builds. The pieces that matter:
 
+- **The image is generated.** `target: container` emits `app/generated/Dockerfile`, and it
+  builds `app.main:app` - so `main.py` is still the entry point you own. Build it from the
+  application root, because the image needs `pyproject.toml`, which sits above `app/`:
+  `docker build -f app/generated/Dockerfile -t support-copilot .`. One image serves every
+  container deployment; the file is emitted once, not once per deployment.
 - **One process, one limiter.** `concurrency: 4` becomes `CONCURRENCY_LIMIT`, and every
   `parallel`/`map`/`reduce` fan-out draws from that one cap. Scaling out means more processes,
   each with its own cap.

@@ -1,4 +1,5 @@
 {
+  "app/generated/Dockerfile": "378ff8d33ba50365335bc73e5d459ba1cdfda201bef882827cd9e1a94a6873f1",
   "app/generated/__init__.py": "77039806ff4d909e27a42a0a60c4c299aa7fa20aec870af1eff67a827b995a39",
   "app/generated/contracts/__init__.py": "4e6e6139fe5c951c896846c2d3311243b4d72e5f8f147351c82f46d36d1df861",
   "app/generated/contracts/citations.py": "7efd80874711e4ea2172b178b8421ea3c5c1c8cabd75a4e3e3f54d50d370634e",

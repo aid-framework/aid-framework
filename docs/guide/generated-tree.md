@@ -12,7 +12,7 @@ happens on the second run.
 | Tree | Files it ships | Managed by the generator |
 | --- | --- | --- |
 | The tutorial from [getting started](getting-started.md) | 24 | 21 |
-| `examples/support-copilot` | 60 | 42 |
+| `examples/support-copilot` | 62 | 44 |
 
 The difference is not the generator being inconsistent. It is the rule: **the generator only
 manages what it can reproduce from the spec.** A file you write - `app/main.py`, an eval
@@ -113,6 +113,7 @@ manifest:
 | `deps.py` | The `Deps` dataclass, `build_deps()` and the `get_deps()` singleton. |
 | `observability.py` | Trace hooks the runtime calls around each step. |
 | `sse.py` | Event-stream framing. Emitted for a streaming deployment only. |
+| `Dockerfile` | The image a deployment with `target: container` runs. |
 | `retrieval/` | `bindings.py` for query-time search, `ingest/<store>.py` for the write path. |
 | `evals/<name>.py` | One module per eval, runnable through `aid eval`. |
 
@@ -121,6 +122,21 @@ manifest:
 always emitted because it holds `ToolContext` - the dataclass the generated adapter hands a
 tool - even when no tool is declared. `evals/__init__.py` is only a package marker; the eval
 modules beside it appear once `evals` is declared.
+
+`Dockerfile` is conditional too, and on a different axis: it exists only when a deployment
+declares `target: container`. Where the app runs is the only thing that can justify an image,
+and a project that deploys nowhere as a container is not missing a file. Because the build
+needs `pyproject.toml`, which sits above `app/`, the context is the application root and the
+file is named explicitly:
+
+```console
+docker build -f app/generated/Dockerfile -t support-copilot .
+docker run --rm -p 8080:8080 -e OPENAI_API_KEY=... support-copilot
+```
+
+The image runs `app.main:app` - the same entry point the developer runs locally - as a
+non-root user, with `exec` so the platform's `SIGTERM` reaches uvicorn. No secret is a build
+argument or an environment layer: the process reads a declared secret when a model is called.
 
 ## The manifest
 

@@ -39,6 +39,13 @@
       "generator": "@aid-framework/generator-py-fastapi",
       "generatorVersion": "0.1.0",
       "owner": "generated",
+      "path": "app/generated/Dockerfile",
+      "sha256": "378ff8d33ba50365335bc73e5d459ba1cdfda201bef882827cd9e1a94a6873f1"
+    },
+    {
+      "generator": "@aid-framework/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
       "path": "app/generated/__init__.py",
       "sha256": "77039806ff4d909e27a42a0a60c4c299aa7fa20aec870af1eff67a827b995a39"
     },
