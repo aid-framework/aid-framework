@@ -25,6 +25,13 @@ export const CI_WORKFLOW_PATH = '.github/workflows/ci.yml';
 export const EVALS_WORKFLOW_PATH = '.github/workflows/evals.yml';
 
 /**
+ * The infrastructure plan. Manual, because it assumes a cloud role: a fork pull request
+ * cannot hold that identity, and a plan against a real account is something a human
+ * dispatches after reviewing what changed.
+ */
+export const INFRA_PLAN_WORKFLOW_PATH = '.github/workflows/infra-plan.yml';
+
+/**
  * Action pins. A tag is mutable; a SHA is not, and a generated workflow that runs
  * `@v4` is one force-push away from running different code than it did last week.
  * These are the commits the `v4`/`v5` tags resolved to when this was written.
@@ -33,7 +40,15 @@ export const ACTION_PINS = {
   checkout: 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262',
   setupNode: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
   setupPython: 'actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065',
+  configureAws: 'aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd',
+  setupTofu: 'opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4',
 } as const;
+
+/**
+ * The OpenTofu release the plan workflow installs. Pinned like the actions are: a floating
+ * `latest` would let a plan change shape because the runner downloaded a new release.
+ */
+export const TOFU_VERSION = '1.13.2';
 
 export interface CiProfile {
   /** The target name, used in the workflow's title so a reader knows what generated it. */
@@ -332,4 +347,134 @@ export function scaffoldEvals(profile: EvalProfile, cliRange: string): Generated
   ].join('\n');
 
   return { path: EVALS_WORKFLOW_PATH, content, owner: 'scaffold' };
+}
+
+export interface InfraPlanProfile {
+  /** The target name, used in the workflow's title so a reader knows what generated it. */
+  readonly target: string;
+}
+
+/**
+ * The infrastructure plan, for a project that has committed `infra/`.
+ *
+ * It is dispatch-only. A plan needs a cloud identity, and `aws-actions/configure-aws-credentials`
+ * assumes it through OIDC, so no long-lived key is stored; a fork pull request cannot use
+ * that identity, and a plan against a real account is a reviewed action rather than a
+ * per-commit check. `ci.yml` already gates the committed tree with `aid infra gen --check`
+ * on every PR, so nothing is lost by keeping the credentialed half manual.
+ *
+ * Two details come from how `aid infra plan` itself works: it shells out to a bare
+ * `tofu plan` in the environment root, so the workflow must `init` first, and it reads
+ * the generated var file, so a project that never ran `aid infra gen` has nothing to plan
+ * and gets a notice instead of a red run. The tofu version is pinned rather than floating
+ * so a plan does not change shape because the runner downloaded a new release.
+ */
+export function scaffoldInfraPlan(profile: InfraPlanProfile, cliRange: string): GeneratedFile {
+  const content = [
+    `# Generated once by \`aid gen\` for the \`${profile.target}\` target, then yours.`,
+    '# A scaffold file is never overwritten and never recorded in aid.manifest.json.',
+    '# Planning reads your cloud account, so it is a manual action rather than a pull',
+    '# request check. Set AID_INFRA_ROLE_ARN and AID_INFRA_REGION as repository variables;',
+    '# credentials are obtained through OIDC, so no long-lived key is stored here.',
+    'name: Infra plan',
+    '',
+    'on:',
+    '  workflow_dispatch:',
+    '    inputs:',
+    '      env:',
+    '        description: environment root under infra/envs, or infra/cdk/<env>',
+    '        required: false',
+    '        default: dev',
+    '      iac:',
+    '        description: backend to drive',
+    '        required: false',
+    '        type: choice',
+    '        options:',
+    '          - tofu',
+    '          - cdk',
+    '        default: tofu',
+    '',
+    'concurrency:',
+    `  group: infra-plan-\${{ github.workflow }}-\${{ github.ref }}`,
+    '  cancel-in-progress: false',
+    '',
+    'permissions:',
+    '  contents: read',
+    '  id-token: write',
+    '',
+    'jobs:',
+    '  plan:',
+    '    name: Plan infrastructure',
+    '    runs-on: ubuntu-latest',
+    '    timeout-minutes: 20',
+    '    env:',
+    `      ENV: \${{ inputs.env }}`,
+    `      IAC: \${{ inputs.iac }}`,
+    '    steps:',
+    `      - uses: ${ACTION_PINS.checkout}`,
+    '      - name: Detect generated infrastructure',
+    '        id: detect',
+    '        run: |',
+    '          if [ -f infra/generated/deploy.auto.tfvars.json ] || [ -f infra/generated/deploy.cdk-context.json ]; then',
+    '            echo "ready=true" >> "$GITHUB_OUTPUT"',
+    '          else',
+    "            echo '::notice::Nothing to plan: run `aid infra gen` and commit the result.'",
+    '            echo "ready=false" >> "$GITHUB_OUTPUT"',
+    '          fi',
+    '      - name: Check the cloud credential',
+    '        id: creds',
+    "        if: steps.detect.outputs.ready == 'true'",
+    '        env:',
+    `          ROLE: \${{ vars.AID_INFRA_ROLE_ARN }}`,
+    `          REGION: \${{ vars.AID_INFRA_REGION }}`,
+    '        run: |',
+    '          missing=0',
+    '          if [ -z "$ROLE" ]; then',
+    '            echo "::warning::AID_INFRA_ROLE_ARN is not set"',
+    '            missing=1',
+    '          fi',
+    '          if [ -z "$REGION" ]; then',
+    '            echo "::warning::AID_INFRA_REGION is not set"',
+    '            missing=1',
+    '          fi',
+    '          if [ "$missing" -eq 0 ]; then',
+    '            echo "ready=true" >> "$GITHUB_OUTPUT"',
+    '          else',
+    '            echo "ready=false" >> "$GITHUB_OUTPUT"',
+    '          fi',
+    '      - name: Report a missing credential',
+    "        if: steps.detect.outputs.ready == 'true' && steps.creds.outputs.ready != 'true'",
+    '        run: |',
+    '          echo "::error::Set AID_INFRA_ROLE_ARN and AID_INFRA_REGION as repository variables."',
+    '          exit 1',
+    '      - name: Configure AWS credentials',
+    "        if: steps.creds.outputs.ready == 'true'",
+    `        uses: ${ACTION_PINS.configureAws}`,
+    '        with:',
+    `          role-to-assume: \${{ vars.AID_INFRA_ROLE_ARN }}`,
+    `          aws-region: \${{ vars.AID_INFRA_REGION }}`,
+    `      - uses: ${ACTION_PINS.setupNode}`,
+    "        if: steps.creds.outputs.ready == 'true'",
+    '        with:',
+    "          node-version: '22'",
+    '      - name: Install the AID CLI',
+    "        if: steps.creds.outputs.ready == 'true'",
+    `        run: npm install --global @aid-framework/cli@${cliRange}`,
+    `      - uses: ${ACTION_PINS.setupTofu}`,
+    "        if: steps.creds.outputs.ready == 'true' && env.IAC == 'tofu'",
+    '        with:',
+    `          tofu_version: '${TOFU_VERSION}'`,
+    '      - name: Initialise the environment root',
+    "        if: steps.creds.outputs.ready == 'true' && env.IAC == 'tofu'",
+    '        run: tofu -chdir="infra/envs/$ENV" init -input=false',
+    '      - name: Install the AWS CDK',
+    "        if: steps.creds.outputs.ready == 'true' && env.IAC == 'cdk'",
+    '        run: npm install --global aws-cdk@2',
+    '      - name: Plan',
+    "        if: steps.creds.outputs.ready == 'true'",
+    '        run: aid infra plan --env "$ENV" --iac "$IAC"',
+    '',
+  ].join('\n');
+
+  return { path: INFRA_PLAN_WORKFLOW_PATH, content, owner: 'scaffold' };
 }

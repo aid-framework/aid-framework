@@ -1,0 +1,102 @@
+# Generated once by `aid gen` for the `py-fastapi` target, then yours.
+# A scaffold file is never overwritten and never recorded in aid.manifest.json.
+# Planning reads your cloud account, so it is a manual action rather than a pull
+# request check. Set AID_INFRA_ROLE_ARN and AID_INFRA_REGION as repository variables;
+# credentials are obtained through OIDC, so no long-lived key is stored here.
+name: Infra plan
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: environment root under infra/envs, or infra/cdk/<env>
+        required: false
+        default: dev
+      iac:
+        description: backend to drive
+        required: false
+        type: choice
+        options:
+          - tofu
+          - cdk
+        default: tofu
+
+concurrency:
+  group: infra-plan-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  plan:
+    name: Plan infrastructure
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ENV: ${{ inputs.env }}
+      IAC: ${{ inputs.iac }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Detect generated infrastructure
+        id: detect
+        run: |
+          if [ -f infra/generated/deploy.auto.tfvars.json ] || [ -f infra/generated/deploy.cdk-context.json ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo '::notice::Nothing to plan: run `aid infra gen` and commit the result.'
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check the cloud credential
+        id: creds
+        if: steps.detect.outputs.ready == 'true'
+        env:
+          ROLE: ${{ vars.AID_INFRA_ROLE_ARN }}
+          REGION: ${{ vars.AID_INFRA_REGION }}
+        run: |
+          missing=0
+          if [ -z "$ROLE" ]; then
+            echo "::warning::AID_INFRA_ROLE_ARN is not set"
+            missing=1
+          fi
+          if [ -z "$REGION" ]; then
+            echo "::warning::AID_INFRA_REGION is not set"
+            missing=1
+          fi
+          if [ "$missing" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Report a missing credential
+        if: steps.detect.outputs.ready == 'true' && steps.creds.outputs.ready != 'true'
+        run: |
+          echo "::error::Set AID_INFRA_ROLE_ARN and AID_INFRA_REGION as repository variables."
+          exit 1
+      - name: Configure AWS credentials
+        if: steps.creds.outputs.ready == 'true'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: ${{ vars.AID_INFRA_ROLE_ARN }}
+          aws-region: ${{ vars.AID_INFRA_REGION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        if: steps.creds.outputs.ready == 'true'
+        with:
+          node-version: '22'
+      - name: Install the AID CLI
+        if: steps.creds.outputs.ready == 'true'
+        run: npm install --global @aid-framework/cli@0.1
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4
+        if: steps.creds.outputs.ready == 'true' && env.IAC == 'tofu'
+        with:
+          tofu_version: '1.13.2'
+      - name: Initialise the environment root
+        if: steps.creds.outputs.ready == 'true' && env.IAC == 'tofu'
+        run: tofu -chdir="infra/envs/$ENV" init -input=false
+      - name: Install the AWS CDK
+        if: steps.creds.outputs.ready == 'true' && env.IAC == 'cdk'
+        run: npm install --global aws-cdk@2
+      - name: Plan
+        if: steps.creds.outputs.ready == 'true'
+        run: aid infra plan --env "$ENV" --iac "$IAC"

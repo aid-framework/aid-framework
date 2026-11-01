@@ -18,6 +18,7 @@ import type { AidManifest, AidManifestProvenance, Plan } from '@aid-framework/ge
 import {
   CI_WORKFLOW_PATH,
   EVALS_WORKFLOW_PATH,
+  INFRA_PLAN_WORKFLOW_PATH,
   parseAidManifestJson,
   sortByPath,
 } from '@aid-framework/generator-sdk';
@@ -185,7 +186,7 @@ export function shippedManagedTree(): Map<string, string> {
     }
   }
 
-  for (const workflow of [CI_WORKFLOW_PATH, EVALS_WORKFLOW_PATH]) {
+  for (const workflow of [CI_WORKFLOW_PATH, EVALS_WORKFLOW_PATH, INFRA_PLAN_WORKFLOW_PATH]) {
     const absolute = join(EXAMPLE_ROOT, workflow);
     if (existsSync(absolute)) managed.set(workflow, readFileSync(absolute, 'utf8'));
   }

@@ -23,6 +23,7 @@ import {
   eject,
   formatRegenerationSummary,
   type GeneratedFile,
+  INFRA_PLAN_WORKFLOW_PATH,
   isScaffoldPath,
   ownerForPath,
   type Plan,
@@ -30,6 +31,8 @@ import {
   regenerate,
   scaffoldCi,
   scaffoldEvals,
+  scaffoldInfraPlan,
+  TOFU_VERSION,
 } from '../src/index.js';
 
 const PROVENANCE: AidManifestProvenance = {
@@ -192,6 +195,85 @@ describe('scaffoldEvals', () => {
     // Trace capture and the cost step do not depend on a credential.
     expect(fakeOnly.content).toContain('AID_TRACE_DIR: .aid-traces');
     expect(fakeOnly.content).toContain('aid cost .aid-traces');
+  });
+});
+
+describe('scaffoldInfraPlan', () => {
+  const file = scaffoldInfraPlan({ target: 'py-fastapi' }, '0.1');
+
+  it('emits the workflow at the path the scaffold tier owns', () => {
+    expect(file.path).toBe(INFRA_PLAN_WORKFLOW_PATH);
+    expect(file.owner).toBe('scaffold');
+  });
+
+  it('is dispatch-only, because a fork pull request cannot assume a cloud role', () => {
+    expect(file.content).toContain('workflow_dispatch:');
+    expect(file.content).not.toContain('pull_request');
+    expect(file.content).not.toContain('schedule:');
+  });
+
+  it('asks for an OIDC token and no write permission, so the role is the only credential', () => {
+    expect(file.content).toContain('permissions:\n  contents: read\n  id-token: write');
+    expect(file.content).toContain('aws-actions/configure-aws-credentials@');
+    expect(file.content).toContain('role-to-assume:');
+    // A stored key would be a secret to rotate; the whole point of OIDC is that there is
+    // nothing in the repository to leak.
+    expect(file.content).not.toContain('secrets.');
+    expect(file.content).not.toContain('aws-access-key-id');
+  });
+
+  it('pins every action to a full commit SHA and the toolchain to one release', () => {
+    const uses = file.content
+      .split('\n')
+      .filter((line) => line.includes('uses:'))
+      .map((line) => line.slice(line.indexOf('uses:') + 'uses:'.length).trim());
+    expect(uses.length).toBeGreaterThan(0);
+    for (const reference of uses) {
+      expect(reference, reference).toMatch(/^[^@]+@[0-9a-f]{40}$/);
+    }
+    expect(file.content).toContain(`tofu_version: '${TOFU_VERSION}'`);
+  });
+
+  it('reports nothing to plan rather than failing when no infrastructure was generated', () => {
+    expect(file.content).toContain('-f infra/generated/deploy.auto.tfvars.json');
+    expect(file.content).toContain('-f infra/generated/deploy.cdk-context.json');
+    expect(file.content).toContain('::notice::');
+    // Unlike the eval gate, infra is optional: a project without `infra/` has no plan to
+    // be missing, so the absent branch must not be an error.
+    const detectStep = file.content.slice(
+      0,
+      file.content.indexOf('      - name: Check the cloud credential'),
+    );
+    expect(detectStep).toContain('::notice::');
+    expect(detectStep).not.toContain('exit 1');
+  });
+
+  it('fails when the infrastructure exists but the credential does not', () => {
+    expect(file.content).toContain('id: creds');
+    expect(file.content).toContain('AID_INFRA_ROLE_ARN');
+    expect(file.content).toContain('AID_INFRA_REGION');
+    expect(file.content).toContain('::error::');
+    expect(file.content).toContain('exit 1');
+  });
+
+  it('initialises the environment root before planning, because aid infra does not', () => {
+    const init = file.content.indexOf('init -input=false');
+    const plan = file.content.indexOf('aid infra plan');
+    expect(init).toBeGreaterThan(-1);
+    expect(plan).toBeGreaterThan(init);
+    expect(file.content).toContain('tofu -chdir="infra/envs/$ENV" init');
+  });
+
+  it('drives both backends from one dispatch input', () => {
+    expect(file.content).toContain("if: steps.creds.outputs.ready == 'true' && env.IAC == 'tofu'");
+    expect(file.content).toContain("if: steps.creds.outputs.ready == 'true' && env.IAC == 'cdk'");
+    expect(file.content).toContain('aws-cdk@2');
+    expect(file.content).toContain('aid infra plan --env "$ENV" --iac "$IAC"');
+    expect(file.content).toContain('options:\n          - tofu\n          - cdk');
+  });
+
+  it('installs the pinned CLI, so the plan runs the released command', () => {
+    expect(file.content).toContain('@aid-framework/cli@0.1');
   });
 });
 
