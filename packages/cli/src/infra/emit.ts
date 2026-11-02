@@ -245,7 +245,7 @@ export function cdkContext(plan: DeployPlan): DeployContext {
 function readme(plan: DeployPlan, cloud: Cloud): string {
   const routes = plan.services.reduce((total, service) => total + service.endpoints.length, 0);
   const modules = modulesOf(plan, cloud);
-  const active = modules.serverless || modules.container || modules.batch;
+  const active = modules.serverless || modules.container || modules.batch || modules.edge;
   const root = envRoot(modules, cloud);
   const envDir = cloud === 'gcp' ? 'infra/envs/gcp-dev' : 'infra/envs/dev';
   return [
@@ -282,6 +282,11 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
     ...(modules.batch && cloud === 'gcp'
       ? [
           '| `modules/cloudrunjob/` | The Cloud Run job + service account module a `batch` deployment runs in. |',
+        ]
+      : []),
+    ...(modules.edge
+      ? [
+          '| `modules/edge/` | The Lambda@Edge + CloudFront module an `edge` deployment deploys into. |',
         ]
       : []),
     '',
@@ -371,11 +376,31 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
                 '',
               ]
             : []),
+          ...(modules.edge
+            ? [
+                'The edge module serves the app from Lambda@Edge: one published function in',
+                'us-east-1 and one CloudFront distribution whose default behaviour answers every',
+                'request. It refuses more than one `edge` deployment (one distribution serves the',
+                'whole app), a `streaming` deployment, a timeout over 30 seconds, and a missing',
+                '`edge.zip` -- the plan hashes that archive, so build it first.',
+                '',
+                'Lambda@Edge takes no environment variables, so the module creates an empty secret',
+                'named after the function and the handler reads it at boot. Populate it with a',
+                'JSON object of environment names to values before the first request, and keep it',
+                'out of tfvars: a variable would land in state. `AID_EDGE_SECRET` cannot be set',
+                'there either, so the handler falls back to its own function name.',
+                '',
+                "Only the app's HTTP pipeline routes are served from the edge. An agent route",
+                'keeps its route through `app.main:app`, so a project that exposes one needs a',
+                '`serverless` or `container` deployment as well.',
+                '',
+              ]
+            : []),
         ]
       : [
           cloud === 'gcp'
             ? 'No provider module is generated for this plan: on GCP `container` and `serverless` both deploy to Cloud Run, and `batch` to a Cloud Run job, so only `edge` (no GCP counterpart) is missing. The plan document and tfvars above are still the contract to write it against.'
-            : 'No provider module is generated for this plan yet: AWS modules exist for `serverless`, `container` and `batch`, so an `edge` target needs a hand-written env root. The plan document and tfvars above are still the contract to write it against.',
+            : 'No provider module is generated for this plan: every runnable target (`serverless`, `container`, `batch`, `edge`) has an AWS module, so the plan declares none of them. The plan document and tfvars above are still the contract to write one against.',
           '',
         ]),
     ...(cloud === 'aws'

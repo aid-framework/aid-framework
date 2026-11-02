@@ -238,6 +238,11 @@ infra/
       variables.tf
       main.tf
       outputs.tf
+    modules/edge/                       generated, when a deployment targets edge on AWS
+      versions.tf
+      variables.tf
+      main.tf
+      outputs.tf
     modules/cloudrun/                   generated, when a deployment targets container or serverless on GCP
       versions.tf
       variables.tf
@@ -260,16 +265,21 @@ The plan and both spellings of it are always emitted. A module is emitted only w
 deployment declares its target, so a serverless-only project on AWS gains no
 `modules/container` directory to ignore. On GCP `serverless` and `container` share
 `modules/cloudrun`, because both run the same image, and `batch` becomes
-`modules/cloudrunjob`, because a Cloud Run job takes the same image too. Each module's bytes are constant: it loops over the generated tfvars
+`modules/cloudrunjob`, because a Cloud Run job takes the same image too. `edge` exists only on
+AWS, because it is Lambda@Edge on CloudFront. Each module's bytes are constant: it loops over
+the generated tfvars
 instead of naming services, which is what lets it be validated once and be correct for every
 project.
 
 The env root is yours and is never written by `aid infra gen`. `infra/envs/<env>/main.tf`
 (AWS) or `infra/envs/gcp-<env>/main.tf` (GCP) calls one module per platform the plan targets -
 `../../generated/modules/serverless`, `../../generated/modules/container`,
-`../../generated/modules/batch`, or `../../generated/modules/cloudrun` on GCP - plus
+`../../generated/modules/batch`, `../../generated/modules/edge`, or
+`../../generated/modules/cloudrun` on GCP - plus
 `../../generated/modules/cloudrunjob` when a deployment targets `batch` there - and
-`variables.tf` declares the inputs no spec can supply:
+`variables.tf` declares the inputs no spec can supply. An `edge`-only root declares none of
+`image_uris`, `secret_arns` or the network inputs: the function is a zip, and its configuration
+is the secret the module creates.
 
 | Input | Why it cannot be derived |
 | --- | --- |
@@ -280,6 +290,10 @@ The env root is yours and is never written by `aid infra gen`. `infra/envs/<env>
 | `batch_sizing` | vCPU, memory, attempts and the run timeout are a budget decision; GCP reads the same input as a Cloud Run job's CPU, memory, retries and task timeout. |
 | `batch_subnet_ids`, `batch_security_group_ids` | A batch task runs in a network you own; the module refuses an empty subnet list rather than guessing a default VPC. |
 | `batch_assign_public_ip`, `batch_max_vcpus`, `batch_log_retention_days` | Public addressing, queue ceiling and log retention are operator decisions. |
+| `edge_zip_path` | The function's archive is built from the app; where it lands is a build decision, and the module refuses to plan without it. |
+| `edge_sizing` | Memory and timeout are a budget decision; Lambda@Edge caps the timeout at 30 seconds. |
+| `edge_aliases`, `edge_certificate_arn` | A hostname and its certificate belong to a domain you own. |
+| `edge_price_class` | Which CloudFront edge locations serve the app is a cost decision. |
 | `bedrock_region` | Bedrock models may live in a different region than the stack; empty means the stack's region. |
 | `gcp_project` | A GCP project id names one account, so the provider is configured from it and the module names it in a Vertex grant. |
 | `region` | Cloud Run names the region in a URL; it is a deployment choice. |
@@ -300,7 +314,10 @@ forwards a streamed body. The batch module refuses a deployment with no `pipelin
 would run nothing), one with no image, a secret with no ARN, and an empty subnet list. The
 Cloud Run job module refuses the same missing `pipeline` and image, a secret with no Secret
 Manager id, and a name Cloud Run cannot accept; it needs no subnet, because a job runs on
-Google's network. Each refusal is a `precondition` whose message names the input to fix.
+Google's network. The edge module refuses a build with more than one `edge` deployment (one
+distribution serves the app), a `streaming` service, an `edge_zip_path` that does not exist, a
+timeout above 30 seconds, and memory outside 128 to 3008 MB. Each refusal is a `precondition`
+whose message names the input to fix.
 
 The container module runs each service as a Fargate task behind one load balancer, in private
 subnets with egress through a single NAT gateway and reachable only from the balancer. Tasks
@@ -331,6 +348,20 @@ and passes it as `taskRoleArn`; the grant applies to a job only when a job in th
 Bedrock. The policy is scoped to `foundation-model/*` and to the account's
 `inference-profile/*`, which is what a cross-region inference profile needs. A build that
 names only `openai` or `anthropic` gets no policy, and every other service is unaffected.
+
+An `edge` deployment becomes one Lambda@Edge function on one CloudFront distribution. The
+function must live in `us-east-1`, and CloudFront can associate only a numbered version, so the
+module pins a `us-east-1` provider alias, publishes the function, and associates its
+`qualified_arn` through an origin-request association that includes the body. The role trusts
+both `lambda.amazonaws.com` and `edgelambda.amazonaws.com`, because a replica is invoked by the
+latter. Lambda@Edge forbids environment variables, so the module leaves the function's
+environment empty and creates an empty Secrets Manager secret named after the function; the
+generated handler reads it on its first request and copies its entries into `os.environ`, which
+is how the same pipeline code sees the configuration a `serverless` deployment passes through
+`environment`. Populate that secret after the first apply. The association answers origin
+requests for the app's HTTP pipeline routes; agent routes stay in `app.main:app`, which a
+Lambda@Edge association does not run. CloudFront still requires an origin, so the module names
+a documented placeholder and never fetches from it.
 
 `--cloud gcp` selects Cloud Run for a `container` service, and for a `serverless` one too.
 The gen2 Functions API accepts only a source zip and builds it, so it would mean a second
@@ -369,9 +400,9 @@ provider gets no grant and no extra variable. A service that declares either var
 keeps its own value, so pointing one service at another project is a decision, not an
 overwrite.
 
-Generated AWS modules exist for `serverless`, `container` and `batch`; GCP has one that covers
-`container` and `serverless` (Cloud Run) and one that covers `batch` (a Cloud Run job). `edge`
-still needs a hand-written env root; the plan document is the contract to write it against.
+Generated AWS modules exist for `serverless`, `container`, `batch` and `edge`; GCP has one
+that covers `container` and `serverless` (Cloud Run) and one that covers `batch` (a Cloud Run
+job).
 `--cloud gcp` refuses a plan containing a target it has no module for, naming each service,
 rather than emitting a tree that silently omits it.
 

@@ -15,6 +15,7 @@ export { BATCH_MODULE_DIR, emitBatchModule } from './batch.js';
 export { CLOUDRUN_MODULE_DIR, emitCloudRunModule } from './cloudrun.js';
 export { CLOUDRUNJOB_MODULE_DIR, emitCloudRunJobModule } from './cloudrunjob.js';
 export { CONTAINER_MODULE_DIR, emitContainerModule } from './container.js';
+export { EDGE_MODULE_DIR, emitEdgeModule } from './edge.js';
 export { type EnvRootModules, envRoot } from './env-root.js';
 export type { ModuleFile } from './hcl.js';
 export { hcl } from './hcl.js';
@@ -24,6 +25,7 @@ import { emitBatchModule } from './batch.js';
 import { emitCloudRunModule } from './cloudrun.js';
 import { emitCloudRunJobModule } from './cloudrunjob.js';
 import { emitContainerModule } from './container.js';
+import { emitEdgeModule } from './edge.js';
 import { emitServerlessModule } from './serverless.js';
 
 /**
@@ -35,7 +37,8 @@ import { emitServerlessModule } from './serverless.js';
  * and it runs the image directly. On AWS `serverless` is its own module: Lambda gets the
  * image, but the HTTP API in front of it is a different shape. `batch` means "some
  * deployment targets batch"; the cloud decides which module that is, AWS Batch on `aws`
- * and a Cloud Run job on `gcp`.
+ * and a Cloud Run job on `gcp`. `edge` is AWS-only: it is Lambda@Edge behind CloudFront,
+ * and GCP has no counterpart (`CLOUD_TARGETS` refuses it there).
  */
 export function modulesOf(
   plan: DeployPlan,
@@ -44,6 +47,7 @@ export function modulesOf(
   serverless: boolean;
   container: boolean;
   batch: boolean;
+  edge: boolean;
 } {
   return {
     serverless: cloud === 'aws' && plan.services.some((service) => service.target === 'serverless'),
@@ -52,6 +56,7 @@ export function modulesOf(
         service.target === 'container' || (cloud === 'gcp' && service.target === 'serverless'),
     ),
     batch: plan.services.some((service) => service.target === 'batch'),
+    edge: cloud === 'aws' && plan.services.some((service) => service.target === 'edge'),
   };
 }
 
@@ -59,5 +64,10 @@ export function modulesOf(
 export function emitProviderModules(plan: DeployPlan, cloud: Cloud = DEFAULT_CLOUD): ModuleFile[] {
   return cloud === 'gcp'
     ? [...emitCloudRunModule(plan), ...emitCloudRunJobModule(plan)]
-    : [...emitServerlessModule(plan), ...emitContainerModule(plan), ...emitBatchModule(plan)];
+    : [
+        ...emitServerlessModule(plan),
+        ...emitContainerModule(plan),
+        ...emitBatchModule(plan),
+        ...emitEdgeModule(plan),
+      ];
 }

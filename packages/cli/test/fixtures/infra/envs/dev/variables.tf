@@ -123,6 +123,39 @@ variable "batch_log_retention_days" {
   default = 30
 }
 
+variable "edge_zip_path" {
+  description = "Path to a zip of the app, resolved from this env root. Build it before planning."
+  type        = string
+  default     = "edge.zip"
+}
+
+variable "edge_sizing" {
+  description = "Deployment id -> memory and timeout. Lambda@Edge caps the timeout at 30s."
+  type = map(object({
+    memory_mb       = optional(number)
+    timeout_seconds = optional(number)
+  }))
+  default = {}
+}
+
+variable "edge_aliases" {
+  description = "Custom domain names the distribution answers on. Empty keeps the cloudfront.net name."
+  type        = list(string)
+  default     = []
+}
+
+variable "edge_certificate_arn" {
+  description = "ACM certificate in us-east-1 for edge_aliases. Required with aliases, ignored without."
+  type        = string
+  default     = ""
+}
+
+variable "edge_price_class" {
+  description = "Which CloudFront edge locations serve the app."
+  type        = string
+  default     = "PriceClass_100"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

@@ -188,8 +188,7 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
   // emit *no* module for it and look successful. Refuse instead of deploying part of a
   // project. `serverless` (Cloud Run), `container` (Cloud Run) and `batch` (a Cloud Run
   // job) are supported there, so they are not refused.
-  // AWS keeps its older answer for `edge` -- an env root written by hand, since the plan
-  // document is the contract -- so this gate is deliberately GCP-only.
+  // AWS has a module for every target, so this gate is deliberately GCP-only.
   if (cloud === 'gcp') {
     const missing = unsupportedTargets(deployPlan, cloud);
     if (missing.length > 0) {

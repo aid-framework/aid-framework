@@ -19,6 +19,8 @@ export interface EnvRootModules {
   readonly container: boolean;
   /** Optional so a caller that predates the batch module keeps reading as "no batch". */
   readonly batch?: boolean;
+  /** Optional for the same reason: "no edge" unless a caller says otherwise. */
+  readonly edge?: boolean;
 }
 
 /** The plan-shaped variables every env root declares, so the generated tfvars binds. */
@@ -208,6 +210,47 @@ const BEDROCK_INPUTS = [
   '}',
 ];
 
+/**
+ * Edge: a Lambda zip, a CloudFront distribution, and the two domain decisions CloudFront
+ * will not make for you. None of it is derivable from the spec -- the zip is a build
+ * artifact, and a custom domain is the operator's.
+ */
+const EDGE_INPUTS = [
+  '',
+  'variable "edge_zip_path" {',
+  '  description = "Path to a zip of the app, resolved from this env root. Build it before planning."',
+  '  type        = string',
+  '  default     = "edge.zip"',
+  '}',
+  '',
+  'variable "edge_sizing" {',
+  '  description = "Deployment id -> memory and timeout. Lambda@Edge caps the timeout at 30s."',
+  '  type = map(object({',
+  '    memory_mb       = optional(number)',
+  '    timeout_seconds = optional(number)',
+  '  }))',
+  '  default = {}',
+  '}',
+  '',
+  'variable "edge_aliases" {',
+  '  description = "Custom domain names the distribution answers on. Empty keeps the cloudfront.net name."',
+  '  type        = list(string)',
+  '  default     = []',
+  '}',
+  '',
+  'variable "edge_certificate_arn" {',
+  '  description = "ACM certificate in us-east-1 for edge_aliases. Required with aliases, ignored without."',
+  '  type        = string',
+  '  default     = ""',
+  '}',
+  '',
+  'variable "edge_price_class" {',
+  '  description = "Which CloudFront edge locations serve the app."',
+  '  type        = string',
+  '  default     = "PriceClass_100"',
+  '}',
+];
+
 const CONTAINER_INPUTS = [
   '',
   'variable "container_sizing" {',
@@ -287,16 +330,21 @@ export function envRoot(
 }
 
 function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string } {
-  const any = modules.serverless || modules.container || modules.batch === true;
+  const edge = modules.edge === true;
+  // An edge function is a zip, not an image, and its configuration is the secret the
+  // module creates -- so an edge-only root needs none of the image or ARN inputs.
+  const images = modules.serverless || modules.container || modules.batch === true;
+  const any = images || edge;
 
   const variables = [
     ...PLAN_VARIABLES,
-    ...(any ? IMAGE_URIS : []),
-    ...(any ? SECRET_ARNS : []),
-    ...(any ? BEDROCK_INPUTS : []),
+    ...(images ? IMAGE_URIS : []),
+    ...(images ? SECRET_ARNS : []),
+    ...(images ? BEDROCK_INPUTS : []),
     ...(modules.serverless ? SERVERLESS_SIZING : []),
     ...(modules.container ? CONTAINER_INPUTS : []),
     ...(modules.batch === true ? BATCH_INPUTS : []),
+    ...(edge ? EDGE_INPUTS : []),
     ...(any ? TAGS : []),
   ];
 
@@ -347,21 +395,41 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   if (modules.batch === true) {
     calls.push(
       moduleCall('batch', [
-        'project                 = var.project',
-        'services                = var.services',
-        'image_uris              = var.image_uris',
-        'secret_arns             = var.secret_arns',
-        'batch_sizing            = var.batch_sizing',
-        'subnet_ids              = var.batch_subnet_ids',
-        'security_group_ids      = var.batch_security_group_ids',
-        'assign_public_ip        = var.batch_assign_public_ip',
-        'max_vcpus               = var.batch_max_vcpus',
-        'log_retention_days      = var.batch_log_retention_days',
-        'bedrock_region          = var.bedrock_region',
-        'tags                    = var.tags',
+        'project            = var.project',
+        'services           = var.services',
+        'image_uris         = var.image_uris',
+        'secret_arns        = var.secret_arns',
+        'batch_sizing       = var.batch_sizing',
+        'subnet_ids         = var.batch_subnet_ids',
+        'security_group_ids = var.batch_security_group_ids',
+        'assign_public_ip   = var.batch_assign_public_ip',
+        'max_vcpus          = var.batch_max_vcpus',
+        'log_retention_days = var.batch_log_retention_days',
+        'bedrock_region     = var.bedrock_region',
+        'tags               = var.tags',
       ]),
     );
     outputs.push(['output "batch_job_queue" {', '  value = module.batch.job_queue_arn', '}']);
+  }
+
+  if (edge) {
+    calls.push(
+      moduleCall('edge', [
+        'project              = var.project',
+        'services             = var.services',
+        'edge_zip_path        = var.edge_zip_path',
+        'edge_sizing          = var.edge_sizing',
+        'edge_aliases         = var.edge_aliases',
+        'edge_certificate_arn = var.edge_certificate_arn',
+        'edge_price_class     = var.edge_price_class',
+        'tags                 = var.tags',
+      ]),
+    );
+    outputs.push([
+      'output "edge_domain_name" {',
+      '  value = module.edge.distribution_domain_name',
+      '}',
+    ]);
   }
 
   const main = any
@@ -375,9 +443,9 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         ...blocks(outputs),
       ]
     : [
-        '# This plan targets none of `serverless`, `container` or `batch`, so no provider module was',
-        '# generated. Point a module call at `../../generated/modules/<platform>` once one',
-        '# exists for the targets you deploy.',
+        '# This plan targets none of `serverless`, `container`, `batch` or `edge`, so no provider',
+        '# module was generated. Point a module call at `../../generated/modules/<platform>` once',
+        '# one exists for the targets you deploy.',
       ];
 
   return { variables: hcl(variables), main: hcl(main) };

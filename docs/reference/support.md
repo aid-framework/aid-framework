@@ -27,6 +27,7 @@ A `yes` means the infra planner emits a module for that target on that cloud. A 
 | --- | --- | --- |
 | `batch` | yes | yes |
 | `container` | yes | yes |
+| `edge` | yes | — |
 | `serverless` | yes | yes |
 
 The emitted infrastructure is OpenTofu. A plan targets one cloud at a time, because two providers in one state is a blast radius rather than a feature.
