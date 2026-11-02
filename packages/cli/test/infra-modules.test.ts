@@ -19,8 +19,10 @@ import { emitInfra } from '../src/infra/emit.js';
 import {
   BATCH_MODULE_DIR,
   CLOUDRUN_MODULE_DIR,
+  CLOUDRUNJOB_MODULE_DIR,
   CONTAINER_MODULE_DIR,
   emitBatchModule,
+  emitCloudRunJobModule,
   emitCloudRunModule,
   emitContainerModule,
   emitProviderModules,
@@ -48,8 +50,8 @@ const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'infra
 /** The env root the fixture commits: one that has to satisfy every AWS module. */
 const BOTH = envRoot({ serverless: true, container: true, batch: true });
 
-/** The GCP env root the fixture commits: Cloud Run is GCP's only module. */
-const GCP = envRoot({ serverless: false, container: true }, 'gcp');
+/** The GCP env root the fixture commits: Cloud Run and a Cloud Run job. */
+const GCP = envRoot({ serverless: false, container: true, batch: true }, 'gcp');
 
 /** Enough of a `DeployPlan` to choose a target: the modules ignore everything else. */
 function planOf(...targets: string[]): DeployPlan {
@@ -528,6 +530,77 @@ describe('emitCloudRunModule', () => {
   });
 });
 
+describe('emitCloudRunJobModule', () => {
+  it('emits nothing when no deployment targets batch', () => {
+    expect(emitCloudRunJobModule(planOf())).toEqual([]);
+    expect(emitCloudRunJobModule(planOf('serverless', 'container', 'edge'))).toEqual([]);
+  });
+
+  it('emits the four module files under the generated tree', () => {
+    const files = emitCloudRunJobModule(planOf('batch'));
+    expect(files.map((file) => file.path)).toEqual([
+      `${CLOUDRUNJOB_MODULE_DIR}/versions.tf`,
+      `${CLOUDRUNJOB_MODULE_DIR}/variables.tf`,
+      `${CLOUDRUNJOB_MODULE_DIR}/main.tf`,
+      `${CLOUDRUNJOB_MODULE_DIR}/outputs.tf`,
+    ]);
+    expect(CLOUDRUNJOB_MODULE_DIR).toBe('infra/generated/modules/cloudrunjob');
+  });
+
+  it('is constant: a real plan and a bare target list yield identical bytes', () => {
+    expect(emitCloudRunJobModule(AS_BATCH)).toEqual(emitCloudRunJobModule(planOf('batch')));
+  });
+
+  it('runs the same entrypoint and pipeline argv as the AWS job definition', () => {
+    // The entrypoint is the one thing both clouds must agree on; only the resource that
+    // invokes it differs.
+    const main = mainOf(emitCloudRunJobModule(planOf('batch')));
+    expect(main).toContain('"python", "-m", "app.generated.batch"');
+    expect(main).toContain('args    = [coalesce(each.value.pipeline, "")]');
+    expect(main).not.toContain('@{');
+  });
+
+  it('creates a Cloud Run job, since the provider has no Google Cloud Batch resource', () => {
+    const main = mainOf(emitCloudRunJobModule(planOf('batch')));
+    expect(main).toContain('resource "google_cloud_run_v2_job" "job"');
+    expect(main).not.toContain('google_batch_job');
+    // One pipeline run per execution, so a retry cannot double a model call.
+    expect(main).toContain('task_count  = 1');
+    expect(main).toContain('parallelism = 1');
+  });
+
+  it('grants the service account read on each secret, and the log writer it starts without', () => {
+    const main = mainOf(emitCloudRunJobModule(planOf('batch')));
+    expect(main).toContain('google_secret_manager_secret_iam_member');
+    expect(main).toContain('roles/secretmanager.secretAccessor');
+    expect(main).toContain('roles/logging.logWriter');
+  });
+
+  it('grants Vertex only to a job that names the provider', () => {
+    const main = mainOf(emitCloudRunJobModule(planOf('batch')));
+    expect(main).toContain('resource "google_project_iam_member" "vertex"');
+    expect(main).toContain('if contains(service.providers, "google")');
+    expect(main).toContain('GOOGLE_CLOUD_PROJECT = var.project_id');
+  });
+
+  it('refuses what it cannot run, in the plan rather than after submission', () => {
+    const main = mainOf(emitCloudRunJobModule(planOf('batch')));
+    expect(main).toContain('names no pipeline');
+    expect(main).toContain('must name the image it runs');
+    expect(main).toContain('secret with no secret_ids entry');
+    expect(main).toContain('cannot be a Cloud Run name');
+  });
+
+  it('exports what an execution needs and nothing more', () => {
+    const outputs = emitCloudRunJobModule(planOf('batch')).find((file) =>
+      file.path.endsWith('/outputs.tf'),
+    );
+    expect(outputs?.contents).toContain('output "job_ids"');
+    expect(outputs?.contents).toContain('output "job_names"');
+    expect(outputs?.contents).toContain('output "service_accounts"');
+  });
+});
+
 describe('envRoot', () => {
   it('declares only the business inputs a present module reads', () => {
     const serverless = envRoot({ serverless: true, container: false });
@@ -594,18 +667,24 @@ describe('envRoot', () => {
     expect(GCP.main).toContain('provider "google"');
     expect(GCP.main).toContain('project = var.gcp_project');
     expect(GCP.main).toContain('module "cloudrun"');
+    expect(GCP.main).toContain('module "cloudrunjob"');
     expect(GCP.main).toContain('source = "../../generated/modules/cloudrun"');
+    expect(GCP.main).toContain('source = "../../generated/modules/cloudrunjob"');
     // The module names the project in a grant, so the root passes it rather than the
     // module reaching for a default: the project is an account fact, not a spec fact.
     expect(GCP.main).toContain('project_id            = var.gcp_project');
     expect(GCP.variables).toContain('variable "gcp_project"');
     expect(GCP.variables).toContain('variable "region"');
-    // Cloud Run terminates TLS and scales behind a managed frontend: no VPC, no CIDR.
+    expect(GCP.variables).toContain('variable "batch_sizing"');
+    // Cloud Run terminates TLS and scales behind a managed frontend: no VPC, no CIDR. A
+    // Cloud Run job needs no network either, so GCP still has no subnet input.
     expect(GCP.variables).not.toContain('variable "vpc_id"');
     expect(GCP.variables).not.toContain('variable "vpc_cidr"');
     expect(GCP.variables).not.toContain('variable "public_subnet_ids"');
+    expect(GCP.variables).not.toContain('variable "batch_subnet_ids"');
     expect(GCP.main).not.toContain('module "serverless"');
     expect(GCP.main).not.toContain('module "container"');
+    expect(GCP.main).not.toContain('module "batch"');
   });
 
   it("does not leak one cloud's variables into the other cloud's root", () => {
@@ -619,13 +698,25 @@ describe('envRoot', () => {
       expect(rendered).not.toMatch(/\n\n\n/);
       expect(rendered).not.toMatch(/\{\n\n/);
     }
-    expect(GCP.main).toContain('}\n\n# The Cloud Run module');
+    expect(GCP.main).toContain('\n\nmodule "cloudrun"');
+    expect(GCP.main).toContain('\n\nmodule "cloudrunjob"');
   });
 
   it('says what GCP is missing rather than inventing a module', () => {
-    const none = envRoot({ serverless: true, container: false }, 'gcp');
+    const none = envRoot({ serverless: false, container: false }, 'gcp');
     expect(none.main).not.toContain('module "');
     expect(none.main).toContain('no service a module exists for');
+    expect(none.main).toContain('`edge` has');
+  });
+
+  it('runs a directly-passed serverless flag on Cloud Run on GCP', () => {
+    // `modulesOf` folds serverless into container on this cloud, but a caller that sets
+    // the flag directly must still get the module rather than the "nothing generated"
+    // message.
+    const serverless = envRoot({ serverless: true, container: false }, 'gcp');
+    expect(serverless.main).toContain('module "cloudrun"');
+    expect(serverless.variables).toContain('variable "cloudrun_sizing"');
+    expect(serverless.variables).not.toContain('variable "batch_sizing"');
   });
 });
 
@@ -728,7 +819,8 @@ describe('modulesOf, the seam emit.ts reads', () => {
 
   it('reports what the cloud can emit, not what the target is called', () => {
     // On GCP `container` and `serverless` both run on Cloud Run, so either one needs the
-    // cloudrun module; `serverless` and `batch` are AWS-only modules.
+    // cloudrun module; `serverless` is an AWS-only module. `batch` is reported on both
+    // clouds and the cloud decides which module renders it.
     expect(modulesOf(planOf('container'), 'gcp')).toEqual({
       serverless: false,
       container: true,
@@ -742,7 +834,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
     expect(modulesOf(planOf('batch'), 'gcp')).toEqual({
       serverless: false,
       container: false,
-      batch: false,
+      batch: true,
     });
     expect(modulesOf(planOf('container'))).toEqual({
       serverless: false,
@@ -764,7 +856,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
     expect(all).toHaveLength(12);
   });
 
-  it('emits only the Cloud Run module for a GCP plan', () => {
+  it('emits only the Cloud Run module for a GCP plan with no job', () => {
     const paths = emitProviderModules(MIXED, 'gcp').map((file) => file.path);
     expect(paths).toEqual([
       `${CLOUDRUN_MODULE_DIR}/versions.tf`,
@@ -772,6 +864,21 @@ describe('modulesOf, the seam emit.ts reads', () => {
       `${CLOUDRUN_MODULE_DIR}/main.tf`,
       `${CLOUDRUN_MODULE_DIR}/outputs.tf`,
     ]);
+  });
+
+  it('emits the Cloud Run job module beside Cloud Run for a GCP batch plan', () => {
+    const job = emitProviderModules(planOf('batch'), 'gcp').map((file) => file.path);
+    expect(job).toEqual([
+      `${CLOUDRUNJOB_MODULE_DIR}/versions.tf`,
+      `${CLOUDRUNJOB_MODULE_DIR}/variables.tf`,
+      `${CLOUDRUNJOB_MODULE_DIR}/main.tf`,
+      `${CLOUDRUNJOB_MODULE_DIR}/outputs.tf`,
+    ]);
+
+    const both = emitProviderModules(planOf('container', 'batch'), 'gcp').map((file) => file.path);
+    expect(both).toContain(`${CLOUDRUN_MODULE_DIR}/main.tf`);
+    expect(both).toContain(`${CLOUDRUNJOB_MODULE_DIR}/main.tf`);
+    expect(both).toHaveLength(8);
   });
 });
 
@@ -843,6 +950,7 @@ describe('the validate fixture', () => {
       { dir: SERVERLESS_MODULE_DIR, files: emitServerlessModule(planOf('serverless')) },
       { dir: CONTAINER_MODULE_DIR, files: emitContainerModule(planOf('container')) },
       { dir: CLOUDRUN_MODULE_DIR, files: emitCloudRunModule(planOf('container')) },
+      { dir: CLOUDRUNJOB_MODULE_DIR, files: emitCloudRunJobModule(planOf('batch')) },
       { dir: BATCH_MODULE_DIR, files: emitBatchModule(planOf('batch')) },
     ];
     for (const { dir, files } of cases) {
@@ -879,9 +987,10 @@ describe('the validate fixture', () => {
     expect(main).toContain('source = "../../generated/modules/container"');
   });
 
-  it('wires the GCP root to the Cloud Run module it ships beside', () => {
+  it('wires the GCP root to the modules it ships beside', () => {
     const main = readFileSync(join(FIXTURE, 'envs', 'gcp-dev', 'main.tf'), 'utf8');
     expect(main).toContain('source = "../../generated/modules/cloudrun"');
+    expect(main).toContain('source = "../../generated/modules/cloudrunjob"');
     expect(main).toContain('provider "google"');
   });
 });

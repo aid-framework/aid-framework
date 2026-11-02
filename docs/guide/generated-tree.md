@@ -233,12 +233,17 @@ infra/
       variables.tf
       main.tf
       outputs.tf
-    modules/batch/                      generated, when a deployment targets batch
+    modules/batch/                      generated, when a deployment targets batch on AWS
       versions.tf
       variables.tf
       main.tf
       outputs.tf
     modules/cloudrun/                   generated, when a deployment targets container or serverless on GCP
+      versions.tf
+      variables.tf
+      main.tf
+      outputs.tf
+    modules/cloudrunjob/                generated, when a deployment targets batch on GCP
       versions.tf
       variables.tf
       main.tf
@@ -254,15 +259,17 @@ infra/
 The plan and both spellings of it are always emitted. A module is emitted only when a
 deployment declares its target, so a serverless-only project on AWS gains no
 `modules/container` directory to ignore. On GCP `serverless` and `container` share
-`modules/cloudrun`, because both run the same image. Each module's bytes are constant: it loops over the generated tfvars
+`modules/cloudrun`, because both run the same image, and `batch` becomes
+`modules/cloudrunjob`, because a Cloud Run job takes the same image too. Each module's bytes are constant: it loops over the generated tfvars
 instead of naming services, which is what lets it be validated once and be correct for every
 project.
 
 The env root is yours and is never written by `aid infra gen`. `infra/envs/<env>/main.tf`
 (AWS) or `infra/envs/gcp-<env>/main.tf` (GCP) calls one module per platform the plan targets -
 `../../generated/modules/serverless`, `../../generated/modules/container`,
-`../../generated/modules/batch`, or `../../generated/modules/cloudrun` - and `variables.tf`
-declares the inputs no spec can supply:
+`../../generated/modules/batch`, or `../../generated/modules/cloudrun` on GCP - plus
+`../../generated/modules/cloudrunjob` when a deployment targets `batch` there - and
+`variables.tf` declares the inputs no spec can supply:
 
 | Input | Why it cannot be derived |
 | --- | --- |
@@ -270,7 +277,7 @@ declares the inputs no spec can supply:
 | `secret_arns` | An ARN names one account, so it belongs to the environment, not the spec. |
 | `sizing` | Memory and timeout are a cost decision, not an inference from the pipeline. |
 | `container_sizing` | CPU units, memory and task count are a budget decision. |
-| `batch_sizing` | vCPU, memory, attempts and attempt timeout are a budget decision. |
+| `batch_sizing` | vCPU, memory, attempts and the run timeout are a budget decision; GCP reads the same input as a Cloud Run job's CPU, memory, retries and task timeout. |
 | `batch_subnet_ids`, `batch_security_group_ids` | A batch task runs in a network you own; the module refuses an empty subnet list rather than guessing a default VPC. |
 | `batch_assign_public_ip`, `batch_max_vcpus`, `batch_log_retention_days` | Public addressing, queue ceiling and log retention are operator decisions. |
 | `bedrock_region` | Bedrock models may live in a different region than the stack; empty means the stack's region. |
@@ -290,8 +297,10 @@ balancer with fewer than two public subnets, and a service with fewer than two p
 subnets. The Cloud Run module refuses a service with no image, a secret with no Secret Manager
 id, and a name Cloud Run cannot route; it does not refuse `streaming`, because Cloud Run
 forwards a streamed body. The batch module refuses a deployment with no `pipeline` (the job
-would run nothing), one with no image, a secret with no ARN, and an empty subnet list. Each
-refusal is a `precondition` whose message names the input to fix.
+would run nothing), one with no image, a secret with no ARN, and an empty subnet list. The
+Cloud Run job module refuses the same missing `pipeline` and image, a secret with no Secret
+Manager id, and a name Cloud Run cannot accept; it needs no subnet, because a job runs on
+Google's network. Each refusal is a `precondition` whose message names the input to fix.
 
 The container module runs each service as a Fargate task behind one load balancer, in private
 subnets with egress through a single NAT gateway and reachable only from the balancer. Tasks
@@ -339,6 +348,17 @@ needs; there is no VPC input, because Cloud Run provisions no network of its own
 `streaming` is served here from either target, so a service that must move to a container on
 AWS because API Gateway cannot stream needs no change on GCP.
 
+A `batch` deployment lands on a Cloud Run job. The stable `hashicorp/google` provider has no
+Cloud Batch resource, and Cloud Run jobs is the service that runs one container to completion
+and then stops: `task_count = 1` and `parallelism = 1`, so a retried attempt cannot run two
+model calls at once. The module invokes the same entrypoint the AWS module does,
+`python -m app.generated.batch <pipeline>`, seals secrets into `secret_key_ref`, grants the
+job's service account `secretAccessor` and `roles/logging.logWriter`, and grants
+`roles/aiplatform.user` when a model names the `google` provider. `batch_sizing` maps to CPU,
+memory, retries (`attempts - 1`) and the task timeout. Creating the job does not run it;
+`gcloud run jobs execute <name> --region <region> --wait` starts it, which keeps a deploy from
+spending model budget.
+
 A service whose models name the `google` provider gets `roles/aiplatform.user` on that
 project, and `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_REGION` in its environment. Both are
 needed: the Vertex adapter reads its project and location from the environment and Cloud Run
@@ -349,9 +369,9 @@ provider gets no grant and no extra variable. A service that declares either var
 keeps its own value, so pointing one service at another project is a decision, not an
 overwrite.
 
-Generated AWS modules exist for `serverless`, `container` and `batch`, and GCP has one that
-covers `container` and `serverless` (Cloud Run). `edge` still needs a hand-written env root,
-and `batch` has no GCP module yet; the plan document is the contract to write either against.
+Generated AWS modules exist for `serverless`, `container` and `batch`; GCP has one that covers
+`container` and `serverless` (Cloud Run) and one that covers `batch` (a Cloud Run job). `edge`
+still needs a hand-written env root; the plan document is the contract to write it against.
 `--cloud gcp` refuses a plan containing a target it has no module for, naming each service,
 rather than emitting a tree that silently omits it.
 

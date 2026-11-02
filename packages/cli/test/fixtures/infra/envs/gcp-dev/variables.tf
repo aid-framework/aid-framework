@@ -22,8 +22,8 @@ variable "secret_ids" {
   default     = {}
 }
 
-# Cloud Run needs a region it can name in a URL, and nothing else about the network: it
-# terminates TLS and scales behind a managed frontend the module creates.
+# Cloud Run names the region in a URL, and a job is created in one; both are deployment
+# choices, not something the spec can infer.
 variable "region" {
   description = "The region every resource is created in."
   type        = string
@@ -47,8 +47,19 @@ variable "allow_unauthenticated" {
   default     = true
 }
 
+variable "batch_sizing" {
+  description = "Deployment id -> CPU, memory, attempts and run timeout."
+  type = map(object({
+    cpu             = optional(string)
+    memory_mb       = optional(number)
+    attempts        = optional(number)
+    timeout_seconds = optional(number)
+  }))
+  default = {}
+}
+
 variable "deletion_protection" {
-  description = "Leave on for anything real: destroying a protected service is refused."
+  description = "Leave on for anything real: destroying a protected resource is refused."
   type        = bool
   default     = true
 }

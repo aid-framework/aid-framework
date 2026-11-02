@@ -274,9 +274,14 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
           '| `modules/cloudrun/` | The Cloud Run v2 + service account + Artifact Registry module a `container` or `serverless` service deploys into. |',
         ]
       : []),
-    ...(modules.batch
+    ...(modules.batch && cloud === 'aws'
       ? [
           '| `modules/batch/` | The AWS Batch Fargate + job queue module a `batch` deployment runs in. |',
+        ]
+      : []),
+    ...(modules.batch && cloud === 'gcp'
+      ? [
+          '| `modules/cloudrunjob/` | The Cloud Run job + service account module a `batch` deployment runs in. |',
         ]
       : []),
     '',
@@ -341,7 +346,7 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
                 '',
               ]
             : []),
-          ...(modules.batch
+          ...(modules.batch && cloud === 'aws'
             ? [
                 'The batch module runs a job definition as `python -m app.generated.batch` with',
                 "the deployment's pipeline as its argument, so one image serves both a route and",
@@ -351,10 +356,25 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
                 '',
               ]
             : []),
+          ...(modules.batch && cloud === 'gcp'
+            ? [
+                'The Cloud Run jobs module runs a job as `python -m app.generated.batch` with the',
+                "deployment's pipeline as its argument, so one image serves both a route and a",
+                'job. It refuses a deployment that names no pipeline, a job with no image URI, a',
+                'secret with no Secret Manager id, and a name Cloud Run cannot accept. Defining a',
+                'job does not run it: start an execution with',
+                '`gcloud run jobs execute <name> --region <region> --wait`.',
+                '',
+                'Cloud Run jobs is the mapping for `batch` because the `hashicorp/google` provider',
+                'has no resource for Google Cloud Batch; a job takes the same image and has the',
+                'same run-to-completion model, on the provider this tree already requires.',
+                '',
+              ]
+            : []),
         ]
       : [
           cloud === 'gcp'
-            ? 'No provider module is generated for this plan: on GCP `container` and `serverless` both deploy to Cloud Run, so only `batch` (a Google Cloud Batch module) and `edge` (no GCP counterpart) are missing. The plan document and tfvars above are still the contract to write it against.'
+            ? 'No provider module is generated for this plan: on GCP `container` and `serverless` both deploy to Cloud Run, and `batch` to a Cloud Run job, so only `edge` (no GCP counterpart) is missing. The plan document and tfvars above are still the contract to write it against.'
             : 'No provider module is generated for this plan yet: AWS modules exist for `serverless`, `container` and `batch`, so an `edge` target needs a hand-written env root. The plan document and tfvars above are still the contract to write it against.',
           '',
         ]),

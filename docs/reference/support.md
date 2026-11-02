@@ -25,7 +25,7 @@ A `yes` means the infra planner emits a module for that target on that cloud. A 
 
 | Target | `aws` | `gcp` |
 | --- | --- | --- |
-| `batch` | yes | — |
+| `batch` | yes | yes |
 | `container` | yes | yes |
 | `serverless` | yes | yes |
 

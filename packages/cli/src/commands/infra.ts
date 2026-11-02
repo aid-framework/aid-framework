@@ -184,9 +184,10 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
 
   const deployPlan = buildDeployPlan(lowered.ir);
 
-  // On GCP a plan with `batch` would otherwise emit *no* module for it and look
-  // successful, and `edge` has no counterpart at all. Refuse instead of deploying part of a
-  // project. `serverless` is supported there (it runs on Cloud Run), so it is not refused.
+  // On GCP `edge` has no counterpart at all, and a plan that named it would otherwise
+  // emit *no* module for it and look successful. Refuse instead of deploying part of a
+  // project. `serverless` (Cloud Run), `container` (Cloud Run) and `batch` (a Cloud Run
+  // job) are supported there, so they are not refused.
   // AWS keeps its older answer for `edge` -- an env root written by hand, since the plan
   // document is the contract -- so this gate is deliberately GCP-only.
   if (cloud === 'gcp') {

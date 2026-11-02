@@ -61,14 +61,27 @@ const GCP_SECRET_IDS = [
   '}',
 ];
 
-const GCP_INPUTS = [
+const GCP_REGION = [
   '',
-  '# Cloud Run needs a region it can name in a URL, and nothing else about the network: it',
-  '# terminates TLS and scales behind a managed frontend the module creates.',
+  '# Cloud Run names the region in a URL, and a job is created in one; both are deployment',
+  '# choices, not something the spec can infer.',
   'variable "region" {',
   '  description = "The region every resource is created in."',
   '  type        = string',
   '}',
+];
+
+const GCP_DELETION_PROTECTION = [
+  '',
+  'variable "deletion_protection" {',
+  '  description = "Leave on for anything real: destroying a protected resource is refused."',
+  '  type        = bool',
+  '  default     = true',
+  '}',
+];
+
+/** Cloud Run services: sizing and whether the internet may invoke them. */
+const GCP_CLOUDRUN_INPUTS = [
   '',
   'variable "cloudrun_sizing" {',
   '  description = "Service id -> CPU, memory, instance bounds and concurrency."',
@@ -87,11 +100,24 @@ const GCP_INPUTS = [
   '  type        = bool',
   '  default     = true',
   '}',
+];
+
+/**
+ * Cloud Run jobs: CPU, memory, attempts and a whole-run deadline. The same decisions the
+ * AWS batch module asks for -- Cloud Run provisions the execution environment, so unlike
+ * Fargate there is no subnet or security group to name.
+ */
+const GCP_JOB_INPUTS = [
   '',
-  'variable "deletion_protection" {',
-  '  description = "Leave on for anything real: destroying a protected service is refused."',
-  '  type        = bool',
-  '  default     = true',
+  'variable "batch_sizing" {',
+  '  description = "Deployment id -> CPU, memory, attempts and run timeout."',
+  '  type = map(object({',
+  '    cpu             = optional(string)',
+  '    memory_mb       = optional(number)',
+  '    attempts        = optional(number)',
+  '    timeout_seconds = optional(number)',
+  '  }))',
+  '  default = {}',
   '}',
 ];
 
@@ -358,23 +384,69 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
 }
 
 /**
- * The GCP env root: one Cloud Run module call, and the inputs Cloud Run needs that the
- * spec cannot know. There is no VPC, subnet or certificate variable here because Cloud
- * Run provisions none of them -- which is why this root is much shorter than the AWS one.
+ * The GCP env root: one Cloud Run module call per platform the plan targets, and the
+ * inputs those modules need that the spec cannot know. There is no VPC, subnet or
+ * certificate variable here because Cloud Run provisions none of them -- which is why this
+ * root is much shorter than the AWS one.
  */
 function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string } {
-  const run = modules.container;
+  // `serverless` is folded into `container` by `modulesOf`, but a caller that sets it
+  // directly still lands on Cloud Run rather than on a module that does not exist.
+  const run = modules.container || modules.serverless;
+  const job = modules.batch === true;
+  const any = run || job;
 
   const variables = [
     ...PLAN_VARIABLES,
-    ...(run ? GCP_PROJECT : []),
-    ...(run ? IMAGE_URIS : []),
-    ...(run ? GCP_SECRET_IDS : []),
-    ...(run ? GCP_INPUTS : []),
-    ...(run ? TAGS : []),
+    ...(any ? GCP_PROJECT : []),
+    ...(any ? IMAGE_URIS : []),
+    ...(any ? GCP_SECRET_IDS : []),
+    ...(any ? GCP_REGION : []),
+    ...(run ? GCP_CLOUDRUN_INPUTS : []),
+    ...(job ? GCP_JOB_INPUTS : []),
+    ...(any ? GCP_DELETION_PROTECTION : []),
+    ...(any ? TAGS : []),
   ];
 
-  const main = run
+  const calls: string[][] = [];
+  const outputs: string[][] = [];
+
+  if (run) {
+    calls.push(
+      moduleCall('cloudrun', [
+        'project               = var.project',
+        'services              = var.services',
+        'image_uris            = var.image_uris',
+        'secret_ids            = var.secret_ids',
+        'cloudrun_sizing       = var.cloudrun_sizing',
+        'project_id            = var.gcp_project',
+        'region                = var.region',
+        'allow_unauthenticated = var.allow_unauthenticated',
+        'deletion_protection   = var.deletion_protection',
+        'tags                  = var.tags',
+      ]),
+    );
+    outputs.push(['output "cloudrun_urls" {', '  value = module.cloudrun.service_urls', '}']);
+  }
+
+  if (job) {
+    calls.push(
+      moduleCall('cloudrunjob', [
+        'project             = var.project',
+        'services            = var.services',
+        'image_uris          = var.image_uris',
+        'secret_ids          = var.secret_ids',
+        'batch_sizing        = var.batch_sizing',
+        'project_id          = var.gcp_project',
+        'region              = var.region',
+        'deletion_protection = var.deletion_protection',
+        'tags                = var.tags',
+      ]),
+    );
+    outputs.push(['output "batch_jobs" {', '  value = module.cloudrunjob.job_ids', '}']);
+  }
+
+  const main = any
     ? [
         '# The project a resource lands in is an account fact the spec cannot know, so the',
         '# env root configures the provider once instead of every resource naming it.',
@@ -383,31 +455,17 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         '  region  = var.region',
         '}',
         '',
-        '# The Cloud Run module, fed from the generated tfvars and the inputs below. dev and',
-        '# prod differ only in the values they supply, which is what lets one generated tree',
-        '# deploy to a second GCP project unchanged.',
+        '# dev and prod differ only in the values they supply, which is what lets one',
+        '# generated tree deploy to a second GCP project unchanged.',
         '',
-        ...moduleCall('cloudrun', [
-          'project               = var.project',
-          'services              = var.services',
-          'image_uris            = var.image_uris',
-          'secret_ids            = var.secret_ids',
-          'cloudrun_sizing       = var.cloudrun_sizing',
-          'project_id            = var.gcp_project',
-          'region                = var.region',
-          'allow_unauthenticated = var.allow_unauthenticated',
-          'deletion_protection   = var.deletion_protection',
-          'tags                  = var.tags',
-        ]),
+        ...blocks(calls),
         '',
-        'output "cloudrun_urls" {',
-        '  value = module.cloudrun.service_urls',
-        '}',
+        ...blocks(outputs),
       ]
     : [
         '# This plan targets no service a module exists for. On GCP `container` and',
-        '# `serverless` both deploy to Cloud Run; `batch` needs a Google Cloud Batch module,',
-        '# and `edge` has no GCP counterpart.',
+        '# `serverless` both deploy to Cloud Run, and `batch` to a Cloud Run job; `edge` has',
+        '# no GCP counterpart.',
       ];
 
   return { variables: hcl(variables), main: hcl(main) };
