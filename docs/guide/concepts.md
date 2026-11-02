@@ -111,7 +111,3 @@ The abstraction stops at the parts where a wrong guess is worse than the work:
   commit.
 - Cross-target: a conformance suite of 73 cases over 40 operations, so the two targets are
   compared rather than assumed equal. See [Conformance](../reference/conformance.md).
-
-Read next: [Spec to IR](spec-to-ir.md) for the lowering rules, [IR to generator](ir-to-generator.md)
-for the plan and determinism contract, [Generator to runtime](generator-to-runtime.md) for the
-seam, and [Runtime to CLI](runtime-to-cli.md) for how a command drives all of it.

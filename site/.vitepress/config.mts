@@ -55,8 +55,14 @@ function canonicalUrl(relativePath: string): string {
 }
 
 /**
- * The content root is the repository's `docs/` directory, so `design.md` has exactly
- * one copy: the site renders it where it already lives instead of owning a duplicate.
+ * The content root is the repository's `docs/` directory, so a document has exactly one
+ * copy: the site renders it where it already lives instead of owning a duplicate.
+ *
+ * `srcExclude` keeps the internal documents — the design document, the contributor guide,
+ * and the four layer deep-dives — out of the published site while leaving them in the
+ * repository. They are cited by section number from `CONTRIBUTING.md`, the package READMEs
+ * and source comments, so deleting them would leave those references pointing at nothing;
+ * publishing them would put build-internals in front of a reader looking for the product.
  */
 export default defineConfig({
   title: SITE_NAME,
@@ -64,6 +70,14 @@ export default defineConfig({
   lang: 'en-GB',
   base: BASE,
   srcDir: '../docs',
+  srcExclude: [
+    'design.md',
+    'contributing.md',
+    'guide/spec-to-ir.md',
+    'guide/ir-to-generator.md',
+    'guide/generator-to-runtime.md',
+    'guide/runtime-to-cli.md',
+  ],
   cleanUrls: true,
   lastUpdated: false,
   head: [
@@ -153,7 +167,6 @@ export default defineConfig({
       { text: 'Features', link: '/features' },
       { text: 'Reference', link: '/reference/spec' },
       { text: 'Walkthroughs', link: '/walkthroughs/support-copilot' },
-      { text: 'Design', link: '/design' },
     ],
     sidebar: {
       '/guide/': [
@@ -165,15 +178,6 @@ export default defineConfig({
             { text: 'The generated tree', link: '/guide/generated-tree' },
             { text: 'Serving an app', link: '/guide/serving' },
             { text: 'Concepts', link: '/guide/concepts' },
-          ],
-        },
-        {
-          text: 'Concepts in depth',
-          items: [
-            { text: 'Spec to IR', link: '/guide/spec-to-ir' },
-            { text: 'IR to generator', link: '/guide/ir-to-generator' },
-            { text: 'Generator to runtime', link: '/guide/generator-to-runtime' },
-            { text: 'Runtime to CLI', link: '/guide/runtime-to-cli' },
           ],
         },
       ],
@@ -217,13 +221,6 @@ export default defineConfig({
             { text: 'Support', link: '/reference/support' },
             { text: 'Eval metrics', link: '/reference/eval-metrics' },
             { text: 'Conformance', link: '/reference/conformance' },
-          ],
-        },
-        {
-          text: 'Project',
-          items: [
-            { text: 'Design document', link: '/design' },
-            { text: 'Contributing', link: '/contributing' },
           ],
         },
       ],
