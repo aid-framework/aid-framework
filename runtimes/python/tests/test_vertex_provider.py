@@ -8,6 +8,7 @@ time, and streaming is a real SSE stream rather than a refused capability.
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -72,7 +73,7 @@ def _provider(
     access_token: str | None = "token-123",  # noqa: S107
     max_attempts: int = 3,
     base_url: str | None = None,
-    token_provider=None,
+    token_provider: Callable[[], Awaitable[str]] | None = None,
 ) -> VertexProvider:
     return VertexProvider(
         project=project,
