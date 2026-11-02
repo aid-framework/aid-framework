@@ -62,6 +62,7 @@ result.text, result.usage, result.cost_usd, result.alias, result.attempts, resul
 | --- | --- |
 | `gateway.py` | `ModelGateway` — alias resolution, capability negotiation, ordered fallback, cost accounting, GenAI spans |
 | `providers/` | The `Provider` protocol, one HTTP adapter (`OpenAICompatibleProvider`), one deterministic fake (`FakeProvider`) |
+| `decisions.py` | `DecisionClient` — TypeSafe AI (Jev) typed decisions: `choice`, `score`, and `noul` answers |
 | `prompts.py` | `PromptTemplate` / `PromptRegistry` — versioned prompts, typed rendering, few-shot assembly |
 | `structured.py` | `build_agent` — structured output via Pydantic AI only |
 | `tools.py` | `Tool` / `ToolExecutor` — declared definitions, argument validation, structured results |
@@ -73,7 +74,7 @@ result.text, result.usage, result.cost_usd, result.alias, result.attempts, resul
 | `cost.py` | `Budget`, `CostLedger`, `estimate_cost_usd`, `estimate_tokens` |
 | `types.py` | The request/response/usage/spec models everything else is typed against |
 
-194 names are exported. The layering is acyclic and one-directional: `errors` and `types` import nothing else in
+249 names are exported. The layering is acyclic and one-directional: `errors` and `types` import nothing else in
 the package, `gateway` is imported only by the package `__init__` and the eval runner, and no core module imports
 a higher layer back.
 
@@ -93,6 +94,36 @@ alias is an error** (`UnknownModelAliasError`) rather than a silent fall-through
   yields a `SpendSummary`; `Budget` (`max_usd`, `max_total_tokens`, `scope`) is enforced *before* the call, and
   `estimate_usage` / `estimate_cost_usd` price a request from a model's `CostProfile` when a caller wants to check
   before spending.
+
+## Decisions are not chat
+
+`DecisionClient` calls TypeSafe AI's Jev (`POST /v1/systemone`), which takes a state plus typed questions and
+returns typed answers instead of prose. It is deliberately not in `providers/`: every provider there maps messages
+to text, and Jev has no text surface, so a pipeline cannot select it as the model that writes an answer.
+
+```python
+from aid_runtime import DecisionClient, DecisionQuestion
+
+async with DecisionClient() as client:
+    response = await client.decide(
+        model="jev-1.14.0",
+        state={"message": message},
+        questions={
+            "triage": DecisionQuestion(
+                type="choice",
+                instructions="Which team should handle this",
+                criteria=("billing", "technical"),
+            )
+        },
+    )
+    response.answers["triage"].choice
+```
+
+The key is `TYPESAFE_API_KEY` (Vercel's spelling, `TYPESAFE_AI_API_KEY`, is accepted too); `TYPESAFE_BASE_URL`
+overrides the host. Two rules matter more than they look: a `noul` answer carries `noul` and **no confidence
+field at all**, so a branch on confidence must refuse it rather than default to zero; and
+`decide(..., reproducible=True)` refuses the moving aliases `jev-latest` and `jev-preview`, which is what eval
+scoring needs. Only 429/529 are retried, honouring `retry-after`.
 
 ## The eval gate measures statistics, not equality
 

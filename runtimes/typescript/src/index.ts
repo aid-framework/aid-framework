@@ -52,6 +52,25 @@ export {
   LedgerEntry,
   SpendSummary,
 } from './cost.js';
+export type {
+  DecideOptions,
+  DecisionAnswer,
+  DecisionClientOptions,
+  DecisionFetchLike,
+  DecisionHttpResponse,
+  DecisionQuestionOptions,
+  DecisionResponse,
+} from './decisions.js';
+export {
+  DEFAULT_TYPESAFE_BASE_URL,
+  DecisionClient,
+  DecisionQuestion,
+  decisionKey,
+  isReproducibleModel,
+  JEV_MOVING_ALIASES,
+  TYPESAFE_API_KEY_ENVS,
+  TYPESAFE_BASE_URL_ENV,
+} from './decisions.js';
 export {
   AgentBudgetDegradedError,
   AgentHandoffUnsupportedError,

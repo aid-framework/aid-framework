@@ -89,6 +89,7 @@ nesting (`MAX_STEP_DEPTH`).
 | Errors | `AidRuntimeError` and 25 subclasses | One base, so an app catches framework refusals in one place |
 | Gateway | `ModelGateway`, `estimateUsage` | Pinned aliases, capability negotiation, ordered fallback, budget preflight |
 | Providers | `OpenAICompatibleProvider`, `FakeProvider`, `supports` | One HTTP adapter, one deterministic fake, plus the `Provider` protocol |
+| Decisions | `DecisionClient`, `DecisionQuestion`, `decisionKey` | TypeSafe AI (Jev) typed decisions: `choice`, `score`, and `noul` answers |
 | Cost | `Budget`, `CostLedger`, `estimateCostUsd` | Pre-call enforcement, per-call ledger entries, spend summaries |
 | Tracing | `getTracer`, `llmSpan`, `recordUsage`, `recordCost`, `recordException` | OTel GenAI semantic conventions; AID values namespaced `aid.*` |
 | Prompts | `PromptRegistry`, `PromptTemplate`, `Example` | Versioned registry, typed rendering, few-shot assembly |
@@ -111,6 +112,36 @@ missing rather than failing later at the provider.
 
 `generate(alias, request, { fallbacks })` tries the alias, then each fallback **in the order given**. Fallbacks
 are ordered, not conditional, and `result.attempts` reports what was actually tried.
+
+## Decisions are not chat
+
+`DecisionClient` calls TypeSafe AI's Jev (`POST /v1/systemone`), which takes a state plus typed questions and
+returns typed answers instead of prose. It is deliberately not in `providers/`: every provider there maps
+messages to text, and Jev has no text surface, so a pipeline cannot select it as the model that writes an answer.
+
+```ts
+import { DecisionClient, DecisionQuestion } from '@aid-framework/runtime';
+
+const client = new DecisionClient();
+const response = await client.decide({
+  model: 'jev-1.14.0',
+  state: { message },
+  questions: {
+    triage: new DecisionQuestion({
+      type: 'choice',
+      instructions: 'Which team should handle this',
+      criteria: ['billing', 'technical'],
+    }),
+  },
+});
+response.answers.triage?.choice;
+```
+
+The key is `TYPESAFE_API_KEY` (Vercel's spelling, `TYPESAFE_AI_API_KEY`, is accepted too); `TYPESAFE_BASE_URL`
+overrides the host. Two rules matter more than they look: a `noul` answer carries `noul` and **no confidence
+field at all**, so a branch on confidence must refuse it rather than default to zero; and
+`decide({ ..., reproducible: true })` refuses the moving aliases `jev-latest` and `jev-preview`, which is what
+eval scoring needs. Only 429/529 are retried, honouring `retry-after`.
 
 ## Evals gate on statistics, not equality
 
