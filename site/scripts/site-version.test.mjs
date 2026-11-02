@@ -45,4 +45,12 @@ describe('the version the site reports', () => {
     expect(homepage).toContain('{{ AID_VERSION }}');
     expect(homepage).not.toMatch(/at version \*\*\d+\.\d+\.\d+\*\*/);
   });
+
+  it('names the current spec language version on the homepage', () => {
+    const source = readFileSync(join(repoRoot, 'packages', 'spec', 'src', 'index.ts'), 'utf8');
+    const latest = /SPEC_VERSION_LATEST = '([0-9.]+)'/.exec(source)?.[1];
+    expect(latest).toBeTruthy();
+    const homepage = readFileSync(join(repoRoot, 'docs', 'index.md'), 'utf8');
+    expect(homepage).toContain(`\`${latest}\``);
+  });
 });
