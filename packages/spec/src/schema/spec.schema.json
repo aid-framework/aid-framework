@@ -2,15 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aid-framework.dev/schemas/spec/0.3/spec.schema.json",
   "$comment": "Conditional branches (`then`, and a `not` inside one) that require a property also declare it as `\"properties\": { \"<name>\": true }`. That is deliberately not a constraint - a boolean `true` schema permits anything. It exists because the validator runs Ajv with `strict: true`, and Ajv's `strictRequired` rule rejects a `required` entry whose property is not declared in that same subschema object. Keeping the branch self-contained satisfies the rule without changing its meaning; the valid and invalid fixtures in packages/spec/test cover both directions.",
-  "title": "AID Framework spec v0.5",
+  "title": "AID Framework spec v0.6",
   "description": "The declarative source of truth for an AID application. Hand-authored against design doc §6, narrowed to the implemented surface (§14): the Phase 0 sections (models, prompts, tools, evals, pipelines) plus Phase 1 retrieval (stores, retrievers, the retrieve step and the retrieval metric). Top-level keys outside this set are rejected rather than ignored, so a feature that has not been implemented cannot be silently dropped. Within an implemented section, a sub-feature Phase 1 does not serve is rejected by a spec-local rule (`spec/not-supported`) rather than by the schema, so the enum stays the design doc's and the message can name the phase. See packages/spec/README.md for the scope boundary and the deferred keys.",
   "type": "object",
   "required": ["specVersion", "project"],
   "additionalProperties": false,
   "properties": {
     "specVersion": {
-      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
-      "enum": ["0.1", "0.2", "0.3", "0.4", "0.5"]
+      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
+      "enum": ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6"]
     },
     "project": { "$ref": "#/$defs/project" },
     "types": {
@@ -190,8 +190,8 @@
       "additionalProperties": false,
       "properties": {
         "provider": {
-          "description": "The provider set the shipped adapters serve. `fake` is deterministic and keyless, which is what lets the eval gate run offline in CI. `bedrock` takes its credentials from the execution role, so it needs no `apiKeyEnv`.",
-          "enum": ["openai", "openai-compatible", "anthropic", "bedrock", "fake"]
+          "description": "The provider set the shipped adapters serve. `fake` is deterministic and keyless, which is what lets the eval gate run offline in CI. `bedrock` takes its credentials from the execution role and `google` (Vertex AI) from a short-lived bearer token supplied by the environment or the metadata server, so neither needs an `apiKeyEnv`.",
+          "enum": ["openai", "openai-compatible", "anthropic", "bedrock", "google", "fake"]
         },
         "modelId": {
           "description": "Pinned vendor model id. Never an alias or a moving target: the resolved id is recorded in the IR so a run is reproducible.",

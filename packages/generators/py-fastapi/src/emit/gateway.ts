@@ -79,9 +79,15 @@ function providerEntry(ir: IR, provider: string): string {
   if (adapter !== 'FakeProvider') {
     arguments_.push(`${INDENT}${INDENT}${INDENT}name=${pythonString(provider)},`);
   }
-  // Converse authenticates with the execution role's credentials, so a key from the
-  // spec would be a credential the app carried but never used.
-  if (env !== undefined && adapter !== 'BedrockProvider' && adapter !== 'FakeProvider') {
+  // Converse authenticates with the execution role's credentials and Vertex with a
+  // short-lived bearer token from the environment or the metadata server, so a key
+  // from the spec would be a credential the app carried but never used.
+  if (
+    env !== undefined &&
+    adapter !== 'BedrockProvider' &&
+    adapter !== 'VertexProvider' &&
+    adapter !== 'FakeProvider'
+  ) {
     arguments_.push(`${INDENT}${INDENT}${INDENT}api_key=os.environ.get(${pythonString(env)}),`);
   }
   const head = `${INDENT}${INDENT}${pythonString(provider)}: ${adapter}(`;

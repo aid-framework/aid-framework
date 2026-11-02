@@ -291,7 +291,7 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
     '',
     ...(active
       ? [
-          'The env root is yours, not generated. `' + envDir + '/variables.tf` declares the',
+          `The env root is yours, not generated. \`${envDir}/variables.tf\` declares the`,
           'business inputs alongside the plan-shaped ones the tfvars already supplies:',
           '',
           '```hcl',

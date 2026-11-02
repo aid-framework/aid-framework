@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   type AidManifestProvenance,
+  ambientCredentialNote,
   CI_WORKFLOW_PATH,
   type CiProfile,
   createMemorySink,
@@ -198,6 +199,39 @@ describe('scaffoldEvals', () => {
     // Trace capture and the cost step do not depend on a credential.
     expect(fakeOnly.content).toContain('AID_TRACE_DIR: .aid-traces');
     expect(fakeOnly.content).toContain('aid cost .aid-traces');
+  });
+
+  it('names the ambient credential a keyless provider needs, without gating on it', () => {
+    const note = 'Bedrock reads its credential from the AWS SDK chain.';
+    const keyless = scaffoldEvals({ ...EVAL_PROFILE, secrets: [], credentialNote: note }, '0.1');
+    expect(keyless.content).toContain(`::notice::${note}`);
+    // Nothing can probe the SDK chain portably, so the gate runs and the provider's own
+    // error is left to fail it; a synthetic probe would report a false negative.
+    expect(keyless.content).not.toContain('id: creds');
+    expect(keyless.content).not.toContain('::error::');
+    expect(keyless.content).not.toContain("if: steps.creds.outputs.ready == 'true'");
+  });
+
+  it('ignores the note when a secret can be checked instead', () => {
+    const keyed = scaffoldEvals({ ...EVAL_PROFILE, credentialNote: 'unused' }, '0.1');
+    expect(keyed.content).not.toContain('::notice::unused');
+    expect(keyed.content).toContain('id: creds');
+  });
+});
+
+describe('ambientCredentialNote', () => {
+  it('names the cloud each keyless provider authenticates against', () => {
+    expect(ambientCredentialNote(['bedrock'])).toContain('AWS SDK chain');
+    expect(ambientCredentialNote(['google'])).toContain('Application Default Credentials');
+    expect(ambientCredentialNote(['bedrock', 'google'])).toContain('AWS SDK chain');
+    expect(ambientCredentialNote(['bedrock', 'google'])).toContain(
+      'Application Default Credentials',
+    );
+  });
+
+  it('says nothing for a provider whose credential the spec already names', () => {
+    expect(ambientCredentialNote(['openai', 'fake'])).toBeUndefined();
+    expect(ambientCredentialNote([])).toBeUndefined();
   });
 });
 

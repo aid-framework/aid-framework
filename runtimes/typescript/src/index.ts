@@ -15,11 +15,11 @@
  * - **Streaming is declared, not implemented.** `Capability` includes it so a spec
  *   can require it and a gate can check it; calling `ModelGateway.stream` raises
  *   {@link FeatureDeferredError}.
- * - **Three HTTP provider adapters and one fake.** OpenAI-compatible endpoints share
- *   one adapter because they share a wire format; Anthropic's Messages API and
- *   Bedrock's Converse API each get their own because they do not. Breadth beyond
- *   those is still deferred: a narrow, correct seam is worth more than a wide
- *   shallow one.
+ * - **Four HTTP provider adapters and one fake.** OpenAI-compatible endpoints share
+ *   one adapter because they share a wire format; Anthropic's Messages API,
+ *   Bedrock's Converse API, and Vertex AI's `generateContent` each get their own
+ *   because they do not. Breadth beyond those is still deferred: a narrow, correct
+ *   seam is worth more than a wide shallow one.
  *
  * This file mirrors the Python package's `__all__`. The exports it adds beyond that
  * list are types a TypeScript consumer cannot avoid naming -- option bags, span
@@ -152,6 +152,14 @@ export type { FakeProviderOptions, Responder } from './providers/fake.js';
 export { FakeProvider, ScriptedTurn } from './providers/fake.js';
 export type { FetchLike, OpenAICompatibleOptions } from './providers/http.js';
 export { DEFAULT_BASE_URL, OpenAICompatibleProvider } from './providers/http.js';
+export type { VertexOptions } from './providers/vertex.js';
+export {
+  DEFAULT_VERTEX_LOCATION,
+  defaultVertexBaseUrl,
+  METADATA_TOKEN_URL,
+  VERTEX_TOKEN_ENV,
+  VertexProvider,
+} from './providers/vertex.js';
 export type { Chunker, MarkerGroups } from './retrieval/chunking.js';
 export {
   CodeChunker,

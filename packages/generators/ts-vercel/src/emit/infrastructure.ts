@@ -76,6 +76,11 @@ export function emitGatewayModels(ir: IR): EmittedFile {
         // variable, so a `keyedProvider` form here would be a credential the app never uses.
         return `    ${propertyKey(model.provider)}: new BedrockProvider({ name: ${name} }),`;
       }
+      if (adapter === 'VertexProvider') {
+        // Vertex takes a short-lived bearer token from the environment or the metadata
+        // server; there is no spec-named API key to read.
+        return `    ${propertyKey(model.provider)}: new VertexProvider({ name: ${name} }),`;
+      }
       if (adapter === 'AnthropicProvider') {
         if (model.apiKeyEnv === undefined) {
           return `    ${propertyKey(model.provider)}: new AnthropicProvider({ name: ${name} }),`;
@@ -97,6 +102,7 @@ export function emitGatewayModels(ir: IR): EmittedFile {
   const imports: ImportName[] = [{ name: 'CostProfile', type: false }];
   if (adapters.has('AnthropicProvider')) imports.push({ name: 'AnthropicProvider', type: false });
   if (adapters.has('BedrockProvider')) imports.push({ name: 'BedrockProvider', type: false });
+  if (adapters.has('VertexProvider')) imports.push({ name: 'VertexProvider', type: false });
   imports.push(
     { name: 'FakeProvider', type: false },
     { name: 'ModelSpec', type: false },

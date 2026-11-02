@@ -44,7 +44,7 @@ export const SUPPORTED_SECTIONS = [
 export const DEFERRED_SECTIONS = [] as const;
 
 /** The spec language versions this build reads. A document declares one of them. */
-export const SUPPORTED_SPEC_VERSIONS = ['0.1', '0.2', '0.3', '0.4', '0.5'] as const;
+export const SUPPORTED_SPEC_VERSIONS = ['0.1', '0.2', '0.3', '0.4', '0.5', '0.6'] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
 
@@ -85,6 +85,16 @@ export const DEPLOYMENT_IMAGE_MIN_VERSION: SpecVersion = '0.4';
  * either is told which version it needs instead of being read as if the key never existed.
  */
 export const BATCH_SURFACE_MIN_VERSION: SpecVersion = '0.5';
+
+/**
+ * The first spec version that accepts `provider: google` (Vertex AI).
+ *
+ * A provider is a vocabulary change, not a new section, so it needs its own nested gate:
+ * a 0.5 document that names a provider its version did not offer was written against a
+ * mistake, and the schema enum alone would only say "must be one of" without saying which
+ * version offers it.
+ */
+export const GOOGLE_PROVIDER_MIN_VERSION: SpecVersion = '0.6';
 
 /** Pipeline step kinds implemented in spec v0.1. */
 export const SUPPORTED_STEP_KINDS = [
@@ -385,9 +395,45 @@ function scopeDiagnostics(
   }
 
   modelCacheDiagnostics(spec, diagnostics, reported);
+  googleProviderDiagnostics(spec, diagnostics, reported);
   deploymentImageDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
+}
+
+/**
+ * Version gating for the `google` provider. The vendor is a 0.6 addition, so a
+ * document that declares an earlier version and names it is told which version it
+ * needs; the schema's enum error at the same path is suppressed by `reported`.
+ */
+function googleProviderDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (
+    declared === undefined ||
+    !known ||
+    specVersionAtLeast(declared, GOOGLE_PROVIDER_MIN_VERSION)
+  ) {
+    return;
+  }
+
+  for (const [name, model] of Object.entries(asRecord(spec.models))) {
+    if (asRecord(model).provider !== 'google') continue;
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.notSupported,
+        message: `'models.${name}.provider: google' requires specVersion ${GOOGLE_PROVIDER_MIN_VERSION}, but this specification declares version ${declared}`,
+        path: ['models', name, 'provider'],
+        hint: `set specVersion: "${GOOGLE_PROVIDER_MIN_VERSION}"; documents that do not use Vertex AI are unchanged`,
+      }),
+    );
+    reported.add(JSON.stringify(['models', name, 'provider']));
+  }
 }
 
 /**

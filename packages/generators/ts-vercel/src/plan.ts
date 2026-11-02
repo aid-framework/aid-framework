@@ -11,6 +11,7 @@
 import type { GeneratedFile, Plan } from '@aid-framework/generator-sdk';
 import {
   ACTION_PINS,
+  ambientCredentialNote,
   cliRangeFor,
   scaffoldCi,
   scaffoldEvals,
@@ -136,6 +137,7 @@ function evalsScaffold(ir: IR): readonly GeneratedFile[] {
           command: `node ${paths.evalsDriver} ${evaluation.id}`,
         })),
         secrets: declaredSecrets(ir),
+        credentialNote: ambientCredentialNote(ir.models.map((model) => model.provider)),
       },
       cliRangeFor(GENERATOR_VERSION),
     ),

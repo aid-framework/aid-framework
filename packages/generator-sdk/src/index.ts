@@ -129,6 +129,7 @@ export type {
 } from './scaffold.js';
 export {
   ACTION_PINS,
+  ambientCredentialNote,
   CI_WORKFLOW_PATH,
   cliRangeFor,
   EVALS_WORKFLOW_PATH,

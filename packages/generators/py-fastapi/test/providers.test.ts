@@ -32,9 +32,9 @@ function files(source = anthropicSpecText()): Map<string, string> {
 }
 
 describe('provider selection', () => {
-  it('serves anthropic and bedrock alongside openai and the deterministic fake', () => {
+  it('serves anthropic, bedrock and google alongside openai and the deterministic fake', () => {
     expect([...SERVED_PROVIDERS].sort()).toEqual(
-      ['anthropic', 'bedrock', 'fake', 'openai', 'openai-compatible'].sort(),
+      ['anthropic', 'bedrock', 'google', 'fake', 'openai', 'openai-compatible'].sort(),
     );
   });
 
@@ -64,13 +64,15 @@ describe('provider selection', () => {
     expect(models).not.toContain('class AnthropicProvider');
   });
 
-  it('refuses a provider no adapter serves, naming the ones that ship', () => {
-    // `google` is in the IR's wider vocabulary but the spec layer refuses it first,
-    // which is the right order: a caller learns the closed set before the IR is built.
-    const spec = exampleSpecText().replaceAll('provider: openai', 'provider: google');
+  it('refuses a provider outside the spec vocabulary, naming the ones that ship', () => {
+    // `azure` and `ollama` are in the IR's wider vocabulary but the spec layer refuses
+    // them first, which is the right order: a caller learns the closed set before the
+    // IR is built, and the message lists every spelling the adapter set serves.
+    const spec = exampleSpecText().replaceAll('provider: openai', 'provider: azure');
 
     expect(() => lowerForSpecText(spec)).toThrow(/must be one of/);
     expect(() => lowerForSpecText(spec)).toThrow(/anthropic/);
+    expect(() => lowerForSpecText(spec)).toThrow(/google/);
   });
 });
 
@@ -198,6 +200,118 @@ describe('bedrock provider', () => {
 
     expect(() => buildForSpecText(spec)).toThrow(/unsupported-capability/);
     expect(() => buildForSpecText(spec)).toThrow(/no embeddings endpoint/);
+  });
+});
+
+/**
+ * The example repointed at Vertex AI.
+ *
+ * Two edits are not rewrites of the models block: `specVersion` has to move to 0.6
+ * because that is the first version whose provider vocabulary includes `google`, and
+ * the OpenAI key variable goes with the OpenAI provider -- Vertex resolves a bearer
+ * token from the environment or the metadata server instead.
+ */
+function vertexSpecText(): string {
+  return exampleSpecText()
+    .replace('specVersion: "0.2"', 'specVersion: "0.6"')
+    .replace(
+      '    provider: openai\n    modelId: gpt-4o-mini\n    apiKeyEnv: OPENAI_API_KEY',
+      '    provider: google\n    modelId: gemini-2.5-flash',
+    )
+    .replace('    costProfile: openai-gpt-4o-mini', '    costProfile: google-gemini-2-5-flash');
+}
+
+describe('google provider', () => {
+  it('plans a Vertex model that names no api key variable', () => {
+    const spec = vertexSpecText();
+    const fast = lowerForSpecText(spec).models.find((model) => model.id === 'fast');
+
+    expect(fast?.provider).toBe('google');
+    expect(fast?.apiKeyEnv).toBeUndefined();
+    expect(buildForSpecText(spec).plan.files.length).toBeGreaterThan(0);
+  });
+
+  it('emits the Vertex adapter with a name and no credential argument', () => {
+    const models = files(vertexSpecText()).get('app/generated/gateway/models.py') ?? '';
+
+    expect(models).toContain('"google": VertexProvider(');
+    expect(models).toContain('name="google"');
+    // `VertexProvider` takes no `api_key`; a key read from the spec would be a
+    // credential the app carried but never used.
+    const start = models.indexOf('"google": VertexProvider(');
+    expect(models.slice(start, models.indexOf('),', start))).not.toContain('api_key');
+  });
+
+  it('imports the adapter from the runtime', () => {
+    const models = files(vertexSpecText()).get('app/generated/gateway/models.py') ?? '';
+
+    expect(models).toMatch(/from aid_runtime import \([^)]*VertexProvider/);
+    expect(models).not.toContain('class VertexProvider');
+  });
+
+  it('advertises streaming, because the Vertex adapter decodes SSE', () => {
+    const models = files(vertexSpecText()).get('app/generated/gateway/models.py') ?? '';
+    const pinned = aliasBlock(models, 'fast');
+
+    expect(pinned).toContain('Capability.STREAMING');
+    expect(pinned).toContain('Capability.STRUCTURED_OUTPUT');
+    expect(pinned).toContain('Capability.TOOL_CALLING');
+  });
+
+  it('refuses a Vertex model that declares embeddings', () => {
+    const spec = vertexSpecText().replace(
+      '    capabilities: [json-schema, tools, streaming]',
+      '    capabilities: [json-schema, tools, embeddings]',
+    );
+
+    expect(() => buildForSpecText(spec)).toThrow(/unsupported-capability/);
+    expect(() => buildForSpecText(spec)).toThrow(/no embeddings endpoint/);
+  });
+});
+
+/**
+ * Swapping the adapter must not change the shape of the app.
+ *
+ * The provider the spec names reaches exactly one file: the gateway models table that
+ * resolves it. Everything else -- pipelines, tools, prompts, retrieval, tests, Docker --
+ * is derived from the spec's business declarations and is indifferent to the wire
+ * protocol. A second file moves only when the adapter changes what the app can do: the
+ * `observability.py` reconciliation records served capabilities, not declared ones.
+ */
+function differingFiles(left: Map<string, string>, right: Map<string, string>): string[] {
+  const keys = new Set([...left.keys(), ...right.keys()]);
+  return [...keys].filter((key) => left.get(key) !== right.get(key)).sort();
+}
+
+describe('provider conformance', () => {
+  it('moves only the models table when the provider changes', () => {
+    const openai = files(exampleSpecText());
+    const vertex = files(vertexSpecText());
+
+    // Vertex and OpenAI serve the same capability set for this spec, so even the
+    // reconciliation is byte-identical.
+    expect(differingFiles(openai, vertex)).toEqual(['app/generated/gateway/models.py']);
+  });
+
+  it('records the capability an adapter cannot serve, without touching anything else', () => {
+    const openai = files(exampleSpecText());
+    const bedrock = files(bedrockSpecText());
+
+    expect(differingFiles(openai, bedrock)).toEqual([
+      'app/generated/gateway/models.py',
+      'app/generated/observability.py',
+    ]);
+
+    const observability = (source: Map<string, string>) =>
+      source.get('app/generated/observability.py') ?? '';
+    // Converse cannot frame a stream, so the capability moves from `modelWired` to
+    // `unrepresentable` for the pinned alias while remaining declared. The other
+    // aliases are fake-backed and do stream, so the assertion is per alias.
+    expect(observability(openai)).not.toContain('"fast": ["streaming"]');
+    expect(observability(bedrock)).toContain('"fast": ["streaming"]');
+    expect(observability(bedrock)).toContain(
+      '"fast": ["Capability.STRUCTURED_OUTPUT", "Capability.TOOL_CALLING"]',
+    );
   });
 });
 
