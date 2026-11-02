@@ -146,5 +146,3 @@ you. The app keeps booting because it never depended on a control plane.
   spec, the IR, the generator and the runtime.
 - Want a worked example? [Support copilot](walkthroughs/support-copilot.md) walks a
   five-step pipeline with retrieval, an agent and two evals, line by line.
-- Want the argument? [`design.md`](design.md) is the authoritative design document, and the
-  site renders it in place rather than duplicating it.
