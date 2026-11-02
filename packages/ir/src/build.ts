@@ -24,12 +24,18 @@ import {
   type AgentOnBudgetExhausted,
   type AgentShape,
   type BranchStep,
+  DECISION_ON_ERROR,
+  DECISION_QUESTION_TYPES,
   DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_OBSERVABILITY,
   DEFAULT_RUNTIME,
   DEPLOY_TARGETS,
+  type DecisionOnError,
+  type DecisionQuestionType,
+  type DecisionShape,
   type DeploymentImageShape,
   type DeploymentShape,
+  decisionIdentity,
   type EmbeddingShape,
   type ErrorPolicy,
   type EvalShape,
@@ -142,6 +148,7 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
   const retrievers = buildRetrievers(root.retrievers);
   const memory = buildMemory(root.memory);
   const guardrails = buildGuardrails(root.guardrails);
+  const decisions = buildDecisions(root.decisions);
   const agents = buildAgents(root.agents, context);
   const deployments = buildDeployments(root.deployments, context);
   const embeddings = buildEmbeddings(models);
@@ -167,6 +174,7 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
     pipelines,
     evals,
     guardrails,
+    decisions,
     deployments,
     observability,
     runtime: { ...DEFAULT_RUNTIME },
@@ -891,6 +899,46 @@ function buildGuardrails(raw: unknown): GuardrailShape[] {
       onFail,
       traits: [],
     };
+  });
+}
+
+function buildDecisions(raw: unknown): DecisionShape[] {
+  const record = asRecord(raw) ?? {};
+  return sortedKeys(record).map((id) => {
+    const entry = asRecord(record[id]) ?? {};
+    const type = asString(entry.type);
+    const decision: DecisionShape = {
+      id,
+      identity: decisionIdentity(id),
+      provider: 'typesafe',
+      model: asString(entry.model) ?? '',
+      type: (DECISION_QUESTION_TYPES as readonly string[]).includes(type ?? '')
+        ? (type as DecisionQuestionType)
+        : 'noul',
+      instructions: asString(entry.instructions) ?? '',
+      onError: (DECISION_ON_ERROR as readonly string[]).includes(asString(entry.onError) ?? '')
+        ? (asString(entry.onError) as DecisionOnError)
+        : 'block',
+      traits: [],
+    };
+
+    const description = asString(entry.description);
+    if (description !== undefined) decision.description = description;
+
+    const criteria = entry.criteria;
+    if (Array.isArray(criteria)) {
+      // `score`: order is the score, so the list is preserved exactly as declared.
+      decision.criteria = criteria
+        .map((criterion) => asString(criterion))
+        .filter((criterion): criterion is string => criterion !== undefined);
+    } else if (asRecord(criteria) !== undefined) {
+      // `choice`: labels are a set, so sorting keeps the serialized IR stable.
+      const map = asRecord(criteria) ?? {};
+      decision.criteria = Object.fromEntries(
+        sortedKeys(map).map((label) => [label, asString(map[label]) ?? '']),
+      );
+    }
+    return decision;
   });
 }
 

@@ -14,7 +14,7 @@ Spec schema title: *AID Framework spec v0.6*.
 
 | Key | Type | Description |
 | --- | --- | --- |
-| `specVersion` | `0.1`, `0.2`, `0.3`, `0.4`, `0.5`, `0.6` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
+| `specVersion` | `0.1`, `0.2`, `0.3`, `0.4`, `0.5`, `0.6` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
 | `project` | `project` | — |
 | `types` | map of `typeDef` | Named structured types referenced by prompts (structured output) and tools (input/output). |
 | `models` | map of `model` | Model aliases. The alias is what the rest of the spec refers to; the vendor id is pinned here and only here. |
@@ -24,6 +24,7 @@ Spec schema title: *AID Framework spec v0.6*.
 | `retrievers` | map of `retriever` | Retrievers: what to index, how to chunk it, which embedding model and store to use, and how to rank. |
 | `agents` | map of `agent` | Agents: a model, instructions, the tools and retrievers it may use, and the budget it may spend. Declarable from spec v0.2; a target that emits no agent route is rejected by the capability gate rather than silently generating one. |
 | `guardrails` | map of `guardrail` | Guardrails: the stages a check runs at, the policies it evaluates, and what happens when one fails. Declarable from spec v0.2. The runtime evaluates them, and `py-fastapi` emits the wiring; a guardrail declared here applies to every pipeline route of the document, not to the one that named it. |
+| `decisions` | map of `decision` | Decision points answered by TypeSafe AI Jev: a named question with its own reply shape, referenced by guardrails, routers and evals. Declarable from spec v0.6. A decision is not a provider, because Jev has no chat surface: it returns a typed answer rather than text. `choice` and `score` require `criteria`; `noul` forbids it. A pinned model version is the reproducible choice; an eval reference refuses a moving alias, while interactive routing may use one. |
 | `memory` | map of `memory` | Memory tiers: what is remembered, for how long, within what token budget, and where it lives. Declarable from spec v0.2; the kinds a target cannot serve are refused by its plan gate rather than approximated. |
 | `deployments` | map of `deployment` | Deployment intents: the target shape, the transport it assumes, and the secrets it needs. Declarable from spec v0.2. `streaming: true` derives a `streaming` requirement; `py-fastapi` declares that capability and answers an `Accept: text/event-stream` request with SSE frames, while `ts-vercel` declares nothing and the deploy gate still rejects it there. |
 | `evals` | map of `eval` | — |
@@ -333,6 +334,18 @@ Applies one prompt to every item of a bound list, concurrently, and binds the or
 | `engine` | `native`, `deepagents` | no | Who owns the loop. `native` is the AID agent runtime; `deepagents` delegates to the pinned framework, which requires an engineVersion. |
 | `engineVersion` | `string` | no | — |
 | `humanInTheLoop` | object | no | — |
+
+## `decision`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `provider` | `"typesafe"` | yes | The decision vendor. Closed: `typesafe` is the only one the runtime serves. |
+| `model` | `string` | yes | A pinned Jev version such as `jev-1.14.0`. Moving aliases (`jev-latest`, `jev-preview`) are refused inside `evals`, where a score must be reproducible. |
+| `type` | `choice`, `score`, `noul` | yes | — |
+| `instructions` | `string` | yes | The question, in one sentence. Not a prompt template: Jev does not carry a conversation. |
+| `criteria` | one of 2 | no | — |
+| `onError` | `allow`, `block` | no | What a failed call means. `block` (the default) keeps a gate closed when the vendor is unreachable; `allow` keeps an advisory check from stopping traffic. |
+| `description` | `string` | no | — |
 
 ## `guardrail`
 

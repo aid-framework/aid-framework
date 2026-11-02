@@ -10,6 +10,7 @@ import {
   DEFAULT_OBSERVABILITY,
   DEFAULT_RUNTIME,
   DEFAULT_TARGET,
+  decisionIdentity,
   deriveRequiredCapabilities,
   EVAL_TARGET_KINDS,
   GATES,
@@ -180,7 +181,7 @@ describe('IR shape constants', () => {
   });
 
   it('pins the collection accounting constants', () => {
-    expect(IR_COLLECTIONS.length).toBe(13);
+    expect(IR_COLLECTIONS.length).toBe(14);
     expect(IR_ONLY_COLLECTIONS).toEqual(['embeddings']);
     expect(NON_COLLECTION_SECTIONS).toEqual(['specVersion', 'project']);
   });
@@ -205,6 +206,7 @@ describe('IR shape constants', () => {
     expect(promptIdentity('classify_ticket', 2)).toBe('prompt:classify_ticket@2');
     expect(toolIdentity('issue_refund')).toBe('tool:issue_refund');
     expect(pipelineIdentity('handle_ticket')).toBe('pipeline:handle_ticket');
+    expect(decisionIdentity('triage')).toBe('decision:triage');
   });
 });
 

@@ -21,6 +21,7 @@
     "pipelines",
     "evals",
     "guardrails",
+    "decisions",
     "deployments",
     "observability",
     "runtime",
@@ -50,6 +51,7 @@
     "memory": { "type": "array", "items": { "$ref": "#/$defs/memory" } },
     "agents": { "type": "array", "items": { "$ref": "#/$defs/agent" } },
     "guardrails": { "type": "array", "items": { "$ref": "#/$defs/guardrail" } },
+    "decisions": { "type": "array", "items": { "$ref": "#/$defs/decision" } },
     "deployments": { "type": "array", "items": { "$ref": "#/$defs/deployment" } },
     "observability": { "$ref": "#/$defs/observability" },
     "runtime": { "$ref": "#/$defs/runtime" },
@@ -1101,6 +1103,41 @@
             "log": { "type": "boolean" }
           }
         },
+        "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "identity",
+        "provider",
+        "model",
+        "type",
+        "instructions",
+        "onError",
+        "traits"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "identity": { "type": "string", "pattern": "^decision:" },
+        "provider": { "enum": ["typesafe"] },
+        "model": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["choice", "score", "noul"] },
+        "instructions": { "type": "string", "minLength": 1 },
+        "criteria": {
+          "oneOf": [
+            {
+              "type": "object",
+              "propertyNames": { "minLength": 1 },
+              "additionalProperties": { "type": "string", "minLength": 1 }
+            },
+            { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          ]
+        },
+        "onError": { "enum": ["allow", "block"] },
+        "description": { "type": "string" },
         "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
       }
     },

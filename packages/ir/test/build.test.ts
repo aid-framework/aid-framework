@@ -54,6 +54,7 @@ const TOP_LEVEL_KEYS = [
   'pipelines',
   'evals',
   'guardrails',
+  'decisions',
   'deployments',
   'observability',
   'runtime',
@@ -146,6 +147,57 @@ describe('buildIR', () => {
       expect(ir[collection], collection).toEqual([]);
     }
     expect(buildFixture('retrieval.yaml').ir.embeddings.length).toBeGreaterThan(0);
+  });
+
+  it('builds a decision with its declared wire shape intact', () => {
+    const { ir: built } = buildIR({
+      specVersion: '0.6',
+      project: { name: 'decisions' },
+      decisions: {
+        triage: {
+          provider: 'typesafe',
+          model: 'jev-1.14.0',
+          type: 'choice',
+          instructions: 'Which queue should handle this ticket',
+          criteria: { technical: 'A bug report', billing: 'Money movement' },
+        },
+        urgency: {
+          provider: 'typesafe',
+          model: 'jev-1.14.0',
+          type: 'score',
+          instructions: 'How urgent is this ticket',
+          criteria: ['low', 'medium', 'high'],
+          onError: 'allow',
+        },
+        is_urgent: {
+          provider: 'typesafe',
+          model: 'jev-1.14.0',
+          type: 'noul',
+          instructions: 'The message conveys urgency',
+        },
+      },
+    });
+
+    expect(built.decisions.map((decision) => decision.id)).toEqual([
+      'is_urgent',
+      'triage',
+      'urgency',
+    ]);
+    const triage = byId(built.decisions, 'triage');
+    expect(triage.identity).toBe('decision:triage');
+    expect(triage.provider).toBe('typesafe');
+    // A choice's labels are a set, so they are sorted; a score's levels are ordered.
+    expect(triage.criteria).toEqual({ billing: 'Money movement', technical: 'A bug report' });
+    expect(byId(built.decisions, 'urgency').criteria).toEqual(['low', 'medium', 'high']);
+    expect(byId(built.decisions, 'is_urgent').criteria).toBeUndefined();
+    // The failure posture has a default rather than an absence.
+    expect(byId(built.decisions, 'urgency').onError).toBe('allow');
+    expect(triage.onError).toBe('block');
+  });
+
+  it('keeps decisions present and empty for a document that declares none', () => {
+    const { ir: built } = buildIR({ specVersion: '0.1', project: { name: 'p' } });
+    expect(built.decisions).toEqual([]);
   });
 
   it('keeps observability and runtime as objects with Phase 0 defaults', () => {

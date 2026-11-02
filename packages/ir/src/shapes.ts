@@ -612,6 +612,48 @@ export interface AgentShape {
   traits: Trait[];
 }
 
+/**
+ * The question types Jev answers. Closed on purpose: each one has its own reply shape
+ * and its own criteria rule, so a spec may not name a fourth.
+ */
+export const DECISION_QUESTION_TYPES = ['choice', 'score', 'noul'] as const;
+
+export type DecisionQuestionType = (typeof DECISION_QUESTION_TYPES)[number];
+
+/**
+ * What the runtime does when the decision call fails: an unreachable vendor is either
+ * a closed door (`block`, the default for a gate) or an open one (`allow`).
+ */
+export const DECISION_ON_ERROR = ['allow', 'block'] as const;
+
+export type DecisionOnError = (typeof DECISION_ON_ERROR)[number];
+
+/**
+ * A Jev decision point. Not a provider: there is no chat surface to map onto, so a
+ * decision is a named question that a guardrail, a router, or an eval can ask.
+ *
+ * `criteria` carries the declared wire shape rather than a normalized one: a `choice`
+ * question is a label -> description map, and a `score` question is an ordered list
+ * where position is the score. Sorting the map is the build's job; order in the list
+ * is meaning and is preserved.
+ */
+export interface DecisionShape {
+  id: string;
+  identity: string;
+  provider: 'typesafe';
+  model: string;
+  type: DecisionQuestionType;
+  instructions: string;
+  criteria?: Record<string, string> | string[];
+  onError: DecisionOnError;
+  description?: string;
+  traits: Trait[];
+}
+
+export function decisionIdentity(id: string): string {
+  return `decision:${id}`;
+}
+
 export interface GuardrailShape {
   id: string;
   stages: ('input' | 'output' | 'retrieval' | 'tool-call')[];
@@ -718,6 +760,7 @@ export interface IR {
   pipelines: PipelineShape[];
   evals: EvalShape[];
   guardrails: GuardrailShape[];
+  decisions: DecisionShape[];
   deployments: DeploymentShape[];
   observability: ObservabilityShape;
   runtime: RuntimeShape;
@@ -739,6 +782,7 @@ export const IR_COLLECTIONS = [
   'pipelines',
   'evals',
   'guardrails',
+  'decisions',
   'deployments',
 ] as const;
 
@@ -755,6 +799,7 @@ export const POPULATED_COLLECTION_BY_SECTION = {
   memory: 'memory',
   agents: 'agents',
   guardrails: 'guardrails',
+  decisions: 'decisions',
   deployments: 'deployments',
   evals: 'evals',
   pipelines: 'pipelines',
