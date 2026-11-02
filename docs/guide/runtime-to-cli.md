@@ -189,6 +189,11 @@ be a second answer to the same question.
 A span with tokens but no `aid.cost.usd` is counted under `unpricedSpans` and kept out of the total.
 It is not summed as zero, because a missing price would otherwise read as a cheap run.
 
+A decision call is priced the same way. Jev bills input tokens at $42 per billion and states that
+output tokens are free, so the decision client records `aid.cost.usd` from the input count alone and
+a decision span is never reported as unpriced. A reply that carries no usage records no cost at all:
+an unmeasured call stays unknown instead of being assumed free.
+
 The taxonomy holds here too. A missing directory, or one that is not a directory, an unparseable
 `--since`, and a `--budget` that is not a plain non-negative decimal are **2**; a trace file that
 exists but cannot be read, or a measured total above `--budget`, is **1**, with the readable rest

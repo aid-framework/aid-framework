@@ -14,8 +14,8 @@ that must not decide a host application's telemetry setup for it.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator, Sequence
+from typing import Any, Protocol
 
 from opentelemetry import trace
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode
@@ -23,12 +23,10 @@ from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 from aid_runtime.local_trace import finish_span, wrap_span
 from aid_runtime.types import TokenUsage
 
-if TYPE_CHECKING:
-    from aid_runtime.agents.guardrails import GuardrailRecord
-
 __all__ = [
     "ATTRIBUTES",
     "GEN_AI_OPERATION_CHAT",
+    "GuardrailEvent",
     "agent_span",
     "aid_attributes",
     "get_tracer",
@@ -226,7 +224,29 @@ def record_hitl(
     span.add_event("aid.hitl", attributes)
 
 
-def record_guardrail(span: Span, record: GuardrailRecord) -> None:
+class GuardrailEvent(Protocol):
+    """The fields :func:`record_guardrail` reads from a fired guardrail.
+
+    Structural on purpose. Importing ``GuardrailRecord`` would close a module cycle --
+    ``guardrails`` imports the decision client, which imports this module, which would
+    import ``guardrails`` again -- and a protocol keeps the annotation honest without
+    the import.
+    """
+
+    @property
+    def guardrail(self) -> str: ...
+
+    @property
+    def stage(self) -> str: ...
+
+    @property
+    def action(self) -> str: ...
+
+    @property
+    def policies(self) -> Sequence[str]: ...
+
+
+def record_guardrail(span: Span, record: GuardrailEvent) -> None:
     """Record one guardrail hit as an ``aid.guardrail`` span event."""
     span.add_event(
         "aid.guardrail",

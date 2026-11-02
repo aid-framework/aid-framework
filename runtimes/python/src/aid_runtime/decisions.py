@@ -38,9 +38,12 @@ from typing import Any, Literal
 import httpx
 
 from aid_runtime.errors import ConfigurationError, ProviderError, ProviderResponseError
+from aid_runtime.tracing import llm_span, record_attributes, record_cost, record_usage
+from aid_runtime.types import TokenUsage
 
 __all__ = [
     "DEFAULT_TYPESAFE_BASE_URL",
+    "JEV_INPUT_USD_PER_MTOK",
     "JEV_MOVING_ALIASES",
     "TYPESAFE_API_KEY_ENVS",
     "TYPESAFE_BASE_URL_ENV",
@@ -48,6 +51,7 @@ __all__ = [
     "DecisionClient",
     "DecisionQuestion",
     "DecisionResponse",
+    "decision_cost_usd",
     "decision_key",
     "is_reproducible_model",
 ]
@@ -63,6 +67,11 @@ TYPESAFE_BASE_URL_ENV = "TYPESAFE_BASE_URL"
 #: Aliases that move to a new model version. Legal interactively, refused under
 #: ``reproducible=True``.
 JEV_MOVING_ALIASES = frozenset({"jev-latest", "jev-preview"})
+
+#: Jev bills input tokens at $42 per billion ($0.042 per million) and states that
+#: output tokens are free. A call therefore needs an input row only, and a
+#: decision run must never be reported as unpriceable.
+JEV_INPUT_USD_PER_MTOK = 0.042
 
 QuestionType = Literal["choice", "score", "noul"]
 
@@ -91,6 +100,19 @@ def decision_key(env: Mapping[str, str] | None = None) -> str | None:
 def is_reproducible_model(model: str) -> bool:
     """Whether ``model`` is pinned to one version rather than a moving alias."""
     return model not in JEV_MOVING_ALIASES
+
+
+def decision_cost_usd(input_tokens: int | None) -> float:
+    """Price one decision call from its input tokens alone.
+
+    Output tokens are free by contract, so they are deliberately not part of the
+    arithmetic: a caller that passed a total would overcharge the run. ``None``
+    means the vendor reported no usage; :meth:`DecisionClient.decide` then records
+    no cost at all, so the call stays unknown rather than free.
+    """
+    if input_tokens is None:
+        return 0.0
+    return (input_tokens / 1_000_000) * JEV_INPUT_USD_PER_MTOK
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,8 +250,22 @@ class DecisionClient:
             "state": state,
             "questions": {key: question.as_payload() for key, question in questions.items()},
         }
-        body = await self._post(payload)
-        return self._parse(body, questions)
+        # A decision is billed like any other model call, so it gets the same
+        # span: `aid cost` and the eval budget read `aid.cost.usd` off it.
+        with llm_span(model=model, provider=self._name, operation="decision") as span:
+            body = await self._post(payload)
+            response = self._parse(body, questions)
+            if response.input_tokens is not None:
+                usage = TokenUsage(
+                    input_tokens=response.input_tokens,
+                    output_tokens=response.output_tokens or 0,
+                )
+                record_usage(span, usage)
+                record_cost(span, decision_cost_usd(usage.input_tokens))
+            # The vendor echoes the version that actually answered, which is the
+            # only record of what a moving alias resolved to.
+            record_attributes(span, response_model=response.model)
+            return response
 
     async def close(self) -> None:
         if self._closed:

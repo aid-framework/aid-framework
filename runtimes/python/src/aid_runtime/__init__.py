@@ -72,6 +72,7 @@ from aid_runtime.cost import (
 )
 from aid_runtime.decisions import (
     DEFAULT_TYPESAFE_BASE_URL,
+    JEV_INPUT_USD_PER_MTOK,
     JEV_MOVING_ALIASES,
     TYPESAFE_API_KEY_ENVS,
     TYPESAFE_BASE_URL_ENV,
@@ -79,6 +80,7 @@ from aid_runtime.decisions import (
     DecisionClient,
     DecisionQuestion,
     DecisionResponse,
+    decision_cost_usd,
     decision_key,
     is_reproducible_model,
 )
@@ -295,7 +297,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.95"
+__version__ = "0.1.96"
 
 __all__ = [
     "ANTHROPIC_VERSION",
@@ -311,6 +313,7 @@ __all__ = [
     "GEN_AI_OPERATION_CHAT",
     "INDEX_KEY",
     "ITEM_KEY",
+    "JEV_INPUT_USD_PER_MTOK",
     "JEV_MOVING_ALIASES",
     "LIMITER_KEY",
     "MAX_STEP_DEPTH",
@@ -499,6 +502,7 @@ __all__ = [
     "chunker_for",
     "cite",
     "create_store",
+    "decision_cost_usd",
     "decision_key",
     "default_bedrock_base_url",
     "default_metrics",
