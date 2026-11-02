@@ -110,6 +110,11 @@ def _text(value: str) -> dict[str, Any]:
     return {"text": value}
 
 
+def _sse(*events: dict[str, Any]) -> str:
+    """An SSE body, one `data:` line per event -- the shape Vertex streams."""
+    return "\n\n".join(f"data: {json.dumps(event)}" for event in events)
+
+
 def _ask(text: str) -> CompletionRequest:
     return CompletionRequest(messages=(Message(role="user", content=text),))
 
@@ -403,12 +408,12 @@ async def test_reports_a_body_with_no_candidates() -> None:
 
 @pytest.mark.asyncio
 async def test_streams_sse_deltas_and_ends_with_usage_and_finish_reason() -> None:
-    events = "\n\n".join(
-        [
-            'data: {"candidates":[{"content":{"parts":[{"text":"Pa"}]}}]}',
-            'data: {"candidates":[{"content":{"parts":[{"text":"ris"}]},"finishReason":"STOP"}],'
-            '"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":2}}',
-        ]
+    events = _sse(
+        {"candidates": [{"content": {"parts": [_text("Pa")]}}]},
+        {
+            "candidates": [{"content": {"parts": [_text("ris")]}, "finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 2},
+        },
     )
     recorder = Recorder(httpx.Response(200, text=events))
     chunks = [c async for c in _provider(recorder).stream(_ask("capital?"), model=_model())]
@@ -424,7 +429,7 @@ async def test_streams_sse_deltas_and_ends_with_usage_and_finish_reason() -> Non
 @pytest.mark.asyncio
 async def test_streams_without_any_usage_still_terminates_with_a_zero_usage_chunk() -> None:
     recorder = Recorder(
-        httpx.Response(200, text='data: {"candidates":[{"content":{"parts":[{"text":"x"}]}}]}')
+        httpx.Response(200, text=_sse({"candidates": [{"content": {"parts": [_text("x")]}}]}))
     )
     chunks = [c async for c in _provider(recorder).stream(_ask("hi"), model=_model())]
     assert chunks[-1].usage is not None
