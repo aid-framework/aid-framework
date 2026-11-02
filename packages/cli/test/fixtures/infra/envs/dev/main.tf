@@ -5,12 +5,13 @@
 module "serverless" {
   source = "../../generated/modules/serverless"
 
-  project     = var.project
-  services    = var.services
-  image_uris  = var.image_uris
-  secret_arns = var.secret_arns
-  sizing      = var.sizing
-  tags        = var.tags
+  project        = var.project
+  services       = var.services
+  image_uris     = var.image_uris
+  secret_arns    = var.secret_arns
+  sizing         = var.sizing
+  bedrock_region = var.bedrock_region
+  tags           = var.tags
 }
 
 module "container" {
@@ -28,6 +29,7 @@ module "container" {
   health_check_path  = var.health_check_path
   idle_timeout       = var.idle_timeout
   log_retention_days = var.log_retention_days
+  bedrock_region     = var.bedrock_region
   tags               = var.tags
 }
 
@@ -44,6 +46,7 @@ module "batch" {
   assign_public_ip        = var.batch_assign_public_ip
   max_vcpus               = var.batch_max_vcpus
   log_retention_days      = var.batch_log_retention_days
+  bedrock_region          = var.bedrock_region
   tags                    = var.tags
 }
 

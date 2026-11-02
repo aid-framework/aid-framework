@@ -78,6 +78,12 @@ variable "log_retention_days" {
   default = 30
 }
 
+variable "bedrock_region" {
+  description = "Region for Bedrock calls. Empty means the region this stack deploys into."
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

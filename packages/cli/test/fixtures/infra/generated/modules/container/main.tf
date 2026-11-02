@@ -6,11 +6,24 @@ data "aws_availability_zones" "available" {
 # a second place to state it is a second place to disagree with itself.
 data "aws_region" "current" {}
 
+data "aws_partition" "current" {}
+data "aws_caller_identity" "current" {}
+
 locals {
   container = {
     for id, service in var.services : id => service
     if service.target == "container"
   }
+
+  # A service that names Bedrock calls it with the task role, so the grant below is the
+  # only credential it needs. `providers` is derived from the build's models, so this is
+  # conservative: every container in a build that mentions Bedrock gets the grant.
+  bedrock = {
+    for id, service in local.container : id => service
+    if contains(service.providers, "bedrock")
+  }
+
+  bedrock_region = var.bedrock_region != "" ? var.bedrock_region : data.aws_region.current.name
 
   routed = {
     for id, service in local.container : id => service
@@ -55,10 +68,13 @@ locals {
   }
 
   literal_env = {
-    for id, service in local.container : id => {
-      for variable in service.env : variable.name => variable.value
-      if variable.secret == false && variable.value != null
-    }
+    for id, service in local.container : id => merge(
+      contains(service.providers, "bedrock") ? { AWS_REGION = local.bedrock_region } : {},
+      {
+        for variable in service.env : variable.name => variable.value
+        if variable.secret == false && variable.value != null
+      }
+    )
   }
 
   # A task receives the ARN reference, not the value: the agent in the task resolves it
@@ -272,6 +288,29 @@ resource "aws_iam_role" "task" {
       Effect    = "Allow"
       Principal = { Service = "ecs-tasks.amazonaws.com" }
       Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+# Bedrock authenticates with this role, so the task needs no API key. The stream action is
+# granted only to a service that streams, so the policy describes what the spec asked for.
+resource "aws_iam_role_policy" "bedrock" {
+  for_each = local.bedrock
+  name     = substr("${local.name[each.key]}-bedrock", 0, 64)
+  role     = aws_iam_role.task[each.key].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = concat(
+        ["bedrock:InvokeModel"],
+        each.value.streaming ? ["bedrock:InvokeModelWithResponseStream"] : [],
+      )
+      Resource = [
+        "arn:${data.aws_partition.current.partition}:bedrock:*::foundation-model/*",
+        "arn:${data.aws_partition.current.partition}:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+      ]
     }]
   })
 }

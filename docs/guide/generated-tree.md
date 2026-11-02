@@ -272,6 +272,7 @@ declares the inputs no spec can supply:
 | `batch_sizing` | vCPU, memory, attempts and attempt timeout are a budget decision. |
 | `batch_subnet_ids`, `batch_security_group_ids` | A batch task runs in a network you own; the module refuses an empty subnet list rather than guessing a default VPC. |
 | `batch_assign_public_ip`, `batch_max_vcpus`, `batch_log_retention_days` | Public addressing, queue ceiling and log retention are operator decisions. |
+| `bedrock_region` | Bedrock models may live in a different region than the stack; empty means the stack's region. |
 | `gcp_project` | A GCP project id names one account, so the provider is configured from it. |
 | `region` | Cloud Run names the region in a URL; it is a deployment choice. |
 | `secret_ids` | A Secret Manager id names one project, the GCP counterpart of an ARN. |
@@ -308,6 +309,17 @@ definition is the thing that knows which job it is. Secrets become job-definitio
 entries resolved by the execution role, so a secret value never enters state or a plan file.
 Submission targets the queue the module outputs, for example
 `aws batch submit-job --job-queue <job_queue_arn> --job-name nightly --job-definition <arn>`.
+
+A service that names `bedrock` in its `providers` gets its credentials from IAM rather than
+from an API key, so each module adds the grant that makes that true. The serverless and
+container modules attach `bedrock:InvokeModel` to the function or task role, add
+`bedrock:InvokeModelWithResponseStream` only when the service streams, and set `AWS_REGION`
+from `bedrock_region` (or the stack's region) because the Bedrock client reads it. The batch
+module had no task role at all, which leaves a job with no credentials, so it now creates one
+and passes it as `taskRoleArn`; the grant applies to a job only when a job in that build names
+Bedrock. The policy is scoped to `foundation-model/*` and to the account's
+`inference-profile/*`, which is what a cross-region inference profile needs. A build that
+names only `openai` or `anthropic` gets no policy, and every other service is unaffected.
 
 `--cloud gcp` selects Cloud Run for a `container` service, and nothing else changes: the image
 is the same one the Dockerfile builds, because that Dockerfile already binds `$PORT` on
