@@ -1150,6 +1150,10 @@
             }
           }
         },
+        "pipeline": {
+          "description": "Id of the pipeline a `batch` job runs to completion; required on that target and absent on every other.",
+          "$ref": "#/$defs/identifier"
+        },
         "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
       }
     }

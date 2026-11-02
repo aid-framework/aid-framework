@@ -500,6 +500,39 @@ describe('the fail-closed plan', () => {
     expect(problems[0]?.path).toBe(`pipelines.${pipeline.id}.steps.0`);
   });
 
+  it('refuses a batch deployment, which this target cannot start', () => {
+    const ir = mutated((copy) => {
+      const deployment = copy.deployments[0];
+      if (deployment === undefined) throw new Error('the example has no deployments');
+      (deployment as { target: string }).target = 'batch';
+      (deployment as { streaming?: boolean }).streaming = false;
+    });
+
+    const problems = checkPlan(ir);
+    expect(problems.map((entry) => entry.code)).toContain('deployment-unsupported');
+    const batch = problems.find((entry) => entry.path === 'deployments.api.target');
+    expect(batch?.message).toContain('runs to completion');
+    expect(batch?.message).toContain('py-fastapi');
+    // A batch deployment alone does not take the route away, so the plan is refused for
+    // the deployment and not for a trigger the document still declares over HTTP.
+    expect(problems.map((entry) => entry.path)).not.toContain('pipelines.answer_ticket.trigger');
+  });
+
+  it('refuses a manual trigger, which would be declared and never routed', () => {
+    const ir = mutated((copy) => {
+      const pipeline = copy.pipelines[0];
+      if (pipeline === undefined) throw new Error('the example has no pipeline');
+      (pipeline as { trigger: unknown }).trigger = { kind: 'manual' };
+    });
+
+    const problems = checkPlan(ir);
+    expect(problems.map((entry) => entry.code)).toContain('deployment-unsupported');
+    const trigger = problems.find((entry) => entry.path === 'pipelines.answer_ticket.trigger');
+    expect(trigger?.message).toContain('never emitted');
+    expect(trigger?.message).toContain('py-fastapi');
+    expect(() => planTsVercel(ir)).toThrow(/deployment-unsupported/);
+  });
+
   it('emits a composite rather than refusing it', () => {
     // Every supported, non-deferred kind now has an emitter, so this test no longer has
     // refused siblings to contrast with. What it still pins is that a composite reaches

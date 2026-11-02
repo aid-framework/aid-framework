@@ -1,10 +1,17 @@
 /**
- * `app/generated/Dockerfile`: the image a `target: container` deployment runs.
+ * `app/generated/Dockerfile`: the image a deployment that runs one runs.
  *
  * `deployments` is the only part of the IR that says where the app runs, so it is the
  * only thing that decides whether an image is emitted at all. A project that declares
- * no container deployment gets no Dockerfile -- an image nothing deploys is a file a
- * reader has to explain, and `aid gen` would keep it byte-identical forever.
+ * no `container` or `batch` deployment gets no Dockerfile -- an image nothing deploys is
+ * a file a reader has to explain, and `aid gen` would keep it byte-identical forever.
+ *
+ * One image serves both: a `container` deployment runs it as a server and a `batch`
+ * deployment runs it as a job. The difference is the entrypoint, and the job's is
+ * `app.generated.batch`, which reads one request from stdin and exits -- the same image
+ * would answer forever otherwise. A build that has a container deployment keeps the
+ * server as its default command, because that is what `docker run` should do, and a job
+ * definition overrides it.
  *
  * The file lives under `app/generated/` because that is the tier the generator may
  * overwrite: the path is recorded in `aid.manifest.json` and hashed like every other
@@ -12,10 +19,10 @@
  * built from the application root, because the build needs `pyproject.toml`, which sits
  * above `app/`; the header carries the exact command.
  *
- * `app/main.py` belongs to the application, not to this generator, so the entrypoint is
- * `app.main:app` -- the same ASGI app the developer runs locally. Nothing in the spec
- * becomes a build argument: a declared secret is read from the environment when a model
- * is called, so no layer can carry one.
+ * `app/main.py` belongs to the application, not to this generator, so the server
+ * entrypoint is `app.main:app` -- the same ASGI app the developer runs locally. Nothing
+ * in the spec becomes a build argument: a declared secret is read from the environment
+ * when a model is called, so no layer can carry one.
  */
 
 import type { IR } from '@aid-framework/ir';
@@ -32,9 +39,11 @@ const PYTHON_IMAGE = 'python:3.11-slim';
 /** The port the image listens on when the platform does not set `PORT`. */
 const DEFAULT_PORT = 8080;
 
-/** Whether any deployment declares `target: container`, and therefore needs an image. */
-export function hasContainerDeployment(ir: IR): boolean {
-  return ir.deployments.some((deployment) => deployment.target === 'container');
+/** Whether any deployment runs an image: a `container` server or a `batch` job. */
+export function hasImageDeployment(ir: IR): boolean {
+  return ir.deployments.some(
+    (deployment) => deployment.target === 'container' || deployment.target === 'batch',
+  );
 }
 
 /** Code-unit ordering, never `localeCompare`, so the header is byte-identical everywhere. */
@@ -44,18 +53,23 @@ function compareIds(a: string, b: string): number {
   return 0;
 }
 
-function containerIds(ir: IR): string[] {
+/** The ids and targets of the deployments this image serves, in canonical order. */
+function imageIds(ir: IR): { id: string; target: string }[] {
   return ir.deployments
-    .filter((deployment) => deployment.target === 'container')
-    .map((deployment) => deployment.id)
-    .sort(compareIds);
+    .filter(
+      (deployment) =>
+        deployment.target === 'container' ||
+        (deployment.target === 'batch' && deployment.pipeline !== undefined),
+    )
+    .map((deployment) => ({ id: deployment.id, target: deployment.target }))
+    .sort((left, right) => compareIds(left.id, right.id));
 }
 
-/** Every secret a container deployment declares, in canonical order. */
+/** Every secret a deployment declares, in canonical order. */
 function declaredSecrets(ir: IR): string[] {
   const names = new Set<string>();
   for (const deployment of ir.deployments) {
-    if (deployment.target !== 'container') continue;
+    if (deployment.target !== 'container' && deployment.target !== 'batch') continue;
     for (const name of deployment.secrets) names.add(name);
   }
   return [...names].sort(compareIds);
@@ -103,17 +117,65 @@ function commentBlock(text: string): string {
 }
 
 export function emitDockerfile(ir: IR): EmittedFile {
-  const ids = containerIds(ir);
+  const ids = imageIds(ir);
   const secrets = declaredSecrets(ir);
   const exposed = secrets.map((name) => `-e ${name}=...`).join(' ');
-  const run =
-    `#   docker run --rm -p ${DEFAULT_PORT}:${DEFAULT_PORT} ` +
-    `${exposed}${exposed === '' ? '' : ' '}${ir.project.name}`;
+  const onlyContainers = ids.every((entry) => entry.target === 'container');
+  const imageLine = onlyContainers
+    ? `# The image for ${ids.map((entry) => `deployments.${entry.id}`).join(', ')} ` +
+      '(`target: container`).'
+    : `# The image for ${ids
+        .map((entry) => `deployments.${entry.id} (\`target: ${entry.target}\`)`)
+        .join(', ')}.`;
+  const serves = ids.some((entry) => entry.target === 'container');
+  const jobs = ids.some((entry) => entry.target === 'batch');
+  const run = serves
+    ? `#   docker run --rm -p ${DEFAULT_PORT}:${DEFAULT_PORT} ` +
+      `${exposed}${exposed === '' ? '' : ' '}${ir.project.name}`
+    : `#   docker run --rm -i ${exposed}${exposed === '' ? '' : ' '}${ir.project.name} ` +
+      '< request.json';
+
+  // One image, two entrypoints. The server is the default when anything serves HTTP,
+  // because that is what running the image by hand should do; a job definition replaces
+  // it with `app.generated.batch` and hands it the request on stdin.
+  const entrypoint = serves
+    ? [
+        "# `app/main.py` is the application's own file, which is why the image runs",
+        '# `app.main:app` instead of an entrypoint the generator invented.',
+        ...(jobs
+          ? [
+              '#',
+              '# A `batch` deployment is the same image with its entrypoint replaced: a job',
+              '# reads one request from stdin and exits instead of answering until stopped.',
+            ]
+          : []),
+      ]
+    : [
+        '# A `batch` deployment runs to completion, so the image is its job rather than a',
+        '# server: `app.generated.batch` reads one request from stdin, prints the answer and',
+        '# exits. The interpreter starts it as a module because it imports the app by',
+        '# package name; running the file by path would not resolve those imports.',
+      ];
+
+  const serving = serves
+    ? [
+        `ENV PORT=${DEFAULT_PORT}`,
+        `EXPOSE ${DEFAULT_PORT}`,
+        '',
+        "# `exec` replaces the shell with uvicorn, so the platform's SIGTERM reaches the process",
+        '# that has to drain in-flight requests rather than stopping at an unresponsive shell.',
+        `CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port \\"\${PORT}\\""]`,
+      ]
+    : [
+        // Exec form, so the platform's own command appends arguments -- which is how a
+        // build that deploys several pipelines says which one this job runs.
+        `ENTRYPOINT ["python", "-m", "app.generated.batch"]`,
+      ];
 
   const lines = [
     banner(),
     '#',
-    `# The image for ${ids.map((id) => `deployments.${id}`).join(', ')} (\`target: container\`).`,
+    imageLine,
     '#',
     '# Build from the application root -- the build needs `pyproject.toml` and the readme',
     '# it names, both of which sit above `app/`, so the context is the project root and',
@@ -122,8 +184,7 @@ export function emitDockerfile(ir: IR): EmittedFile {
     `#   docker build -f ${DOCKERFILE_PATH} -t ${ir.project.name} .`,
     run,
     '#',
-    "# `app/main.py` is the application's own file, which is why the image runs",
-    '# `app.main:app` instead of an entrypoint the generator invented.',
+    ...entrypoint,
     '#',
     commentBlock(secretsNote(secrets)),
     '',
@@ -149,12 +210,7 @@ export function emitDockerfile(ir: IR): EmittedFile {
     'RUN useradd --create-home --uid 10001 aid',
     'USER aid',
     '',
-    `ENV PORT=${DEFAULT_PORT}`,
-    `EXPOSE ${DEFAULT_PORT}`,
-    '',
-    "# `exec` replaces the shell with uvicorn, so the platform's SIGTERM reaches the process",
-    '# that has to drain in-flight requests rather than stopping at an unresponsive shell.',
-    `CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port \\"\${PORT}\\""]`,
+    ...serving,
     '',
   ];
 

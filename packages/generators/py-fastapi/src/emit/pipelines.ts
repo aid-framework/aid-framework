@@ -159,7 +159,7 @@ function contextCall(
 }
 
 /** A statement whose value is a call, measured with the prefix it is assigned to. */
-function callStatement(
+export function callStatement(
   prefix: string,
   callee: string,
   args: readonly string[],
@@ -168,7 +168,8 @@ function callStatement(
   return `${indent}${prefix}${call(callee, args, indent, prefix.length)}`;
 }
 
-function mapping(pairs: readonly (readonly [string, string])[], indent: string): string {
+/** A dict literal, one entry per line when it does not fit the code line budget. */
+export function mapping(pairs: readonly (readonly [string, string])[], indent: string): string {
   if (pairs.length === 0) return '{}';
   const entries = pairs.map(([key, value]) => `${pythonString(key)}: ${value}`);
   const oneLine = `{${entries.join(', ')}}`;
@@ -1033,7 +1034,7 @@ function expressionList(items: readonly string[], indent: string, prefixLength =
  * `isAuthenticated()` predicate vacuously true and send every caller down `then`. A
  * generated app has no auth layer of its own, so the closed answer is the honest one.
  */
-function contextSeed(pipeline: PipelineShape, deps: string): [string, string][] {
+export function contextSeed(pipeline: PipelineShape, deps: string): [string, string][] {
   const values: [string, string][] = [
     [DEPS_BINDING, deps],
     [EVENT_BINDING, EVENT_BINDING],
@@ -1416,6 +1417,20 @@ function httpPipelines(ir: IR): PipelineShape[] {
   return orderedPipelines(ir).filter((pipeline) => pipeline.trigger?.kind === 'http');
 }
 
+/**
+ * Pipelines whose input arrives as a request body.
+ *
+ * A route reads it from a POST; a `batch` job reads the same shape from stdin. Both need
+ * the model, and both need it built from exactly what the pipeline reads off `event`, so
+ * an HTTP pipeline and a manual one share this walk. What differs is the entrypoint, not
+ * the shape.
+ */
+function requestPipelines(ir: IR): PipelineShape[] {
+  return orderedPipelines(ir).filter(
+    (pipeline) => pipeline.trigger?.kind === 'http' || pipeline.trigger?.kind === 'manual',
+  );
+}
+
 export function emitPipelinesInit(ir: IR): EmittedFile {
   const pipelines = orderedPipelines(ir);
   const imports = pipelines.map(
@@ -1434,15 +1449,15 @@ export function emitPipelinesInit(ir: IR): EmittedFile {
 }
 
 /**
- * The request models, one per HTTP pipeline.
+ * The request models, one per pipeline that takes a request body.
  *
  * Every field is required: a step reads it off `event` and hands it to a prompt or a
  * tool declared to take it, so a request that omitted it would fail inside a step
- * rather than at the edge where a 422 belongs.
+ * rather than at the edge where a 422 -- or a rejected job input -- belongs.
  */
 export function emitRequests(ir: IR): EmittedFile {
   const names = new Set<string>();
-  const classes = httpPipelines(ir).map((pipeline) => {
+  const classes = requestPipelines(ir).map((pipeline) => {
     const plan = requestPlan(ir, pipeline);
     for (const field of plan.fields) {
       if (field.type.kind === 'named') names.add(className(field.type.name));
@@ -1450,8 +1465,12 @@ export function emitRequests(ir: IR): EmittedFile {
     const trigger = pipeline.trigger;
     const method = trigger?.kind === 'http' ? trigger.method.toUpperCase() : '';
     const path = trigger?.kind === 'http' ? trigger.path : '';
+    const doc =
+      trigger?.kind === 'manual'
+        ? `The input of pipeline \`${pipeline.id}\`, read from stdin by the \`batch\` job that runs it.`
+        : `The request body of \`${method} ${path}\`.`;
     const lines = [`class ${requestModelName(pipeline.id)}(BaseModel):`];
-    lines.push(pythonDoc(`The request body of \`${method} ${path}\`.`, INDENT));
+    lines.push(pythonDoc(doc, INDENT));
     for (const field of plan.fields) {
       lines.push(`${INDENT}${fieldName(field.name)}: ${annotationFor(field.type, false)}`);
     }
@@ -1474,7 +1493,22 @@ function responseValue(source: ResponseSource): string {
   return `context.require(${pythonString(contextKey(root))}).${attribute}`;
 }
 
-export function emitRoute(ir: IR, pipeline: PipelineShape): EmittedFile {
+export interface PipelineResponse {
+  /** The model the emit step produces, which is what a caller receives. */
+  type: string;
+  /** `[field, expression]` pairs in code-unit order; each expression reads `context`. */
+  fields: readonly (readonly [string, string])[];
+}
+
+/**
+ * What a finished pipeline run hands back.
+ *
+ * The route and the `batch` entrypoint ask the same question -- which fields of the
+ * emitted event does this pipeline actually fill, and where does each come from -- and
+ * only the transport differs. Deriving it once keeps a job's JSON and a route's body the
+ * same shape, which is what lets one request model describe both.
+ */
+export function pipelineResponse(ir: IR, pipeline: PipelineShape): PipelineResponse {
   const types = typeTable(ir);
   const scopes = scopeMap(pipeline, ir);
   const steps = pipeline.steps ?? [];
@@ -1489,15 +1523,21 @@ export function emitRoute(ir: IR, pipeline: PipelineShape): EmittedFile {
     types,
     `pipelines.${pipeline.id}.steps[${emitIndex}]`,
   );
+  return {
+    type: className(eventType),
+    fields: sortedPairs(
+      plans.sources.map((source) => [fieldName(source.field), responseValue(source)]),
+    ),
+  };
+}
+
+export function emitRoute(ir: IR, pipeline: PipelineShape): EmittedFile {
+  const { type: response, fields } = pipelineResponse(ir, pipeline);
   const trigger = pipeline.trigger;
   const method = trigger?.kind === 'http' ? trigger.method.toLowerCase() : '';
   const path = trigger?.kind === 'http' ? trigger.path : '';
   const router = routerName(pipeline.id);
   const handler = `${moduleName(pipeline.id)}_endpoint`;
-  const response = className(eventType);
-  const fields = sortedPairs(
-    plans.sources.map((source) => [fieldName(source.field), responseValue(source)]),
-  );
   const run = callStatement(
     'context = await ',
     `${factoryName(pipeline.id)}().run`,

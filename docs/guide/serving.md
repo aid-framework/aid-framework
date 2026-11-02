@@ -97,6 +97,68 @@ Note where that error comes from: `aid validate` returns **ok** for the same spe
 rule lives in the target's plan compiler rather than in an `ir/*` gate. So you choose streaming
 or output inspection, not both - and you find out at `gen`.
 
+## Batch jobs
+
+A pipeline whose trigger is `manual` has no route: it exists so a `target: batch` deployment can
+run it once to completion. Spec 0.5, and the two keys belong together:
+
+```yaml
+pipelines:
+  answer_ticket:
+    trigger:
+      manual: true        # no route; this pipeline is entered by a job
+    steps: [...]
+
+deployments:
+  nightly:
+    target: batch
+    pipeline: answer_ticket
+    secrets: [OPENAI_API_KEY]
+```
+
+`aid gen` emits `app/generated/batch.py` for the job and keeps `app.main:app` for a container
+deployment in the same spec. That is one image with two entrypoints: `target: container` runs
+`app.main:app`, `target: batch` runs `python -m app.generated.batch`, and the generated
+`Dockerfile` says which is which and why. Nothing is inferred at runtime.
+
+A job's contract is the pipeline's, not a route's:
+
+- **Input is the pipeline's request body, JSON on stdin.** It is the same Pydantic model the
+  route would accept (`AnswerTicketRequest`), so the two entrypoints cannot disagree about the
+  shape.
+- **Output is the `emit` step's fields, JSON on stdout.** It is the model the route returns,
+  serialised with `model_dump_json()`, so a job's stdout is a route's response body.
+- **Diagnostics go to stderr**, because stdout is what a scheduler reads.
+- **Exit codes say what happened.** `0` is an answer, `1` is a step that failed, `64` is input
+  the caller chose (not JSON, or not a request this pipeline accepts) and would fail the same
+  way on retry, and `2` is a guardrail refusal - declared only when the app has a guardrail that
+  can refuse, so a spec with none never documents an exit it cannot return.
+
+Run it by hand the same way the platform does:
+
+```console
+$ python -m app.generated.batch answer_ticket < request.json > answer.json
+$ echo $?
+0
+```
+
+The pipeline argument is optional when the build deploys exactly one pipeline and required
+when it deploys several: with more than one there is no defensible default, so an unnamed run is
+`64` with a message naming the deployed pipelines rather than a guess.
+
+Three refusals keep the pair honest rather than leaving it to a reviewer:
+
+- `deployments.<id>.pipeline` on a target that is not `batch` - a route is selected by the
+  request, not by the deployment, so the key would name a job that never runs.
+- `target: batch` with no `pipeline` - the job would start the module with nothing to run.
+- A `pipeline` naming a pipeline without `trigger.manual` - a job and a route are different
+  entrypoints, and a pipeline that already serves a route would get two.
+
+The `ts-vercel` target refuses both halves: it emits one HTTP route per pipeline and runs a
+request/response function, so a batch job is not something it can start. A spec that says
+`targets: [ts-vercel, py-fastapi]` must therefore declare no batch deployment, which is the
+point of a target-level refusal instead of a warning at deploy time.
+
 ## The dependency seam
 
 Every generated step reads its collaborators from one container. On Python it is a frozen

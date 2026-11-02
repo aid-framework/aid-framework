@@ -54,6 +54,7 @@ import {
   modelIdentity,
   type ObservabilityShape,
   type PipelineShape,
+  type PipelineTrigger,
   PRIMITIVE_TYPES,
   type PrimitiveType,
   type ProjectShape,
@@ -607,15 +608,16 @@ function buildPipelines(
   const record = asRecord(raw) ?? {};
   return sortedKeys(record).map((id) => {
     const entry = asRecord(record[id]) ?? {};
-    const trigger = asRecord(asRecord(entry.trigger)?.http) ?? {};
+    const declaredTrigger = asRecord(entry.trigger) ?? {};
+    const httpTrigger = asRecord(declaredTrigger.http);
+    const trigger: PipelineTrigger =
+      httpTrigger === undefined && declaredTrigger.manual === true
+        ? { kind: 'manual' }
+        : buildHttpTrigger(httpTrigger ?? {});
     const pipeline: PipelineShape = {
       id,
       identity: pipelineIdentity(id),
-      trigger: {
-        kind: 'http' as const,
-        method: asString(trigger.method) ?? 'post',
-        path: asString(trigger.path) ?? '/',
-      },
+      trigger,
       steps: buildStepList(entry.steps, promptModels, context, ['pipelines', id, 'steps']),
       errorPolicy: buildErrorPolicy(entry.errorPolicy),
       observability: buildObservability(entry.observability, sensitive, observability),
@@ -624,6 +626,15 @@ function buildPipelines(
     if (description !== undefined) pipeline.description = description;
     return pipeline;
   });
+}
+
+/** The HTTP trigger's defaults; also what a pipeline with no `trigger` at all gets. */
+function buildHttpTrigger(trigger: Record<string, unknown>): PipelineTrigger {
+  return {
+    kind: 'http',
+    method: asString(trigger.method) ?? 'post',
+    path: asString(trigger.path) ?? '/',
+  };
 }
 
 function buildErrorPolicy(raw: unknown): ErrorPolicy {
@@ -1002,6 +1013,8 @@ function buildDeployments(raw: unknown, context: BuildContext): DeploymentShape[
     }
     const image: DeploymentImageShape | undefined = buildDeploymentImage(entry.image, id, context);
     if (image !== undefined) deployment.image = image;
+    const pipeline = asString(entry.pipeline);
+    if (pipeline !== undefined) deployment.pipeline = pipeline;
     return deployment;
   });
 }

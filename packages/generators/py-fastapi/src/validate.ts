@@ -76,6 +76,7 @@ export type PlanProblemCode =
   | 'unsupported-param'
   | 'unsupported-placeholder'
   | 'unsupported-provider'
+  | 'batch-pipeline-without-emit'
   | 'unsupported-redact'
   | 'unsupported-retriever'
   | 'unsupported-step'
@@ -1637,17 +1638,45 @@ export function checkPipelines(ir: IR): PlanProblem[] {
   const models = new Set(ir.models.map((model) => model.id));
   const agents = new Map((ir.agents ?? []).map((agent) => [agent.id, agent]));
   const guardrails = new Map((ir.guardrails ?? []).map((guardrail) => [guardrail.id, guardrail]));
+  const batchPipelines = new Set(
+    ir.deployments
+      .filter((deployment) => deployment.target === 'batch')
+      .flatMap((deployment) => (deployment.pipeline === undefined ? [] : [deployment.pipeline])),
+  );
   const problems: PlanProblem[] = [];
 
   for (const pipeline of ir.pipelines) {
     const base = `pipelines.${pipeline.id}`;
-    if (pipeline.trigger?.kind !== 'http') {
+    const kind = pipeline.trigger?.kind;
+    if (kind === 'manual') {
+      if (!batchPipelines.has(pipeline.id)) {
+        problems.push(
+          problem(
+            'unsupported-trigger',
+            `${base}.trigger`,
+            `'${pipeline.id}' is manual, but no \`target: batch\` deployment names it, so ` +
+              'nothing would ever run it: a manual trigger is the batch job entrypoint, not ' +
+              'a second way to reach a route',
+          ),
+        );
+      } else if (!pipeline.steps.some((step) => step.kind === 'emit')) {
+        problems.push(
+          problem(
+            'batch-pipeline-without-emit',
+            `${base}.steps`,
+            'a batch job writes the model its `emit` step produces to stdout as one JSON ' +
+              'object; without an emit step there is no answer to write and no non-zero ' +
+              'exit that tells a failed run from a successful one',
+          ),
+        );
+      }
+    } else if (kind !== 'http') {
       problems.push(
         problem(
           'unsupported-trigger',
           `${base}.trigger`,
-          `Phase 0 wires only an 'http' trigger to a FastAPI route; got ` +
-            `'${pipeline.trigger?.kind ?? '<none>'}'`,
+          `Phase 0 wires an 'http' trigger to a FastAPI route and a 'manual' one to a batch ` +
+            `job; got '${kind ?? '<none>'}'`,
         ),
       );
     }
@@ -2462,15 +2491,51 @@ function toolArgumentNames(tool: ToolShape, types: Map<string, TypeShape>): stri
 /**
  * The deployments this target cannot serve.
  *
- * `streaming` is the only deployment field that reaches generated code -- everything else
- * describes the platform the app is put on, which the app neither reads nor implements. So
- * a deployment that asks to stream is checked against what the routes can actually do.
+ * `streaming` and `pipeline` are the only deployment fields that reach generated code --
+ * everything else describes the platform the app is put on, which the app neither reads
+ * nor implements. So a deployment that asks to stream, or to run a pipeline, is checked
+ * against what the generated entrypoints can actually do.
  */
 function checkDeployments(ir: IR): PlanProblem[] {
+  const pipelines = new Map(ir.pipelines.map((pipeline) => [pipeline.id, pipeline]));
   const problems: PlanProblem[] = [];
   for (const deployment of ir.deployments) {
-    if (!deployment.streaming) continue;
     const path = `deployments.${deployment.id}`;
+    if (deployment.target === 'batch') {
+      const named = deployment.pipeline;
+      if (named === undefined) {
+        problems.push(
+          problem(
+            'unsupported-target',
+            `${path}.pipeline`,
+            `'${deployment.id}' targets 'batch' but names no pipeline, so the job would have ` +
+              'nothing to run; a batch deployment exists to run exactly one pipeline once',
+          ),
+        );
+      } else {
+        const pipeline = pipelines.get(named);
+        if (pipeline === undefined) {
+          problems.push(
+            problem(
+              'unsupported-target',
+              `${path}.pipeline`,
+              `'${deployment.id}' names pipeline '${named}', which this IR does not declare`,
+            ),
+          );
+        } else if (pipeline.trigger?.kind !== 'manual') {
+          problems.push(
+            problem(
+              'unsupported-trigger',
+              `pipelines.${named}.trigger`,
+              `'${deployment.id}' runs pipeline '${named}', but that pipeline is also an ` +
+                'http route; a batch job and an HTTP route are different entrypoints, so ' +
+                "the pipeline must declare a 'manual' trigger",
+            ),
+          );
+        }
+      }
+    }
+    if (!deployment.streaming) continue;
     if (deployment.target === 'batch') {
       problems.push(
         problem(

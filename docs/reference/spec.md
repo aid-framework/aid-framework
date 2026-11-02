@@ -6,7 +6,7 @@ description: "Every spec key, type and constraint, generated from the JSON Schem
 
 Every key, type, and constraint below is read from `packages/spec/src/schema/spec.schema.json`, the schema `aid validate` enforces. A `required` column of `yes` means `aid validate` rejects a spec that omits the key.
 
-Spec schema title: *AID Framework spec v0.4*.
+Spec schema title: *AID Framework spec v0.5*.
 
 **Required at the top level:** `specVersion`, `project`.
 
@@ -14,7 +14,7 @@ Spec schema title: *AID Framework spec v0.4*.
 
 | Key | Type | Description |
 | --- | --- | --- |
-| `specVersion` | `0.1`, `0.2`, `0.3`, `0.4` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
+| `specVersion` | `0.1`, `0.2`, `0.3`, `0.4`, `0.5` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
 | `project` | `project` | — |
 | `types` | map of `typeDef` | Named structured types referenced by prompts (structured output) and tools (input/output). |
 | `models` | map of `model` | Model aliases. The alias is what the rest of the spec refers to; the vendor id is pinned here and only here. |
@@ -200,7 +200,7 @@ Takes the value `"assert"` and no other keys.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `description` | `string` | no | — |
-| `trigger` | object | yes | — |
+| `trigger` | one of 2 | yes | How the pipeline starts. `http` mounts a route; `manual` starts nothing on its own and exists so a `target: batch` deployment can run the pipeline once to completion. Exactly one of the two is declared. |
 | `steps` | array of `step` | yes | — |
 
 ## `step`
@@ -368,6 +368,7 @@ Applies one prompt to every item of a bound list, concurrently, and binds the or
 | `autoscale` | object | no | — |
 | `secrets` | array of `string` | yes | — |
 | `image` | `image` | no | Where the image is published. Spec 0.4, and only on a `target: container` deployment: another target builds no image to publish. |
+| `pipeline` | `name` | no | The pipeline this job runs, by id. Spec 0.5, and only on a `target: batch` deployment: a run-to-completion job exists to run exactly one pipeline once, and a target that answers requests runs whichever pipeline its route names. The pipeline must declare `trigger.manual`. |
 | `env` | array of object | no | — |
 
 ## `image`
