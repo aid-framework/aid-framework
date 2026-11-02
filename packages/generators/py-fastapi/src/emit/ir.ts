@@ -111,6 +111,31 @@ export function scopeMap(pipeline: PipelineShape, ir: IR): Map<StepShape, StepBi
         inScope.push({ name: step.as, type: { kind: 'primitive', name: 'string', list: true } });
         continue;
       }
+      if (step.kind === 'route') {
+        // Exactly one arm runs, so a name is only in scope afterwards when *every* arm
+        // binds it -- including the `default` arm, which is an arm like any other and can
+        // be the one that ran. `as` is the label that was answered, so it is text.
+        const arms = [
+          ...Object.values(step.on),
+          ...(step.default === undefined ? [] : [step.default]),
+        ];
+        const armScopes = arms.map((arm) => walk(arm, inScope));
+        const first = armScopes[0];
+        if (first !== undefined) {
+          for (const entry of first.slice(inScope.length)) {
+            const everywhere = armScopes
+              .slice(1)
+              .every((scope) =>
+                scope.slice(inScope.length).some((candidate) => candidate.name === entry.name),
+              );
+            if (everywhere) inScope.push({ name: entry.name, type: entry.type });
+          }
+        }
+        if (step.as !== undefined) {
+          inScope.push({ name: step.as, type: { kind: 'primitive', name: 'string', list: false } });
+        }
+        continue;
+      }
       const bound = bindingOf(step);
       if (bound !== undefined) inScope.push({ name: bound, type: bindingType(step, ir) });
     }

@@ -95,6 +95,7 @@ describe('spec version', () => {
       'reduce',
       'rerank',
       'retrieve',
+      'route',
       'tool',
     ]);
     // The phase-exit criterion itself: nothing is pending. L7b gave the last entry,
@@ -273,6 +274,30 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
   'retriever-without-store.spec.yaml': {
     code: DIAGNOSTIC_CODES.schemaViolation,
     path: ['retrievers', 'knowledge', 'store'],
+  },
+  'route-below-version.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['pipelines', 'handle', 'steps', 0],
+  },
+  'route-dead-default.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['pipelines', 'handle', 'steps', 0, 'route', 'default'],
+  },
+  'route-decision-not-choice.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['pipelines', 'handle', 'steps', 0, 'route', 'decision'],
+  },
+  'route-decision-undeclared.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['pipelines', 'handle', 'steps', 0, 'route', 'decision'],
+  },
+  'route-on-unknown-label.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['pipelines', 'handle', 'steps', 0, 'route', 'on', 'refunds'],
+  },
+  'route-unmapped-label.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['pipelines', 'handle', 'steps', 0, 'route'],
   },
   'step-with-two-kinds.spec.yaml': {
     code: DIAGNOSTIC_CODES.unsupportedStep,

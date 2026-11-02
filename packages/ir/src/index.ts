@@ -219,6 +219,7 @@ export type {
   RerankStep,
   RetrieverShape,
   RetrieveStep,
+  RouteStep,
   RuntimeShape,
   SideEffects,
   StepInput,

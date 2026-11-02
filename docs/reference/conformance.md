@@ -1,10 +1,10 @@
 ---
-description: "The language-neutral conformance corpus both runtimes must reproduce: 73 cases across 40 operations."
+description: "The language-neutral conformance corpus both runtimes must reproduce: 77 cases across 41 operations."
 ---
 
 # Conformance
 
-The conformance corpus is a set of language-neutral behaviours that both runtimes must reproduce. It currently holds **73 cases** across **40 operations**. The list below is generated from `conformance/corpus.json`.
+The conformance corpus is a set of language-neutral behaviours that both runtimes must reproduce. It currently holds **77 cases** across **41 operations**. The list below is generated from `conformance/corpus.json`.
 
 A case names a behaviour, not an implementation: `id` identifies it, `op` selects the operation, `input` is the fixture and `expect` is the observable outcome. Neither runtime is named anywhere in a case, so each runner maps the same fixture onto its own types. Each case is a test in both `runtimes/python` and `runtimes/typescript`; a case that applies to only one runtime carries a `runtimes` scope and a `reason`, and the other runner reports it as `scoped-out` rather than skipping it silently.
 
@@ -49,6 +49,7 @@ A case names a behaviour, not an implementation: `id` identifies it, `op` select
 | [`steps.reduce`](#steps-reduce) | 1 |
 | [`steps.rerank`](#steps-rerank) | 1 |
 | [`steps.retrieve`](#steps-retrieve) | 1 |
+| [`steps.route`](#steps-route) | 4 |
 | [`steps.tool`](#steps-tool) | 1 |
 | [`structured.parse`](#structured-parse) | 2 |
 | [`structured.repair`](#structured-repair) | 2 |
@@ -231,6 +232,13 @@ A case names a behaviour, not an implementation: `id` identifies it, `op` select
 ## `steps.retrieve` {#steps-retrieve}
 
 - `steps-retrieve-binds-the-result-it-was-asked-for` — A retrieve step searches with the query and ceiling it was given and binds the whole result it got back.
+
+## `steps.route` {#steps-route}
+
+- `steps-route-runs-the-arm-the-decision-chose-and-binds-the-label` — A route asks its decision one choice over the definition's criteria, runs the arm the answer selected, and binds the answered label under `as`.
+- `steps-route-falls-through-to-the-default-for-an-unmapped-label` — An answer no arm maps runs the default arm, and `as` still binds the label that was actually answered rather than the arm's name.
+- `steps-route-refuses-an-unmapped-label-with-no-default` — An answer no arm maps fails the run when there is no default, rather than silently running nothing.
+- `steps-route-refuses-an-answer-with-no-choice` — An answer that carries no choice fails the run, because a route does not guess which arm was meant.
 
 ## `steps.tool` {#steps-tool}
 

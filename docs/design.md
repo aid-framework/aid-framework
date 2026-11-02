@@ -358,7 +358,7 @@ Any spec that declares a retriever must carry at least one eval with a `retrieva
 
 #### The wiring steps, as landed (L5c)
 
-`rerank`, `guard` and `agent` are leaves: they compose with `branch`/`parallel`/`map`/`reduce` but never
+`rerank`, `guard` and `agent` are leaves: they compose with `branch`/`route`/`parallel`/`map`/`reduce` but never
 open a scope, so `MAX_STEP_DEPTH` does not apply to them. Each is wiring onto a runtime surface that
 already shipped, and each one narrows the design's shape where the shipped interface is narrower:
 
@@ -555,6 +555,7 @@ type StepShape =
   | { kind: 'agent';    agent: string; text: string; as: string }
   | { kind: 'tool';     tool: string; input: unknown; as: string }
   | { kind: 'branch';   when: PolicyExpr; then: StepShape[]; else?: StepShape[] }
+  | { kind: 'route';    decision: string; input: string; on: Record<string, StepShape[]>; default?: StepShape[]; as?: string }
   | { kind: 'parallel'; branches: StepShape[][] }
   | { kind: 'map';      over: string; step: StepShape }
   | { kind: 'reduce';   over: string; prompt: string; as: string }
@@ -1146,9 +1147,11 @@ already implement — the suite adds no runtime features:
 - **structured-output repair** — the repair loop's prompts and its terminal error.
 - **retrieval ranking** — BM25, lexical rerank, and RRF scores against a fixed vector fixture.
 - **eval-gate math** — `z_critical`, the baseline comparison, and the four rationale branches.
-- **composite steps** — the arm a `branch` selects from a principal, the ceiling a `parallel`
-  observes and the input-order merge it keeps when arms finish in reverse, the per-item bindings
-  a `map` produces, the collection order a `reduce` preserves, and the depth bound all four share.
+- **composite steps** — the arm a `branch` selects from a principal, the arm a `route` selects
+  from a decision's answer (and its refusal to fall through when no arm maps), the ceiling a
+  `parallel` observes and the input-order merge it keeps when arms finish in reverse, the
+  per-item bindings a `map` produces, the collection order a `reduce` preserves, and the depth
+  bound all five share.
 - **leaf steps** — the event an `emit` projects and the fields it reads them from, the prompt a
   `generate` renders before it binds a completion, the query a `retrieve` asks with its ceiling and
   the exact result it binds, and the arguments a `tool` executes with the parsed content it binds.

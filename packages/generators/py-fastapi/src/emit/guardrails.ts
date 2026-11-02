@@ -105,14 +105,14 @@ function referencedDecisions(ir: IR): DecisionShape[] {
 }
 
 /** The labels a `choice` decision offers; a record names each label's intent. */
-function decisionLabels(decision: DecisionShape): string[] {
+export function decisionLabels(decision: DecisionShape): string[] {
   const criteria = decision.criteria;
   if (criteria === undefined) return [];
   return Array.isArray(criteria) ? [...criteria] : Object.keys(criteria);
 }
 
 /** The `DecisionDefinition(...)` literal for one decision a guardrail asks. */
-function decisionDefinition(decision: DecisionShape): string {
+export function decisionDefinition(decision: DecisionShape): string {
   const arguments_ = [
     `id=${pythonString(decision.id)}`,
     `model=${pythonString(decision.model)}`,

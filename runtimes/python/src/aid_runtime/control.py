@@ -1,4 +1,4 @@
-"""Composite pipeline steps: ``branch``, ``parallel``, ``map`` and ``reduce``.
+"""Composite pipeline steps: ``branch``, ``route``, ``parallel``, ``map`` and ``reduce``.
 
 :class:`~aid_runtime.pipeline.Pipeline` is a sequential reducer, and it stays one.
 Each factory here returns an ordinary :data:`~aid_runtime.pipeline.Step`, so a
@@ -27,12 +27,17 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from aid_runtime.agents.policy import Principal, evaluate_policy, policy_source
 from aid_runtime.concurrency import ConcurrencyLimiter, holds_slot
+from aid_runtime.decisions import DecisionClient, DecisionQuestion
 from aid_runtime.errors import PipelineError
 from aid_runtime.pipeline import STEPS_KEY, Pipeline, PipelineContext
+
+if TYPE_CHECKING:
+    from aid_runtime.agents.guardrails import DecisionAsker
+    from aid_runtime.agents.ir import DecisionDefinition
 
 __all__ = [
     "DEPTH_KEY",
@@ -47,6 +52,7 @@ __all__ = [
     "map_step",
     "parallel",
     "reduce_step",
+    "route",
 ]
 
 #: Deepest composite nesting a pipeline may declare.
@@ -206,6 +212,90 @@ def branch(
         return _escape(context.with_values(**added))
 
     return _named(_branch, name)
+
+
+def route(
+    *,
+    decision: str,
+    state: str,
+    on: Mapping[str, Pipeline],
+    otherwise: Pipeline | None = None,
+    as_: str | None = None,
+    decisions: Mapping[str, DecisionDefinition] | None = None,
+    client_factory: Callable[[], DecisionAsker] | None = None,
+    max_depth: int = MAX_STEP_DEPTH,
+    name: str | None = None,
+) -> CompositeStep:
+    """Ask one ``choice`` decision which arm to run, then run that arm.
+
+    This is the one composite that asks a model a question, and it is the difference
+    between a ``branch`` and a ``route``: a branch's predicate is a policy over the
+    caller, so it can only answer who is asking. A route's question is asked about
+    ``state`` -- the rendered text of what the pipeline has produced so far -- so it
+    can answer what the request *means*.
+
+    Every way the question can fail fails the run rather than picking an arm:
+    a decision with no definition in this runtime, a client that raises, an answer
+    with no choice, and a label no arm maps. A default is deliberately not a fourth
+    outcome; it is the arm an *unexpected* label runs, and the spec gate refuses a
+    default that a mapped set already covers.
+
+    ``as_`` binds the label that was answered -- including one that fell through to
+    ``otherwise`` -- so a later step can name the arm that ran rather than re-deriving
+    it. The client is built on first use, not when the pipeline is assembled: an app
+    with no TypeSafe key still boots as long as no request reaches a route.
+    """
+    declared = dict(decisions or {})
+    factory = client_factory or DecisionClient
+    client: DecisionAsker | None = None
+
+    async def _route(context: PipelineContext) -> PipelineContext:
+        nonlocal client
+        nested = _enter(context, max_depth, f"route ({decision})")
+        definition = declared.get(decision)
+        if definition is None:
+            raise PipelineError(
+                f"route needs a definition for decision {decision!r}; the generated app "
+                f"carries one for every decision its routes name"
+            )
+        if client is None:
+            client = factory()
+        question = DecisionQuestion(
+            type="choice",
+            instructions=definition.instructions,
+            criteria=definition.criteria,
+        )
+        try:
+            response = await client.decide(
+                model=definition.model,
+                state=state,
+                questions={decision: question},
+            )
+        except Exception as error:
+            raise PipelineError(
+                f"route decision {decision!r} could not answer: {error}"
+            ) from error
+        answer = response.answers.get(decision)
+        label = None if answer is None else answer.choice
+        if label is None:
+            raise PipelineError(
+                f"route decision {decision!r} returned no choice, so no arm can be "
+                f"selected; a route does not guess which one was meant"
+            )
+        chosen = on.get(label)
+        if chosen is None:
+            if otherwise is None:
+                raise PipelineError(
+                    f"route decision {decision!r} answered {label!r}, which no arm maps "
+                    f"and no `default` catches"
+                )
+            chosen = otherwise
+        _, added = await _run_body(chosen, nested)
+        if as_ is not None:
+            added[as_] = label
+        return _escape(context.with_values(**added))
+
+    return _named(_route, name)
 
 
 def parallel(

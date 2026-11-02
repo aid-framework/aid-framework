@@ -145,6 +145,15 @@ function normalizeStep(step: StepShape): StepShape {
     return { ...step, branches: step.branches.map((arm) => arm.map(normalizeStep)) };
   }
   if (step.kind === 'map') return { ...step, step: normalizeStep(step.step) };
+  if (step.kind === 'route') {
+    const on: Record<string, StepShape[]> = {};
+    for (const [label, arm] of Object.entries(step.on)) on[label] = arm.map(normalizeStep);
+    return {
+      ...step,
+      on,
+      ...(step.default === undefined ? {} : { default: step.default.map(normalizeStep) }),
+    };
+  }
   return { ...step, input: step.input ?? {} };
 }
 

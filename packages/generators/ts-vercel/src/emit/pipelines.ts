@@ -24,6 +24,7 @@ import type {
   PipelineShape,
   ReduceStep,
   RerankStep,
+  RouteStep,
   StepInput,
   StepInputValue,
   StepShape,
@@ -37,6 +38,7 @@ import { type EmittedFile, generated, paths, pipelinePath, routePath } from './f
 import { stageTable, usesStage } from './guardrails.js';
 import { requestTypeName } from './schemas.js';
 import {
+  arrayLiteral,
   type Entry,
   exportStatement,
   fits,
@@ -273,12 +275,30 @@ function* walkSteps(
       yield* walkSteps(ir, [step.step], [...path, 'step']);
     } else if (step.kind === 'reduce') {
       yield* walkSteps(ir, [reduceBody(ir, step)], [...path, 'item']);
+    } else if (step.kind === 'route') {
+      // A label is arbitrary text, and `className` folds it into the same identifier
+      // space as every other segment, so a label like `off-topic` would sit beside a
+      // `off_topic` arm under one name. Position cannot collide, and sorting the labels
+      // first keeps it a function of the IR.
+      for (const [index, label] of Object.keys(step.on).sort().entries()) {
+        yield* walkSteps(ir, step.on[label] as readonly StepShape[], [
+          ...path,
+          'on',
+          String(index),
+        ]);
+      }
+      if (step.default !== undefined) {
+        yield* walkSteps(ir, step.default, [...path, 'default']);
+      }
     }
   }
 }
 
 /** The binding the runtime's `reduceStep` collects; the body may not choose its own. */
 const REDUCED_BINDING = 'reduced';
+
+/** The table of decision definitions every `route` in a pipeline module reads. */
+const DECISIONS_CONSTANT = 'DECISIONS';
 
 /** The context value `mapStep` and `reduceStep` seed per iteration. */
 const ITERATION_ITEM = 'item';
@@ -339,6 +359,8 @@ function bindingType(
       return { name: step.as, type: 'Array<Record<string, unknown>>' };
     case 'reduce':
       return { name: step.as, type: 'unknown[]' };
+    case 'route':
+      return step.as === undefined ? undefined : { name: step.as, type: 'string' };
     default:
       return undefined;
   }
@@ -421,15 +443,16 @@ function leafModule(
   }
 }
 
-/** The four step kinds whose code is a wrapper over a runtime helper. */
+/** The five step kinds whose code is a wrapper over a runtime helper. */
 function isCompositeKind(
   step: StepShape,
-): step is BranchStep | ParallelStep | MapStep | ReduceStep {
+): step is BranchStep | ParallelStep | MapStep | ReduceStep | RouteStep {
   return (
     step.kind === 'branch' ||
     step.kind === 'parallel' ||
     step.kind === 'map' ||
-    step.kind === 'reduce'
+    step.kind === 'reduce' ||
+    step.kind === 'route'
   );
 }
 
@@ -472,7 +495,7 @@ function branchList(arms: readonly (readonly EmittedStep[])[], indent: string): 
 function compositeStep(
   ir: IR,
   pipeline: PipelineShape,
-  step: BranchStep | ParallelStep | MapStep | ReduceStep,
+  step: BranchStep | ParallelStep | MapStep | ReduceStep | RouteStep,
   path: StepPath,
   contextType: string,
 ): EmittedStep {
@@ -524,6 +547,48 @@ function compositeStep(
     doc =
       `Run the body once per item of \`${step.over}\`, under the concurrency cap, and ` +
       `bind the results in item order as \`${step.as}\`.`;
+  } else if (step.kind === 'route') {
+    const labels = Object.keys(step.on).sort();
+    // The arm's name is its position among the sorted labels, not the label itself: a
+    // label is arbitrary text and `className` could fold two of them onto one identifier.
+    const arms = labels.map((label, index) => ({
+      label,
+      steps: emitSteps(ir, pipeline, step.on[label] as readonly StepShape[], contextType, [
+        ...path,
+        'on',
+        String(index),
+      ]),
+    }));
+    const otherwise =
+      step.default === undefined
+        ? []
+        : emitSteps(ir, pipeline, step.default, contextType, [...path, 'default']);
+    children = [...arms.flatMap((arm) => arm.steps), ...otherwise];
+    // `state` is a template over earlier bindings, so it reads them back through the
+    // context exactly as a guard or rerank template does. The route asks about rendered
+    // text, not about the caller, which is what separates it from a `branch`.
+    const types = bindingTypes(ir, pipeline);
+    entries = [
+      ['decision', literal(step.decision)],
+      ['state', contextTemplate(step.input, types)],
+      [
+        'on',
+        objectLiteral(
+          arms.map((arm) => [literal(arm.label), pipelineOf(arm.steps, '    ')] as const),
+          '    ',
+        ),
+      ],
+      ...(otherwise.length === 0
+        ? []
+        : [['otherwise', pipelineOf(otherwise, '    ')] as const satisfies Entry]),
+      ...(step.as === undefined ? [] : [['as', literal(step.as)] as const satisfies Entry]),
+      ['decisions', DECISIONS_CONSTANT],
+      ...common,
+    ];
+    doc =
+      `Ask the \`${step.decision}\` decision which arm to run. Every label the decision ` +
+      'can answer has an arm, so a missing arm is refused at generation time rather than ' +
+      'turning into a run that cannot finish.';
   } else {
     const body = reduceBody(ir, step);
     const bodyPath = [...path, 'item'];
@@ -936,6 +1001,7 @@ function compositeHelpers(steps: readonly StepShape[]): string[] {
     ...(kinds.has('parallel') ? ['parallel'] : []),
     ...(kinds.has('map') ? ['mapStep'] : []),
     ...(kinds.has('reduce') ? ['reduceStep'] : []),
+    ...(kinds.has('route') ? ['route'] : []),
   ];
 }
 
@@ -949,6 +1015,7 @@ export function emitPipelineModule(ir: IR, pipeline: PipelineShape): EmittedFile
   const hasRerank = all.some((step) => step.kind === 'rerank');
   const hasGuardStep = all.some((step) => step.kind === 'guard');
   const hasAgentStep = all.some((step) => step.kind === 'agent');
+  const hasRoute = all.some((step) => step.kind === 'route');
   // The routes check the whole stage table, so a route that generates at all runs the
   // `input` and `output` declarations; a `tool` step runs the `tool-call` ones.
   const inlineInput = hasStructured && usesStage(ir, 'input');
@@ -1002,6 +1069,7 @@ export function emitPipelineModule(ir: IR, pipeline: PipelineShape): EmittedFile
     importStatement('@aid-framework/runtime', [
       ...sortedNames([...new Set(runtimeValues)]).map((name) => ({ name, type: false })),
       ...(usesRetrieved && !hasRerank ? [{ name: 'RetrievalResult', type: true }] : []),
+      ...(hasRoute ? [{ name: 'RouteDecision', type: true }] : []),
       { name: 'Step', type: true },
     ]),
     ...relativeImports.map((entry) => importStatement(entry.specifier, entry.names)),
@@ -1011,6 +1079,7 @@ export function emitPipelineModule(ir: IR, pipeline: PipelineShape): EmittedFile
     .join('\n');
 
   const outputDeclaration = outputConstants(ir, pipeline);
+  const decisionDeclaration = decisionConstants(ir, pipeline);
 
   const factory = [
     '/** The declared pipeline, in step order. */',
@@ -1026,6 +1095,7 @@ export function emitPipelineModule(ir: IR, pipeline: PipelineShape): EmittedFile
     moduleText(
       header,
       outputDeclaration,
+      decisionDeclaration,
       ...steps.map((step) => step.text).filter((text) => text.length > 0),
       factory,
     ),
@@ -1053,6 +1123,59 @@ function schemaImports(ir: IR, pipeline: PipelineShape): string {
     '../schemas.js',
     sortedNames(names).map((name) => ({ name, type: false })),
   );
+}
+
+/**
+ * The decision definitions the routes in this pipeline read, as one table.
+ *
+ * The runtime looks a route's decision up by id and refuses to guess when it is absent,
+ * so the definitions have to reach the generated app somehow. They are inlined rather
+ * than fetched because a decision is part of the spec: a run that needed a network round
+ * trip to learn its own instructions could not boot offline.
+ */
+function decisionConstants(ir: IR, pipeline: PipelineShape): string {
+  const ids = [
+    ...new Set(
+      [...walkSteps(ir, pipeline.steps)]
+        .map(({ step }) => step)
+        .filter((step): step is RouteStep => step.kind === 'route')
+        .map((step) => step.decision),
+    ),
+  ].sort();
+  if (ids.length === 0) return '';
+  const entries = ids.map((id) => {
+    const decision = ir.decisions.find((candidate) => candidate.id === id);
+    if (decision === undefined) return [literal(id), '{}'] as const;
+    const criteria = decision.criteria;
+    const labels =
+      criteria === undefined
+        ? undefined
+        : Array.isArray(criteria)
+          ? [...criteria]
+          : Object.keys(criteria);
+    return [
+      literal(id),
+      objectLiteral(
+        [
+          ['model', literal(decision.model)],
+          ['instructions', literal(decision.instructions)],
+          ...(labels === undefined
+            ? []
+            : [
+                [
+                  'criteria',
+                  arrayLiteral(
+                    labels.map((label) => literal(label)),
+                    '  ',
+                  ),
+                ] as const,
+              ]),
+        ],
+        '  ',
+      ),
+    ] as const;
+  });
+  return `const ${DECISIONS_CONSTANT}: Record<string, RouteDecision> = ${objectLiteral(entries, '')};`;
 }
 
 function outputConstants(ir: IR, pipeline: PipelineShape): string {

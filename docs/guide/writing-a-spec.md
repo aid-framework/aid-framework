@@ -348,7 +348,7 @@ The trigger binds the request body as `event`. Each step binds its result with `
 later step reads it with <code v-pre>{{ name }}</code>. A binding read before it is written is
 `ir/binding-forward-reference`; two steps binding one name is `ir/binding-duplicate`.
 
-The eleven step kinds:
+The twelve step kinds:
 
 | Kind | What it does |
 | --- | --- |
@@ -360,13 +360,59 @@ The eleven step kinds:
 | `agent` | Run an agent once over a text and bind its answer. |
 | `emit` | Build the HTTP response from bindings. **Must be last.** |
 | `branch` | Choose a step list from the caller's `Principal` - authorization, never data. |
+| `route` | Choose a step list from a decision's answer - data-driven control flow (0.9). |
 | `parallel` | Run arms concurrently under the deployment's single concurrency cap. |
 | `map` | Apply one step to every item of a bound list and bind the ordered results. |
 | `reduce` | Apply one prompt to every item of a bound list and bind the ordered results. |
 
 `branch` is worth reading twice: its `when` is a policy expression over the authenticated
-caller and the grammar has no operand for a context value. Data-driven control flow is `map`
-and `reduce`.
+caller and the grammar has no operand for a context value. Data-driven control flow is
+`route`, `map`, and `reduce`.
+
+### Routing on a decision (0.9)
+
+```yaml
+decisions:
+  topic:
+    provider: typesafe
+    model: jev-1.14.0
+    type: choice
+    instructions: Which part of the product is this question about
+    criteria:
+      product: A question about features
+      billing: A question about an invoice
+
+steps:
+  - route:
+      decision: topic
+      input: "{{ event.subject }}"
+      on:
+        product:
+          - generate:
+              prompt: product_answer
+              input:
+                subject: "{{ event.subject }}"
+              as: reply
+        billing:
+          - generate:
+              prompt: billing_answer
+              input:
+                subject: "{{ event.subject }}"
+              as: reply
+      default:
+        - generate:
+            prompt: fallback_answer
+            input:
+              subject: "{{ event.subject }}"
+            as: reply
+      as: path
+```
+
+`decision` must name a `type: choice` decision. Every `on` key must be one of that decision's
+criteria, and every criterion must be mapped unless `default` catches the rest - a `default`
+alongside a complete `on` table is refused, because the arm could never run. `input` is a
+template over bindings written earlier, and `as` binds the answered label so a later step can
+read the path it took, including a `default` fallthrough.
 
 A pipeline served over HTTP needs a final `emit`, and `validate` does not check for its
 absence - `gen` fails with an internal error instead. See

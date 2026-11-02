@@ -34,12 +34,12 @@ The emitted infrastructure is OpenTofu. A plan targets one cloud at a time, beca
 
 ## Spec language
 
-The current spec language version is `0.8`.
+The current spec language version is `0.9`.
 A construct that needs a later version is reported as `spec/not-supported`, naming the version it needs, instead of being ignored.
 
 ## Conformance
 
-The corpus holds 73 cases over 40 operations, run against every target. A case that a target cannot satisfy is a declared capability boundary, not a skipped test.
+The corpus holds 77 cases over 41 operations, run against every target. A case that a target cannot satisfy is a declared capability boundary, not a skipped test.
 
 ---
 

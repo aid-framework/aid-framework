@@ -113,7 +113,7 @@ describe('wiring surface, spec to IR to gates', () => {
   it('treats all three as leaves rather than composites', () => {
     // `COMPOSITE_STEP_KINDS` bounds recursion, and every one of these has no body to
     // recurse into. The pinned list is what makes adding one a visible change.
-    expect(COMPOSITE_STEP_KINDS).toEqual(['branch', 'parallel', 'map', 'reduce']);
+    expect(COMPOSITE_STEP_KINDS).toEqual(['branch', 'parallel', 'map', 'reduce', 'route']);
 
     const { ir } = buildFixture(SPEC);
     const steps = byId(ir.pipelines, 'answer_question').steps;

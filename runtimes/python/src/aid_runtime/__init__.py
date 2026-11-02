@@ -60,6 +60,7 @@ from aid_runtime.control import (
     map_step,
     parallel,
     reduce_step,
+    route,
 )
 from aid_runtime.cost import (
     Budget,
@@ -294,7 +295,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.94"
+__version__ = "0.1.95"
 
 __all__ = [
     "ANTHROPIC_VERSION",
@@ -539,6 +540,7 @@ __all__ = [
     "resolve_uri",
     "retrieval_metrics",
     "retrieve_step",
+    "route",
     "rrf_score",
     "run_evaluation",
     "run_structured",

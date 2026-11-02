@@ -558,6 +558,31 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "description": "Asks one `choice` decision which arm to run and runs that arm. Every label the decision can answer is mapped unless `default` catches the rest.",
+          "required": ["kind", "decision", "input", "on"],
+          "properties": {
+            "kind": { "const": "route" },
+            "decision": { "$ref": "#/$defs/identifier" },
+            "input": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Template over earlier bindings; the rendered text is what the decision classifies."
+            },
+            "on": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": { "$ref": "#/$defs/stepList" }
+            },
+            "default": { "$ref": "#/$defs/stepList" },
+            "as": {
+              "$ref": "#/$defs/identifier",
+              "description": "Binds the label that was answered, including one that fell through to `default`."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "description": "Reorders the retrieval result bound by `over` against `query`. A leaf: it nests no steps.",
           "required": ["kind", "over", "query", "model", "topN", "as"],
           "properties": {

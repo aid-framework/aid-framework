@@ -811,6 +811,14 @@ function checkStepTemplates(step: StepShape, path: string, problems: PlanProblem
     checkStepTemplates(step.step, `${path}.map.step`, problems);
     return;
   }
+  if (step.kind === 'route') {
+    for (const { label, arm } of routeArms(step)) {
+      for (const [index, nested] of arm.entries()) {
+        checkStepTemplates(nested, `${path}.route.${label}[${index}]`, problems);
+      }
+    }
+    return;
+  }
   if (
     step.kind === 'emit' ||
     step.kind === 'retrieve' ||
@@ -1526,6 +1534,31 @@ export function requestPlan(ir: IR, pipeline: PipelineShape): RequestPlan {
         bindings.push({ name: step.as, type: undefined });
         return;
       }
+      if (step.kind === 'route') {
+        // A route's state is text, so an `event.<field>` placeholder in it fixes that
+        // field as a string, exactly as a retrieval query does.
+        for (const name of templatePlaceholders(step.input)) {
+          const [root, field, ...rest] = name.split('.');
+          if (root !== 'event' || field === undefined || rest.length > 0) continue;
+          add(field, { kind: 'primitive', name: 'string', list: false }, `${path}.input`);
+        }
+        const scopes = routeArms(step).map(({ label, arm }) => {
+          const scope: StepBinding[] = [...bindings];
+          walkSteps(arm, `${path}.route.${label}`, scope);
+          return scope;
+        });
+        const first = scopes[0];
+        if (first !== undefined) {
+          for (const entry of first.slice(bindings.length)) {
+            const everywhere = scopes.every((scope) =>
+              scope.slice(bindings.length).some((candidate) => candidate.name === entry.name),
+            );
+            if (everywhere) bindings.push({ name: entry.name, type: entry.type });
+          }
+        }
+        if (step.as !== undefined) bindings.push({ name: step.as, type: undefined });
+        return;
+      }
       if (step.kind === 'emit') {
         const target = types.get(step.event);
         if (target === undefined) return;
@@ -1627,6 +1660,16 @@ export function bindingOf(step: StepShape): string | undefined {
     : step.as;
 }
 
+/** The arms a `route` can take, in declaration order, with `default` last. */
+export function routeArms(
+  step: Extract<StepShape, { kind: 'route' }>,
+): { label: string; arm: readonly StepShape[] }[] {
+  return [
+    ...Object.entries(step.on).map(([label, arm]) => ({ label, arm })),
+    ...(step.default === undefined ? [] : [{ label: 'default', arm: step.default }]),
+  ];
+}
+
 /** The names a `map` iteration exposes to its body. */
 export const ITERATION_ITEM = 'item';
 export const ITERATION_INDEX = 'index';
@@ -1638,6 +1681,7 @@ export function checkPipelines(ir: IR): PlanProblem[] {
   const models = new Set(ir.models.map((model) => model.id));
   const agents = new Map((ir.agents ?? []).map((agent) => [agent.id, agent]));
   const guardrails = new Map((ir.guardrails ?? []).map((guardrail) => [guardrail.id, guardrail]));
+  const decisions = new Map((ir.decisions ?? []).map((decision) => [decision.id, decision]));
   const batchPipelines = new Set(
     ir.deployments
       .filter((deployment) => deployment.target === 'batch')
@@ -1892,6 +1936,54 @@ export function checkPipelines(ir: IR): PlanProblem[] {
             );
           }
           bindings.push({ name: step.as, type: undefined });
+          return;
+        }
+        if (step.kind === 'route') {
+          const decision = decisions.get(step.decision);
+          if (decision === undefined) {
+            problems.push(
+              problem(
+                'unresolved-reference',
+                `${path}.decision`,
+                `decision '${step.decision}' is not declared`,
+              ),
+            );
+          } else if (decision.type !== 'choice') {
+            // A `score` answer is a position on a rubric and a `noul` answer a probability;
+            // neither names one of the arms, so neither can select one.
+            problems.push(
+              problem(
+                'unsupported-param',
+                `${path}.decision`,
+                `decision '${decision.id}' is a '${decision.type}' question, and a route runs ` +
+                  "the arm a 'choice' answer names; only a choice answer carries a label",
+              ),
+            );
+          }
+          checkTextTemplate(step.input, 'input', 'a route input', path, bindings, types, problems);
+          const scopes = routeArms(step).map(({ label, arm }) => {
+            const scope: StepBinding[] = [...bindings];
+            walkSteps(arm, `${path}.route.${label}`, scope);
+            return scope;
+          });
+          // Exactly one arm runs, so a name only some arms bind is not a binding of the
+          // route at all: it would resolve or raise depending on which arm answered.
+          const first = scopes[0];
+          if (first !== undefined) {
+            for (const entry of first.slice(bindings.length)) {
+              const everywhere = scopes.every((scope) =>
+                scope.slice(bindings.length).some((candidate) => candidate.name === entry.name),
+              );
+              if (everywhere) bindings.push({ name: entry.name, type: entry.type });
+            }
+          }
+          // The chosen label is the one value a route can hand on; it is text by definition.
+          if (step.as !== undefined) {
+            bindings.push({
+              name: step.as,
+              type: { kind: 'primitive', name: 'string', list: false },
+            });
+          }
           return;
         }
         if (step.kind === 'emit') {

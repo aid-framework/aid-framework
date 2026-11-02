@@ -62,8 +62,8 @@ the IR, the CLI surface, and the roadmap.
 ## What ships today
 
 - **Targets:** `py-fastapi` (Python) and `ts-vercel` (TypeScript).
-- **Pipeline step kinds:** `generate`, `retrieve`, `tool`, `emit`, `branch`, `parallel`, `map`, `reduce`, `rerank`, `guard`, and `agent` — `DEFERRED_STEP_KINDS` is empty, so none is deferred.
-- **Conformance corpus:** 73 language-neutral cases run against both the Python and TypeScript runtimes.
+- **Pipeline step kinds:** `generate`, `retrieve`, `tool`, `emit`, `branch`, `route`, `parallel`, `map`, `reduce`, `rerank`, `guard`, and `agent` — `DEFERRED_STEP_KINDS` is empty, so none is deferred.
+- **Conformance corpus:** 77 language-neutral cases run against both the Python and TypeScript runtimes.
 
 ## Repository layout
 

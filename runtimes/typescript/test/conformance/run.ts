@@ -32,12 +32,15 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type {
   Capability,
+  DecisionAsker,
+  DecisionResponse,
   DistanceMetric,
   GateResult,
   GuardrailDefinition,
   GuardrailVerdict,
   Provider,
   RankedId,
+  RouteDecision,
   Step,
   StructuredOutput,
   ToolParameters,
@@ -114,6 +117,7 @@ import {
   reduceStep,
   rerankerFor,
   retrieveStep,
+  route,
   runStructured,
   ScriptedTurn,
   STEPS_KEY,
@@ -890,6 +894,88 @@ async function stepsReduce(input: Json): Promise<Json> {
 }
 
 /**
+ * One `route`: the question it asked, the arm the answer chose, and what ran.
+ *
+ * The asker is a double that records the question and answers the case's `chosen` label,
+ * so a verdict shows both halves of the contract: that the route asked a `choice` over
+ * the definition's criteria with the rendered state, and that it ran exactly one arm and
+ * bound the label it was answered with. A case whose `chosen` label no arm maps and that
+ * has no `default` is how "the run fails rather than guessing" is observed.
+ */
+async function stepsRoute(input: Json): Promise<Json> {
+  const entry = asRecord(input.decision, 'decision');
+  const decision = asString(entry.id, 'decision.id');
+  const asked: Json[] = [];
+  const ran: string[] = [];
+  const chosen =
+    input.chosen === undefined || input.chosen === null ? undefined : String(input.chosen);
+
+  const asker: DecisionAsker = {
+    decide: async (options): Promise<DecisionResponse> => {
+      const question = options.questions[decision];
+      if (question === undefined) throw new TypeError(`no question named ${decision}`);
+      asked.push({
+        type: question.type,
+        instructions: question.instructions,
+        criteria: [...question.criteria],
+        model: options.model,
+        state: options.state,
+      });
+      return {
+        model: options.model,
+        answers: {
+          [decision]:
+            chosen === undefined ? { type: 'choice' } : { type: 'choice', choice: chosen },
+        },
+      };
+    },
+  };
+
+  const armOf = (which: string, binds: Json): Pipeline => {
+    const body = namedStep(which, (current) => {
+      ran.push(which);
+      return current.withValues({ ...binds });
+    });
+    return Pipeline.of(body);
+  };
+
+  const binds = asRecord(input.binds ?? {}, 'binds');
+  const on: Record<string, Pipeline> = {};
+  for (const label of asStrings(input.on, 'on')) {
+    on[label] = armOf(label, asRecord(binds[label] ?? {}, `binds.${label}`));
+  }
+  const definition: RouteDecision = {
+    model: asString(entry.model, 'decision.model'),
+    instructions: asString(entry.instructions, 'decision.instructions'),
+    criteria: asStrings(entry.criteria, 'decision.criteria'),
+  };
+  const as = input.as === undefined || input.as === null ? undefined : asString(input.as, 'as');
+  const composite = route({
+    decision,
+    state: asString(input.state, 'state'),
+    on,
+    ...(input.default === undefined
+      ? {}
+      : { otherwise: armOf('otherwise', asRecord(binds.default ?? {}, 'binds.default')) }),
+    ...(as === undefined ? {} : { as }),
+    decisions: { [decision]: definition },
+    clientFactory: () => asker,
+  });
+  try {
+    const result = await Pipeline.of(composite).run(seeded(input, new ConcurrencyLimiter(1)));
+    return { asked, ran, refused: false, bound: bound(result, input) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      asked,
+      ran,
+      refused: true,
+      reason: message.includes('no arm maps') ? 'unmapped' : 'other',
+    };
+  }
+}
+
+/**
  * How deep a nest a runtime allows before it refuses the next level.
  *
  * The nest is one `parallel` per level and the leaf is not a composite at all, so the
@@ -1663,6 +1749,7 @@ const OPS: Readonly<Record<string, Handler>> = {
   'steps.parallel': stepsParallel,
   'steps.map': stepsMap,
   'steps.reduce': stepsReduce,
+  'steps.route': stepsRoute,
   'steps.depth': stepsDepth,
   'steps.rerank': stepsRerank,
   'steps.guard': stepsGuard,

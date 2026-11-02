@@ -14,7 +14,7 @@ Spec schema title: *AID Framework spec v0.6*.
 
 | Key | Type | Description |
 | --- | --- | --- |
-| `specVersion` | `0.1`, `0.2`, `0.3`, `0.4`, `0.5`, `0.6`, `0.7`, `0.8` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). 0.8 adds the `decision` metric kind, which scores an eval prediction with a `score` decision. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
+| `specVersion` | `0.1`, `0.2`, `0.3`, `0.4`, `0.5`, `0.6`, `0.7`, `0.8`, `0.9` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). 0.8 adds the `decision` metric kind, which scores an eval prediction with a `score` decision. 0.9 adds the `route` pipeline step, which runs the arm a `choice` decision's answer names. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
 | `project` | `project` | — |
 | `types` | map of `typeDef` | Named structured types referenced by prompts (structured output) and tools (input/output). |
 | `models` | map of `model` | Model aliases. The alias is what the rest of the spec refers to; the vendor id is pinned here and only here. |
@@ -212,7 +212,7 @@ Takes the value `"decision"` and no other keys.
 
 ## `step`
 
-A `step` is exactly one of the 11 forms below; each form is recognised by its discriminating key.
+A `step` is exactly one of the 12 forms below; each form is recognised by its discriminating key.
 
 ### `generate`
 
@@ -318,6 +318,18 @@ Applies one prompt to every item of a bound list, concurrently, and binds the or
 | `over` | `binding` | yes | Binding name holding the list to iterate. |
 | `prompt` | `name` | yes | — |
 | `as` | `binding` | yes | — |
+
+### `route`
+
+Data-driven control flow: asks a declared `choice` decision what the input is, then runs the arm its answer names. Every label the decision can return must reach an arm, so an answer never has an unhandled continuation; `default` covers the labels `on` leaves out. Unlike `branch`, whose `when` sees only the caller's Principal, `input` is a template, so routing may depend on what an earlier step produced.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `decision` | `name` | yes | A declared decision of type `choice`. A `score` or `noul` answer names no arm, so neither is a legal router. |
+| `input` | `string` | yes | The text the decision classifies. A mustache template over earlier bindings, like a `retrieve` step's query. |
+| `on` | map of `stepList` | yes | The arm to run for each answer label. A key the decision never returns is refused, as is a decision whose label has no arm and no `default`. |
+| `default` | `stepList` | no | The arm for a label `on` leaves out. Required when `on` is partial; refused when `on` already maps every label, because it could never run. |
+| `as` | `binding` | no | Binding name for the chosen label, so a later step can name the path it took. |
 
 ## `agent`
 

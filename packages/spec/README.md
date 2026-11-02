@@ -100,21 +100,24 @@ const diagnostics = [
 | `memory` | 0.2 | Conversation, user and global memory scopes |
 | `deployments` | 0.2 | Trigger, concurrency and streaming declarations |
 
-The build reads spec versions `0.1` through `0.8`. A section listed as `0.2` is rejected in a 0.1 document,
+The build reads spec versions `0.1` through `0.9`. A section listed as `0.2` is rejected in a 0.1 document,
 with a diagnostic naming the version that accepts it. `deployments[].image` is a 0.4 construct and needs
 `target: container`; both rules are reported at `deployments.<id>.image`. `guardrails[].decision` is a 0.7
 construct: it answers the guardrail with a `choice` decision instead of detector policies, and is rejected
 in an earlier document. A `decision` eval metric is a 0.8 construct: it scores every prediction with a
-declared `score` decision, and is rejected in an earlier document.
+declared `score` decision, and is rejected in an earlier document. The `route` step is a 0.9 construct: it
+selects an arm from a `choice` decision's answer, and is rejected in an earlier document.
 
 ## Pipeline step kinds
 
-A pipeline step contains exactly one step kind. The validator implements eleven:
+A pipeline step contains exactly one step kind. The validator implements twelve:
 
-`generate`, `retrieve`, `tool`, `emit`, `branch`, `parallel`, `map`, `reduce`, `rerank`, `guard`, `agent`.
+`generate`, `retrieve`, `tool`, `emit`, `branch`, `route`, `parallel`, `map`, `reduce`, `rerank`, `guard`, `agent`.
 
-`branch`, `parallel`, `map` and `reduce` are the composite kinds — the only ones that may nest another step — and
+`branch`, `route`, `parallel`, `map` and `reduce` are the composite kinds — the only ones that may nest another step — and
 nesting is bounded. `emit` may not appear inside a composite step, because it terminates the pipeline.
+`branch` selects on the authenticated caller; `route` selects on data, by asking a `choice` decision and
+matching its answer against `on`.
 
 No step kind is deferred in this build. `human` was **retired** rather than deferred: a human-in-the-loop pause is
 a property of an agent (`agents[].humanInTheLoop`), so the old spelling produces a diagnostic naming the
