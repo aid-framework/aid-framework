@@ -62,7 +62,7 @@ function stubFetch(replies: readonly Reply[]): {
   const calls: Call[] = [];
   let index = 0;
   const fetch: FetchLike = (url, init) => {
-    calls.push({ url, method: init.method, body: init.body, headers: init.headers });
+    calls.push({ url, method: init.method, body: init.body ?? '', headers: init.headers });
     const reply = replies[Math.min(index, replies.length - 1)];
     index += 1;
     if (reply === undefined) throw new Error('no reply queued');

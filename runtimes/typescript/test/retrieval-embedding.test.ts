@@ -33,7 +33,7 @@ function stubFetch(
       url,
       method: init.method,
       headers: init.headers,
-      body: init.body,
+      body: init.body ?? '',
     });
     const scripted = replies[Math.min(reply, replies.length - 1)];
     reply += 1;
