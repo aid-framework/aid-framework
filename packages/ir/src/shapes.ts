@@ -691,6 +691,13 @@ export interface DeploymentShape {
    * release workflow can push with a token the repository already has.
    */
   image?: DeploymentImageShape;
+  /**
+   * The pipeline a `target: batch` job runs, by id, from spec 0.5. A batch deployment
+   * runs exactly one pipeline once to completion, and that pipeline declares
+   * `trigger: { manual: true }` so no route contradicts it. Absent on every other
+   * target, whose entrypoint is the request rather than the deployment.
+   */
+  pipeline?: string;
   traits: Trait[];
 }
 

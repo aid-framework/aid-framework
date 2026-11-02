@@ -723,6 +723,148 @@ describe('deployments', () => {
   });
 });
 
+/**
+ * The batch surface: `trigger.manual` and `deployments[].pipeline`, which only make sense
+ * together and only from spec 0.5.
+ *
+ * The two version cases are separate from the four shape cases because they are the
+ * boundary the feature ships behind: a 0.4 document must hear "0.5" and not a
+ * contradiction it has no way to fix. The schema cases pin the closure -- `manual` has one
+ * legal value and a trigger names one kind -- because a trigger that meant both would have
+ * two routes and one deployment.
+ */
+describe('the batch surface', () => {
+  /** A document with one model and one prompt, so a pipeline can have a real step list. */
+  function doc(
+    specVersion: string,
+    pipelines: Record<string, unknown>,
+    deployments: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return {
+      specVersion,
+      project: { name: 'jobs', namespace: 'aid.test.jobs', targets: ['py-fastapi'] },
+      types: {
+        Reply: { kind: 'struct', fields: { summary: { type: 'string', required: true } } },
+      },
+      models: {
+        fast: { provider: 'fake', modelId: 'fake-deterministic-1', capabilities: ['json-schema'] },
+      },
+      prompts: {
+        draft: {
+          version: 1,
+          model: 'fast',
+          template: 'Summarise this ticket: {{ subject }}',
+          variables: { subject: { type: 'string', required: true } },
+          output: { kind: 'structured', schema: 'Reply' },
+        },
+      },
+      pipelines,
+      deployments,
+    };
+  }
+
+  const STEPS = [
+    { generate: { prompt: 'draft', input: { subject: '{{ event.subject }}' }, as: 'answer' } },
+    { emit: { event: 'Reply' } },
+  ];
+  const MANUAL = { trigger: { manual: true }, steps: STEPS };
+  const HTTP = { trigger: { http: { method: 'post', path: '/jobs/run' } }, steps: STEPS };
+  const container = { target: 'container', secrets: [] };
+  const batch = { target: 'batch', pipeline: 'brief', secrets: [] };
+
+  it('accepts a manual pipeline run by a batch deployment', () => {
+    expect(validateSpec(doc('0.5', { brief: MANUAL }, { nightly: batch }))).toEqual([]);
+  });
+
+  it('accepts an http pipeline and a route-serving deployment, unchanged', () => {
+    expect(validateSpec(doc('0.5', { brief: HTTP }, { api: container }))).toEqual([]);
+  });
+
+  it('tells a 0.4 document to move to 0.5 before it uses the manual trigger', () => {
+    const diagnostics = validateSpec(doc('0.4', { brief: MANUAL }, { api: container }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['pipelines.brief.trigger.manual']);
+    expect(diagnostics[0]?.message).toContain(
+      "'pipelines.brief.trigger.manual' requires specVersion 0.5",
+    );
+    expect(diagnostics[0]?.hint).toContain('a document with no manual pipeline is unchanged');
+  });
+
+  it('tells a 0.4 document to move to 0.5 before it binds a job', () => {
+    const diagnostics = validateSpec(doc('0.4', { brief: HTTP }, { nightly: batch }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['deployments.nightly.pipeline']);
+    expect(diagnostics[0]?.message).toContain(
+      "'deployments.nightly.pipeline' requires specVersion 0.5",
+    );
+    expect(diagnostics[0]?.hint).toContain('a document that binds no job is unchanged');
+  });
+
+  it('refuses a pipeline on a deployment that serves routes', () => {
+    const diagnostics = validateSpec(
+      doc('0.5', { brief: MANUAL }, { api: { ...container, pipeline: 'brief' } }),
+    );
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.deploymentPipelineWithoutBatch]);
+    expect(paths(diagnostics)).toEqual(['deployments.api.pipeline']);
+    expect(diagnostics[0]?.message).toContain("targets 'container'");
+    expect(diagnostics[0]?.hint).toContain('a route is selected by the request');
+  });
+
+  it('refuses a batch deployment that names no pipeline', () => {
+    const diagnostics = validateSpec(
+      doc('0.5', { brief: MANUAL }, { nightly: { target: 'batch', secrets: [] } }),
+    );
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.batchDeploymentWithoutPipeline]);
+    expect(paths(diagnostics)).toEqual(['deployments.nightly']);
+    expect(diagnostics[0]?.message).toContain('the job would run nothing');
+  });
+
+  it('refuses a batch deployment naming a pipeline the document lacks', () => {
+    const diagnostics = validateSpec(
+      doc('0.5', { brief: MANUAL }, { nightly: { ...batch, pipeline: 'digest' } }),
+    );
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.batchPipelineUnknown]);
+    expect(paths(diagnostics)).toEqual(['deployments.nightly.pipeline']);
+    expect(diagnostics[0]?.hint).toContain('declare `pipelines.digest`');
+    expect(diagnostics[0]?.hint).toContain('brief');
+  });
+
+  it('refuses to run a pipeline that also declares a route', () => {
+    const diagnostics = validateSpec(doc('0.5', { brief: HTTP }, { nightly: batch }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.batchPipelineNotManual]);
+    expect(paths(diagnostics)).toEqual(['deployments.nightly.pipeline']);
+    expect(diagnostics[0]?.hint).toContain("set `trigger: { manual: true }` on 'brief'");
+  });
+
+  it('closes trigger.manual to the literal true', () => {
+    const diagnostics = validateSpec(
+      doc('0.5', { brief: { trigger: { manual: false }, steps: STEPS } }, { nightly: batch }),
+    );
+
+    expect(codes(diagnostics)).toContain(DIAGNOSTIC_CODES.schemaViolation);
+    expect(paths(diagnostics)).toContain('pipelines.brief.trigger.manual');
+  });
+
+  it('refuses a trigger that is both http and manual', () => {
+    const diagnostics = validateSpec(
+      doc(
+        '0.5',
+        { brief: { trigger: { ...HTTP.trigger, manual: true }, steps: STEPS } },
+        { nightly: batch },
+      ),
+    );
+
+    expect(codes(diagnostics)).toContain(DIAGNOSTIC_CODES.schemaViolation);
+    expect(paths(diagnostics)).toContain('pipelines.brief.trigger');
+  });
+});
+
 /** Renders the message alone, so a failure diff stays readable. */
 function formatDiagnosticLine(diagnostic: Diagnostic): string {
   return `${formatPath(diagnostic.path)}:${diagnostic.code}: ${diagnostic.message}`;

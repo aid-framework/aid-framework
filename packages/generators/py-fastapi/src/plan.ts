@@ -25,10 +25,11 @@ import {
 import type { IR } from '@aid-framework/ir';
 
 import { emitAgents, hasAgents } from './emit/agents.js';
+import { emitBatch, hasBatchDeployment } from './emit/batch.js';
 import { emitBusinessToolSeed, emitContractsInit, emitToolContract } from './emit/contracts.js';
 import { emitControl, hasComposite } from './emit/control.js';
 import { emitDeps } from './emit/deps.js';
-import { DOCKERFILE_PATH, emitDockerfile, hasContainerDeployment } from './emit/dockerfile.js';
+import { DOCKERFILE_PATH, emitDockerfile, hasImageDeployment } from './emit/dockerfile.js';
 import { emitEval, emitEvalsInit, evalModulePath } from './emit/evals.js';
 import { emitGatewayInit, emitGatewayModels } from './emit/gateway.js';
 import { emitGuardrails, hasGuardrails } from './emit/guardrails.js';
@@ -91,7 +92,8 @@ export function filesFor(ir: IR): GeneratedFile[] {
     emitEvalsInit(ir),
     ...orderedEvals(ir).map((evaluation) => emitEval(ir, evaluation)),
     ...emitRetrieval(ir),
-    ...(hasContainerDeployment(ir) ? [emitDockerfile(ir)] : []),
+    ...(hasBatchDeployment(ir) ? [emitBatch(ir)] : []),
+    ...(hasImageDeployment(ir) ? [emitDockerfile(ir)] : []),
     emitBusinessInit(ir),
     emitBusinessToolsInit(ir),
     ...tools.map((tool) => emitBusinessToolSeed(tool)),

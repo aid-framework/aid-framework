@@ -44,7 +44,7 @@ export const SUPPORTED_SECTIONS = [
 export const DEFERRED_SECTIONS = [] as const;
 
 /** The spec language versions this build reads. A document declares one of them. */
-export const SUPPORTED_SPEC_VERSIONS = ['0.1', '0.2', '0.3', '0.4'] as const;
+export const SUPPORTED_SPEC_VERSIONS = ['0.1', '0.2', '0.3', '0.4', '0.5'] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
 
@@ -77,6 +77,14 @@ export const MODEL_CACHE_MIN_VERSION: SpecVersion = '0.3';
  * rather than have the key silently dropped by a schema it declared.
  */
 export const DEPLOYMENT_IMAGE_MIN_VERSION: SpecVersion = '0.4';
+
+/**
+ * The first spec version that accepts the batch surface: `pipelines[].trigger.manual` and
+ * `deployments[].pipeline`. A batch job is the pair -- a pipeline with no inbound route and
+ * a deployment that names it -- so both are gated together: a 0.4 document that declares
+ * either is told which version it needs instead of being read as if the key never existed.
+ */
+export const BATCH_SURFACE_MIN_VERSION: SpecVersion = '0.5';
 
 /** Pipeline step kinds implemented in spec v0.1. */
 export const SUPPORTED_STEP_KINDS = [
@@ -378,6 +386,7 @@ function scopeDiagnostics(
 
   modelCacheDiagnostics(spec, diagnostics, reported);
   deploymentImageDiagnostics(spec, diagnostics, reported);
+  batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
 }
 
@@ -465,6 +474,114 @@ function deploymentImageDiagnostics(
         hint: 'set `target: container` to get a Dockerfile and a release workflow, or drop `image`; the generator will not publish an artifact it cannot build',
       }),
     );
+  }
+}
+
+/**
+ * The batch surface: `pipelines[].trigger.manual` and `deployments[].pipeline`.
+ *
+ * Both halves are needed for one feature and are gated together. A batch deployment
+ * without a pipeline names a job nothing can run -- `target: batch` has always been
+ * accepted, and until now a document that declared it compiled to an image with no
+ * entrypoint and a deploy plan with no module, which is the silent gap this rule closes
+ * rather than a behaviour worth preserving. The version half is reported first, so a
+ * 0.4 document hears "0.5" instead of a contradiction it cannot fix without it.
+ */
+function batchSurfaceDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) return;
+  const needsVersion = !specVersionAtLeast(declared, BATCH_SURFACE_MIN_VERSION);
+  const pipelines = asRecord(spec.pipelines);
+  const manual = new Set(
+    Object.entries(pipelines)
+      .filter(([, raw]) => asRecord(asRecord(raw).trigger)?.manual !== undefined)
+      .map(([id]) => id),
+  );
+
+  if (needsVersion) {
+    for (const id of [...manual].sort()) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'pipelines.${id}.trigger.manual' requires specVersion ${BATCH_SURFACE_MIN_VERSION}, but this specification declares version ${declared}`,
+          path: ['pipelines', id, 'trigger', 'manual'],
+          hint: `set specVersion: "${BATCH_SURFACE_MIN_VERSION}"; a document with no manual pipeline is unchanged`,
+        }),
+      );
+      reported.add(JSON.stringify(['pipelines', id, 'trigger']));
+    }
+  }
+
+  for (const [id, raw] of Object.entries(asRecord(spec.deployments))) {
+    const deployment = asRecord(raw);
+    const target = typeof deployment.target === 'string' ? deployment.target : 'unknown';
+    const pipeline = deployment.pipeline;
+    if (pipeline === undefined) {
+      if (target !== 'batch') continue;
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.batchDeploymentWithoutPipeline,
+          message: `deployment '${id}' targets 'batch' but names no pipeline, so the job would run nothing`,
+          path: ['deployments', id],
+          hint: `declare \`pipeline: <id>\` naming a pipeline with \`trigger: { manual: true }\` (spec ${BATCH_SURFACE_MIN_VERSION}); a batch job exists to run one pipeline once`,
+        }),
+      );
+      reported.add(JSON.stringify(['deployments', id]));
+      continue;
+    }
+    if (needsVersion) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'deployments.${id}.pipeline' requires specVersion ${BATCH_SURFACE_MIN_VERSION}, but this specification declares version ${declared}`,
+          path: ['deployments', id, 'pipeline'],
+          hint: `set specVersion: "${BATCH_SURFACE_MIN_VERSION}"; a document that binds no job is unchanged`,
+        }),
+      );
+      reported.add(JSON.stringify(['deployments', id, 'pipeline']));
+      continue;
+    }
+    if (target !== 'batch') {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.deploymentPipelineWithoutBatch,
+          message: `deployment '${id}' names pipeline '${String(pipeline)}' but targets '${target}', which answers requests through a route rather than running one pipeline`,
+          path: ['deployments', id, 'pipeline'],
+          hint: 'set `target: batch` to get a job that runs the pipeline once, or drop `pipeline`; a route is selected by the request, not by the deployment',
+        }),
+      );
+      reported.add(JSON.stringify(['deployments', id, 'pipeline']));
+      continue;
+    }
+    const name = typeof pipeline === 'string' ? pipeline : undefined;
+    if (name === undefined || !Object.hasOwn(pipelines, name)) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.batchPipelineUnknown,
+          message: `deployment '${id}' names pipeline '${String(pipeline)}', which this specification does not declare`,
+          path: ['deployments', id, 'pipeline'],
+          hint: `declare \`pipelines.${String(pipeline)}\`, or name one of ${Object.keys(pipelines).sort().join(', ') || '(none declared)'}`,
+        }),
+      );
+      reported.add(JSON.stringify(['deployments', id, 'pipeline']));
+      continue;
+    }
+    if (manual.has(name)) continue;
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.batchPipelineNotManual,
+        message: `deployment '${id}' runs pipeline '${name}', but that pipeline does not declare 'trigger.manual'`,
+        path: ['deployments', id, 'pipeline'],
+        hint: `set \`trigger: { manual: true }\` on '${name}'; a job and a route are different entrypoints, and only a manual pipeline has no inbound route to contradict the deployment`,
+      }),
+    );
+    reported.add(JSON.stringify(['deployments', id, 'pipeline']));
   }
 }
 

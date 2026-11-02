@@ -38,6 +38,10 @@ export const DIAGNOSTIC_CODES = {
   deploymentEnvDuplicate: 'spec/deployment-env-duplicate',
   deploymentEnvValueAndSecret: 'spec/deployment-env-value-and-secret',
   deploymentImageWithoutContainer: 'spec/deployment-image-without-container',
+  deploymentPipelineWithoutBatch: 'spec/deployment-pipeline-without-batch',
+  batchDeploymentWithoutPipeline: 'spec/batch-deployment-without-pipeline',
+  batchPipelineUnknown: 'spec/batch-pipeline-unknown',
+  batchPipelineNotManual: 'spec/batch-pipeline-not-manual',
 } as const;
 
 /** Codes are namespaced `<layer>/<slug>`. This layer's own codes are `spec/*`. */

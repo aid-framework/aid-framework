@@ -183,6 +183,16 @@ export function checkDeployments(ir: IR): PlanProblem[] {
   const problems: PlanProblem[] = [];
   for (const deployment of ir.deployments) {
     const at = `deployments.${deployment.id}`;
+    if (deployment.target === 'batch') {
+      problems.push(
+        problem(
+          'deployment-unsupported',
+          `${at}.target`,
+          'a batch job runs to completion, and this target deploys a request/response ' +
+            'function; use the py-fastapi target for a batch deployment',
+        ),
+      );
+    }
     if (deployment.streaming) {
       problems.push(
         problem(
@@ -551,6 +561,16 @@ export function checkPipelines(ir: IR): PlanProblem[] {
     agents: new Set(ir.agents.map((agent) => agent.id)),
   };
   for (const pipeline of ir.pipelines) {
+    if (pipeline.trigger?.kind !== 'http') {
+      problems.push(
+        problem(
+          'deployment-unsupported',
+          `pipelines.${pipeline.id}.trigger`,
+          'this target emits one HTTP route per pipeline, so a manual trigger would be ' +
+            'declared and never emitted; use the py-fastapi target for a batch job',
+        ),
+      );
+    }
     problems.push(...checkPipelineShape(pipeline, declarations));
   }
   return problems;

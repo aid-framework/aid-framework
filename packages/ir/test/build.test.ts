@@ -337,6 +337,80 @@ describe('name helpers', () => {
   });
 });
 
+describe('the batch surface', () => {
+  /** A document with one prompt, so a pipeline can have a step list the builder accepts. */
+  function doc(
+    pipelines: Record<string, unknown>,
+    deployments: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return {
+      specVersion: '0.5',
+      project: { name: 'jobs' },
+      types: {
+        Reply: { kind: 'struct', fields: { summary: { type: 'string', required: true } } },
+      },
+      models: {
+        fast: { provider: 'fake', modelId: 'fake-deterministic-1', capabilities: ['json-schema'] },
+      },
+      prompts: {
+        draft: {
+          version: 1,
+          model: 'fast',
+          template: 'Summarise this ticket: {{ subject }}',
+          variables: { subject: { type: 'string', required: true } },
+          output: { kind: 'structured', schema: 'Reply' },
+        },
+      },
+      pipelines,
+      deployments,
+    };
+  }
+
+  const STEPS = [
+    { generate: { prompt: 'draft', input: { subject: '{{ event.subject }}' }, as: 'answer' } },
+    { emit: { event: 'Reply' } },
+  ];
+  const MANUAL = { trigger: { manual: true }, steps: STEPS };
+
+  it('lowers a manual trigger to a kind with no method and no path', () => {
+    const { ir } = buildIR(
+      doc({ brief: MANUAL }, { nightly: { target: 'batch', pipeline: 'brief', secrets: [] } }),
+    );
+
+    expect(byId(ir.pipelines, 'brief')?.trigger).toEqual({ kind: 'manual' });
+  });
+
+  it('keeps an http trigger exactly as declared', () => {
+    const { ir } = buildIR(
+      doc(
+        { brief: { trigger: { http: { method: 'post', path: '/jobs/run' } }, steps: STEPS } },
+        { api: { target: 'container', secrets: [] } },
+      ),
+    );
+
+    expect(byId(ir.pipelines, 'brief')?.trigger).toEqual({
+      kind: 'http',
+      method: 'post',
+      path: '/jobs/run',
+    });
+  });
+
+  it('carries the named pipeline onto the deployment', () => {
+    const { ir } = buildIR(
+      doc({ brief: MANUAL }, { nightly: { target: 'batch', pipeline: 'brief', secrets: [] } }),
+    );
+
+    expect(byId(ir.deployments, 'nightly')?.pipeline).toBe('brief');
+  });
+
+  it('omits the pipeline key entirely when no job is bound', () => {
+    // Same rule as `image`: an enumerated `pipeline: undefined` would rewrite every golden.
+    const { ir } = buildIR(doc({ brief: MANUAL }, { api: { target: 'container', secrets: [] } }));
+
+    expect(byId(ir.deployments, 'api')).not.toHaveProperty('pipeline');
+  });
+});
+
 describe('buildIR with a sparse value', () => {
   it('produces no diagnostics and leaves unknown sections empty', () => {
     const built = buildIR({ specVersion: '0.1', project: { name: 'x' } });
