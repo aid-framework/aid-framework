@@ -196,6 +196,10 @@ function mainOf(files: { path: string; contents: string }[]): string {
   return files.find((file) => file.path.endsWith('/main.tf'))?.contents ?? '';
 }
 
+function variableOf(files: { path: string; contents: string }[]): string {
+  return files.find((file) => file.path.endsWith('/variables.tf'))?.contents ?? '';
+}
+
 describe('emitServerlessModule', () => {
   it('emits nothing when no deployment targets serverless', () => {
     expect(emitServerlessModule(planOf())).toEqual([]);
@@ -464,6 +468,36 @@ describe('emitCloudRunModule', () => {
     expect(variables).not.toMatch(/variable "region"[\s\S]{0,200}default/);
   });
 
+  it('grants Vertex AI only to a service that names the provider', () => {
+    // Same bargain as the AWS modules' Bedrock grant: the service account is the
+    // credential, so no key is stored, and the set of grantees is derived from the plan.
+    const main = mainOf(emitCloudRunModule(planOf('container')));
+    expect(main).toContain('resource "google_project_iam_member" "vertex"');
+    expect(main).toContain('role    = "roles/aiplatform.user"');
+    expect(main).toContain('for_each = local.vertex');
+    expect(main).toContain('if contains(service.providers, "google")');
+  });
+
+  it('tells the Vertex adapter where to call, because Cloud Run does not', () => {
+    const main = mainOf(emitCloudRunModule(planOf('container')));
+    expect(main).toContain('GOOGLE_CLOUD_PROJECT = var.project_id');
+    expect(main).toContain('GOOGLE_CLOUD_REGION  = var.region');
+    // A missing entry means "no Vertex here", not an index error.
+    expect(main).toContain('lookup(local.vertex_env, each.key, {})');
+  });
+
+  it('lets a declared variable win over the injected default', () => {
+    // Pointing a service at another project is a decision; overwriting it is not ours.
+    const main = mainOf(emitCloudRunModule(planOf('container')));
+    expect(main).toContain('if !contains([for variable in service.env : variable.name], name)');
+  });
+
+  it('requires the project id it has to name in a grant', () => {
+    const variables = variableOf(emitCloudRunModule(planOf('container')));
+    expect(variables).toMatch(/variable "project_id"[\s\S]{0,160}type\s+= string\n\}/);
+    expect(variables).not.toMatch(/variable "project_id"[\s\S]{0,200}default/);
+  });
+
   it('defaults to public invocation but does not grant it silently', () => {
     // Cloud Run authenticates every request unless allUsers is bound; the binding is a
     // separate resource gated on the input rather than something baked into the service.
@@ -540,6 +574,9 @@ describe('envRoot', () => {
     expect(GCP.main).toContain('project = var.gcp_project');
     expect(GCP.main).toContain('module "cloudrun"');
     expect(GCP.main).toContain('source = "../../generated/modules/cloudrun"');
+    // The module names the project in a grant, so the root passes it rather than the
+    // module reaching for a default: the project is an account fact, not a spec fact.
+    expect(GCP.main).toContain('project_id            = var.gcp_project');
     expect(GCP.variables).toContain('variable "gcp_project"');
     expect(GCP.variables).toContain('variable "region"');
     // Cloud Run terminates TLS and scales behind a managed frontend: no VPC, no CIDR.

@@ -96,9 +96,9 @@ const GCP_INPUTS = [
 ];
 
 /**
- * The provider, not the module, owns the GCP project: a namespace and name are spec
- * facts, but a project id is an account fact, so the env root supplies it and every
- * resource inherits it rather than repeating it.
+ * The GCP project id is an account fact the spec cannot know, so the env root supplies it
+ * once: the provider block uses it for every resource, and the module takes it for the
+ * one grant that has to name a project (`roles/aiplatform.user`). It is not derived.
  */
 const GCP_PROJECT = [
   '',
@@ -393,6 +393,7 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
           'image_uris            = var.image_uris',
           'secret_ids            = var.secret_ids',
           'cloudrun_sizing       = var.cloudrun_sizing',
+          'project_id            = var.gcp_project',
           'region                = var.region',
           'allow_unauthenticated = var.allow_unauthenticated',
           'deletion_protection   = var.deletion_protection',
