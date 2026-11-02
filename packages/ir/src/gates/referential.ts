@@ -23,6 +23,7 @@ const NAMESPACES = [
   'pipelines',
   'guardrails',
   'agents',
+  'decisions',
 ] as const;
 
 type Namespace = (typeof NAMESPACES)[number];
@@ -58,6 +59,7 @@ export function referentialGate(ir: IR, options: GateOptions): GateResult {
       pipelines: new Set(ir.pipelines.map((entry) => entry.id)),
       guardrails: new Set(ir.guardrails.map((entry) => entry.id)),
       agents: new Set(ir.agents.map((entry) => entry.id)),
+      decisions: new Set(ir.decisions.map((entry) => entry.id)),
     },
   };
 
@@ -383,6 +385,9 @@ function collectBindingNames(steps: readonly StepShape[], into: Set<string>): vo
       collectBindingNames(step.else, into);
     } else if (step.kind === 'parallel') {
       for (const arm of step.branches) collectBindingNames(arm, into);
+    } else if (step.kind === 'route') {
+      for (const arm of Object.values(step.on)) collectBindingNames(arm, into);
+      if (step.default !== undefined) collectBindingNames(step.default, into);
     }
   }
 }
@@ -492,6 +497,27 @@ function walkComposite(step: StepShape, state: WalkState): ReadonlyMap<string, s
     return merged;
   }
 
+  if (step.kind === 'route') {
+    // Exactly one arm runs, so the arms are alternatives: a name bound in two arms is
+    // the sound shape, the same as a `branch`, and merges silently.
+    const merged = new Map(state.visible);
+    for (const [label, arm] of Object.entries(step.on)) {
+      const armScope = walkStepList(arm, {
+        ...state,
+        base: [...state.base, 'route', 'on', label],
+      });
+      for (const [name, where] of armScope) merged.set(name, where);
+    }
+    if (step.default !== undefined) {
+      const defaultScope = walkStepList(step.default, {
+        ...state,
+        base: [...state.base, 'route', 'default'],
+      });
+      for (const [name, where] of defaultScope) merged.set(name, where);
+    }
+    return merged;
+  }
+
   if (step.kind === 'map') {
     // `item` and `index` are what the iteration offers; the body's bindings are local.
     const inner = new Map(state.visible);
@@ -532,6 +558,17 @@ function checkStepReferences(step: StepShape, state: WalkState): void {
   } else if (step.kind === 'agent') {
     if (!scope.names.agents.has(step.agent)) {
       reportRef(step.agent, 'agents', scope, [...base, 'agent'], diagnostics, report);
+    }
+  } else if (step.kind === 'route') {
+    if (!scope.names.decisions.has(step.decision)) {
+      reportRef(
+        step.decision,
+        'decisions',
+        scope,
+        [...base, 'route', 'decision'],
+        diagnostics,
+        report,
+      );
     }
   }
 
@@ -581,6 +618,9 @@ function stepReferences(step: StepShape): { path: (string | number)[]; value: St
   if (step.kind === 'emit' || step.kind === 'branch' || step.kind === 'parallel') return [];
   if (step.kind === 'retrieve') {
     return [{ path: ['query'], value: { kind: 'template', template: step.query } }];
+  }
+  if (step.kind === 'route') {
+    return [{ path: ['route', 'input'], value: { kind: 'template', template: step.input } }];
   }
   if (step.kind === 'map' || step.kind === 'reduce') {
     return [{ path: [step.kind, 'over'], value: { kind: 'reference', path: [step.over] } }];

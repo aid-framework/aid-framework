@@ -12,6 +12,7 @@
 import {
   type AgentStep,
   type BranchStep,
+  type DecisionShape,
   type EmitStep,
   type EvalShape,
   evalSubject,
@@ -31,6 +32,7 @@ import {
   type ReduceStep,
   type RerankStep,
   type RetrieveStep,
+  type RouteStep,
   type StepShape,
   type ToolShape,
   type ToolStep,
@@ -559,6 +561,7 @@ export function checkPipelines(ir: IR): PlanProblem[] {
     retrievers: new Set(ir.retrievers.map((retriever) => retriever.id)),
     guardrails: new Map(ir.guardrails.map((guardrail) => [guardrail.id, guardrail])),
     agents: new Set(ir.agents.map((agent) => agent.id)),
+    decisions: new Map(ir.decisions.map((decision) => [decision.id, decision])),
   };
   for (const pipeline of ir.pipelines) {
     if (pipeline.trigger?.kind !== 'http') {
@@ -598,6 +601,7 @@ interface StepDeclarations {
   readonly retrievers: ReadonlySet<string>;
   readonly guardrails: ReadonlyMap<string, GuardrailShape>;
   readonly agents: ReadonlySet<string>;
+  readonly decisions: ReadonlyMap<string, DecisionShape>;
 }
 
 function checkPipelineShape(
@@ -647,6 +651,14 @@ function checkSteps(
   for (const [index, step] of steps.entries()) {
     const stepAt = `${at}.${index}`;
     if (isCompositeStep(step)) {
+      if (step.kind === 'route') {
+        const checked = checkRouteStep(step, stepAt, declarations, bound);
+        problems.push(...checked.problems);
+        for (const name of [...checked.alwaysBound, ...(step.as === undefined ? [] : [step.as])]) {
+          bind(name, stepAt);
+        }
+        continue;
+      }
       problems.push(...checkComposite(step, stepAt, declarations, bound));
       // `map` and `reduce` bind their result; `branch` and `parallel` bind only inside an
       // arm, and which arm ran is not knowable at generation time, so a later step may
@@ -716,6 +728,111 @@ function checkComposite(
     problems.push(...checkSteps([reduceBody(step)], `${at}.item`, declarations, new Set(bound)));
   }
   return problems;
+}
+
+/**
+ * The labels a decision can answer.
+ *
+ * A `choice` decision keeps its criteria as an object map in the spec and as a record or
+ * a list in the IR, so both spellings are read rather than assuming one.
+ */
+function decisionLabels(decision: DecisionShape): string[] {
+  if (decision.criteria === undefined) return [];
+  return Array.isArray(decision.criteria) ? [...decision.criteria] : Object.keys(decision.criteria);
+}
+
+/**
+ * A `route`, checked against the decision it asks and the arms it declares.
+ *
+ * The rule a route adds is that an answer must always have an arm: every label the
+ * decision can return is mapped, or a `default` catches the ones that are not. That is
+ * refused here rather than at run time because the runtime can only report an unmapped
+ * answer as a failed request, and the spec author is the one who can fix it.
+ *
+ * `alwaysBound` is what a later step may read: an arm starts from the bindings that exist
+ * before the route, and exactly one arm runs, so only a name every arm bound is sound
+ * afterwards.
+ */
+function checkRouteStep(
+  step: RouteStep,
+  at: string,
+  declarations: StepDeclarations,
+  bound: ReadonlySet<string>,
+): { readonly problems: PlanProblem[]; readonly alwaysBound: readonly string[] } {
+  const problems: PlanProblem[] = [];
+  const decision = declarations.decisions.get(step.decision);
+  if (decision === undefined) {
+    problems.push(problem('reference-unresolved', at, `decision ${step.decision} is not declared`));
+    return { problems, alwaysBound: [] };
+  }
+  if (decision.type !== 'choice') {
+    problems.push(
+      problem(
+        'step-unsupported',
+        at,
+        `decision ${step.decision} is a ${decision.type} decision; a route asks which arm to run, so it needs a choice decision`,
+      ),
+    );
+    return { problems, alwaysBound: [] };
+  }
+  for (const name of unboundNames(step.input, bound)) {
+    problems.push(
+      problem(
+        'reference-unresolved',
+        `${at}.input`,
+        `the route input names ${name}, which is not bound at this step`,
+      ),
+    );
+  }
+  const labels = decisionLabels(decision);
+  const mapped = Object.keys(step.on);
+  for (const label of mapped) {
+    if (!labels.includes(label)) {
+      problems.push(
+        problem(
+          'reference-unresolved',
+          `${at}.on.${label}`,
+          `decision ${step.decision} has no label ${label}; its labels are ${labels.join(', ') || 'none'}`,
+        ),
+      );
+    }
+  }
+  const uncovered = labels.filter((label) => !mapped.includes(label));
+  if (step.default === undefined && uncovered.length > 0) {
+    problems.push(
+      problem(
+        'step-unsupported',
+        at,
+        `the route maps ${mapped.join(', ') || 'no label'}, but decision ${step.decision} can also answer ${uncovered.join(', ')}; map every label or add a default`,
+      ),
+    );
+  }
+  if (step.default !== undefined && uncovered.length === 0) {
+    problems.push(
+      problem(
+        'step-unsupported',
+        at,
+        'the route declares a default, but every label is already mapped, so the arm can never run',
+      ),
+    );
+  }
+  const arms: (readonly [string, readonly StepShape[], string])[] = mapped.map((label) => [
+    label,
+    step.on[label] as readonly StepShape[],
+    `${at}.on.${label}`,
+  ]);
+  if (step.default !== undefined) arms.push(['default', step.default, `${at}.default`]);
+  const additions: (readonly string[])[] = [];
+  for (const [, steps, path] of arms) {
+    const armBound = new Set(bound);
+    problems.push(...checkSteps(steps, path, declarations, armBound));
+    additions.push([...armBound].filter((name) => !bound.has(name)));
+  }
+  const alwaysBound =
+    additions.length === 0
+      ? []
+      : (additions[0] ?? []).filter((name) => additions.every((added) => added.includes(name)));
+  return { problems, alwaysBound };
 }
 
 /**

@@ -2022,6 +2022,142 @@
       }
     },
     {
+      "id": "steps-route-runs-the-arm-the-decision-chose-and-binds-the-label",
+      "op": "steps.route",
+      "description": "A route asks its decision one choice over the definition's criteria, runs the arm the answer selected, and binds the answered label under `as`.",
+      "input": {
+        "decision": {
+          "id": "intent",
+          "model": "typesafe-xl",
+          "instructions": "Which team should handle this request?",
+          "criteria": ["billing", "general"]
+        },
+        "state": "My invoice was charged twice",
+        "on": ["billing", "general"],
+        "chosen": "billing",
+        "binds": {
+          "billing": { "handledBy": "billing" },
+          "general": { "handledBy": "general" }
+        },
+        "as": "intent"
+      },
+      "expect": {
+        "asked": [
+          {
+            "type": "choice",
+            "instructions": "Which team should handle this request?",
+            "criteria": ["billing", "general"],
+            "model": "typesafe-xl",
+            "state": "My invoice was charged twice"
+          }
+        ],
+        "ran": ["billing"],
+        "refused": false,
+        "bound": {
+          "handledBy": "billing",
+          "intent": "billing"
+        }
+      }
+    },
+    {
+      "id": "steps-route-falls-through-to-the-default-for-an-unmapped-label",
+      "op": "steps.route",
+      "description": "An answer no arm maps runs the default arm, and `as` still binds the label that was actually answered rather than the arm's name.",
+      "input": {
+        "decision": {
+          "id": "intent",
+          "model": "typesafe-xl",
+          "instructions": "Which team should handle this request?",
+          "criteria": ["billing", "general", "refund"]
+        },
+        "state": "Where is my parcel?",
+        "on": ["billing"],
+        "chosen": "refund",
+        "default": true,
+        "binds": {
+          "default": { "handledBy": "triage" }
+        },
+        "as": "intent"
+      },
+      "expect": {
+        "asked": [
+          {
+            "type": "choice",
+            "instructions": "Which team should handle this request?",
+            "criteria": ["billing", "general", "refund"],
+            "model": "typesafe-xl",
+            "state": "Where is my parcel?"
+          }
+        ],
+        "ran": ["otherwise"],
+        "refused": false,
+        "bound": {
+          "handledBy": "triage",
+          "intent": "refund"
+        }
+      }
+    },
+    {
+      "id": "steps-route-refuses-an-unmapped-label-with-no-default",
+      "op": "steps.route",
+      "description": "An answer no arm maps fails the run when there is no default, rather than silently running nothing.",
+      "input": {
+        "decision": {
+          "id": "intent",
+          "model": "typesafe-xl",
+          "instructions": "Which team should handle this request?",
+          "criteria": ["billing", "general", "refund"]
+        },
+        "state": "Where is my parcel?",
+        "on": ["billing"],
+        "chosen": "refund"
+      },
+      "expect": {
+        "asked": [
+          {
+            "type": "choice",
+            "instructions": "Which team should handle this request?",
+            "criteria": ["billing", "general", "refund"],
+            "model": "typesafe-xl",
+            "state": "Where is my parcel?"
+          }
+        ],
+        "ran": [],
+        "refused": true,
+        "reason": "unmapped"
+      }
+    },
+    {
+      "id": "steps-route-refuses-an-answer-with-no-choice",
+      "op": "steps.route",
+      "description": "An answer that carries no choice fails the run, because a route does not guess which arm was meant.",
+      "input": {
+        "decision": {
+          "id": "intent",
+          "model": "typesafe-xl",
+          "instructions": "Which team should handle this request?",
+          "criteria": ["billing", "general"]
+        },
+        "state": "My invoice was charged twice",
+        "on": ["billing", "general"],
+        "as": "intent"
+      },
+      "expect": {
+        "asked": [
+          {
+            "type": "choice",
+            "instructions": "Which team should handle this request?",
+            "criteria": ["billing", "general"],
+            "model": "typesafe-xl",
+            "state": "My invoice was charged twice"
+          }
+        ],
+        "ran": [],
+        "refused": true,
+        "reason": "other"
+      }
+    },
+    {
       "id": "steps-depth-allows-nesting-up-to-the-bound",
       "op": "steps.depth",
       "description": "A nest of composites exactly at the bound runs, and the leaf observes the depth it ran at.",

@@ -1,4 +1,4 @@
-"""The composite step family: branch, parallel, map and reduce.
+"""The composite step family: branch, parallel, map, reduce and route.
 
 Each test drives real pipelines rather than asserting that the factories were
 called, because every property this family promises -- the cap, the ordering, the
@@ -33,7 +33,10 @@ from aid_runtime import (
     map_step,
     parallel,
     reduce_step,
+    route,
 )
+from aid_runtime.agents.ir import DecisionDefinition
+from aid_runtime.decisions import DecisionAnswer, DecisionResponse
 
 IS_AUTHENTICATED: Mapping[str, Any] = {"kind": "call", "name": "isAuthenticated", "args": []}
 HAS_ROLE_ADMIN: Mapping[str, Any] = {
@@ -462,3 +465,126 @@ def test_the_sequence_guard_refuses_a_string_even_though_it_is_a_sequence() -> N
         _items(context(text="abc"), "text", "map")
     assert _items(context(text=["abc"]), "text", "map") == ["abc"]
     assert isinstance([], Sequence)
+
+
+TOPIC = DecisionDefinition(
+    id="topic",
+    model="jev-1.14.0",
+    instructions="Which part of the product is this question about",
+    criteria=("product", "billing"),
+)
+
+DECISIONS = {"topic": TOPIC}
+
+
+class ScriptedAsker:
+    """A ``DecisionAsker`` returning one scripted answer and recording every call."""
+
+    def __init__(self, choice: str | None = None, *, error: Exception | None = None) -> None:
+        self._choice = choice
+        self._error = error
+        self.calls: list[dict[str, Any]] = []
+
+    async def decide(
+        self,
+        *,
+        model: str,
+        state: Any,
+        questions: Any,
+        reproducible: bool = False,
+    ) -> DecisionResponse:
+        self.calls.append({"model": model, "state": state, "questions": dict(questions)})
+        if self._error is not None:
+            raise self._error
+        answer = DecisionAnswer(type="choice", choice=self._choice)
+        return DecisionResponse(model=model, answers={"topic": answer})
+
+
+def topic_route(asker: ScriptedAsker, **kwargs: Any) -> Any:
+    """A route over two mapped labels, so an answer outside them has to find a default."""
+    options: dict[str, Any] = {
+        "decision": "topic",
+        "state": "How much does the pro plan cost",
+        "on": {
+            "product": Pipeline.of(step("product_ran")),
+            "billing": Pipeline.of(step("billing_ran")),
+        },
+        "decisions": DECISIONS,
+        "client_factory": lambda: asker,
+    }
+    options.update(kwargs)
+    return route(**options)
+
+
+async def test_route_runs_the_arm_the_decision_names_and_binds_the_label() -> None:
+    asker = ScriptedAsker("product")
+    result = await Pipeline.of(topic_route(asker, as_="path")).run(context())
+
+    assert result.get("product_ran") == "product_ran"
+    assert "billing_ran" not in result.values
+    assert result.get("path") == "product"
+    assert asker.calls[0]["state"] == "How much does the pro plan cost"
+
+
+async def test_route_asks_a_choice_question_from_the_carried_definition() -> None:
+    asker = ScriptedAsker("product")
+    await Pipeline.of(topic_route(asker)).run(context())
+
+    assert asker.calls[0]["model"] == TOPIC.model
+    question = asker.calls[0]["questions"]["topic"]
+    assert question.type == "choice"
+    assert question.instructions == TOPIC.instructions
+    assert question.criteria == TOPIC.criteria
+
+
+async def test_route_runs_the_default_for_an_unmapped_label_and_binds_it() -> None:
+    asker = ScriptedAsker("off_topic")
+    result = await Pipeline.of(
+        topic_route(asker, otherwise=Pipeline.of(step("default_ran")), as_="path")
+    ).run(context())
+
+    assert result.get("default_ran") == "default_ran"
+    assert result.get("path") == "off_topic"
+
+
+async def test_route_fails_closed_for_an_unmapped_label_with_no_default() -> None:
+    with pytest.raises(PipelineError, match="no arm maps"):
+        await Pipeline.of(topic_route(ScriptedAsker("off_topic"))).run(context())
+
+
+async def test_route_fails_when_the_decision_has_no_definition() -> None:
+    asker = ScriptedAsker("product")
+    with pytest.raises(PipelineError, match="needs a definition"):
+        await Pipeline.of(topic_route(asker, decision="nowhere")).run(context())
+
+    assert asker.calls == []
+
+
+async def test_route_fails_when_the_client_raises() -> None:
+    with pytest.raises(PipelineError, match="could not answer: vendor exploded"):
+        await Pipeline.of(
+            topic_route(ScriptedAsker("product", error=RuntimeError("vendor exploded")))
+        ).run(context())
+
+
+async def test_route_fails_when_the_answer_carries_no_choice() -> None:
+    with pytest.raises(PipelineError, match="returned no choice"):
+        await Pipeline.of(topic_route(ScriptedAsker())).run(context())
+
+
+async def test_route_builds_its_client_on_first_use_and_reuses_it() -> None:
+    asker = ScriptedAsker("product")
+    built: list[ScriptedAsker] = []
+
+    def factory() -> ScriptedAsker:
+        built.append(asker)
+        return asker
+
+    pipeline = Pipeline.of(topic_route(asker, client_factory=factory))
+    assert built == []
+
+    await pipeline.run(context())
+    await pipeline.run(context())
+
+    assert built == [asker]
+    assert len(asker.calls) == 2

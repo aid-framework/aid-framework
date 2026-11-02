@@ -66,6 +66,7 @@ export function childrenOf(step: StepShape): StepShape[] {
   if (step.kind === 'branch') return [...step.then, ...(step.else ?? [])];
   if (step.kind === 'parallel') return step.branches.flat();
   if (step.kind === 'map') return [step.step];
+  if (step.kind === 'route') return [...Object.values(step.on).flat(), ...(step.default ?? [])];
   return [];
 }
 

@@ -75,6 +75,7 @@ import {
   RETRIEVAL_TRAITS,
   type RetrieverShape,
   type RetrieveStep,
+  type RouteStep,
   type SemanticCacheShape,
   type SideEffects,
   type StepInput,
@@ -705,6 +706,10 @@ function buildStep(
   if (branch !== undefined) {
     return buildBranchStep(branch, promptModels, context, [...path, 'branch']);
   }
+  const route = asRecord(record.route);
+  if (route !== undefined) {
+    return buildRouteStep(route, promptModels, context, [...path, 'route']);
+  }
   const parallel = asRecord(record.parallel);
   if (parallel !== undefined) {
     const arms = asArray(parallel.branches);
@@ -792,6 +797,35 @@ function buildBranchStep(
     then: buildStepList(branch.then, promptModels, context, [...path, 'then']),
     else: buildStepList(branch.else, promptModels, context, [...path, 'else']),
   };
+}
+
+/**
+ * The spec layer already refused a route the schema cannot express, so an empty `on`
+ * here means the layers disagree. It is still built faithfully: the runtime fails a
+ * route with no arm for the answer, which is the same closed door.
+ */
+function buildRouteStep(
+  route: Record<string, unknown>,
+  promptModels: Map<string, string>,
+  context: BuildContext,
+  path: readonly (string | number)[],
+): RouteStep {
+  const on: Record<string, StepShape[]> = {};
+  for (const [label, arm] of Object.entries(asRecord(route.on) ?? {})) {
+    on[label] = buildStepList(arm, promptModels, context, [...path, 'on', label]);
+  }
+  const step: RouteStep = {
+    kind: 'route',
+    decision: asString(route.decision) ?? '',
+    input: asString(route.input) ?? '',
+    on,
+  };
+  if (route.default !== undefined) {
+    step.default = buildStepList(route.default, promptModels, context, [...path, 'default']);
+  }
+  const as = asString(route.as);
+  if (as !== undefined) step.as = as;
+  return step;
 }
 
 /** `query` stays as declared: the runtime interpolates it per request. */

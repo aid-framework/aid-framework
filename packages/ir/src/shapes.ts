@@ -361,6 +361,27 @@ export interface AgentStep {
   as: string;
 }
 
+/**
+ * Runs the arm a `choice` decision's answer names.
+ *
+ * Unlike `branch`, whose `when` sees only the caller's Principal, `input` is a template
+ * over earlier bindings, so a route may depend on what a previous step produced. The
+ * decision is asked once per step, and exactly one arm runs.
+ */
+export interface RouteStep {
+  kind: 'route';
+  /** Declared decision id; the spec validator guarantees its type is `choice`. */
+  decision: string;
+  /** Template text the decision classifies. */
+  input: string;
+  /** Label to the steps that answer it. Covers every label unless `default` exists. */
+  on: Readonly<Record<string, StepShape[]>>;
+  /** The arm for a label `on` leaves out; absent when `on` covers everything. */
+  default?: StepShape[];
+  /** Binding for the chosen label, when a later step needs to name the path. */
+  as?: string;
+}
+
 export type StepShape =
   | GenerateStep
   | RetrieveStep
@@ -372,13 +393,14 @@ export type StepShape =
   | ReduceStep
   | RerankStep
   | GuardStep
-  | AgentStep;
+  | AgentStep
+  | RouteStep;
 
-/** The composite kinds: the four that nest other steps and so can recurse. */
-export const COMPOSITE_STEP_KINDS = ['branch', 'parallel', 'map', 'reduce'] as const;
+/** The composite kinds: the five that nest other steps and so can recurse. */
+export const COMPOSITE_STEP_KINDS = ['branch', 'parallel', 'map', 'reduce', 'route'] as const;
 
 /** The step kinds that contain other steps, so every walker has one guard to reach for. */
-export type CompositeStep = BranchStep | ParallelStep | MapStep | ReduceStep;
+export type CompositeStep = BranchStep | ParallelStep | MapStep | ReduceStep | RouteStep;
 
 export function isCompositeStep(step: { kind: StepShape['kind'] }): step is CompositeStep {
   return (COMPOSITE_STEP_KINDS as readonly string[]).includes(step.kind);

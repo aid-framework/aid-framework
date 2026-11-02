@@ -1,0 +1,55 @@
+specVersion: "0.9"
+
+project:
+  name: probe
+
+models:
+  fast:
+    provider: fake
+    modelId: fake-echo
+
+prompts:
+  reply:
+    version: 1
+    model: fast
+    template: "Reply about {{subject}}"
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: text
+
+decisions:
+  triage:
+    provider: typesafe
+    model: jev-1.14.0
+    type: score
+    instructions: How urgent is this
+    criteria:
+      - not urgent
+      - urgent
+
+pipelines:
+  handle:
+    trigger:
+      http:
+        method: post
+        path: /handle
+    steps:
+      - route:
+          decision: triage
+          input: "hello"
+          on:
+            billing:
+              - generate:
+                  prompt: reply
+                  input:
+                    subject: "hello"
+                  as: reply
+            product:
+              - generate:
+                  prompt: reply
+                  input:
+                    subject: "hello"
+                  as: reply

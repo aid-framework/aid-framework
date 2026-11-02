@@ -17,6 +17,7 @@ import { ConcurrencyLimiter } from '../src/concurrency.js';
 import {
   branch,
   DEPTH_KEY,
+  type DecisionAsker,
   INDEX_KEY,
   ITEM_KEY,
   LIMITER_KEY,
@@ -26,8 +27,12 @@ import {
   parallel,
   REDUCED_KEY,
   RESERVED_KEYS,
+  type RouteDecision,
+  type RouteOptions,
   reduceStep,
+  route,
 } from '../src/control.js';
+import type { DecisionAnswer } from '../src/decisions.js';
 import { PolicyEvaluationError } from '../src/errors.js';
 import { Pipeline, PipelineContext, type Step } from '../src/pipeline.js';
 import {
@@ -564,5 +569,145 @@ describe('the reserved names', () => {
     ).toBeDefined();
     expect(reserved?.sort()).toEqual([...RESERVED_KEYS].sort());
     expect(source).toContain(`MAX_STEP_DEPTH = ${MAX_STEP_DEPTH}`);
+  });
+});
+
+const TOPIC: RouteDecision = {
+  model: 'jev-1.14.0',
+  instructions: 'Which part of the product is this question about',
+  criteria: ['product', 'billing'],
+};
+
+const DECISIONS: Readonly<Record<string, RouteDecision>> = { topic: TOPIC };
+
+/** A scripted decision client: one answer, every call recorded. */
+function scriptedAsker(choice: string | undefined, error?: Error) {
+  const calls: { model: string; state: unknown; questions: unknown }[] = [];
+  const client: DecisionAsker = {
+    async decide(options) {
+      calls.push({ model: options.model, state: options.state, questions: options.questions });
+      if (error !== undefined) throw error;
+      const answers: Record<string, DecisionAnswer> = {
+        topic: choice === undefined ? { type: 'choice' } : { type: 'choice', choice },
+      };
+      return { model: options.model, answers };
+    },
+  };
+  return { client, calls };
+}
+
+/** A route over two mapped labels, so an answer outside them has to find `otherwise`. */
+function topicRoute(options: Partial<RouteOptions> = {}): ReturnType<typeof route> {
+  return route({
+    decision: 'topic',
+    state: 'How much does the pro plan cost',
+    on: {
+      product: Pipeline.of(step('product_ran')),
+      billing: Pipeline.of(step('billing_ran')),
+    },
+    decisions: DECISIONS,
+    ...options,
+  });
+}
+
+describe('route', () => {
+  it('runs the arm the decision names and binds the label', async () => {
+    const asker = scriptedAsker('product');
+    const pipeline = Pipeline.of(topicRoute({ as: 'path', clientFactory: () => asker.client }));
+
+    const result = await pipeline.run(context());
+
+    expect(result.get('product_ran')).toBe('product_ran');
+    expect(result.get('billing_ran')).toBeUndefined();
+    expect(result.get('path')).toBe('product');
+    expect(asker.calls[0]?.state).toBe('How much does the pro plan cost');
+  });
+
+  it('asks a choice question with the definition the generated app carries', async () => {
+    const asker = scriptedAsker('product');
+    const pipeline = Pipeline.of(topicRoute({ clientFactory: () => asker.client }));
+
+    await pipeline.run(context());
+
+    expect(asker.calls[0]?.model).toBe(TOPIC.model);
+    expect(asker.calls[0]?.questions).toMatchObject({
+      topic: { type: 'choice', instructions: TOPIC.instructions, criteria: TOPIC.criteria },
+    });
+  });
+
+  it('runs the default for a label no arm maps, and binds that label too', async () => {
+    const asker = scriptedAsker('off_topic');
+    const pipeline = Pipeline.of(
+      topicRoute({
+        otherwise: Pipeline.of(step('default_ran')),
+        as: 'path',
+        clientFactory: () => asker.client,
+      }),
+    );
+
+    const result = await pipeline.run(context());
+
+    expect(result.get('default_ran')).toBe('default_ran');
+    expect(result.get('path')).toBe('off_topic');
+  });
+
+  it('fails closed for a label no arm maps and no default catches', async () => {
+    const asker = scriptedAsker('off_topic');
+    const pipeline = Pipeline.of(topicRoute({ clientFactory: () => asker.client }));
+
+    const error = await failure(pipeline.run(context()));
+
+    expect(error.message).toMatch(/answered 'off_topic', which no arm maps/);
+  });
+
+  it('fails when the decision has no definition in the app', async () => {
+    const asker = scriptedAsker('product');
+    const pipeline = Pipeline.of(
+      topicRoute({ decision: 'nowhere', decisions: DECISIONS, clientFactory: () => asker.client }),
+    );
+
+    const error = await failure(pipeline.run(context()));
+
+    expect(error.message).toMatch(/needs a definition for decision 'nowhere'/);
+    expect(asker.calls).toEqual([]);
+  });
+
+  it('fails when the client throws rather than picking an arm', async () => {
+    const asker = scriptedAsker('product', new Error('vendor exploded'));
+    const pipeline = Pipeline.of(topicRoute({ clientFactory: () => asker.client }));
+
+    const error = await failure(pipeline.run(context()));
+
+    expect(error.message).toMatch(/could not answer: vendor exploded/);
+  });
+
+  it('fails when the answer carries no choice', async () => {
+    const asker = scriptedAsker(undefined);
+    const pipeline = Pipeline.of(topicRoute({ clientFactory: () => asker.client }));
+
+    const error = await failure(pipeline.run(context()));
+
+    expect(error.message).toMatch(/returned no choice/);
+  });
+
+  it('builds its client on first use and reuses it across runs', async () => {
+    const asker = scriptedAsker('product');
+    const built: DecisionAsker[] = [];
+    const pipeline = Pipeline.of(
+      topicRoute({
+        clientFactory: () => {
+          built.push(asker.client);
+          return asker.client;
+        },
+      }),
+    );
+
+    expect(built).toEqual([]);
+
+    await pipeline.run(context());
+    await pipeline.run(context());
+
+    expect(built).toHaveLength(1);
+    expect(asker.calls).toHaveLength(2);
   });
 });

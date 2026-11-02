@@ -109,13 +109,15 @@ from aid_runtime import (
     reduce_step,
     reranker_for,
     retrieve_step,
+    route,
     run_structured,
     similarity,
     tool_step,
     z_critical,
 )
-from aid_runtime.agents import GuardrailDefinition, GuardrailEngine
+from aid_runtime.agents import DecisionDefinition, GuardrailDefinition, GuardrailEngine
 from aid_runtime.agents.ir import from_ir
+from aid_runtime.decisions import DecisionAnswer, DecisionResponse
 from aid_runtime.evals import AssertMetric
 
 #: ``tests/conformance/test_conformance.py`` is four levels below the repository root.
@@ -1031,6 +1033,84 @@ def _steps_reduce(data: Mapping[str, Any]) -> dict[str, Any]:
     return {"bound": _bound(result, data), "finished": finished}
 
 
+def _steps_route(data: Mapping[str, Any]) -> dict[str, Any]:
+    """One ``route``: the question it asked, the arm the answer chose, and what ran.
+
+    The asker is a double that records the question and answers the case's ``chosen``
+    label, so a verdict shows both halves of the contract: that the route asked a
+    ``choice`` over the definition's criteria with the rendered state, and that it ran
+    exactly one arm and bound the label it was answered with. A case whose ``chosen``
+    label no arm maps and that has no ``default`` is how "the run fails rather than
+    guessing" is observed.
+    """
+    entry = data["decision"]
+    decision = str(entry["id"])
+    asked: list[dict[str, Any]] = []
+    ran: list[str] = []
+
+    class Asker:
+        async def decide(
+            self,
+            *,
+            model: str,
+            state: Any,
+            questions: Mapping[str, Any],
+            reproducible: bool = False,
+        ) -> DecisionResponse:
+            question = questions[decision]
+            asked.append(
+                {
+                    "type": question.type,
+                    "instructions": question.instructions,
+                    "criteria": list(question.criteria or ()),
+                    "model": model,
+                    "state": state,
+                }
+            )
+            return DecisionResponse(
+                model=model,
+                answers={
+                    decision: DecisionAnswer(type="choice", choice=data.get("chosen")),
+                },
+            )
+
+    def arm(which: str, binds: Mapping[str, Any]) -> Pipeline:
+        async def run(current: PipelineContext) -> PipelineContext:
+            ran.append(which)
+            return current.with_values(**{str(key): value for key, value in binds.items()})
+
+        run.__name__ = which
+        return Pipeline.of(run)
+
+    binds = data.get("binds", {})
+    composite = route(
+        decision=decision,
+        state=str(data["state"]),
+        on={str(label): arm(str(label), binds.get(label, {})) for label in data["on"]},
+        otherwise=(None if "default" not in data else arm("otherwise", binds.get("default", {}))),
+        as_=data.get("as"),
+        decisions={
+            decision: DecisionDefinition(
+                id=decision,
+                model=str(entry["model"]),
+                instructions=str(entry["instructions"]),
+                criteria=tuple(str(label) for label in entry["criteria"]),
+            )
+        },
+        client_factory=Asker,
+    )
+    try:
+        result = asyncio.run(Pipeline.of(composite).run(_seeded(data, ConcurrencyLimiter(1))))
+    except PipelineError as exc:
+        return {
+            "asked": asked,
+            "ran": ran,
+            "refused": True,
+            "reason": "unmapped" if "no arm maps" in str(exc) else "other",
+        }
+    return {"asked": asked, "ran": ran, "refused": False, "bound": _bound(result, data)}
+
+
 def _steps_depth(data: Mapping[str, Any]) -> dict[str, Any]:
     """How deep a nest a runtime allows before it refuses the next level.
 
@@ -1438,6 +1518,7 @@ _OPS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     "steps.parallel": _steps_parallel,
     "steps.map": _steps_map,
     "steps.reduce": _steps_reduce,
+    "steps.route": _steps_route,
     "steps.depth": _steps_depth,
     "steps.rerank": _steps_rerank,
     "steps.guard": _steps_guard,

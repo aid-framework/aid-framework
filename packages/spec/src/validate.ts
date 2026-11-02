@@ -54,6 +54,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.6',
   '0.7',
   '0.8',
+  '0.9',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -95,6 +96,13 @@ export const GUARDRAIL_DECISION_MIN_VERSION: SpecVersion = '0.7';
  * one is refused rather than measured by a runtime it did not ask for.
  */
 export const DECISION_METRIC_MIN_VERSION: SpecVersion = '0.8';
+
+/**
+ * The `route` step arrived in 0.9. A pipeline has existed since 0.1, so this is a
+ * nested construct that `SECTION_MIN_VERSION` cannot gate; the check lives in
+ * `routeDiagnostics`, which runs for every step.
+ */
+export const ROUTE_MIN_VERSION: SpecVersion = '0.9';
 
 /**
  * The Jev aliases that move with the vendor's next release. Duplicated from the runtimes
@@ -150,6 +158,7 @@ export const SUPPORTED_STEP_KINDS = [
   'rerank',
   'guard',
   'agent',
+  'route',
 ] as const;
 
 /**
@@ -193,13 +202,13 @@ export function retiredStepReplacement(kind: string): string | undefined {
 }
 
 /**
- * The composite step kinds: the four a pipeline may nest inside another step.
+ * The composite step kinds: the five a pipeline may nest inside another step.
  *
  * They are separate from `SUPPORTED_STEP_KINDS` because they are the only kinds that
  * can recurse, so the nesting bound and the "no `emit` inside a composite" rule have
  * exactly one list to consult.
  */
-export const COMPOSITE_STEP_KINDS = ['branch', 'parallel', 'map', 'reduce'] as const;
+export const COMPOSITE_STEP_KINDS = ['branch', 'parallel', 'map', 'reduce', 'route'] as const;
 
 /**
  * Deepest composite nesting a pipeline may declare.
@@ -441,6 +450,7 @@ function scopeDiagnostics(
   deploymentImageDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
+  routeDiagnostics(spec, diagnostics, reported);
 }
 
 /**
@@ -848,7 +858,7 @@ interface WalkedStep {
  * Visit every step in a list, recursing into the composite kinds.
  *
  * One walker serves the kind check, the nesting bound and the template check, so the
- * four composite shapes are enumerated exactly once. A new composite kind that this
+ * composite shapes are enumerated exactly once. A new composite kind that this
  * function does not know about is therefore a single missing `case` rather than three
  * independently-maintained recursions.
  */
@@ -882,6 +892,14 @@ function walkSteps(
     const map = asRecord(body.map);
     if (Object.keys(asRecord(map.step)).length > 0) {
       walkSteps([map.step], [...path, 'map', 'step'], depth + 1, visit);
+    }
+
+    const route = asRecord(body.route);
+    if (Object.keys(route).length > 0) {
+      for (const [label, arm] of Object.entries(asRecord(route.on))) {
+        walkSteps(arm, [...path, 'route', 'on', label], depth + 1, visit);
+      }
+      walkSteps(route.default, [...path, 'route', 'default'], depth + 1, visit);
     }
   });
 }
@@ -1003,6 +1021,137 @@ function declaresConcurrency(spec: Record<string, unknown>): boolean {
     const value = asRecord(deployment).concurrency;
     return typeof value === 'number' && Number.isInteger(value) && value >= 1;
   });
+}
+
+/**
+ * The rules a `route` step needs that JSON Schema cannot state.
+ *
+ * **Version**: `route` is 0.9 while `pipelines` has been legal since 0.1, so this is a
+ * nested gate like `models[].cache`, not a `SECTION_MIN_VERSION` entry. **Reference**:
+ * the decision must exist and be a `choice`; a `score` answer is an ordinal and a
+ * `noul` answer a probability, and neither names an arm. **Arms**: every key in `on`
+ * must be a label the decision can return, every label must reach an arm, and a
+ * `default` must not be dead -- an arm that can never run is a mistake in the
+ * document, not a harmless one.
+ */
+function routeDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) {
+    return;
+  }
+
+  const decisions = asRecord(spec.decisions);
+  for (const [pipelineName, pipeline] of Object.entries(asRecord(spec.pipelines))) {
+    const steps = asRecord(pipeline).steps;
+    if (!Array.isArray(steps)) {
+      continue;
+    }
+
+    walkSteps(steps, ['pipelines', pipelineName, 'steps'], 0, ({ body, path }) => {
+      const route = asRecord(body.route);
+      if (Object.keys(route).length === 0) {
+        return;
+      }
+
+      if (!specVersionAtLeast(declared, ROUTE_MIN_VERSION)) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.notSupported,
+            message: `a 'route' step requires specVersion ${ROUTE_MIN_VERSION}, but this specification declares version ${declared}`,
+            path,
+            hint: `set specVersion: "${ROUTE_MIN_VERSION}"; a document that does not route by a decision is unchanged`,
+          }),
+        );
+        reported.add(JSON.stringify(path));
+        return;
+      }
+
+      const decisionName = typeof route.decision === 'string' ? route.decision : undefined;
+      if (decisionName === undefined) {
+        // The schema already reports the missing key; there is nothing to resolve.
+        return;
+      }
+      if (!Object.hasOwn(decisions, decisionName)) {
+        const ids = Object.keys(decisions).sort();
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `route step names decision '${decisionName}', which the 'decisions' section does not declare`,
+            path: [...path, 'route', 'decision'],
+            hint:
+              ids.length > 0
+                ? `declare '${decisionName}', or use one of: ${ids.join(', ')}`
+                : "add a 'decisions' section that declares it",
+          }),
+        );
+        reported.add(JSON.stringify([...path, 'route', 'decision']));
+        return;
+      }
+
+      const target = asRecord(decisions[decisionName]);
+      const type = String(target.type ?? 'unknown');
+      if (type !== 'choice') {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `decision '${decisionName}' is a '${type}' question; a route needs a 'choice' decision, because only a label names an arm`,
+            path: [...path, 'route', 'decision'],
+            hint: "declare the decision with type: choice, or branch on the answer's value in a generate step",
+          }),
+        );
+        reported.add(JSON.stringify([...path, 'route', 'decision']));
+        return;
+      }
+
+      const labels = Object.keys(asRecord(target.criteria));
+      const on = asRecord(route.on);
+      const hasDefault = route.default !== undefined;
+
+      for (const label of Object.keys(on)) {
+        if (labels.includes(label)) continue;
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `'route.on.${label}' names no criterion of decision '${decisionName}', so no answer could ever select it`,
+            path: [...path, 'route', 'on', label],
+            hint:
+              labels.length > 0
+                ? `declared labels: ${labels.join(', ')}`
+                : 'the decision declares no criteria',
+          }),
+        );
+      }
+
+      const unmapped = labels.filter((label) => !Object.hasOwn(on, label));
+      if (unmapped.length > 0 && !hasDefault) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `'route' does not say what to do when decision '${decisionName}' answers '${unmapped[0]}'${unmapped.length > 1 ? ` (or ${unmapped.length - 1} other label${unmapped.length > 2 ? 's' : ''})` : ''}`,
+            path: [...path, 'route'],
+            hint: `map ${unmapped.length === 1 ? 'it' : 'each one'} under 'on', or add a 'default' arm`,
+          }),
+        );
+      }
+
+      if (hasDefault && unmapped.length === 0) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `'route.default' can never run, because 'on' already maps every label decision '${decisionName}' can return`,
+            path: [...path, 'route', 'default'],
+            hint: "remove the 'default' arm, or leave one label out of 'on' if it should fall through",
+          }),
+        );
+      }
+    });
+  }
 }
 
 function templateDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnostic[]): void {

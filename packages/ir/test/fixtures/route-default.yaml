@@ -1,0 +1,82 @@
+specVersion: "0.9"
+project:
+  name: route-default
+  namespace: acme.routedefault
+  description: A route maps the labels it handles and a default catches the rest.
+  targets: [py-fastapi, ts-vercel]
+types:
+  Answer:
+    kind: struct
+    fields:
+      reply:
+        type: string
+        required: true
+decisions:
+  topic:
+    provider: typesafe
+    model: jev-1.14.0
+    type: choice
+    instructions: Which part of the product is this question about
+    criteria:
+      product: A question about features, pricing, or usage
+      billing: A question about an invoice or a refund
+      off_topic: Anything unrelated
+models:
+  fast:
+    provider: fake
+    modelId: fake-echo
+prompts:
+  reply:
+    version: 1
+    model: fast
+    template: "Reply about {{subject}}"
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: text
+deployments:
+  prod:
+    target: serverless
+    secrets: [FAKE_API_KEY]
+pipelines:
+  triage:
+    description: Route the mapped topics and let the default answer everything else.
+    trigger:
+      http:
+        method: post
+        path: /triage
+    steps:
+      - generate:
+          prompt: reply
+          input:
+            subject: "How much does the pro plan cost"
+          as: plan
+      # `off_topic` is deliberately left unmapped: it is what makes the `default` arm
+      # reachable, and what the emitter has to render as its `otherwise` pipeline.
+      - route:
+          decision: topic
+          input: "{{plan}}"
+          on:
+            product:
+              - generate:
+                  prompt: reply
+                  input:
+                    subject: "{{plan}}"
+                  as: reply
+            billing:
+              - generate:
+                  prompt: reply
+                  input:
+                    subject: "{{plan}}"
+                  as: reply
+          default:
+            - generate:
+                prompt: reply
+                input:
+                  subject: "This request is not about the product"
+                as: reply
+          as: path
+      - emit:
+          event: Answer

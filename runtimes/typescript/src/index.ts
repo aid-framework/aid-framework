@@ -29,7 +29,7 @@
 
 export * from './agents/index.js';
 export { ConcurrencyLimiter, holdsSlot } from './concurrency.js';
-export type { CompositeStep } from './control.js';
+export type { CompositeStep, DecisionAsker, RouteDecision, RouteOptions } from './control.js';
 export {
   branch,
   DEPTH_KEY,
@@ -43,6 +43,7 @@ export {
   REDUCED_KEY,
   RESERVED_KEYS,
   reduceStep,
+  route,
 } from './control.js';
 export {
   Budget,

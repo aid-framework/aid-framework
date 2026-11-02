@@ -101,7 +101,7 @@ shows every file `gen` wrote and serves the endpoint. You need Node.js 24 or new
 account, no email gate, nothing else to install.
 
 Seven packages on npm and one on PyPI ship together at version **{{ AID_VERSION }}**, with
-the spec language at `0.8`.
+the spec language at `0.9`.
 
 ## Support, read from the code
 

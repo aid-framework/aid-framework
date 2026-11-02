@@ -1,5 +1,5 @@
 /**
- * Composite pipeline steps: `branch`, `parallel`, `map` and `reduce`.
+ * Composite pipeline steps: `branch`, `route`, `parallel`, `map` and `reduce`.
  *
  * {@link Pipeline} is a sequential reducer, and it stays one. Each factory here returns
  * an ordinary {@link Step}, so a composite composes with the flat steps by the same rule
@@ -25,6 +25,12 @@
  */
 
 import { ConcurrencyLimiter, holdsSlot } from './concurrency.js';
+import {
+  type DecideOptions,
+  DecisionClient,
+  DecisionQuestion,
+  type DecisionResponse,
+} from './decisions.js';
 import { PipelineError } from './errors.js';
 import { repr } from './internal/json.js';
 import { type Pipeline, type PipelineContext, STEPS_KEY } from './pipeline.js';
@@ -202,6 +208,119 @@ export function branch(options: {
       return escapeIteration(context);
     }
     const [, added] = await runBody(chosen, nested);
+    return escapeIteration(context.withValues(added));
+  };
+
+  return named(run, name);
+}
+
+/** What a route needs from a decision client; {@link DecisionClient} satisfies it. */
+export interface DecisionAsker {
+  decide(options: DecideOptions): Promise<DecisionResponse>;
+}
+
+/** The part of a decision a route asks about, mirroring the generated definition. */
+export interface RouteDecision {
+  readonly model: string;
+  readonly instructions: string;
+  readonly criteria?: readonly string[];
+}
+
+export interface RouteOptions {
+  readonly decision: string;
+  /** The rendered text the decision classifies. */
+  readonly state: string;
+  /** Label to arm. Covers every label unless `otherwise` exists. */
+  readonly on: Readonly<Record<string, Pipeline>>;
+  /** The arm for a label `on` leaves out. */
+  readonly otherwise?: Pipeline;
+  /** Binding for the label that was answered, including one that fell through. */
+  readonly as?: string;
+  readonly decisions: Readonly<Record<string, RouteDecision>>;
+  /** Built on first use, so an unfetched decision does not need a key at boot. */
+  readonly clientFactory?: () => DecisionAsker;
+  readonly maxDepth?: number;
+  readonly name?: string;
+}
+
+/**
+ * Ask one `choice` decision which arm to run, then run that arm.
+ *
+ * This is the difference between a `route` and a `branch`: a branch's predicate is a
+ * policy over the caller, so it can only answer who is asking, while a route's question
+ * is asked about rendered text, so it can answer what the request means.
+ *
+ * Every way the question can fail fails the run rather than picking an arm: a decision
+ * with no definition here, a client that throws, an answer with no choice, and a label
+ * no arm maps. A default is not a fourth outcome; it is the arm an *unexpected* label
+ * runs, and the spec gate refuses a default that a mapped set already covers.
+ *
+ * `as` binds the label that was answered, including one that fell through to
+ * `otherwise`, so a later step can name the arm that ran rather than re-deriving it. The
+ * client is built on first use, never when the pipeline is assembled.
+ */
+export function route(options: RouteOptions): CompositeStep {
+  const {
+    decision,
+    state,
+    on,
+    otherwise,
+    as: labelBinding,
+    decisions,
+    maxDepth = MAX_STEP_DEPTH,
+    name,
+  } = options;
+  const factory = options.clientFactory ?? ((): DecisionAsker => new DecisionClient());
+  let client: DecisionAsker | undefined;
+
+  const run = async function _route(context: PipelineContext): Promise<PipelineContext> {
+    const definition = decisions[decision];
+    if (definition === undefined) {
+      throw new PipelineError(
+        `route needs a definition for decision ${repr(decision)}; the generated app ` +
+          'carries one for every decision its routes name',
+      );
+    }
+    const nested = enter(context, maxDepth, `route (${decision})`);
+    // `DecisionQuestion` is the only validator of a question shape, so a `route` asks
+    // through it rather than hand-building the payload the client would refuse.
+    const question = new DecisionQuestion({
+      type: 'choice',
+      instructions: definition.instructions,
+      ...(definition.criteria === undefined ? {} : { criteria: definition.criteria }),
+    });
+    client ??= factory();
+    let response: DecisionResponse;
+    try {
+      response = await client.decide({
+        model: definition.model,
+        state,
+        questions: { [decision]: question },
+      });
+    } catch (error) {
+      throw new PipelineError(
+        `route decision ${repr(decision)} could not answer: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error },
+      );
+    }
+    const label = response.answers[decision]?.choice;
+    if (label === undefined) {
+      throw new PipelineError(
+        `route decision ${repr(decision)} returned no choice, so no arm can be selected; ` +
+          'a route does not guess which one was meant',
+      );
+    }
+    const chosen = on[label] ?? otherwise;
+    if (chosen === undefined) {
+      throw new PipelineError(
+        `route decision ${repr(decision)} answered ${repr(label)}, which no arm maps and ` +
+          'no `default` catches',
+      );
+    }
+    const [, added] = await runBody(chosen, nested);
+    if (labelBinding !== undefined) added[labelBinding] = label;
     return escapeIteration(context.withValues(added));
   };
 

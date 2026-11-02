@@ -35,6 +35,7 @@ import { interpolate, templatePlaceholders } from '../placeholders.js';
 import {
   INDENT,
   MAX_LINE,
+  pythonFString,
   pythonNumber,
   pythonString,
   pythonTuple,
@@ -58,7 +59,7 @@ import {
 import { DEPS_BINDING } from './deps.js';
 import type { EmittedFile } from './file.js';
 import { GENERATED_ROOT, generated } from './file.js';
-import { hasGuardrails, stageGuardrails, stageTable } from './guardrails.js';
+import { decisionDefinition, hasGuardrails, stageGuardrails, stageTable } from './guardrails.js';
 import { promptOf, scopeMap, structOf, toolOf, typeTable } from './ir.js';
 import { orderedPipelines } from './order.js';
 import { promptVersion } from './prompts.js';
@@ -203,10 +204,11 @@ export function renderReference(
  *
  * An `emit` step takes none and a `retrieve` step carries a query instead, so the
  * union cannot be indexed directly; every caller wants the same empty set for those
- * rather than a branch of its own. The composite kinds take no template input either:
- * `branch` and `parallel` are decided by their arms, and `map`/`reduce` name the list
- * they iterate in `over` -- a bare binding, not a template, so it is surfaced as the
- * reference it is rather than silently dropped.
+ * rather than a branch of its own. `branch` and `parallel` take no template input either:
+ * they are decided by their arms, and `map`/`reduce` name the list they iterate in `over`
+ * -- a bare binding, not a template, so it is surfaced as the reference it is rather than
+ * silently dropped. A `route` is the one composite that asks a question about rendered
+ * text, so its `input` surfaces as the template it is.
  */
 export function stepInputs(step: StepShape): Readonly<Record<string, StepInputValue>> {
   if (step.kind === 'emit' || step.kind === 'retrieve') return {};
@@ -231,6 +233,9 @@ export function stepInputs(step: StepShape): Readonly<Record<string, StepInputVa
   if (step.kind === 'guard' || step.kind === 'agent') {
     return { text: { kind: 'template', template: step.text } };
   }
+  // A `route` asks one question about a rendered state, so its `input` is a template
+  // like a retrieval query rather than the map the model-calling kinds carry.
+  if (step.kind === 'route') return { input: { kind: 'template', template: step.input } };
   return step.input;
 }
 
@@ -328,6 +333,8 @@ interface StepImports {
   readonly guardrails: Set<string>;
   readonly control: Set<string>;
   readonly agents: Set<string>;
+  /** Decision ids a `route` in this module asks, for the module's own `DECISIONS` table. */
+  readonly decisions: Set<string>;
 }
 
 /**
@@ -362,7 +369,10 @@ function valueExpression(
     // than a nested `str(...)` call: the same text, and one expression instead of two.
     return isStringRef(typeOfPath(path, context)) ? reference : `${reference}!s`;
   });
-  return `f${pythonString(body)}`;
+  // A template with no substitution is the text it renders; an `f`-prefix on it would
+  // only invite a reader to look for the field that is not there. A body that still holds
+  // a brace is `escapeBraces`' doubled literal, which only the f-string renders once.
+  return body.includes('{') ? pythonFString(body) : pythonString(body);
 }
 
 function promptValues(
@@ -929,7 +939,8 @@ function emitAgentStep(
  * one branch may bind the same one (the validator accepts arms with identical key sets),
  * and Python's module scope is flat, so binding names alone would emit two `def escalation`
  * where the second shadows the first and both arms run it. Every nested step therefore
- * takes a position-qualified name, `<composite>_<arm>_<index>_<binding>`.
+ * takes a position-qualified name, `<composite>_<arm>_<index>_<binding>` -- and a route
+ * arm is numbered by the label's position, because a label is arbitrary text.
  *
  * The leading underscore is a spelling the validator already refuses for a user binding,
  * so these names cannot shadow one, and numbering them by position keeps the output a
@@ -962,6 +973,13 @@ export function compositeNames(pipeline: PipelineShape): Map<StepShape, string> 
       for (const [index, arm] of step.branches.entries()) nested(arm, `${prefix}_arm_${index + 1}`);
     } else if (step.kind === 'map') {
       nested([step.step], `${prefix}_body`);
+    } else if (step.kind === 'route') {
+      // A route's arms are keyed by decision labels, which are arbitrary text rather than
+      // identifiers, so each arm is numbered in the order its label appears.
+      Object.values(step.on).forEach((arm, index) => {
+        nested(arm, `${prefix}_on_${index + 1}`);
+      });
+      if (step.default !== undefined) nested(step.default, `${prefix}_default`);
     }
   };
   for (const step of pipeline.steps ?? []) {
@@ -1028,7 +1046,22 @@ function expressionList(items: readonly string[], indent: string, prefixLength =
 }
 
 /**
- * The values a context starts with, before a pipeline's first step runs.
+ * A string-keyed mapping literal, wrapped the same way {@link expressionList} wraps a list.
+ *
+ * `route`'s `on` is keyed by the labels a decision offers, and a label is not a Python
+ * identifier: it has to be written as a string key, which is why this is not a keyword
+ * argument list.
+ */
+function mappingLiteral(items: readonly string[], indent: string, prefixLength = 0): string {
+  if (items.length === 0) return '{}';
+  const oneLine = `{${items.join(', ')}}`;
+  const inline = !items.some((item) => item.includes('\n'));
+  if (inline && indent.length + prefixLength + oneLine.length <= MAX_LINE) return oneLine;
+  const deeper = indent + INDENT;
+  return `{\n${items.map((item) => `${deeper}${item},`).join('\n')}\n${indent}}`;
+}
+
+/**
  *
  * `deps` and `event` are what a flat pipeline has always needed. A composite needs three
  * more, and only a composite: the principal a `branch` is evaluated against, the one
@@ -1155,6 +1188,39 @@ function emitCompositeSteps(emitter: PipelineEmitter, step: StepShape): string[]
       `over=${pythonString(contextKey(step.over))}`,
       `as_=${pythonString(contextKey(step.as))}`,
       `step=Pipeline.of(${bodyName})`,
+      ...common,
+    ];
+  } else if (step.kind === 'route') {
+    imports.runtime.add('route');
+    imports.decisions.add(step.decision);
+    doc =
+      `Ask decision \`${step.decision}\` which arm to run, then run that arm. The question ` +
+      'is asked about the rendered `input`, so it answers what the request means rather ' +
+      'than who is asking.';
+    callee = 'route';
+    args = [
+      `decision=${pythonString(step.decision)}`,
+      // The body opens no locals, so every placeholder reads through `ctx.require` rather
+      // than a bare name -- a composite's arms own the locals they open, and this body
+      // owns none.
+      `state=${valueExpression(
+        { kind: 'template', template: step.input },
+        contextOf(emitter, step),
+        true,
+        (key) => `ctx.require(${pythonString(key)})`,
+      )}`,
+      `on=${mappingLiteral(
+        Object.entries(step.on).map(
+          ([label, arm]) => `${pythonString(label)}: ${pipelineCall(arm, names, inner + INDENT)}`,
+        ),
+        inner,
+        'on='.length,
+      )}`,
+      ...(step.default !== undefined
+        ? [`otherwise=${pipelineCall(step.default, names, inner)}`]
+        : []),
+      ...(step.as !== undefined ? [`as_=${pythonString(contextKey(step.as))}`] : []),
+      'decisions=DECISIONS',
       ...common,
     ];
   } else {
@@ -1330,6 +1396,7 @@ function emitterFor(ir: IR, pipeline: PipelineShape): PipelineEmitter {
       guardrails: new Set<string>(),
       control: new Set<string>(),
       agents: new Set<string>(),
+      decisions: new Set<string>(),
     },
     request: requestModelName(pipeline.id),
   };
@@ -1406,8 +1473,27 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
       ...(imports.agents.size > 0
         ? [importFrom('..agents', [...imports.agents].sort(byName))]
         : []),
+      ...(imports.decisions.size > 0
+        ? [importFrom('aid_runtime.agents', ['DecisionDefinition'])]
+        : []),
     ],
   ]);
+
+  /* A route asks a decision, and the definition it asks is data the spec already holds.
+   * The table is per pipeline module rather than shared with `app/guardrails.py` because
+   * that module only exists when a guardrail does: an app whose only use of a decision is
+   * a route would otherwise have nowhere to import its definitions from. */
+  const decisions = (ir.decisions ?? []).filter((decision) => imports.decisions.has(decision.id));
+  const decisionTable =
+    decisions.length === 0
+      ? []
+      : [
+          [
+            'DECISIONS: dict[str, DecisionDefinition] = {',
+            ...decisions.map(decisionDefinition),
+            '}',
+          ].join('\n'),
+        ];
 
   return generated(
     pipelinePath(pipeline.id),
@@ -1415,6 +1501,7 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
       HEADER,
       pythonDoc(`Pipeline \`${pipeline.id}\`, generated from the spec. Do not edit.`),
       headers,
+      ...decisionTable,
       ...blocks,
       factory,
     ]),

@@ -24,6 +24,20 @@ export function pythonString(value: string): string {
   return JSON.stringify(value);
 }
 
+/**
+ * An f-string that renders `body`, substitutions included.
+ *
+ * A substitution can itself contain a string literal -- a body rendering
+ * `ctx.require("plan")` does -- and a backslash inside an f-string's replacement field is
+ * refused before Python 3.12. So a body holding a double quote becomes a single-quoted
+ * literal, which needs no escaping of the call it interpolates.
+ */
+export function pythonFString(body: string): string {
+  if (!body.includes('"')) return `f${pythonString(body)}`;
+  const inner = JSON.stringify(body).slice(1, -1).replace(/\\"/g, '"').replace(/'/g, "\\'");
+  return `f'${inner}'`;
+}
+
 /** A Python number literal. Non-finite numbers have no literal, so they become `None`. */
 export function pythonNumber(value: number): string {
   return Number.isFinite(value) ? String(value) : 'None';
