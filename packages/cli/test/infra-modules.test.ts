@@ -1138,6 +1138,9 @@ describe('the validate fixture', () => {
   it('matches the emitted CDK construct byte for byte', () => {
     // CI runs `cdk synth` here, so this file must be exactly what `aid infra gen` writes.
     const [construct] = emitCdkModules(planOf('serverless'), 'aws');
+    if (construct === undefined) {
+      throw new Error('the CDK construct was not emitted');
+    }
     const fixture = readFileSync(join(FIXTURE, 'generated', 'cdk', 'serverless.cjs'), 'utf8');
     expect(fixture).toBe(construct.contents);
   });
@@ -1186,15 +1189,21 @@ describe('the whole derived tree', () => {
 });
 
 describe('the CDK construct', () => {
+  /** The one file `emitCdkModules` writes; a different count is itself the failure. */
+  function cdkModule(plan: DeployPlan = planOf('serverless'), cloud: 'aws' | 'gcp' = 'aws') {
+    const [file, ...rest] = emitCdkModules(plan, cloud);
+    if (file === undefined || rest.length > 0) {
+      throw new Error(`expected one CDK construct for ${cloud}, got ${rest.length + 1}`);
+    }
+    return file;
+  }
+
   it('is a constant, so `cdk synth` can validate it once', () => {
-    const files = emitCdkModules(planOf('serverless'), 'aws');
-    expect(files).toHaveLength(1);
-    expect(files[0].path).toBe(CDK_SERVERLESS_MODULE);
+    const file = cdkModule();
+    expect(file.path).toBe(CDK_SERVERLESS_MODULE);
     // The construct loops over the context at synth time, so its bytes cannot depend on
     // the plan. A construct that baked in services could not be validated once.
-    expect(emitCdkModules(planOf('serverless', 'serverless'), 'aws')[0].contents).toBe(
-      files[0].contents,
-    );
+    expect(cdkModule(planOf('serverless', 'serverless')).contents).toBe(file.contents);
   });
 
   it('is not emitted for GCP or for a plan with no serverless service', () => {
@@ -1203,7 +1212,7 @@ describe('the CDK construct', () => {
   });
 
   it('refuses what the HCL module refuses, in the same words', () => {
-    const construct = emitCdkModules(planOf('serverless'), 'aws')[0].contents;
+    const construct = cdkModule().contents;
     const module = emitServerlessModule(planOf('serverless'))
       .map((file) => file.contents)
       .join('\n');
@@ -1229,7 +1238,7 @@ describe('the CDK construct', () => {
   });
 
   it('mirrors every resource the HCL module renders', () => {
-    const contents = emitCdkModules(planOf('serverless'), 'aws')[0].contents;
+    const contents = cdkModule().contents;
     for (const kind of [
       'CfnFunction', // aws_lambda_function
       'CfnApi', // aws_apigatewayv2_api
