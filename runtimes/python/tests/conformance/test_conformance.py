@@ -1087,9 +1087,7 @@ def _steps_route(data: Mapping[str, Any]) -> dict[str, Any]:
         decision=decision,
         state=str(data["state"]),
         on={str(label): arm(str(label), binds.get(label, {})) for label in data["on"]},
-        otherwise=(
-            None if "default" not in data else arm("otherwise", binds.get("default", {}))
-        ),
+        otherwise=(None if "default" not in data else arm("otherwise", binds.get("default", {}))),
         as_=data.get("as"),
         decisions={
             decision: DecisionDefinition(

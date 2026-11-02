@@ -35,7 +35,6 @@ from aid_runtime import (
     reduce_step,
     route,
 )
-
 from aid_runtime.agents.ir import DecisionDefinition
 from aid_runtime.decisions import DecisionAnswer, DecisionResponse
 
@@ -563,9 +562,9 @@ async def test_route_fails_when_the_decision_has_no_definition() -> None:
 
 async def test_route_fails_when_the_client_raises() -> None:
     with pytest.raises(PipelineError, match="could not answer: vendor exploded"):
-        await Pipeline.of(topic_route(ScriptedAsker("product", error=RuntimeError("vendor exploded")))).run(
-            context()
-        )
+        await Pipeline.of(
+            topic_route(ScriptedAsker("product", error=RuntimeError("vendor exploded")))
+        ).run(context())
 
 
 async def test_route_fails_when_the_answer_carries_no_choice() -> None:

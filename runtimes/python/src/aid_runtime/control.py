@@ -272,9 +272,7 @@ def route(
                 questions={decision: question},
             )
         except Exception as error:
-            raise PipelineError(
-                f"route decision {decision!r} could not answer: {error}"
-            ) from error
+            raise PipelineError(f"route decision {decision!r} could not answer: {error}") from error
         answer = response.answers.get(decision)
         label = None if answer is None else answer.choice
         if label is None:

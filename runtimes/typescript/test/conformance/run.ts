@@ -917,7 +917,7 @@ async function stepsRoute(input: Json): Promise<Json> {
       asked.push({
         type: question.type,
         instructions: question.instructions,
-        criteria: [...question.criteria],
+        criteria: [...(question.criteria ?? [])],
         model: options.model,
         state: options.state,
       });
