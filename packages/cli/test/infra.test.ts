@@ -24,6 +24,12 @@ function scratch() {
   return made;
 }
 
+function scratchSpec(spec: string) {
+  const made = project(spec);
+  created.push(made);
+  return made;
+}
+
 afterAll(() => {
   for (const made of created) made.close();
 });
@@ -50,6 +56,45 @@ project:
   name: tiny
   targets:
     - py-fastapi
+`;
+
+/** A 0.5 document: a manual pipeline and the batch deployment that names it. */
+const BATCH_SPEC = `specVersion: "0.5"
+project:
+  name: nightly
+  namespace: aid.test.nightly
+  targets: [py-fastapi]
+models:
+  fast:
+    provider: fake
+    modelId: fake-deterministic-1
+    capabilities: [json-schema]
+prompts:
+  draft:
+    version: 1
+    model: fast
+    template: "Summarise {{ subject }}."
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: text
+pipelines:
+  brief:
+    trigger:
+      manual: true
+    steps:
+      - generate:
+          prompt: draft
+          input:
+            subject: "{{ event.subject }}"
+          as: brief
+deployments:
+  nightly:
+    target: batch
+    pipeline: brief
+    secrets: []
 `;
 
 /** Everything a derived file must never contain, because the spec does not say it. */
@@ -94,7 +139,23 @@ describe('infra gen', () => {
     // The deployment's secret is declared; the model's key env may add to it, never
     // subtract, so the assertion is containment rather than equality.
     expect(tfvars.services.api.secret_names).toContain('OPENAI_API_KEY');
+    // A container deployment names no pipeline: the key appears only when a job does.
+    expect(tfvars.services.api.pipeline).toBeUndefined();
     expect(tfvars.project).toEqual({ name: 'support-copilot', namespace: 'aid.examples.support' });
+  });
+
+  it('wires a batch job to the module that runs it', () => {
+    const made = scratchSpec(BATCH_SPEC);
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+
+    const tfvars = JSON.parse(made.read(TFVARS));
+    expect(tfvars.services.nightly.target).toBe('batch');
+    expect(tfvars.services.nightly.pipeline).toBe('brief');
+    expect(tfvars.services.nightly.routes).toEqual([]);
+
+    expect(made.walk()).toContain(`${GENERATED}/modules/batch/main.tf`);
+    expect(made.walk()).not.toContain(`${GENERATED}/modules/container/main.tf`);
+    expect(made.read(`${GENERATED}/README.md`)).toContain('modules/batch/');
   });
 
   it('emits derived shape only', () => {

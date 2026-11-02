@@ -11,6 +11,7 @@ import type { DeployPlan } from '@aid-framework/ir';
 import { type Cloud, DEFAULT_CLOUD } from '../cloud.js';
 import type { ModuleFile } from './hcl.js';
 
+export { BATCH_MODULE_DIR, emitBatchModule } from './batch.js';
 export { CLOUDRUN_MODULE_DIR, emitCloudRunModule } from './cloudrun.js';
 export { CONTAINER_MODULE_DIR, emitContainerModule } from './container.js';
 export { type EnvRootModules, envRoot } from './env-root.js';
@@ -18,6 +19,7 @@ export type { ModuleFile } from './hcl.js';
 export { hcl } from './hcl.js';
 export { emitServerlessModule, SERVERLESS_MODULE_DIR } from './serverless.js';
 
+import { emitBatchModule } from './batch.js';
 import { emitCloudRunModule } from './cloudrun.js';
 import { emitContainerModule } from './container.js';
 import { emitServerlessModule } from './serverless.js';
@@ -29,6 +31,8 @@ import { emitServerlessModule } from './serverless.js';
  * `serverless` is not, because GCP's counterpart runs on Cloud Functions and needs a
  * different entrypoint; the command refuses that plan before this is ever asked, so
  * reporting `false` here is the second half of the same answer, not a silent drop.
+ * `batch` is AWS-only too: Google Cloud Batch would need its own module, and until one
+ * exists the env root says so instead of pointing at a directory that is not there.
  */
 export function modulesOf(
   plan: DeployPlan,
@@ -36,10 +40,12 @@ export function modulesOf(
 ): {
   serverless: boolean;
   container: boolean;
+  batch: boolean;
 } {
   return {
     serverless: cloud === 'aws' && plan.services.some((service) => service.target === 'serverless'),
     container: plan.services.some((service) => service.target === 'container'),
+    batch: cloud === 'aws' && plan.services.some((service) => service.target === 'batch'),
   };
 }
 
@@ -47,5 +53,5 @@ export function modulesOf(
 export function emitProviderModules(plan: DeployPlan, cloud: Cloud = DEFAULT_CLOUD): ModuleFile[] {
   return cloud === 'gcp'
     ? emitCloudRunModule(plan)
-    : [...emitServerlessModule(plan), ...emitContainerModule(plan)];
+    : [...emitServerlessModule(plan), ...emitContainerModule(plan), ...emitBatchModule(plan)];
 }

@@ -233,6 +233,11 @@ infra/
       variables.tf
       main.tf
       outputs.tf
+    modules/batch/                      generated, when a deployment targets batch
+      versions.tf
+      variables.tf
+      main.tf
+      outputs.tf
     modules/cloudrun/                   generated, when a deployment targets container on GCP
       versions.tf
       variables.tf
@@ -248,14 +253,15 @@ infra/
 
 The plan and both spellings of it are always emitted. A module is emitted only when a
 deployment declares its target, so a serverless-only project gains no `modules/container`
-directory to ignore. Either module's bytes are constant: it loops over the generated tfvars
+directory to ignore. Each module's bytes are constant: it loops over the generated tfvars
 instead of naming services, which is what lets it be validated once and be correct for every
 project.
 
 The env root is yours and is never written by `aid infra gen`. `infra/envs/<env>/main.tf`
 (AWS) or `infra/envs/gcp-<env>/main.tf` (GCP) calls one module per platform the plan targets -
-`../../generated/modules/serverless`, `../../generated/modules/container`, `../../generated/modules/cloudrun`,
-or both AWS modules - and `variables.tf` declares the inputs no spec can supply:
+`../../generated/modules/serverless`, `../../generated/modules/container`,
+`../../generated/modules/batch`, or `../../generated/modules/cloudrun` - and `variables.tf`
+declares the inputs no spec can supply:
 
 | Input | Why it cannot be derived |
 | --- | --- |
@@ -263,6 +269,9 @@ or both AWS modules - and `variables.tf` declares the inputs no spec can supply:
 | `secret_arns` | An ARN names one account, so it belongs to the environment, not the spec. |
 | `sizing` | Memory and timeout are a cost decision, not an inference from the pipeline. |
 | `container_sizing` | CPU units, memory and task count are a budget decision. |
+| `batch_sizing` | vCPU, memory, attempts and attempt timeout are a budget decision. |
+| `batch_subnet_ids`, `batch_security_group_ids` | A batch task runs in a network you own; the module refuses an empty subnet list rather than guessing a default VPC. |
+| `batch_assign_public_ip`, `batch_max_vcpus`, `batch_log_retention_days` | Public addressing, queue ceiling and log retention are operator decisions. |
 | `gcp_project` | A GCP project id names one account, so the provider is configured from it. |
 | `region` | Cloud Run names the region in a URL; it is a deployment choice. |
 | `secret_ids` | A Secret Manager id names one project, the GCP counterpart of an ARN. |
@@ -277,8 +286,9 @@ plus two services claiming one path - a load balancer routes by path, not by met
 balancer with fewer than two public subnets, and a service with fewer than two private
 subnets. The Cloud Run module refuses a service with no image, a secret with no Secret Manager
 id, and a name Cloud Run cannot route; it does not refuse `streaming`, because Cloud Run
-forwards a streamed body. Each refusal is a `precondition` whose message names the input to
-fix.
+forwards a streamed body. The batch module refuses a deployment with no `pipeline` (the job
+would run nothing), one with no image, a secret with no ARN, and an empty subnet list. Each
+refusal is a `precondition` whose message names the input to fix.
 
 The container module runs each service as a Fargate task behind one load balancer, in private
 subnets with egress through a single NAT gateway and reachable only from the balancer. Tasks
@@ -290,6 +300,15 @@ The module sets no registry credentials, so the tag in `image_uris` must be pull
 them: a public `ghcr.io` package, or the image copied to ECR. A private package needs a pull
 secret that belongs to your account, and the module will not invent one.
 
+The batch module runs each job on Fargate behind one managed compute environment and one job
+queue, with a job definition per `batch` deployment and a CloudWatch log group per job. The
+job command is `python -m app.generated.batch <pipeline>`, using the `pipeline` the deployment
+names: a build with more than one manual pipeline cannot resolve a default, and a job
+definition is the thing that knows which job it is. Secrets become job-definition `secrets`
+entries resolved by the execution role, so a secret value never enters state or a plan file.
+Submission targets the queue the module outputs, for example
+`aws batch submit-job --job-queue <job_queue_arn> --job-name nightly --job-definition <arn>`.
+
 `--cloud gcp` selects Cloud Run for a `container` service, and nothing else changes: the image
 is the same one the Dockerfile builds, because that Dockerfile already binds `$PORT` on
 `0.0.0.0`. The module creates a service account per service, grants it `secretAccessor` on
@@ -299,8 +318,8 @@ through an explicit `allUsers` binding, so it can be turned off with
 `allow_unauthenticated = false`. `gcp_project` and `region` are the only account facts it
 needs; there is no VPC input, because Cloud Run provisions no network of its own.
 
-Generated AWS modules exist for `serverless` and `container`, and GCP has one for `container`.
-`batch` and `edge` still need a hand-written env root, and the plan document is the contract
+Generated AWS modules exist for `serverless`, `container` and `batch`, and GCP has one for
+`container`. `edge` still needs a hand-written env root, and the plan document is the contract
 to write it against. `--cloud gcp` refuses a plan containing a target it has no module for,
 naming each service, rather than emitting a tree that silently omits it.
 
