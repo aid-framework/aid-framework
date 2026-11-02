@@ -17,8 +17,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { emitInfra } from '../src/infra/emit.js';
 import {
+  BATCH_MODULE_DIR,
   CLOUDRUN_MODULE_DIR,
   CONTAINER_MODULE_DIR,
+  emitBatchModule,
   emitCloudRunModule,
   emitContainerModule,
   emitProviderModules,
@@ -43,8 +45,8 @@ function scratch(spec?: string) {
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'infra');
 
-/** The env root the fixture commits: one that has to satisfy both modules. */
-const BOTH = envRoot({ serverless: true, container: true });
+/** The env root the fixture commits: one that has to satisfy every AWS module. */
+const BOTH = envRoot({ serverless: true, container: true, batch: true });
 
 /** The GCP env root the fixture commits: Cloud Run is GCP's only module. */
 const GCP = envRoot({ serverless: false, container: true }, 'gcp');
@@ -127,6 +129,16 @@ const CONTAINER = SERVERLESS.replace('target: serverless', 'target: container');
 const AS_CONTAINER = {
   ...SERVING,
   services: SERVING.services.map((service) => ({ ...service, target: 'container' })),
+} as unknown as DeployPlan;
+
+/** The same plan as a batch job: the pipeline it runs is the one thing batch adds. */
+const AS_BATCH = {
+  ...SERVING,
+  services: SERVING.services.map((service) => ({
+    ...service,
+    target: 'batch',
+    pipeline: 'ping',
+  })),
 } as unknown as DeployPlan;
 
 /** Both targets at once, so the cloud alone decides which modules exist. */
@@ -403,12 +415,29 @@ describe('envRoot', () => {
     expect(container.main).not.toContain('module "serverless"');
   });
 
-  it('calls both modules when a plan targets both', () => {
+  it('calls every module a plan targets', () => {
     expect(BOTH.main).toContain('module "serverless"');
     expect(BOTH.main).toContain('module "container"');
+    expect(BOTH.main).toContain('module "batch"');
     expect(BOTH.main).toContain('source = "../../generated/modules/serverless"');
     expect(BOTH.main).toContain('source = "../../generated/modules/container"');
+    expect(BOTH.main).toContain('source = "../../generated/modules/batch"');
     expect(BOTH.main).not.toContain('@{');
+  });
+
+  it('declares the batch inputs only when a job needs them', () => {
+    const batch = envRoot({ serverless: false, container: false, batch: true });
+    expect(batch.variables).toContain('variable "batch_sizing"');
+    expect(batch.variables).toContain('variable "batch_subnet_ids"');
+    expect(batch.variables).toContain('variable "image_uris"');
+    expect(batch.main).toContain('module "batch"');
+    expect(batch.main).not.toContain('module "container"');
+    // A subnet is an account fact: the module refuses an empty list rather than guessing
+    // a default VPC, so the variable must not carry a default.
+    expect(batch.variables).not.toMatch(/variable "batch_subnet_ids" \{[^}]*default/);
+    expect(envRoot({ serverless: true, container: false }).variables).not.toContain(
+      'variable "batch_sizing"',
+    );
   });
 
   it('says so rather than inventing a module when neither target is present', () => {
@@ -416,6 +445,7 @@ describe('envRoot', () => {
     expect(none.main).not.toContain('module "');
     expect(none.main).toContain('no provider module was');
     expect(none.variables).not.toContain('variable "image_uris"');
+    expect(none.variables).not.toContain('variable "batch_sizing"');
   });
 
   it('separates blocks with one blank line, never two', () => {
@@ -424,11 +454,12 @@ describe('envRoot', () => {
       expect(rendered).not.toMatch(/\{\n\n/);
     }
     expect(BOTH.main).toContain('}\n\nmodule "container"');
+    expect(BOTH.main).toContain('}\n\nmodule "batch"');
     expect(BOTH.main).toContain('}\n\noutput "serverless_endpoint"');
   });
 
   it('is pure: the same module set yields the same bytes', () => {
-    expect(envRoot({ serverless: true, container: true })).toEqual(BOTH);
+    expect(envRoot({ serverless: true, container: true, batch: true })).toEqual(BOTH);
   });
 
   it('configures the GCP provider once, and names no network inputs', () => {
@@ -467,23 +498,114 @@ describe('envRoot', () => {
   });
 });
 
+describe('emitBatchModule', () => {
+  it('emits nothing when no deployment targets batch', () => {
+    expect(emitBatchModule(planOf())).toEqual([]);
+    expect(emitBatchModule(planOf('serverless', 'container', 'edge'))).toEqual([]);
+  });
+
+  it('emits the four module files under the generated tree', () => {
+    const files = emitBatchModule(planOf('batch'));
+    expect(files.map((file) => file.path)).toEqual([
+      `${BATCH_MODULE_DIR}/versions.tf`,
+      `${BATCH_MODULE_DIR}/variables.tf`,
+      `${BATCH_MODULE_DIR}/main.tf`,
+      `${BATCH_MODULE_DIR}/outputs.tf`,
+    ]);
+    expect(BATCH_MODULE_DIR).toBe('infra/generated/modules/batch');
+  });
+
+  it('is constant: a real plan and a bare target list yield identical bytes', () => {
+    expect(emitBatchModule(AS_BATCH)).toEqual(emitBatchModule(planOf('batch')));
+  });
+
+  it('names the pipeline as argv, because a job definition knows which job it is', () => {
+    const main = mainOf(emitBatchModule(planOf('batch')));
+    expect(main).toContain('"python", "-m", "app.generated.batch", coalesce(service.pipeline, "")');
+    expect(main).not.toContain('@{');
+  });
+
+  it('runs on Fargate behind one managed compute environment and queue', () => {
+    const main = mainOf(emitBatchModule(planOf('batch')));
+    expect(main).toContain('resource "aws_batch_compute_environment" "fargate"');
+    expect(main).toContain('type               = "FARGATE"');
+    expect(main).toContain('platform_capabilities = ["FARGATE"]');
+    expect(main).toContain('resource "aws_batch_job_queue" "queue"');
+    expect(main).toContain('compute_environment = aws_batch_compute_environment.fargate[0].arn');
+  });
+
+  it('grants the execution role the secrets its job definitions resolve', () => {
+    // A job definition `secrets` entry is resolved by the execution role, not the job, so
+    // a declared secret is unusable without this policy.
+    const main = mainOf(emitBatchModule(planOf('batch')));
+    expect(main).toContain('secretsmanager:GetSecretValue');
+    expect(main).toContain('Resource = values(var.secret_arns)');
+    expect(main).toContain('secrets     = local.secret_env[each.key]');
+  });
+
+  it('refuses the four inputs it cannot guess, at plan time', () => {
+    const main = mainOf(emitBatchModule(planOf('batch')));
+    expect(main).toContain('precondition');
+    expect(main).toContain('names no pipeline');
+    expect(main).toContain('must name the image it runs');
+    expect(main).toContain('secret with no secret_arns entry');
+    expect(main).toContain('without at least one subnet');
+  });
+
+  it('exports what a submission needs and nothing more', () => {
+    const outputs = emitBatchModule(planOf('batch')).find((file) =>
+      file.path.endsWith('/outputs.tf'),
+    );
+    expect(outputs?.contents).toContain('output "job_queue_arn"');
+    expect(outputs?.contents).toContain('output "job_definition_arns"');
+    expect(outputs?.contents).toContain('output "log_groups"');
+  });
+});
+
 describe('modulesOf, the seam emit.ts reads', () => {
   it('reports the platforms a plan targets', () => {
-    expect(modulesOf(planOf())).toEqual({ serverless: false, container: false });
+    expect(modulesOf(planOf())).toEqual({ serverless: false, container: false, batch: false });
     expect(modulesOf(planOf('serverless', 'container'))).toEqual({
       serverless: true,
       container: true,
+      batch: false,
+    });
+    expect(modulesOf(planOf('batch'))).toEqual({
+      serverless: false,
+      container: false,
+      batch: true,
     });
     // A target with no module yet must not be mistaken for one that has a module.
-    expect(modulesOf(planOf('batch', 'edge'))).toEqual({ serverless: false, container: false });
+    expect(modulesOf(planOf('edge'))).toEqual({
+      serverless: false,
+      container: false,
+      batch: false,
+    });
   });
 
   it('reports what the cloud can emit, not what the target is called', () => {
     // On GCP only `container` has a module, so a serverless plan yields no module even
     // though AWS would have emitted one.
-    expect(modulesOf(planOf('container'), 'gcp')).toEqual({ serverless: false, container: true });
-    expect(modulesOf(planOf('serverless'), 'gcp')).toEqual({ serverless: false, container: false });
-    expect(modulesOf(planOf('container'))).toEqual({ serverless: false, container: true });
+    expect(modulesOf(planOf('container'), 'gcp')).toEqual({
+      serverless: false,
+      container: true,
+      batch: false,
+    });
+    expect(modulesOf(planOf('serverless'), 'gcp')).toEqual({
+      serverless: false,
+      container: false,
+      batch: false,
+    });
+    expect(modulesOf(planOf('batch'), 'gcp')).toEqual({
+      serverless: false,
+      container: false,
+      batch: false,
+    });
+    expect(modulesOf(planOf('container'))).toEqual({
+      serverless: false,
+      container: true,
+      batch: false,
+    });
   });
 
   it('emits every module a plan needs in one call', () => {
@@ -491,6 +613,12 @@ describe('modulesOf, the seam emit.ts reads', () => {
     expect(paths).toContain(`${SERVERLESS_MODULE_DIR}/main.tf`);
     expect(paths).toContain(`${CONTAINER_MODULE_DIR}/main.tf`);
     expect(paths).toHaveLength(8);
+
+    const all = emitProviderModules(planOf('serverless', 'container', 'batch')).map(
+      (file) => file.path,
+    );
+    expect(all).toContain(`${BATCH_MODULE_DIR}/main.tf`);
+    expect(all).toHaveLength(12);
   });
 
   it('emits only the Cloud Run module for a GCP plan', () => {
@@ -572,6 +700,7 @@ describe('the validate fixture', () => {
       { dir: SERVERLESS_MODULE_DIR, files: emitServerlessModule(planOf('serverless')) },
       { dir: CONTAINER_MODULE_DIR, files: emitContainerModule(planOf('container')) },
       { dir: CLOUDRUN_MODULE_DIR, files: emitCloudRunModule(planOf('container')) },
+      { dir: BATCH_MODULE_DIR, files: emitBatchModule(planOf('batch')) },
     ];
     for (const { dir, files } of cases) {
       expect(files).toHaveLength(4);

@@ -47,6 +47,14 @@ export interface DeployService {
   env: DeployEnvVar[];
   /** Logical secret names, sorted. Never values. */
   secrets: string[];
+  /**
+   * The pipeline a `target: batch` job runs once, by id, from spec 0.5.
+   *
+   * Optional because only a batch deployment names one, and because a job definition has
+   * to be given the pipeline: the entrypoint resolves it only when the build deploys
+   * exactly one. Absent on every other target, so an existing plan document is unchanged.
+   */
+  pipeline?: string;
   /** Providers the service may call, for an emitter to reason about egress. */
   providers: Provider[];
   /** Retriever ids whose corpus must exist before this service serves traffic. */
@@ -101,16 +109,20 @@ export function buildDeployPlan(ir: IR): DeployPlan {
   const providers = uniqueSorted(ir.models.map((model) => model.provider));
   const ingest = uniqueSorted(ir.retrievers.map((retriever) => retriever.id));
 
-  const services: DeployService[] = ir.deployments.map((deployment) => ({
-    id: deployment.id,
-    target: deployment.target,
-    streaming: deployment.streaming,
-    endpoints: endpoints.map((endpoint) => ({ ...endpoint })),
-    env: serviceEnv(ir, deployment.env),
-    secrets: serviceSecrets(ir, deployment),
-    providers,
-    ingest,
-  }));
+  const services: DeployService[] = ir.deployments.map((deployment) => {
+    const service: DeployService = {
+      id: deployment.id,
+      target: deployment.target,
+      streaming: deployment.streaming,
+      endpoints: endpoints.map((endpoint) => ({ ...endpoint })),
+      env: serviceEnv(ir, deployment.env),
+      secrets: serviceSecrets(ir, deployment),
+      providers,
+      ingest,
+    };
+    if (deployment.pipeline !== undefined) service.pipeline = deployment.pipeline;
+    return service;
+  });
 
   const stores: DeployStore[] = ir.stores
     .map((store) => {

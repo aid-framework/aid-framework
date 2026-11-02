@@ -17,6 +17,8 @@ import { hcl } from './hcl.js';
 export interface EnvRootModules {
   readonly serverless: boolean;
   readonly container: boolean;
+  /** Optional so a caller that predates the batch module keeps reading as "no batch". */
+  readonly batch?: boolean;
 }
 
 /** The plan-shaped variables every env root declares, so the generated tfvars binds. */
@@ -118,6 +120,53 @@ const SERVERLESS_SIZING = [
   '}',
 ];
 
+/**
+ * Batch: a Fargate job needs a place to run and a ceiling to scale to. Nothing here is
+ * derivable from the spec -- the subnets belong to the account, and the ceiling is a cost
+ * decision -- which is why the module defaults are the only values it may assume.
+ */
+const BATCH_INPUTS = [
+  '',
+  'variable "batch_sizing" {',
+  '  description = "Deployment id -> vCPU, memory, attempts and attempt timeout."',
+  '  type = map(object({',
+  '    vcpus           = optional(number)',
+  '    memory_mb       = optional(number)',
+  '    attempts        = optional(number)',
+  '    timeout_seconds = optional(number)',
+  '  }))',
+  '  default = {}',
+  '}',
+  '',
+  'variable "batch_subnet_ids" {',
+  '  description = "Subnets a batch task runs in. At least one; the module refuses an empty list."',
+  '  type        = list(string)',
+  '}',
+  '',
+  'variable "batch_security_group_ids" {',
+  '  description = "Security groups a batch task joins."',
+  '  type        = list(string)',
+  '  default     = []',
+  '}',
+  '',
+  'variable "batch_assign_public_ip" {',
+  '  description = "Give the task a public IP. A private subnet needs a NAT gateway instead."',
+  '  type        = bool',
+  '  default     = false',
+  '}',
+  '',
+  'variable "batch_max_vcpus" {',
+  '  description = "The ceiling the batch queue may scale to."',
+  '  type        = number',
+  '  default     = 16',
+  '}',
+  '',
+  'variable "batch_log_retention_days" {',
+  '  type    = number',
+  '  default = 30',
+  '}',
+];
+
 const CONTAINER_INPUTS = [
   '',
   'variable "container_sizing" {',
@@ -197,7 +246,7 @@ export function envRoot(
 }
 
 function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string } {
-  const any = modules.serverless || modules.container;
+  const any = modules.serverless || modules.container || modules.batch === true;
 
   const variables = [
     ...PLAN_VARIABLES,
@@ -205,6 +254,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
     ...(any ? SECRET_ARNS : []),
     ...(modules.serverless ? SERVERLESS_SIZING : []),
     ...(modules.container ? CONTAINER_INPUTS : []),
+    ...(modules.batch === true ? BATCH_INPUTS : []),
     ...(any ? TAGS : []),
   ];
 
@@ -250,6 +300,25 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
     outputs.push(['output "container_endpoint" {', '  value = module.container.api_endpoint', '}']);
   }
 
+  if (modules.batch === true) {
+    calls.push(
+      moduleCall('batch', [
+        'project                 = var.project',
+        'services                = var.services',
+        'image_uris              = var.image_uris',
+        'secret_arns             = var.secret_arns',
+        'batch_sizing            = var.batch_sizing',
+        'subnet_ids              = var.batch_subnet_ids',
+        'security_group_ids      = var.batch_security_group_ids',
+        'assign_public_ip        = var.batch_assign_public_ip',
+        'max_vcpus               = var.batch_max_vcpus',
+        'log_retention_days      = var.batch_log_retention_days',
+        'tags                    = var.tags',
+      ]),
+    );
+    outputs.push(['output "batch_job_queue" {', '  value = module.batch.job_queue_arn', '}']);
+  }
+
   const main = any
     ? [
         '# The one module call per platform this plan targets. dev and prod differ only in',
@@ -261,7 +330,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         ...blocks(outputs),
       ]
     : [
-        '# This plan targets neither `serverless` nor `container`, so no provider module was',
+        '# This plan targets none of `serverless`, `container` or `batch`, so no provider module was',
         '# generated. Point a module call at `../../generated/modules/<platform>` once one',
         '# exists for the targets you deploy.',
       ];
@@ -317,8 +386,8 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
       ]
     : [
         '# This plan targets no `container` service, and on GCP that is the only target a',
-        '# module exists for. `serverless` needs a Cloud Functions entrypoint and `batch` a',
-        '# run-to-completion entrypoint, neither of which the generators emit yet.',
+        '# module exists for. `serverless` needs a Cloud Functions entrypoint, `batch` a',
+        '# Google Cloud Batch module, and `edge` has no GCP counterpart.',
       ];
 
   return { variables: hcl(variables), main: hcl(main) };

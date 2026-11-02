@@ -13,6 +13,9 @@ variable "services" {
     providers    = list(string)
     ingest       = list(string)
     secret_names = list(string)
+    # Set only by a `batch` service; the other targets ignore it and the entrypoint does
+    # not read it, but the shared variable type must admit it.
+    pipeline = optional(string)
     routes = list(object({
       pipeline = string
       method   = string

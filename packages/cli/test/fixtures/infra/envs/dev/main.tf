@@ -31,10 +31,30 @@ module "container" {
   tags               = var.tags
 }
 
+module "batch" {
+  source = "../../generated/modules/batch"
+
+  project                 = var.project
+  services                = var.services
+  image_uris              = var.image_uris
+  secret_arns             = var.secret_arns
+  batch_sizing            = var.batch_sizing
+  subnet_ids              = var.batch_subnet_ids
+  security_group_ids      = var.batch_security_group_ids
+  assign_public_ip        = var.batch_assign_public_ip
+  max_vcpus               = var.batch_max_vcpus
+  log_retention_days      = var.batch_log_retention_days
+  tags                    = var.tags
+}
+
 output "serverless_endpoint" {
   value = module.serverless.api_endpoint
 }
 
 output "container_endpoint" {
   value = module.container.api_endpoint
+}
+
+output "batch_job_queue" {
+  value = module.batch.job_queue_arn
 }

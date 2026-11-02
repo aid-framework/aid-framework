@@ -55,6 +55,8 @@ export interface DeployTfvars {
           value?: string;
         }[];
         readonly secret_names: readonly string[];
+        /** Only a `batch` service sets this: the pipeline its job runs once. */
+        readonly pipeline?: string;
         readonly providers: readonly string[];
         readonly ingest: readonly string[];
       }
@@ -99,6 +101,8 @@ export interface DeployContext {
           value?: string;
         }[];
         readonly secrets: readonly string[];
+        /** Only a `batch` service sets this: the pipeline its job runs once. */
+        readonly pipeline?: string;
         readonly providers: readonly string[];
         readonly ingest: readonly string[];
       }
@@ -154,6 +158,7 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
       secret_names: [...service.secrets],
       providers: [...service.providers],
       ingest: [...service.ingest],
+      ...(service.pipeline === undefined ? {} : { pipeline: service.pipeline }),
     };
   }
 
@@ -212,6 +217,7 @@ export function cdkContext(plan: DeployPlan): DeployContext {
       secrets: [...service.secret_names],
       providers: [...service.providers],
       ingest: [...service.ingest],
+      ...(service.pipeline === undefined ? {} : { pipeline: service.pipeline }),
     };
   }
 
@@ -239,7 +245,7 @@ export function cdkContext(plan: DeployPlan): DeployContext {
 function readme(plan: DeployPlan, cloud: Cloud): string {
   const routes = plan.services.reduce((total, service) => total + service.endpoints.length, 0);
   const modules = modulesOf(plan, cloud);
-  const active = modules.serverless || modules.container;
+  const active = modules.serverless || modules.container || modules.batch;
   const root = envRoot(modules, cloud);
   const envDir = cloud === 'gcp' ? 'infra/envs/gcp-dev' : 'infra/envs/dev';
   return [
@@ -266,6 +272,11 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
     ...(modules.container && cloud === 'gcp'
       ? [
           '| `modules/cloudrun/` | The Cloud Run v2 + service account + Artifact Registry module a `container` service deploys into. |',
+        ]
+      : []),
+    ...(modules.batch
+      ? [
+          '| `modules/batch/` | The AWS Batch Fargate + job queue module a `batch` deployment runs in. |',
         ]
       : []),
     '',
@@ -319,11 +330,21 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
                 '',
               ]
             : []),
+          ...(modules.batch
+            ? [
+                'The batch module runs a job definition as `python -m app.generated.batch` with',
+                "the deployment's pipeline as its argument, so one image serves both a route and",
+                'a job. It refuses a deployment that names no pipeline, a job with no image URI, a',
+                'secret with no ARN, and an empty `batch_subnet_ids` (Fargate has nowhere to run).',
+                'Submit a run with `aws batch submit-job --job-queue <arn> --job-definition <arn>`.',
+                '',
+              ]
+            : []),
         ]
       : [
           cloud === 'gcp'
-            ? 'No provider module is generated for this plan: on GCP only a `container` target has a module (Cloud Run). `serverless` and `batch` need an entrypoint the generators do not emit yet, and `edge` has no GCP counterpart. The plan document and tfvars above are still the contract to write it against.'
-            : 'No provider module is generated for this plan yet: AWS modules exist for `serverless` and `container`, so a batch or edge target needs a hand-written env root. The plan document and tfvars above are still the contract to write it against.',
+            ? 'No provider module is generated for this plan: on GCP only a `container` target has a module (Cloud Run). `serverless` needs a Cloud Functions entrypoint, `batch` a Google Cloud Batch module, and `edge` has no GCP counterpart. The plan document and tfvars above are still the contract to write it against.'
+            : 'No provider module is generated for this plan yet: AWS modules exist for `serverless`, `container` and `batch`, so an `edge` target needs a hand-written env root. The plan document and tfvars above are still the contract to write it against.',
           '',
         ]),
     ...(cloud === 'aws'

@@ -21,14 +21,15 @@ export function isCloud(value: string): value is Cloud {
  * The deployment targets each cloud has a module for today.
  *
  * `edge` is absent from both: Cloud CDN serves static assets and cannot run the app, so
- * there is nothing to map it to. GCP's `serverless` and `batch` are absent because they
- * need an entrypoint the generators do not emit yet -- a functions-framework handler and a
- * run-to-completion `main()` respectively -- not because the services are missing. Naming
- * them here lets the command refuse a plan instead of emitting nothing for a target the
- * operator believes is deployed.
+ * there is nothing to map it to. AWS now covers `batch` with a Fargate job queue; GCP's
+ * `serverless` and `batch` are absent because they need a module this command does not
+ * emit yet -- a functions-framework handler and a Google Cloud Batch job respectively --
+ * even though the generators emit the entrypoints. Naming them here lets the command
+ * refuse a plan instead of emitting nothing for a target the operator believes is
+ * deployed.
  */
 export const CLOUD_TARGETS: Readonly<Record<Cloud, readonly string[]>> = {
-  aws: ['serverless', 'container'],
+  aws: ['serverless', 'container', 'batch'],
   gcp: ['container'],
 };
 
