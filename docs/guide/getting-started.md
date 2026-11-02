@@ -47,6 +47,8 @@ original surface - and you raise it when you use a later construct:
 | `0.2` | The closed `agents`, `guardrails`, `memory` and `deployments` sections. |
 | `0.3` | `models[].cache` - prompt and semantic caching. |
 | `0.4` | `deployments[].image` - the registry and repository a container image is published to. |
+| `0.5` | `pipelines[].trigger.manual` and `deployments[].pipeline` - the pair that lets a `target: batch` deployment run one pipeline once to completion. |
+| `0.6` | The `google` provider (Vertex AI). |
 
 A section or construct that needs a later version is reported as `spec/not-supported` with
 the version it needs, so you get told rather than silently ignored. Raise the value yourself;

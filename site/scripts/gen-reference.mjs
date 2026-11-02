@@ -717,6 +717,126 @@ function conformancePage() {
  * @param {string} body
  * @returns {string}
  */
+// ---------------------------------------------------------------------------
+// Support matrix
+// ---------------------------------------------------------------------------
+
+/**
+ * Providers × clouds × targets, read from the declarations that enforce them.
+ *
+ * The page exists so the marketing surface can link to a matrix instead of
+ * restating one: `SERVED_PROVIDERS` is what the normalize gate accepts, and
+ * `CLOUD_TARGETS` is what the infra planner refuses outside of. A hand-written
+ * matrix is a second copy that goes stale the day a cloud or provider ships.
+ */
+function supportPage() {
+  const shapes = readSource('packages/ir/src/shapes.ts');
+  const providerBlock = shapes.match(/export const SERVED_PROVIDERS = \[([\s\S]*?)\] as const;/);
+  if (providerBlock === null) {
+    failures.push('cannot parse `SERVED_PROVIDERS` from packages/ir/src/shapes.ts');
+  }
+  const providers = [...(providerBlock?.[1] ?? '').matchAll(/'([^']+)'/g)].map(
+    (match) => match[1] ?? '',
+  );
+
+  const cloudSource = readSource('packages/cli/src/infra/cloud.ts');
+  const cloudBlock = cloudSource.match(/CLOUD_TARGETS[^=]*=\s*\{([\s\S]*?)\n\};/);
+  if (cloudBlock === null) {
+    failures.push('cannot parse `CLOUD_TARGETS` from packages/cli/src/infra/cloud.ts');
+  }
+  /** @type {Map<string, string[]>} */
+  const clouds = new Map();
+  for (const match of (cloudBlock?.[1] ?? '').matchAll(/^\s*([a-z][a-z0-9]*):\s*\[([^\]]*)\],/gm)) {
+    clouds.set(
+      match[1] ?? '',
+      [...(match[2] ?? '').matchAll(/'([^']+)'/g)].map((entry) => entry[1] ?? ''),
+    );
+  }
+  if (clouds.size === 0) {
+    failures.push('parsed `CLOUD_TARGETS` as an empty map; expected at least one cloud');
+  }
+
+  const schema = readJson('packages/spec/src/schema/spec.schema.json');
+  const versions = /** @type {string[]} */ (
+    /** @type {any} */ (schema)?.properties?.specVersion?.enum ?? []
+  );
+  if (versions.length === 0) {
+    failures.push('cannot parse the spec version enum from the spec JSON Schema');
+  }
+  const latestVersion = versions[versions.length - 1] ?? '';
+
+  const corpus = /** @type {any} */ (readJson('conformance/corpus.json'));
+  const cases = Array.isArray(corpus?.cases) ? corpus.cases.length : 0;
+  const operations = new Set(
+    /** @type {{ op?: string }[]} */ (corpus?.cases ?? []).map((entry) => entry.op),
+  ).size;
+
+  const allTargets = [...new Set([...clouds.values()].flat())].sort();
+  const generatedTargets = targetIds();
+
+  const lines = [];
+  lines.push('# Support');
+  lines.push('');
+  lines.push(
+    'This page is read from the declarations the compiler enforces, not maintained by hand: the provider set is `SERVED_PROVIDERS` (what the normalize gate accepts) and the cloud matrix is `CLOUD_TARGETS` (what the infra planner refuses outside of). If a provider or cloud is missing here, a spec that names it is rejected at plan time rather than quietly generated.',
+  );
+  lines.push('');
+
+  lines.push('## Model providers');
+  lines.push('');
+  lines.push(
+    `Every provider below is served by ${generatedTargets.map((id) => `\`${id}\``).join(' and ')} and is accepted by the normalize gate.`,
+  );
+  lines.push('');
+  lines.push(`| Provider | Served by |`);
+  lines.push('| --- | --- |');
+  for (const provider of providers) {
+    lines.push(`| \`${provider}\` | ${generatedTargets.map((id) => `\`${id}\``).join(', ')} |`);
+  }
+  lines.push('');
+
+  lines.push('## Clouds and deployment targets');
+  lines.push('');
+  lines.push(
+    'A `yes` means the infra planner emits a module for that target on that cloud. A dash means it refuses the plan with a named diagnostic; it does not emit unvalidated HCL. Every emitted module is byte-asserted against a committed fixture and validated with `tofu validate` in CI.',
+  );
+  lines.push('');
+  lines.push(`| Target | ${[...clouds.keys()].map((cloud) => `\`${cloud}\``).join(' | ')} |`);
+  lines.push(`| --- | ${[...clouds.keys()].map(() => '---').join(' | ')} |`);
+  for (const target of allTargets) {
+    const cells = [...clouds.values()].map((targets) => (targets.includes(target) ? 'yes' : '—'));
+    lines.push(`| \`${target}\` | ${cells.join(' | ')} |`);
+  }
+  lines.push('');
+  lines.push(
+    'The emitted infrastructure is OpenTofu. A plan targets one cloud at a time, because two providers in one state is a blast radius rather than a feature.',
+  );
+  lines.push('');
+
+  lines.push('## Spec language');
+  lines.push('');
+  lines.push(`The current spec language version is \`${latestVersion}\`.`);
+  lines.push(
+    'A construct that needs a later version is reported as `spec/not-supported`, naming the version it needs, instead of being ignored.',
+  );
+  lines.push('');
+
+  lines.push('## Conformance');
+  lines.push('');
+  lines.push(
+    `The corpus holds ${cases} cases over ${operations} operations, run against every target. A case that a target cannot satisfy is a declared capability boundary, not a skipped test.`,
+  );
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+  lines.push(
+    'Next: [the generator targets](./targets.md), [the CLI reference](./cli.md), or [the conformance index](./conformance.md).',
+  );
+  lines.push('');
+
+  return lines.join('\n');
+}
+
 function withDescription(description, body) {
   return `---\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`;
 }
@@ -742,6 +862,13 @@ const pages = [
     withDescription(
       'The generator targets and their capability matrix, read from each generator manifest and checked against the IR capability gate.',
       targetsPage(),
+    ),
+  ],
+  [
+    'docs/reference/support.md',
+    withDescription(
+      'The shipped provider, cloud and target matrix, generated from the declarations the compiler enforces.',
+      supportPage(),
     ),
   ],
   // `conformancePage` applies its own description, because the counts in it are read
