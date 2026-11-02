@@ -2494,7 +2494,9 @@ function toolArgumentNames(tool: ToolShape, types: Map<string, TypeShape>): stri
  * `streaming` and `pipeline` are the only deployment fields that reach generated code --
  * everything else describes the platform the app is put on, which the app neither reads
  * nor implements. So a deployment that asks to stream, or to run a pipeline, is checked
- * against what the generated entrypoints can actually do.
+ * against what the generated entrypoints can actually do. An `edge` deployment reads
+ * neither field: it serves whichever HTTP routes the app has, so it is refused when
+ * there are none.
  */
 function checkDeployments(ir: IR): PlanProblem[] {
   const pipelines = new Map(ir.pipelines.map((pipeline) => [pipeline.id, pipeline]));
@@ -2535,14 +2537,29 @@ function checkDeployments(ir: IR): PlanProblem[] {
         }
       }
     }
+    if (
+      deployment.target === 'edge' &&
+      !ir.pipelines.some((pipeline) => pipeline.trigger?.kind === 'http')
+    ) {
+      problems.push(
+        problem(
+          'unsupported-target',
+          `${path}.target`,
+          `'${deployment.id}' targets 'edge' but this IR declares no HTTP pipeline, so the ` +
+            'association would have no route to serve; an edge deployment serves the app ' +
+            'HTTP routes',
+        ),
+      );
+    }
     if (!deployment.streaming) continue;
-    if (deployment.target === 'batch') {
+    if (deployment.target === 'batch' || deployment.target === 'edge') {
+      const kind = deployment.target === 'batch' ? 'a batch' : 'an edge';
       problems.push(
         problem(
           'unsupported-streaming',
           `${path}.target`,
-          `'${deployment.id}' streams, but a batch deployment runs to completion and returns ` +
-            'no response to stream. Use a serverless, container or edge target',
+          `'${deployment.id}' streams, but ${kind} deployment returns one complete body, ` +
+            'so there is no stream to forward. Use a serverless or container target',
         ),
       );
     }

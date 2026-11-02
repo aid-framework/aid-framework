@@ -21,10 +21,12 @@ import {
   CLOUDRUN_MODULE_DIR,
   CLOUDRUNJOB_MODULE_DIR,
   CONTAINER_MODULE_DIR,
+  EDGE_MODULE_DIR,
   emitBatchModule,
   emitCloudRunJobModule,
   emitCloudRunModule,
   emitContainerModule,
+  emitEdgeModule,
   emitProviderModules,
   emitServerlessModule,
   envRoot,
@@ -48,7 +50,7 @@ function scratch(spec?: string) {
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'infra');
 
 /** The env root the fixture commits: one that has to satisfy every AWS module. */
-const BOTH = envRoot({ serverless: true, container: true, batch: true });
+const BOTH = envRoot({ serverless: true, container: true, batch: true, edge: true });
 
 /** The GCP env root the fixture commits: Cloud Run and a Cloud Run job. */
 const GCP = envRoot({ serverless: false, container: true, batch: true }, 'gcp');
@@ -156,6 +158,18 @@ const BATCH_BEDROCK = {
 const MIXED = {
   ...SERVING,
   services: [...SERVING.services, { ...SERVING.services[0], id: 'web', target: 'container' }],
+} as unknown as DeployPlan;
+
+/** The same compiled plan, retargeted to Lambda@Edge, so "constant bytes" is real. */
+const AS_EDGE = {
+  ...SERVING,
+  services: SERVING.services.map((service) => ({ ...service, target: 'edge' })),
+} as unknown as DeployPlan;
+
+/** The edge plan naming a cloud-native model, which is what earns the Bedrock grant. */
+const EDGE_BEDROCK = {
+  ...AS_EDGE,
+  services: AS_EDGE.services.map((service) => ({ ...service, providers: ['bedrock'] })),
 } as unknown as DeployPlan;
 
 /** The same plan naming a cloud-native model, which is what earns an IAM grant. */
@@ -641,12 +655,27 @@ describe('envRoot', () => {
     );
   });
 
+  it('wires an edge-only root without any image input', () => {
+    const edge = envRoot({ serverless: false, container: false, edge: true });
+    expect(edge.variables).toContain('variable "edge_zip_path"');
+    expect(edge.variables).toContain('variable "edge_sizing"');
+    expect(edge.main).toContain('module "edge"');
+    expect(edge.main).toContain('source = "../../generated/modules/edge"');
+    expect(edge.main).toContain('edge_certificate_arn = var.edge_certificate_arn');
+    // A Lambda@Edge function is a zip, not an image, and takes no VPC or secret ARN.
+    expect(edge.variables).not.toContain('variable "image_uris"');
+    expect(edge.variables).not.toContain('variable "secret_arns"');
+    expect(edge.variables).not.toContain('variable "batch_subnet_ids"');
+    expect(edge.main).toContain('output "edge_domain_name"');
+  });
+
   it('says so rather than inventing a module when neither target is present', () => {
     const none = envRoot({ serverless: false, container: false });
     expect(none.main).not.toContain('module "');
-    expect(none.main).toContain('no provider module was');
+    expect(none.main).toContain('module was generated');
     expect(none.variables).not.toContain('variable "image_uris"');
     expect(none.variables).not.toContain('variable "batch_sizing"');
+    expect(none.variables).not.toContain('variable "edge_zip_path"');
   });
 
   it('separates blocks with one blank line, never two', () => {
@@ -660,7 +689,7 @@ describe('envRoot', () => {
   });
 
   it('is pure: the same module set yields the same bytes', () => {
-    expect(envRoot({ serverless: true, container: true, batch: true })).toEqual(BOTH);
+    expect(envRoot({ serverless: true, container: true, batch: true, edge: true })).toEqual(BOTH);
   });
 
   it('configures the GCP provider once, and names no network inputs', () => {
@@ -796,50 +825,154 @@ describe('emitBatchModule', () => {
   });
 });
 
+describe('emitEdgeModule', () => {
+  it('emits nothing when no deployment targets edge', () => {
+    expect(emitEdgeModule(planOf())).toEqual([]);
+    expect(emitEdgeModule(planOf('serverless', 'container', 'batch'))).toEqual([]);
+  });
+
+  it('emits the four module files under the generated tree', () => {
+    const files = emitEdgeModule(planOf('edge'));
+    expect(files.map((file) => file.path)).toEqual([
+      `${EDGE_MODULE_DIR}/versions.tf`,
+      `${EDGE_MODULE_DIR}/variables.tf`,
+      `${EDGE_MODULE_DIR}/main.tf`,
+      `${EDGE_MODULE_DIR}/outputs.tf`,
+    ]);
+    expect(EDGE_MODULE_DIR).toBe('infra/generated/modules/edge');
+  });
+
+  it('is constant: a real plan and a bare target list yield identical bytes', () => {
+    expect(emitEdgeModule(AS_EDGE)).toEqual(emitEdgeModule(planOf('edge')));
+  });
+
+  it('publishes a numbered version, which is what CloudFront associates', () => {
+    const main = mainOf(emitEdgeModule(planOf('edge')));
+    expect(main).toContain('handler          = "app.generated.edge.handler"');
+    // `$LATEST` and an alias are both refused by CloudFront; publish makes the version.
+    expect(main).toContain('publish = true');
+    expect(main).toContain('qualified_arn');
+    expect(main).toContain('event_type   = "origin-request"');
+    expect(main).toContain('include_body = true');
+    expect(main).not.toContain('@{');
+  });
+
+  it('puts the function in us-east-1 wherever the stack lives', () => {
+    const main = mainOf(emitEdgeModule(planOf('edge')));
+    expect(main).toContain('alias  = "us_east_1"');
+    expect(main).toContain('region = "us-east-1"');
+    // A resource left on the root provider would follow the stack's region, and a
+    // CloudFront association only accepts a function from us-east-1.
+    expect(main.match(/provider\s+= aws\.us_east_1/g)?.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('trusts the edge service as well as Lambda, since a replica assumes the role', () => {
+    const main = mainOf(emitEdgeModule(planOf('edge')));
+    expect(main).toContain('lambda.amazonaws.com');
+    expect(main).toContain('edgelambda.amazonaws.com');
+    expect(main).toContain('AWSLambdaBasicExecutionRole');
+  });
+
+  it('carries configuration in a secret, because the function has no environment', () => {
+    const main = mainOf(emitEdgeModule(planOf('edge')));
+    expect(main).toContain('resource "aws_secretsmanager_secret" "edge"');
+    expect(main).toContain('name        = local.name[each.key]');
+    // Zero so a destroy/recreate cycle does not hold the name for 30 days.
+    expect(main).toContain('recovery_window_in_days = 0');
+    expect(main).toContain('secretsmanager:GetSecretValue');
+    expect(main).not.toContain('environment {');
+  });
+
+  it('refuses what Lambda@Edge cannot do, at plan time', () => {
+    const main = mainOf(emitEdgeModule(planOf('edge')));
+    expect(main).toContain('precondition');
+    expect(main).toContain('one CloudFront distribution serves the app');
+    expect(main).toContain('fileexists(var.edge_zip_path)');
+    expect(main).toContain('declares streaming');
+    expect(main).toContain('at most 30 seconds');
+    expect(main).toContain('128 to 3008 MB');
+  });
+
+  it('grants Bedrock only to the deployment that names it', () => {
+    const main = mainOf(emitEdgeModule(EDGE_BEDROCK));
+    expect(main).toContain('resource "aws_iam_role_policy" "edge_bedrock"');
+    expect(main).toContain('bedrock:InvokeModel');
+    expect(main).toContain('for_each = local.bedrock');
+    expect(main).toContain('if contains(service.providers, "bedrock")');
+  });
+
+  it('exports the distribution, the versions and the secret a deploy populates', () => {
+    const outputs = emitEdgeModule(planOf('edge')).find((file) =>
+      file.path.endsWith('/outputs.tf'),
+    );
+    expect(outputs?.contents).toContain('output "distribution_domain_name"');
+    expect(outputs?.contents).toContain('output "function_versions"');
+    expect(outputs?.contents).toContain('output "secret_arns"');
+  });
+});
+
 describe('modulesOf, the seam emit.ts reads', () => {
   it('reports the platforms a plan targets', () => {
-    expect(modulesOf(planOf())).toEqual({ serverless: false, container: false, batch: false });
+    expect(modulesOf(planOf())).toEqual({
+      serverless: false,
+      container: false,
+      batch: false,
+      edge: false,
+    });
     expect(modulesOf(planOf('serverless', 'container'))).toEqual({
       serverless: true,
       container: true,
       batch: false,
+      edge: false,
     });
     expect(modulesOf(planOf('batch'))).toEqual({
       serverless: false,
       container: false,
       batch: true,
+      edge: false,
     });
-    // A target with no module yet must not be mistaken for one that has a module.
     expect(modulesOf(planOf('edge'))).toEqual({
       serverless: false,
       container: false,
       batch: false,
+      edge: true,
     });
   });
 
   it('reports what the cloud can emit, not what the target is called', () => {
     // On GCP `container` and `serverless` both run on Cloud Run, so either one needs the
     // cloudrun module; `serverless` is an AWS-only module. `batch` is reported on both
-    // clouds and the cloud decides which module renders it.
+    // clouds and the cloud decides which module renders it. `edge` is AWS-only: on GCP
+    // the command refuses it before a plan is rendered.
     expect(modulesOf(planOf('container'), 'gcp')).toEqual({
       serverless: false,
       container: true,
       batch: false,
+      edge: false,
     });
     expect(modulesOf(planOf('serverless'), 'gcp')).toEqual({
       serverless: false,
       container: true,
       batch: false,
+      edge: false,
     });
     expect(modulesOf(planOf('batch'), 'gcp')).toEqual({
       serverless: false,
       container: false,
       batch: true,
+      edge: false,
+    });
+    expect(modulesOf(planOf('edge'), 'gcp')).toEqual({
+      serverless: false,
+      container: false,
+      batch: false,
+      edge: false,
     });
     expect(modulesOf(planOf('container'))).toEqual({
       serverless: false,
       container: true,
       batch: false,
+      edge: false,
     });
   });
 
@@ -849,11 +982,12 @@ describe('modulesOf, the seam emit.ts reads', () => {
     expect(paths).toContain(`${CONTAINER_MODULE_DIR}/main.tf`);
     expect(paths).toHaveLength(8);
 
-    const all = emitProviderModules(planOf('serverless', 'container', 'batch')).map(
+    const all = emitProviderModules(planOf('serverless', 'container', 'batch', 'edge')).map(
       (file) => file.path,
     );
     expect(all).toContain(`${BATCH_MODULE_DIR}/main.tf`);
-    expect(all).toHaveLength(12);
+    expect(all).toContain(`${EDGE_MODULE_DIR}/main.tf`);
+    expect(all).toHaveLength(16);
   });
 
   it('emits only the Cloud Run module for a GCP plan with no job', () => {
@@ -952,6 +1086,7 @@ describe('the validate fixture', () => {
       { dir: CLOUDRUN_MODULE_DIR, files: emitCloudRunModule(planOf('container')) },
       { dir: CLOUDRUNJOB_MODULE_DIR, files: emitCloudRunJobModule(planOf('batch')) },
       { dir: BATCH_MODULE_DIR, files: emitBatchModule(planOf('batch')) },
+      { dir: EDGE_MODULE_DIR, files: emitEdgeModule(planOf('edge')) },
     ];
     for (const { dir, files } of cases) {
       expect(files).toHaveLength(4);

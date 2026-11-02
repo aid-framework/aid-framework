@@ -36,18 +36,31 @@ module "container" {
 module "batch" {
   source = "../../generated/modules/batch"
 
-  project                 = var.project
-  services                = var.services
-  image_uris              = var.image_uris
-  secret_arns             = var.secret_arns
-  batch_sizing            = var.batch_sizing
-  subnet_ids              = var.batch_subnet_ids
-  security_group_ids      = var.batch_security_group_ids
-  assign_public_ip        = var.batch_assign_public_ip
-  max_vcpus               = var.batch_max_vcpus
-  log_retention_days      = var.batch_log_retention_days
-  bedrock_region          = var.bedrock_region
-  tags                    = var.tags
+  project            = var.project
+  services           = var.services
+  image_uris         = var.image_uris
+  secret_arns        = var.secret_arns
+  batch_sizing       = var.batch_sizing
+  subnet_ids         = var.batch_subnet_ids
+  security_group_ids = var.batch_security_group_ids
+  assign_public_ip   = var.batch_assign_public_ip
+  max_vcpus          = var.batch_max_vcpus
+  log_retention_days = var.batch_log_retention_days
+  bedrock_region     = var.bedrock_region
+  tags               = var.tags
+}
+
+module "edge" {
+  source = "../../generated/modules/edge"
+
+  project              = var.project
+  services             = var.services
+  edge_zip_path        = var.edge_zip_path
+  edge_sizing          = var.edge_sizing
+  edge_aliases         = var.edge_aliases
+  edge_certificate_arn = var.edge_certificate_arn
+  edge_price_class     = var.edge_price_class
+  tags                 = var.tags
 }
 
 output "serverless_endpoint" {
@@ -60,4 +73,8 @@ output "container_endpoint" {
 
 output "batch_job_queue" {
   value = module.batch.job_queue_arn
+}
+
+output "edge_domain_name" {
+  value = module.edge.distribution_domain_name
 }
