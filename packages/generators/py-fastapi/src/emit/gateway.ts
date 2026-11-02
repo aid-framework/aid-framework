@@ -75,12 +75,14 @@ function providerEntry(ir: IR, provider: string): string {
   const adapter = providerAdapter(provider);
   const env = apiKeyEnv(ir, provider);
   const arguments_: string[] = [];
-  // Both HTTP adapters take a `name` and an optional key; only the fake takes neither.
-  if (adapter === 'OpenAICompatibleProvider' || adapter === 'AnthropicProvider') {
+  // Every real adapter takes a `name`; only the fake takes nothing.
+  if (adapter !== 'FakeProvider') {
     arguments_.push(`${INDENT}${INDENT}${INDENT}name=${pythonString(provider)},`);
-    if (env !== undefined) {
-      arguments_.push(`${INDENT}${INDENT}${INDENT}api_key=os.environ.get(${pythonString(env)}),`);
-    }
+  }
+  // Converse authenticates with the execution role's credentials, so a key from the
+  // spec would be a credential the app carried but never used.
+  if (env !== undefined && adapter !== 'BedrockProvider' && adapter !== 'FakeProvider') {
+    arguments_.push(`${INDENT}${INDENT}${INDENT}api_key=os.environ.get(${pythonString(env)}),`);
   }
   const head = `${INDENT}${INDENT}${pythonString(provider)}: ${adapter}(`;
   if (arguments_.length === 0) return `${head}),`;

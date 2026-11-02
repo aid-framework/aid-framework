@@ -9,7 +9,9 @@
     "openai-text-embedding-3-small": { "inputPerMTok": 0.02, "outputPerMTok": 0 },
     "anthropic-claude-3-5-haiku": { "inputPerMTok": 0.8, "outputPerMTok": 4 },
     "anthropic-claude-3-5-sonnet": { "inputPerMTok": 3, "outputPerMTok": 15 },
-    "azure-gpt-4o-mini": { "inputPerMTok": 0.165, "outputPerMTok": 0.66 }
+    "azure-gpt-4o-mini": { "inputPerMTok": 0.165, "outputPerMTok": 0.66 },
+    "bedrock-claude-3-5-haiku": { "inputPerMTok": 0.8, "outputPerMTok": 4 },
+    "bedrock-claude-3-5-sonnet": { "inputPerMTok": 3, "outputPerMTok": 15 }
   },
   "models": {
     "gpt-4o-mini": {
@@ -47,6 +49,16 @@
       "provider": "anthropic",
       "limits": { "contextTokens": 200000, "maxOutputTokens": 8192 },
       "costProfiles": ["anthropic-claude-3-5-sonnet"]
+    },
+    "anthropic.claude-3-5-haiku-20241022-v1:0": {
+      "provider": "bedrock",
+      "limits": { "contextTokens": 200000, "maxOutputTokens": 8192 },
+      "costProfiles": ["bedrock-claude-3-5-haiku"]
+    },
+    "anthropic.claude-3-5-sonnet-20241022-v2:0": {
+      "provider": "bedrock",
+      "limits": { "contextTokens": 200000, "maxOutputTokens": 8192 },
+      "costProfiles": ["bedrock-claude-3-5-sonnet"]
     }
   }
 }

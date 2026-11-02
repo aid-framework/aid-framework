@@ -38,7 +38,12 @@ import {
   type TypeShape,
 } from '@aid-framework/ir';
 import { TS_VERCEL_MANIFEST, TS_VERCEL_TARGET } from './manifest.js';
-import { type Capability, modelCapabilityMember, providerAdapter } from './names.js';
+import {
+  ADAPTER_CAPABILITIES,
+  type Capability,
+  modelCapabilityMember,
+  providerAdapter,
+} from './names.js';
 import { templatePlaceholders } from './placeholders.js';
 
 export type PlanProblemCode =
@@ -273,22 +278,34 @@ export function checkModels(ir: IR): PlanProblem[] {
   const promptModels = new Set(ir.prompts.map((prompt) => prompt.model));
   for (const model of ir.models) {
     const at = `models.${model.id}`;
-    if (providerAdapter(model.provider) === undefined) {
+    const adapter = providerAdapter(model.provider);
+    if (adapter === undefined) {
       problems.push(
         problem(
           'model-provider-unsupported',
           at,
-          `provider ${model.provider} has no TypeScript adapter; the runtime ships fake and openai-compatible only`,
+          `provider ${model.provider} has no TypeScript adapter; the runtime ships fake, openai-compatible, anthropic and bedrock adapters`,
         ),
       );
     }
     for (const capability of model.capabilities) {
-      if (modelCapabilityMember(capability) === undefined) {
+      const member = modelCapabilityMember(capability);
+      if (member === undefined) {
         problems.push(
           problem(
             'model-capability-unsupported',
             at,
             `capability ${capability} has no runtime member, so the emitted ModelSpec would silently drop it`,
+          ),
+        );
+      } else if (adapter !== undefined && !ADAPTER_CAPABILITIES[adapter].has(member)) {
+        // The adapter table is what an emitted app can actually negotiate. Refusing here
+        // keeps the pinned spec from advertising a capability only the call would discover.
+        problems.push(
+          problem(
+            'model-capability-unsupported',
+            at,
+            `capability ${capability} is not served by ${adapter}, so the emitted ModelSpec would silently drop it`,
           ),
         );
       }

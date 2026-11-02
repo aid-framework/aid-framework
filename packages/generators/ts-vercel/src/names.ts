@@ -272,16 +272,24 @@ export function modelCapabilityMember(name: ModelCapability): Capability | undef
   return MODEL_CAPABILITY_MEMBERS[name];
 }
 
-/** Split a model's declared capabilities into what the runtime can be told and what it cannot. */
-export function modelCapabilities(declared: readonly ModelCapability[]): {
+/**
+ * Split a model's declared capabilities into what its adapter can actually be told
+ * and what it cannot. `adapter` is `undefined` when no adapter serves the provider;
+ * the IR's normalize gate refuses that, so no filtering is applied here.
+ */
+export function modelCapabilities(
+  adapter: ProviderAdapter | undefined,
+  declared: readonly ModelCapability[],
+): {
   advertised: Capability[];
   dropped: ModelCapability[];
 } {
+  const supported = adapter === undefined ? undefined : ADAPTER_CAPABILITIES[adapter];
   const advertised: Capability[] = [];
   const dropped: ModelCapability[] = [];
   for (const name of declared) {
     const member = modelCapabilityMember(name);
-    if (member === undefined) {
+    if (member === undefined || (supported !== undefined && !supported.has(member))) {
       dropped.push(name);
     } else if (!advertised.includes(member)) {
       advertised.push(member);
@@ -291,11 +299,48 @@ export function modelCapabilities(declared: readonly ModelCapability[]): {
 }
 
 /** The provider adapter class a provider spelling maps onto, or `undefined`. */
-export function providerAdapter(
-  provider: string,
-): 'FakeProvider' | 'OpenAICompatibleProvider' | undefined {
+export type ProviderAdapter =
+  | 'AnthropicProvider'
+  | 'BedrockProvider'
+  | 'FakeProvider'
+  | 'OpenAICompatibleProvider';
+
+/**
+ * What each adapter can do at all. A declared capability outside its set is not
+ * advertised on the model, because a generated app that claims one it cannot serve
+ * fails only when the model is finally called.
+ */
+export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, ReadonlySet<Capability>>> = {
+  FakeProvider: new Set<Capability>([
+    'embeddings',
+    'long-context',
+    'streaming',
+    'structured-output',
+    'tool-calling',
+  ]),
+  OpenAICompatibleProvider: new Set<Capability>([
+    'embeddings',
+    'long-context',
+    'streaming',
+    'structured-output',
+    'tool-calling',
+  ]),
+  // The TS runtime's Messages adapter validates every turn but does not stream.
+  AnthropicProvider: new Set<Capability>(['structured-output', 'tool-calling']),
+  // Converse has no embeddings endpoint and /converse-stream is a binary event
+  // stream the adapter does not decode.
+  BedrockProvider: new Set<Capability>(['structured-output', 'tool-calling']),
+};
+
+/**
+ * The adapter a provider spelling maps onto, or `undefined` when the target has
+ * none. `azure` and `google` are declared providers no TS adapter serves yet.
+ */
+export function providerAdapter(provider: string): ProviderAdapter | undefined {
   if (provider === 'fake') return 'FakeProvider';
   if (provider === 'openai' || provider === 'openai-compatible') return 'OpenAICompatibleProvider';
+  if (provider === 'anthropic') return 'AnthropicProvider';
+  if (provider === 'bedrock') return 'BedrockProvider';
   return undefined;
 }
 

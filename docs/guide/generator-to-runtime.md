@@ -25,8 +25,10 @@ assuming a feature exists:
 - **Streaming is SSE, served end to end.** A model and adapter that advertise the capability are
   served by `ModelGateway.stream`, which yields `data` frames. Anything that does not advertise it
   raises `CapabilityMismatchError` instead of pretending to stream.
-- **One HTTP provider adapter and one fake.** Breadth of vendor coverage is not the goal; a
-  narrow correct seam is.
+- **One narrow adapter seam, three dialects, and a fake.** OpenAI-compatible endpoints share one
+  adapter because they share a wire format; Anthropic's Messages API and Bedrock's Converse API
+  each get their own because they do not. Breadth beyond those is not the goal; a narrow correct
+  seam is.
 
 ## The pipeline is a reducer
 

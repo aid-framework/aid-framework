@@ -32,9 +32,9 @@ function files(source = anthropicSpecText()): Map<string, string> {
 }
 
 describe('provider selection', () => {
-  it('serves anthropic alongside openai and the deterministic fake', () => {
+  it('serves anthropic and bedrock alongside openai and the deterministic fake', () => {
     expect([...SERVED_PROVIDERS].sort()).toEqual(
-      ['anthropic', 'fake', 'openai', 'openai-compatible'].sort(),
+      ['anthropic', 'bedrock', 'fake', 'openai', 'openai-compatible'].sort(),
     );
   });
 
@@ -65,9 +65,9 @@ describe('provider selection', () => {
   });
 
   it('refuses a provider no adapter serves, naming the ones that ship', () => {
-    // `bedrock` is in the IR's wider vocabulary but the spec layer refuses it first,
+    // `google` is in the IR's wider vocabulary but the spec layer refuses it first,
     // which is the right order: a caller learns the closed set before the IR is built.
-    const spec = exampleSpecText().replaceAll('provider: openai', 'provider: bedrock');
+    const spec = exampleSpecText().replaceAll('provider: openai', 'provider: google');
 
     expect(() => lowerForSpecText(spec)).toThrow(/must be one of/);
     expect(() => lowerForSpecText(spec)).toThrow(/anthropic/);
@@ -132,6 +132,72 @@ describe('adapter capabilities', () => {
     // The fake embedder in the same table still advertises embeddings; only the
     // Anthropic entry must not, because the Messages API has no such endpoint.
     expect(pinned).not.toContain('Capability.EMBEDDINGS');
+  });
+});
+
+/**
+ * The committed example, with the primary model repointed at Bedrock.
+ *
+ * The wire id is one the catalog prices, so the cost gate resolves a real profile
+ * instead of an unpriced model, and it contains the `:` the adapter percent-encodes
+ * in the `/model/{id}/converse` path.
+ */
+function bedrockSpecText(): string {
+  return exampleSpecText()
+    .replace(
+      '    provider: openai\n    modelId: gpt-4o-mini\n    apiKeyEnv: OPENAI_API_KEY',
+      '    provider: bedrock\n    modelId: anthropic.claude-3-5-haiku-20241022-v1:0',
+    )
+    .replace('    costProfile: openai-gpt-4o-mini', '    costProfile: bedrock-claude-3-5-haiku');
+}
+
+describe('bedrock provider', () => {
+  it('plans a bedrock model that names no api key variable', () => {
+    const spec = bedrockSpecText();
+    const fast = lowerForSpecText(spec).models.find((model) => model.id === 'fast');
+
+    expect(fast?.provider).toBe('bedrock');
+    expect(fast?.apiKeyEnv).toBeUndefined();
+    expect(buildForSpecText(spec).plan.files.length).toBeGreaterThan(0);
+  });
+
+  it('emits the Converse adapter with a name and no credential argument', () => {
+    const models = files(bedrockSpecText()).get('app/generated/gateway/models.py') ?? '';
+
+    expect(models).toContain('"bedrock": BedrockProvider(');
+    expect(models).toContain('name="bedrock"');
+    // `BedrockProvider` takes no `api_key`; passing one would be a TypeError at import.
+    const start = models.indexOf('"bedrock": BedrockProvider(');
+    expect(models.slice(start, models.indexOf('),', start))).not.toContain('api_key');
+    // The example's second openai model still resolves to the OpenAI wire, so the bedrock
+    // entry above is not the whole provider map.
+    expect(models).toContain('"openai": OpenAICompatibleProvider(');
+  });
+
+  it('imports the adapter from the runtime', () => {
+    const models = files(bedrockSpecText()).get('app/generated/gateway/models.py') ?? '';
+
+    expect(models).toMatch(/from aid_runtime import \([^)]*BedrockProvider/);
+    expect(models).not.toContain('class BedrockProvider');
+  });
+
+  it('does not advertise the streaming it cannot frame', () => {
+    const models = files(bedrockSpecText()).get('app/generated/gateway/models.py') ?? '';
+    const pinned = aliasBlock(models, 'fast');
+
+    expect(pinned).toContain('Capability.STRUCTURED_OUTPUT');
+    expect(pinned).toContain('Capability.TOOL_CALLING');
+    expect(pinned).not.toContain('Capability.STREAMING');
+  });
+
+  it('refuses a bedrock model that declares embeddings', () => {
+    const spec = bedrockSpecText().replace(
+      '    capabilities: [json-schema, tools, streaming]',
+      '    capabilities: [json-schema, tools, embeddings]',
+    );
+
+    expect(() => buildForSpecText(spec)).toThrow(/unsupported-capability/);
+    expect(() => buildForSpecText(spec)).toThrow(/no embeddings endpoint/);
   });
 });
 

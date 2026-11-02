@@ -772,7 +772,13 @@ export const NON_COLLECTION_SECTIONS = ['specVersion', 'project'] as const;
  * union is wider on purpose: the spec may declare any of them, and the `normalize`
  * gate is what refuses one nothing can serve.
  */
-export const SERVED_PROVIDERS = ['anthropic', 'openai', 'openai-compatible', 'fake'] as const;
+export const SERVED_PROVIDERS = [
+  'anthropic',
+  'bedrock',
+  'openai',
+  'openai-compatible',
+  'fake',
+] as const;
 
 /** Phase 0 defaults for the two IR objects that are not collections. */
 export const DEFAULT_OBSERVABILITY: ObservabilityShape = { trace: true, redact: [] };

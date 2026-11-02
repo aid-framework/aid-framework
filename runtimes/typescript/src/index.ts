@@ -15,10 +15,11 @@
  * - **Streaming is declared, not implemented.** `Capability` includes it so a spec
  *   can require it and a gate can check it; calling `ModelGateway.stream` raises
  *   {@link FeatureDeferredError}.
- * - **Two HTTP provider adapters and one fake.** OpenAI-compatible endpoints share
- *   one adapter because they share a wire format; Anthropic's Messages API gets its
- *   own because it does not. Breadth beyond those is still deferred: a narrow,
- *   correct seam is worth more than a wide shallow one.
+ * - **Three HTTP provider adapters and one fake.** OpenAI-compatible endpoints share
+ *   one adapter because they share a wire format; Anthropic's Messages API and
+ *   Bedrock's Converse API each get their own because they do not. Breadth beyond
+ *   those is still deferred: a narrow, correct seam is worth more than a wide
+ *   shallow one.
  *
  * This file mirrors the Python package's `__all__`. The exports it adds beyond that
  * list are types a TypeScript consumer cannot avoid naming -- option bags, span
@@ -140,6 +141,13 @@ export {
 } from './providers/anthropic.js';
 export type { Provider } from './providers/base.js';
 export { supports } from './providers/base.js';
+export type { BedrockOptions } from './providers/bedrock.js';
+export {
+  BEDROCK_SERVICE,
+  BedrockProvider,
+  defaultBedrockBaseUrl,
+  rfc3986,
+} from './providers/bedrock.js';
 export type { FakeProviderOptions, Responder } from './providers/fake.js';
 export { FakeProvider, ScriptedTurn } from './providers/fake.js';
 export type { FetchLike, OpenAICompatibleOptions } from './providers/http.js';

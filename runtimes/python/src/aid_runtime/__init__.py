@@ -17,8 +17,10 @@ Design boundaries worth stating up front, because they are deliberate:
   ``data`` frames with the first delta before completion. Anything not advertising
   the capability raises :class:`~aid_runtime.errors.CapabilityMismatchError`
   instead of pretending to stream.
-* **One HTTP provider adapter and one fake.** Breadth of vendor coverage is a
-  Phase 2 concern; a narrow, correct seam is worth more now than a wide shallow one.
+* **One narrow adapter seam, three dialects, and a fake.** Breadth of vendor
+  coverage stays a later concern; a correct seam is worth more than a wide shallow
+  one. Three dialects ship: OpenAI-compatible, Anthropic Messages, and Bedrock
+  Converse, alongside a deterministic fake that lets the eval gate run offline.
 """
 
 from __future__ import annotations
@@ -140,13 +142,16 @@ from aid_runtime.pipeline import (
 from aid_runtime.prompts import Example, PromptRegistry, PromptTemplate, RenderedPrompt
 from aid_runtime.providers import (
     ANTHROPIC_VERSION,
+    BEDROCK_SERVICE,
     DEFAULT_ANTHROPIC_BASE_URL,
     DEFAULT_BASE_URL,
     AnthropicProvider,
+    BedrockProvider,
     FakeProvider,
     OpenAICompatibleProvider,
     Provider,
     ScriptedTurn,
+    default_bedrock_base_url,
 )
 from aid_runtime.retrieval import (
     DEFAULT_CANDIDATE_FACTOR,
@@ -272,11 +277,12 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.77"
+__version__ = "0.1.78"
 
 __all__ = [
     "ANTHROPIC_VERSION",
     "ATTRIBUTES",
+    "BEDROCK_SERVICE",
     "DEFAULT_ANTHROPIC_BASE_URL",
     "DEFAULT_BASE_URL",
     "DEFAULT_CANDIDATE_FACTOR",
@@ -301,6 +307,7 @@ __all__ = [
     "AidRuntimeError",
     "AnthropicProvider",
     "BaselineGate",
+    "BedrockProvider",
     "Budget",
     "BudgetExceededError",
     "Capability",
@@ -462,6 +469,7 @@ __all__ = [
     "chunker_for",
     "cite",
     "create_store",
+    "default_bedrock_base_url",
     "default_metrics",
     "embedder_for",
     "emit_step",
