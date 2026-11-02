@@ -25,13 +25,15 @@ export function isCloud(value: string): value is Cloud {
  * maps to Cloud Run rather than Cloud Functions for a packaging reason -- the gen2
  * Functions API accepts only a source zip in GCS and then builds it, while every service
  * here is deployed from the image the generator already produces, which Cloud Run runs
- * directly. `batch` is still absent because it needs a Google Cloud Batch job module this
- * command does not emit yet. Naming a target here lets the command refuse a plan instead
- * of emitting nothing for a target the operator believes is deployed.
+ * directly. `batch` maps to a Cloud Run job rather than Google Cloud Batch because the
+ * `hashicorp/google` provider has no resource for the latter, and a Cloud Run job is the
+ * same run-to-completion model on the provider the rest of the GCP tree already uses.
+ * Naming a target here lets the command refuse a plan instead of emitting nothing for a
+ * target the operator believes is deployed.
  */
 export const CLOUD_TARGETS: Readonly<Record<Cloud, readonly string[]>> = {
   aws: ['serverless', 'container', 'batch'],
-  gcp: ['serverless', 'container'],
+  gcp: ['serverless', 'container', 'batch'],
 };
 
 /** The targets in the plan this cloud has no module for, in plan order. */

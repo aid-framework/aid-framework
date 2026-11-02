@@ -5,9 +5,8 @@ provider "google" {
   region  = var.region
 }
 
-# The Cloud Run module, fed from the generated tfvars and the inputs below. dev and
-# prod differ only in the values they supply, which is what lets one generated tree
-# deploy to a second GCP project unchanged.
+# dev and prod differ only in the values they supply, which is what lets one
+# generated tree deploy to a second GCP project unchanged.
 
 module "cloudrun" {
   source = "../../generated/modules/cloudrun"
@@ -24,6 +23,24 @@ module "cloudrun" {
   tags                  = var.tags
 }
 
+module "cloudrunjob" {
+  source = "../../generated/modules/cloudrunjob"
+
+  project             = var.project
+  services            = var.services
+  image_uris          = var.image_uris
+  secret_ids          = var.secret_ids
+  batch_sizing        = var.batch_sizing
+  project_id          = var.gcp_project
+  region              = var.region
+  deletion_protection = var.deletion_protection
+  tags                = var.tags
+}
+
 output "cloudrun_urls" {
   value = module.cloudrun.service_urls
+}
+
+output "batch_jobs" {
+  value = module.cloudrunjob.job_ids
 }

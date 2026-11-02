@@ -13,6 +13,7 @@ import type { ModuleFile } from './hcl.js';
 
 export { BATCH_MODULE_DIR, emitBatchModule } from './batch.js';
 export { CLOUDRUN_MODULE_DIR, emitCloudRunModule } from './cloudrun.js';
+export { CLOUDRUNJOB_MODULE_DIR, emitCloudRunJobModule } from './cloudrunjob.js';
 export { CONTAINER_MODULE_DIR, emitContainerModule } from './container.js';
 export { type EnvRootModules, envRoot } from './env-root.js';
 export type { ModuleFile } from './hcl.js';
@@ -21,6 +22,7 @@ export { emitServerlessModule, SERVERLESS_MODULE_DIR } from './serverless.js';
 
 import { emitBatchModule } from './batch.js';
 import { emitCloudRunModule } from './cloudrun.js';
+import { emitCloudRunJobModule } from './cloudrunjob.js';
 import { emitContainerModule } from './container.js';
 import { emitServerlessModule } from './serverless.js';
 
@@ -31,9 +33,9 @@ import { emitServerlessModule } from './serverless.js';
  * On GCP a `serverless` service joins it, because the function API takes only a source
  * zip while every service here deploys from an image -- Cloud Run is what gen2 builds on
  * and it runs the image directly. On AWS `serverless` is its own module: Lambda gets the
- * image, but the HTTP API in front of it is a different shape. `batch` is AWS-only too:
- * Google Cloud Batch would need its own module, and until one exists the env root says so
- * instead of pointing at a directory that is not there.
+ * image, but the HTTP API in front of it is a different shape. `batch` means "some
+ * deployment targets batch"; the cloud decides which module that is, AWS Batch on `aws`
+ * and a Cloud Run job on `gcp`.
  */
 export function modulesOf(
   plan: DeployPlan,
@@ -49,13 +51,13 @@ export function modulesOf(
       (service) =>
         service.target === 'container' || (cloud === 'gcp' && service.target === 'serverless'),
     ),
-    batch: cloud === 'aws' && plan.services.some((service) => service.target === 'batch'),
+    batch: plan.services.some((service) => service.target === 'batch'),
   };
 }
 
 /** Every provider module the plan needs on this cloud, or none. */
 export function emitProviderModules(plan: DeployPlan, cloud: Cloud = DEFAULT_CLOUD): ModuleFile[] {
   return cloud === 'gcp'
-    ? emitCloudRunModule(plan)
+    ? [...emitCloudRunModule(plan), ...emitCloudRunJobModule(plan)]
     : [...emitServerlessModule(plan), ...emitContainerModule(plan), ...emitBatchModule(plan)];
 }

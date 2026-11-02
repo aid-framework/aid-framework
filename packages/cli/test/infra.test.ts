@@ -436,7 +436,7 @@ pipelines:
           as: reply
 `;
 
-  /** The same project as a job, which GCP has no module for yet. */
+  /** The same project as a job; GCP runs it as a Cloud Run job. */
   const BATCH_ONLY = `specVersion: "0.5"
 project:
   name: ping
@@ -478,6 +478,49 @@ pipelines:
           as: reply
 `;
 
+  /** An edge deployment, which neither cloud has an infra module for. */
+  const EDGE_ONLY = `specVersion: "0.5"
+project:
+  name: ping
+  namespace: aid.test
+  targets: [py-fastapi]
+models:
+  small:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  answer:
+    version: 1
+    model: small
+    template: "Answer the request."
+    output:
+      kind: text
+guardrails:
+  inbound:
+    stages: [input]
+    policies: [prompt-injection]
+    action: block
+    onFail:
+      message: rejected.
+      log: true
+deployments:
+  api:
+    target: edge
+    secrets: [OPENAI_API_KEY]
+pipelines:
+  ping:
+    trigger:
+      http:
+        method: get
+        path: /ping
+    steps:
+      - generate:
+          prompt: answer
+          as: reply
+`;
+
   it('rejects an unknown cloud before writing anything', () => {
     const made = scratch();
     const run = aid(made, ['infra', 'gen', '--cloud', 'mars', '--json']);
@@ -510,8 +553,26 @@ pipelines:
     expect(readme).toContain('infra/envs/gcp-dev');
   });
 
-  it('names the services a cloud cannot deploy rather than silently dropping them', () => {
+  it('runs a batch deployment as a Cloud Run job, and no AWS batch module', () => {
     const made = project(BATCH_ONLY);
+    created.push(made);
+
+    const run = aid(made, ['infra', 'gen', '--cloud', 'gcp', '--json']);
+    expect(run.code).toBe(0);
+    const walked = made.walk();
+    expect(walked).toContain('infra/generated/modules/cloudrunjob/main.tf');
+    expect(walked.filter((path) => path.includes('/modules/batch/'))).toEqual([]);
+    expect(walked.filter((path) => path.includes('/modules/cloudrun/'))).toEqual([]);
+
+    const readme = made.read(`${GENERATED}/README.md`);
+    expect(readme).toContain('modules/cloudrunjob/');
+    // Cloud Batch has no resource in the stable provider, so the README has to name the
+    // thing that actually runs the job rather than a resource that does not exist.
+    expect(readme).toContain('gcloud run jobs execute');
+  });
+
+  it('names the services a cloud cannot deploy rather than silently dropping them', () => {
+    const made = project(EDGE_ONLY);
     created.push(made);
 
     const run = aid(made, ['infra', 'gen', '--cloud', 'gcp', '--json']);
