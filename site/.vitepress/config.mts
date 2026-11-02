@@ -150,6 +150,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
+      { text: 'Features', link: '/features' },
       { text: 'Reference', link: '/reference/spec' },
       { text: 'Walkthroughs', link: '/walkthroughs/support-copilot' },
       { text: 'Design', link: '/design' },

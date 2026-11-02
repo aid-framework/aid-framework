@@ -55,17 +55,18 @@ export {
 
 import { type Diagnostic, hasErrors, sortDiagnostics } from './diagnostics.js';
 import { type ParseOptions, parseSpecDocument } from './parse.js';
+import type { SpecVersion } from './validate.js';
 import { validateSpec } from './validate.js';
 
 /**
  * The version `aid init` writes and the version every 0.1 fixture stays on. This
- * build also reads 0.2, 0.3 and 0.4 (`SUPPORTED_SPEC_VERSIONS`); 0.1 documents are
- * byte-identical under all four.
+ * build also reads 0.2 through `SPEC_VERSION_LATEST` (`SUPPORTED_SPEC_VERSIONS`);
+ * the later versions only add sections, so a 0.1 document is unaffected by them.
  */
 export const SPEC_VERSION = '0.1';
 
 /** The newest version this build reads. Sections above this are rejected, not ignored. */
-export const SPEC_VERSION_LATEST = '0.6';
+export const SPEC_VERSION_LATEST: SpecVersion = '0.8';
 
 export interface SpecCheckResult {
   /** True when no diagnostic has `error` severity. Warnings do not fail a check. */

@@ -13,6 +13,7 @@ import {
   RETIRED_STEP_KINDS,
   SECTION_MIN_VERSION,
   SPEC_VERSION,
+  SPEC_VERSION_LATEST,
   SUPPORTED_SECTIONS,
   SUPPORTED_SPEC_VERSIONS,
   SUPPORTED_STEP_KINDS,
@@ -37,6 +38,13 @@ describe('spec version', () => {
     });
     // `aid init` writes SPEC_VERSION, so it has to be a version the schema accepts.
     expect([...SUPPORTED_SPEC_VERSIONS]).toContain(SPEC_VERSION);
+  });
+
+  it('names the newest supported version, so docs cannot claim an older language', () => {
+    // The homepage and `/features` state this number. It was `0.6` while the build read
+    // through `0.8`, which made the site describe a language two versions behind the one
+    // `aid validate` accepts.
+    expect(SPEC_VERSION_LATEST).toBe(SUPPORTED_SPEC_VERSIONS[SUPPORTED_SPEC_VERSIONS.length - 1]);
   });
 
   it('lists the fifteen supported sections, five of which need a later version', () => {

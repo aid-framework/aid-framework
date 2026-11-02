@@ -11,7 +11,7 @@ hero:
       link: /guide/getting-started
     - theme: alt
       text: See what ships
-      link: /reference/support
+      link: /features
     - theme: alt
       text: GitHub
       link: https://github.com/aid-framework/aid-framework
@@ -101,7 +101,7 @@ shows every file `gen` wrote and serves the endpoint. You need Node.js 24 or new
 account, no email gate, nothing else to install.
 
 Seven packages on npm and one on PyPI ship together at version **{{ AID_VERSION }}**, with
-the spec language at `0.6`.
+the spec language at `0.8`.
 
 ## Support, read from the code
 
@@ -109,6 +109,12 @@ The provider, cloud and target matrix is generated from `SERVED_PROVIDERS` and
 `CLOUD_TARGETS`, the same declarations the compiler enforces, so the page cannot claim a
 provider or a cloud that has not shipped. The [support matrix](reference/support.md) is the
 source of truth; a pair it does not cover is refused at plan time with a named diagnostic.
+
+The [features page](features.md) is the short version for a decision: which managed service
+runs each deployment target on each cloud, which capabilities every model provider's adapter
+advertises, the cloud identity the generated infrastructure grants the service, what ships
+out of the box with the release that first shipped it, and what the framework refuses on
+purpose with the diagnostic that enforces the refusal.
 
 ## What AID is not
 
