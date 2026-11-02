@@ -1,6 +1,9 @@
 /**
- * Provider code: the OpenTofu module a `container` deployment is rendered into when the
- * target cloud is GCP. It is the Cloud Run counterpart of `container.ts`, which emits ECS.
+ * Provider code: the OpenTofu module a `container` or `serverless` deployment is rendered
+ * into when the target cloud is GCP. It is the Cloud Run counterpart of `container.ts`,
+ * which emits ECS, and it covers both targets because GCP's function API accepts only a
+ * source zip while the framework deploys images -- Cloud Run is what gen2 builds on, and
+ * it takes the image directly.
  *
  * Same bargain as every generated module: it carries no fact the plan does not already
  * state (it loops over the tfvars rather than baking in names), and its bytes are a
@@ -18,8 +21,8 @@
  * sentence rather than as an image pull error after deploy.
  *
  * What it does *not* refuse: a `streaming` service. Cloud Run forwards a streamed response
- * body, unlike API Gateway, so the same service that needs the container target on AWS
- * works here with no change.
+ * body, unlike API Gateway, so a service that needs the container target on AWS works
+ * here from either target -- and the serverless refusal AWS emits names that difference.
  *
  * Still business inputs, never derived here (design §12.2): the project id and region the
  * provider authenticates as, each service's image, memory, CPU, instance bounds,
@@ -58,7 +61,7 @@ const VARIABLES_TF = hcl([
   '}',
   '',
   'variable "services" {',
-  '  description = "The plan services, verbatim. Entries not targeting container are ignored."',
+  '  description = "The plan services, verbatim. Entries not targeting container or serverless are ignored."',
   '  type = map(object({',
   '    target       = string',
   '    streaming    = bool',
@@ -135,9 +138,9 @@ const VARIABLES_TF = hcl([
 
 const MAIN_TF = hcl([
   'locals {',
-  '  container = {',
+  '  app = {',
   '    for id, service in var.services : id => service',
-  '    if service.target == "container"',
+  '    if service.target == "container" || service.target == "serverless"',
   '  }',
   '',
   '  # Cloud Run names allow lowercase letters, digits and hyphens only, are at most 63',
@@ -145,7 +148,7 @@ const MAIN_TF = hcl([
   '  # (`aid.test`), and a trailing hyphen after truncation is not legal. Both are cleared',
   '  # here; a name that still cannot start a request is refused by the precondition below.',
   '  name = {',
-  '    for id, service in local.container :',
+  '    for id, service in local.app :',
   '    id => substr(',
   '      replace(',
   '        replace(lower("@{var.project.namespace}-@{var.project.name}-@{id}"), "/[^a-z0-9-]/", "-"),',
@@ -160,7 +163,7 @@ const MAIN_TF = hcl([
   '  # Service account ids are 6-30 characters and must start with a letter, so the same',
   '  # name with a fixed prefix keeps even a one-character project legal.',
   '  account_id = {',
-  '    for id, service in local.container :',
+  '    for id, service in local.app :',
   '    id => substr(',
   '      replace(',
   '        replace(lower("aid-@{var.project.namespace}-@{var.project.name}-@{id}"), "/[^a-z0-9-]/", "-"),',
@@ -184,7 +187,7 @@ const MAIN_TF = hcl([
   '  # same secret and each needs its own grant for its own identity.',
   '  secret_env = {',
   '    for pair in flatten([',
-  '      for id, service in local.container : [',
+  '      for id, service in local.app : [',
   '        for variable in service.env : { service = id, name = variable.name }',
   '        if variable.secret',
   '      ]',
@@ -195,7 +198,7 @@ const MAIN_TF = hcl([
   '  # project role below is the only credential it needs -- the same shape as the AWS',
   "  # modules' `local.bedrock`, and derived from `providers` rather than from a flag.",
   '  vertex = {',
-  '    for id, service in local.container : id => service',
+  '    for id, service in local.app : id => service',
   '    if contains(service.providers, "google")',
   '  }',
   '',
@@ -217,7 +220,7 @@ const MAIN_TF = hcl([
   '}',
   '',
   'resource "google_service_account" "service" {',
-  '  for_each     = local.container',
+  '  for_each     = local.app',
   '  account_id   = local.account_id[each.key]',
   '  display_name = "@{var.project.namespace}-@{var.project.name}-@{each.key}"',
   '}',
@@ -235,7 +238,7 @@ const MAIN_TF = hcl([
   '}',
   '',
   'resource "google_cloud_run_v2_service" "service" {',
-  '  for_each = local.container',
+  '  for_each = local.app',
   '',
   '  name                = local.name[each.key]',
   '  location            = var.region',
@@ -247,9 +250,11 @@ const MAIN_TF = hcl([
   '',
   '    # Cloud Run defaults to 80 concurrent requests per instance, which suits an ASGI',
   '    # app that awaits models; lower it for a service whose memory grows per request.',
+  '    # A `serverless` service keeps the function model it asked for -- one request at a',
+  '    # time per instance -- unless the sizing input says otherwise.',
   '    max_instance_request_concurrency = coalesce(',
   '      try(var.cloudrun_sizing[each.key].concurrency, null),',
-  '      80,',
+  '      each.value.target == "serverless" ? 1 : 80,',
   '    )',
   '',
   '    scaling {',
@@ -351,7 +356,7 @@ const MAIN_TF = hcl([
   '# Cloud Run authenticates every request by default. A model gateway is a public URL, so',
   '# the operator asks for the allUsers binding explicitly instead of getting it silently.',
   'resource "google_cloud_run_v2_service_iam_member" "invoker" {',
-  '  for_each = var.allow_unauthenticated ? local.container : {}',
+  '  for_each = var.allow_unauthenticated ? local.app : {}',
   '',
   '  name     = google_cloud_run_v2_service.service[each.key].name',
   '  location = google_cloud_run_v2_service.service[each.key].location',
@@ -362,7 +367,7 @@ const MAIN_TF = hcl([
   '# The registry the images are pushed to. It is created once per project, not per',
   '# service, and only when there is a service to run.',
   'resource "google_artifact_registry_repository" "images" {',
-  '  for_each = length(local.container) > 0 ? { images = true } : {}',
+  '  for_each = length(local.app) > 0 ? { images = true } : {}',
   '',
   '  location      = var.region',
   '  repository_id = substr(local.repository_id, 0, 63)',
@@ -398,11 +403,12 @@ const OUTPUTS_TF = hcl([
 /**
  * The module, or nothing.
  *
- * Nothing is emitted when no deployment targets `container`, so a plan with no service to
- * run gains no directory and no manifest entry -- the same rule every other module follows.
+ * Nothing is emitted when no deployment targets `container` or `serverless`, so a plan
+ * with no service to run gains no directory and no manifest entry -- the same rule every
+ * other module follows. Both targets share this module on GCP because both run the image.
  */
 export function emitCloudRunModule(plan: DeployPlan): ModuleFile[] {
-  if (!targets(plan, 'container')) return [];
+  if (!targets(plan, 'container') && !targets(plan, 'serverless')) return [];
 
   return moduleFiles(CLOUDRUN_MODULE_DIR, {
     versions: VERSIONS_TF,

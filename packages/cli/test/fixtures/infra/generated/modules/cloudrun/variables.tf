@@ -6,7 +6,7 @@ variable "project" {
 }
 
 variable "services" {
-  description = "The plan services, verbatim. Entries not targeting container are ignored."
+  description = "The plan services, verbatim. Entries not targeting container or serverless are ignored."
   type = map(object({
     target       = string
     streaming    = bool

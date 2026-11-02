@@ -387,9 +387,20 @@ describe('emitContainerModule', () => {
 });
 
 describe('emitCloudRunModule', () => {
-  it('emits nothing when no deployment targets container', () => {
+  it('emits nothing when no deployment targets container or serverless', () => {
     expect(emitCloudRunModule(planOf())).toEqual([]);
-    expect(emitCloudRunModule(planOf('serverless', 'batch', 'edge'))).toEqual([]);
+    expect(emitCloudRunModule(planOf('batch', 'edge'))).toEqual([]);
+  });
+
+  it('runs a serverless service too, because GCP needs no second packaging model', () => {
+    // The gen2 Functions API takes only a source zip; Cloud Run takes the image, and it
+    // is what gen2 builds on -- so both targets share one module.
+    const files = emitCloudRunModule(planOf('serverless'));
+    expect(files).toHaveLength(4);
+    const main = mainOf(files);
+    expect(main).toContain('service.target == "container" || service.target == "serverless"');
+    // The function model is kept: one request per instance unless sizing says otherwise.
+    expect(main).toContain('each.value.target == "serverless" ? 1 : 80');
   });
 
   it('emits the four module files under the generated tree', () => {
@@ -436,7 +447,7 @@ describe('emitCloudRunModule', () => {
   it('creates one registry for the images, not one per service', () => {
     const main = mainOf(emitCloudRunModule(planOf('container')));
     expect(main).toContain('google_artifact_registry_repository');
-    expect(main).toContain('length(local.container) > 0 ? { images = true } : {}');
+    expect(main).toContain('length(local.app) > 0 ? { images = true } : {}');
   });
 
   it('makes a legal service name out of a namespace that carries a dot', () => {
@@ -498,11 +509,21 @@ describe('emitCloudRunModule', () => {
     expect(variables).not.toMatch(/variable "project_id"[\s\S]{0,200}default/);
   });
 
+  it('grants Vertex to a serverless service too, since the same loop covers both targets', () => {
+    const google = {
+      ...SERVING,
+      services: SERVING.services.map((service) => ({ ...service, providers: ['google'] })),
+    } as unknown as DeployPlan;
+    const main = mainOf(emitCloudRunModule(google));
+    expect(main).toContain('resource "google_project_iam_member" "vertex"');
+    expect(main).toContain('roles/aiplatform.user');
+  });
+
   it('defaults to public invocation but does not grant it silently', () => {
     // Cloud Run authenticates every request unless allUsers is bound; the binding is a
     // separate resource gated on the input rather than something baked into the service.
     const main = mainOf(emitCloudRunModule(planOf('container')));
-    expect(main).toContain('var.allow_unauthenticated ? local.container : {}');
+    expect(main).toContain('var.allow_unauthenticated ? local.app : {}');
     expect(main).toContain('member   = "allUsers"');
   });
 });
@@ -604,7 +625,7 @@ describe('envRoot', () => {
   it('says what GCP is missing rather than inventing a module', () => {
     const none = envRoot({ serverless: true, container: false }, 'gcp');
     expect(none.main).not.toContain('module "');
-    expect(none.main).toContain('only target a');
+    expect(none.main).toContain('no service a module exists for');
   });
 });
 
@@ -706,8 +727,8 @@ describe('modulesOf, the seam emit.ts reads', () => {
   });
 
   it('reports what the cloud can emit, not what the target is called', () => {
-    // On GCP only `container` has a module, so a serverless plan yields no module even
-    // though AWS would have emitted one.
+    // On GCP `container` and `serverless` both run on Cloud Run, so either one needs the
+    // cloudrun module; `serverless` and `batch` are AWS-only modules.
     expect(modulesOf(planOf('container'), 'gcp')).toEqual({
       serverless: false,
       container: true,
@@ -715,7 +736,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
     });
     expect(modulesOf(planOf('serverless'), 'gcp')).toEqual({
       serverless: false,
-      container: false,
+      container: true,
       batch: false,
     });
     expect(modulesOf(planOf('batch'), 'gcp')).toEqual({

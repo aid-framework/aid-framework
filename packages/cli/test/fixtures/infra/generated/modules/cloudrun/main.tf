@@ -1,7 +1,7 @@
 locals {
-  container = {
+  app = {
     for id, service in var.services : id => service
-    if service.target == "container"
+    if service.target == "container" || service.target == "serverless"
   }
 
   # Cloud Run names allow lowercase letters, digits and hyphens only, are at most 63
@@ -9,7 +9,7 @@ locals {
   # (`aid.test`), and a trailing hyphen after truncation is not legal. Both are cleared
   # here; a name that still cannot start a request is refused by the precondition below.
   name = {
-    for id, service in local.container :
+    for id, service in local.app :
     id => substr(
       replace(
         replace(lower("${var.project.namespace}-${var.project.name}-${id}"), "/[^a-z0-9-]/", "-"),
@@ -24,7 +24,7 @@ locals {
   # Service account ids are 6-30 characters and must start with a letter, so the same
   # name with a fixed prefix keeps even a one-character project legal.
   account_id = {
-    for id, service in local.container :
+    for id, service in local.app :
     id => substr(
       replace(
         replace(lower("aid-${var.project.namespace}-${var.project.name}-${id}"), "/[^a-z0-9-]/", "-"),
@@ -48,7 +48,7 @@ locals {
   # same secret and each needs its own grant for its own identity.
   secret_env = {
     for pair in flatten([
-      for id, service in local.container : [
+      for id, service in local.app : [
         for variable in service.env : { service = id, name = variable.name }
         if variable.secret
       ]
@@ -59,7 +59,7 @@ locals {
   # project role below is the only credential it needs -- the same shape as the AWS
   # modules' `local.bedrock`, and derived from `providers` rather than from a flag.
   vertex = {
-    for id, service in local.container : id => service
+    for id, service in local.app : id => service
     if contains(service.providers, "google")
   }
 
@@ -81,7 +81,7 @@ locals {
 }
 
 resource "google_service_account" "service" {
-  for_each     = local.container
+  for_each     = local.app
   account_id   = local.account_id[each.key]
   display_name = "${var.project.namespace}-${var.project.name}-${each.key}"
 }
@@ -99,7 +99,7 @@ resource "google_project_iam_member" "vertex" {
 }
 
 resource "google_cloud_run_v2_service" "service" {
-  for_each = local.container
+  for_each = local.app
 
   name                = local.name[each.key]
   location            = var.region
@@ -111,9 +111,11 @@ resource "google_cloud_run_v2_service" "service" {
 
     # Cloud Run defaults to 80 concurrent requests per instance, which suits an ASGI
     # app that awaits models; lower it for a service whose memory grows per request.
+    # A `serverless` service keeps the function model it asked for -- one request at a
+    # time per instance -- unless the sizing input says otherwise.
     max_instance_request_concurrency = coalesce(
       try(var.cloudrun_sizing[each.key].concurrency, null),
-      80,
+      each.value.target == "serverless" ? 1 : 80,
     )
 
     scaling {
@@ -215,7 +217,7 @@ resource "google_secret_manager_secret_iam_member" "accessor" {
 # Cloud Run authenticates every request by default. A model gateway is a public URL, so
 # the operator asks for the allUsers binding explicitly instead of getting it silently.
 resource "google_cloud_run_v2_service_iam_member" "invoker" {
-  for_each = var.allow_unauthenticated ? local.container : {}
+  for_each = var.allow_unauthenticated ? local.app : {}
 
   name     = google_cloud_run_v2_service.service[each.key].name
   location = google_cloud_run_v2_service.service[each.key].location
@@ -226,7 +228,7 @@ resource "google_cloud_run_v2_service_iam_member" "invoker" {
 # The registry the images are pushed to. It is created once per project, not per
 # service, and only when there is a service to run.
 resource "google_artifact_registry_repository" "images" {
-  for_each = length(local.container) > 0 ? { images = true } : {}
+  for_each = length(local.app) > 0 ? { images = true } : {}
 
   location      = var.region
   repository_id = substr(local.repository_id, 0, 63)

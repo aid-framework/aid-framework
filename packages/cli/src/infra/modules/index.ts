@@ -28,11 +28,12 @@ import { emitServerlessModule } from './serverless.js';
  * Which platform modules a plan needs, in the shape `envRoot` reads.
  *
  * `container` is cloud-neutral: the same deployment is ECS on AWS and Cloud Run on GCP.
- * `serverless` is not, because GCP's counterpart runs on Cloud Functions and needs a
- * different entrypoint; the command refuses that plan before this is ever asked, so
- * reporting `false` here is the second half of the same answer, not a silent drop.
- * `batch` is AWS-only too: Google Cloud Batch would need its own module, and until one
- * exists the env root says so instead of pointing at a directory that is not there.
+ * On GCP a `serverless` service joins it, because the function API takes only a source
+ * zip while every service here deploys from an image -- Cloud Run is what gen2 builds on
+ * and it runs the image directly. On AWS `serverless` is its own module: Lambda gets the
+ * image, but the HTTP API in front of it is a different shape. `batch` is AWS-only too:
+ * Google Cloud Batch would need its own module, and until one exists the env root says so
+ * instead of pointing at a directory that is not there.
  */
 export function modulesOf(
   plan: DeployPlan,
@@ -44,7 +45,10 @@ export function modulesOf(
 } {
   return {
     serverless: cloud === 'aws' && plan.services.some((service) => service.target === 'serverless'),
-    container: plan.services.some((service) => service.target === 'container'),
+    container: plan.services.some(
+      (service) =>
+        service.target === 'container' || (cloud === 'gcp' && service.target === 'serverless'),
+    ),
     batch: cloud === 'aws' && plan.services.some((service) => service.target === 'batch'),
   };
 }

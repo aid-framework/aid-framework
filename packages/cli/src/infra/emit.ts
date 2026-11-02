@@ -271,7 +271,7 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
       : []),
     ...(modules.container && cloud === 'gcp'
       ? [
-          '| `modules/cloudrun/` | The Cloud Run v2 + service account + Artifact Registry module a `container` service deploys into. |',
+          '| `modules/cloudrun/` | The Cloud Run v2 + service account + Artifact Registry module a `container` or `serverless` service deploys into. |',
         ]
       : []),
     ...(modules.batch
@@ -333,6 +333,12 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
                 'streamed body, so the same service that needs the container target on AWS needs',
                 'no change here. It does refuse a service name Cloud Run cannot route.',
                 '',
+                'A `serverless` service also lands on Cloud Run: the gen2 Functions API accepts',
+                'only a source zip and builds it, while this project deploys the image the',
+                'generator already produces, which Cloud Run runs directly. It scales to zero and',
+                'serves one request per instance unless `cloudrun_sizing` says otherwise, so the',
+                'function model is kept.',
+                '',
               ]
             : []),
           ...(modules.batch
@@ -348,7 +354,7 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
         ]
       : [
           cloud === 'gcp'
-            ? 'No provider module is generated for this plan: on GCP only a `container` target has a module (Cloud Run). `serverless` needs a Cloud Functions entrypoint, `batch` a Google Cloud Batch module, and `edge` has no GCP counterpart. The plan document and tfvars above are still the contract to write it against.'
+            ? 'No provider module is generated for this plan: on GCP `container` and `serverless` both deploy to Cloud Run, so only `batch` (a Google Cloud Batch module) and `edge` (no GCP counterpart) are missing. The plan document and tfvars above are still the contract to write it against.'
             : 'No provider module is generated for this plan yet: AWS modules exist for `serverless`, `container` and `batch`, so an `edge` target needs a hand-written env root. The plan document and tfvars above are still the contract to write it against.',
           '',
         ]),

@@ -238,7 +238,7 @@ infra/
       variables.tf
       main.tf
       outputs.tf
-    modules/cloudrun/                   generated, when a deployment targets container on GCP
+    modules/cloudrun/                   generated, when a deployment targets container or serverless on GCP
       versions.tf
       variables.tf
       main.tf
@@ -252,8 +252,9 @@ infra/
 ```
 
 The plan and both spellings of it are always emitted. A module is emitted only when a
-deployment declares its target, so a serverless-only project gains no `modules/container`
-directory to ignore. Each module's bytes are constant: it loops over the generated tfvars
+deployment declares its target, so a serverless-only project on AWS gains no
+`modules/container` directory to ignore. On GCP `serverless` and `container` share
+`modules/cloudrun`, because both run the same image. Each module's bytes are constant: it loops over the generated tfvars
 instead of naming services, which is what lets it be validated once and be correct for every
 project.
 
@@ -281,7 +282,8 @@ declares the inputs no spec can supply:
 | `public_subnet_ids`, `private_subnet_ids` | Only meaningful with `vpc_id`, when you bring a VPC. |
 
 The modules turn a spec mistake into a plan-time refusal rather than a broken deploy. The
-serverless module refuses a `streaming` service (an HTTP API cannot deliver a streamed body),
+serverless module refuses a `streaming` service (an HTTP API cannot deliver a streamed body; on
+GCP the same service deploys as `serverless` on Cloud Run),
 a service with no image, and a secret with no ARN. The container module refuses those too,
 plus two services claiming one path - a load balancer routes by path, not by method - a load
 balancer with fewer than two public subnets, and a service with fewer than two private
@@ -321,14 +323,21 @@ Bedrock. The policy is scoped to `foundation-model/*` and to the account's
 `inference-profile/*`, which is what a cross-region inference profile needs. A build that
 names only `openai` or `anthropic` gets no policy, and every other service is unaffected.
 
-`--cloud gcp` selects Cloud Run for a `container` service, and nothing else changes: the image
-is the same one the Dockerfile builds, because that Dockerfile already binds `$PORT` on
-`0.0.0.0`. The module creates a service account per service, grants it `secretAccessor` on
-each declared secret, references secrets by `secret_key_ref` rather than inlining them, and
-creates one Artifact Registry repository for the images. Invocation is public by default but
-through an explicit `allUsers` binding, so it can be turned off with
+`--cloud gcp` selects Cloud Run for a `container` service, and for a `serverless` one too.
+The gen2 Functions API accepts only a source zip and builds it, so it would mean a second
+packaging pipeline; Cloud Run is what gen2 runs on, and it takes the image the generator
+already produces. A `serverless` service still scales to zero and serves one request per
+instance unless `cloudrun_sizing` lowers that further, so the function model is kept. Nothing
+else changes: the image is the same one the Dockerfile builds, because that Dockerfile already
+binds `$PORT` on `0.0.0.0`. The module creates a service account per service, grants it
+`secretAccessor` on each declared secret, references secrets by `secret_key_ref` rather than
+inlining them, and creates one Artifact Registry repository for the images. Invocation is
+public by default but through an explicit `allUsers` binding, so it can be turned off with
 `allow_unauthenticated = false`. `gcp_project` and `region` are the only account facts it
 needs; there is no VPC input, because Cloud Run provisions no network of its own.
+
+`streaming` is served here from either target, so a service that must move to a container on
+AWS because API Gateway cannot stream needs no change on GCP.
 
 A service whose models name the `google` provider gets `roles/aiplatform.user` on that
 project, and `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_REGION` in its environment. Both are
@@ -340,10 +349,11 @@ provider gets no grant and no extra variable. A service that declares either var
 keeps its own value, so pointing one service at another project is a decision, not an
 overwrite.
 
-Generated AWS modules exist for `serverless`, `container` and `batch`, and GCP has one for
-`container`. `edge` still needs a hand-written env root, and the plan document is the contract
-to write it against. `--cloud gcp` refuses a plan containing a target it has no module for,
-naming each service, rather than emitting a tree that silently omits it.
+Generated AWS modules exist for `serverless`, `container` and `batch`, and GCP has one that
+covers `container` and `serverless` (Cloud Run). `edge` still needs a hand-written env root,
+and `batch` has no GCP module yet; the plan document is the contract to write either against.
+`--cloud gcp` refuses a plan containing a target it has no module for, naming each service,
+rather than emitting a tree that silently omits it.
 
 `aid infra plan` and `aid infra apply` spawn the backend but never run `init`, because
 initialising is a decision about a backend and a lock table, not a consequence of the spec. Run
