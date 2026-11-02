@@ -238,8 +238,10 @@ guardrails:
 `onDecision` must map every label the decision can return, `allow` is the one outcome that
 lets the payload through, and `minConfidence` fails an answer closed when the model is less
 sure than that. A reference to an undeclared or non-`choice` decision is rejected, as is an
-`onDecision` key the decision never returns. `redact` is not available here: a decision
-returns a verdict, not a masked payload.
+`onDecision` key the decision never returns. `minConfidence` needs an answer that carries a
+confidence, so it is rejected over a `noul` decision - whose answer has none - and a run
+fails closed if an answer ever arrives without one. `redact` is not available here: a
+decision returns a verdict, not a masked payload.
 
 ## `decisions`
 

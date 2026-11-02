@@ -461,6 +461,17 @@ class GuardrailEngine:
                 "input",
                 f"decision {name!r} answered {label!r}, which this guardrail does not map",
             )
+        if guardrail.min_confidence > 0 and answer.confidence is None:
+            # A `noul` answer carries only its probability, and the wire contract forbids
+            # a confidence on it. A floor that cannot be read must not pass: silently
+            # treating the missing value as "no opinion, therefore allow" is exactly the
+            # failure this check exists to stop.
+            raise GuardrailBlockedError(
+                guardrail.id,
+                "input",
+                f"decision {name!r} answered without a confidence, and this guardrail "
+                f"requires at least {guardrail.min_confidence:.2f}",
+            )
         if answer.confidence is not None and answer.confidence < guardrail.min_confidence:
             raise GuardrailBlockedError(
                 guardrail.id,

@@ -190,6 +190,10 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
     code: DIAGNOSTIC_CODES.schemaViolation,
     path: ['guardrails', 'gate', 'decision'],
   },
+  'guardrail-decision-noul-confidence.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['guardrails', 'gate', 'minConfidence'],
+  },
   'guardrail-decision-missing-label.spec.yaml': {
     code: DIAGNOSTIC_CODES.schemaViolation,
     path: ['guardrails', 'gate', 'onDecision'],

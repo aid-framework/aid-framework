@@ -1,0 +1,22 @@
+specVersion: "0.7"
+
+project:
+  name: probe
+
+decisions:
+  urgent:
+    provider: typesafe
+    model: jev-1.14.0
+    type: noul
+    instructions: The message conveys urgency
+
+guardrails:
+  gate:
+    stages: [input]
+    decision: urgent
+    onDecision:
+      default: allow
+    minConfidence: 0.8
+    onFail:
+      message: refused
+      log: true
