@@ -1,0 +1,28 @@
+specVersion: "0.8"
+
+project:
+  name: scored
+
+decisions:
+  helpfulness:
+    provider: typesafe
+    model: jev-1.14.0
+    type: choice
+    instructions: How helpful is this answer
+    criteria:
+      poor: Answers nothing asked
+      good: Answers the question
+
+evals:
+  quality:
+    target: pipeline:answer
+    dataset:
+      source: file
+      uri: evals/quality.jsonl
+    metrics:
+      - kind: exact
+        field: text
+      - kind: decision
+        decision: helpfulness
+    gate:
+      maxRegression: 0.05

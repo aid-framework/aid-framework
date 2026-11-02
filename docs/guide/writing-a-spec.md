@@ -266,10 +266,11 @@ on a membership question is a number that means nothing.
 `provider` is `typesafe` and `model` names a Jev version such as `jev-1.14.0`. A moving alias
 (`jev-latest`, `jev-preview`) is legal in the declaration - interactive routing may deliberately
 want the newest model - but an eval reference refuses one, because a recorded decision has to name
-the exact model that produced it. Decisions are not `models` entries, so they cannot be aliased,
-budgeted, or swapped by an eval. `onError` is `block` (default) or `allow`, and it is declared
-rather than inferred: a billing decision that silently degrades to "allow" fails open in the one
-place correctness matters.
+the exact model that produced it. A `score` decision is also usable as an eval metric, where its
+ordered criteria turn a prediction into a `0..1` score. Decisions are not `models` entries, so
+they cannot be aliased, budgeted, or swapped by an eval. `onError` is `block` (default) or
+`allow`, and it is declared rather than inferred: a billing decision that silently degrades to
+"allow" fails open in the one place correctness matters.
 
 ## `memory`
 
@@ -392,6 +393,11 @@ evals:
 `ir/eval-uncovered` for an HTTP pipeline. `maxRegression` is a budget, not a target.
 `llm-judge` is deliberately refused under a CI gate, because a judgement that is not
 deterministic cannot define a regression.
+
+A `decision` metric scores each prediction with a `score` decision you declared. The
+criteria are ordered, so the position the model returns becomes a `0..1` score, and an eval
+can carry one such metric. It is model-produced, so it is refused under `gate.ci` for the
+same reason as `llm-judge`, and it declares no threshold: the gate would refuse to honour one.
 
 ## `deployments`
 

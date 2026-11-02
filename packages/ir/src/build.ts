@@ -1239,6 +1239,14 @@ function buildMetric(
       if (threshold !== undefined) metric.threshold = threshold;
       return metric;
     }
+    case 'decision': {
+      const decision = asString(record.decision);
+      if (decision === undefined) return undefined;
+      // No threshold: a score comes from a model, so `BaselineGate` refuses to gate on it
+      // (`allow_nondeterministic` exists for local exploration only). Declaring one here
+      // would be a knob the generated gate could never honor.
+      return { kind: 'decision', decision };
+    }
     case 'assert': {
       const message = asString(record.message);
       if (message === undefined) return undefined;

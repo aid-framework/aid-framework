@@ -1,0 +1,39 @@
+specVersion: "0.8"
+
+project:
+  name: scored
+
+decisions:
+  helpfulness:
+    provider: typesafe
+    model: jev-1.14.0
+    type: score
+    instructions: How helpful is this answer
+    criteria:
+      - unusable
+      - complete
+  tone:
+    provider: typesafe
+    model: jev-1.14.0
+    type: score
+    instructions: How is the tone
+    criteria:
+      - rude
+      - neutral
+      - warm
+
+evals:
+  quality:
+    target: pipeline:answer
+    dataset:
+      source: file
+      uri: evals/quality.jsonl
+    metrics:
+      - kind: exact
+        field: text
+      - kind: decision
+        decision: helpfulness
+      - kind: decision
+        decision: tone
+    gate:
+      maxRegression: 0.05

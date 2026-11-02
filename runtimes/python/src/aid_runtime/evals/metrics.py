@@ -15,13 +15,17 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from aid_runtime.errors import EvalError
+from aid_runtime.agents.guardrails import DecisionAsker
+from aid_runtime.agents.ir import DecisionDefinition
+from aid_runtime.decisions import DecisionClient, DecisionQuestion, DecisionResponse
+from aid_runtime.errors import ConfigurationError, EvalError
 from aid_runtime.evals.dataset import EvalCase
 from aid_runtime.evals.predicate import evaluate_predicate
 from aid_runtime.structured import run_structured
 
 __all__ = [
     "AssertMetric",
+    "DecisionScore",
     "ExactMatch",
     "JsonSchemaValid",
     "JudgeVerdict",
@@ -270,6 +274,91 @@ class LlmJudge:
             f"Reference: {expected}\n"
             f"Candidate: {prediction}\n\n"
             'Reply with JSON: {"score": <0.0-1.0>, "reason": "<short>"}'
+        )
+
+
+class DecisionScore:
+    """Scores a prediction with a TypeSafe AI Jev ``score`` decision.
+
+    ``deterministic`` is ``False``: the answer comes from a model, so the gate
+    refuses to threshold on it and ``gate.ci`` may not declare it. What makes a
+    ``score`` decision the right rubric here is that its ``criteria`` are
+    ordered: the position the model returns *is* the score, so this metric maps
+    that position onto ``[0, 1]`` instead of inventing an order for labels.
+
+    A call that fails, or an answer outside the declared range, raises rather
+    than scoring. A ``0.0`` would read as a regression the candidate caused and
+    a ``1.0`` would silently pass; neither is what "the vendor did not answer"
+    means.
+
+    ``threshold`` marks a single answer as passing, which is useful when the
+    metric is read directly. It is not a gate: ``BaselineGate`` refuses a
+    ``Threshold`` on any non-deterministic metric, so a spec has no way to floor
+    this score and the generated eval never asks for one.
+    """
+
+    def __init__(
+        self,
+        decision: DecisionDefinition,
+        *,
+        threshold: float = 0.5,
+        name: str = "decision",
+        client_factory: Callable[[], DecisionAsker] | None = None,
+    ) -> None:
+        if len(decision.criteria) < 2:
+            raise ConfigurationError(
+                f"decision {decision.id!r} declares {len(decision.criteria)} criteria, "
+                "but scoring needs at least two ordered levels"
+            )
+        self._decision = decision
+        self._threshold = threshold
+        self._name = name
+        self._client_factory = client_factory
+        self._client: DecisionAsker | None = None
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def deterministic(self) -> bool:
+        return False
+
+    async def score(self, case: EvalCase, prediction: str) -> MetricResult:
+        response = await self._ask(prediction)
+        answer = response.answers.get(self._decision.id)
+        if answer is None or answer.score is None:
+            raise EvalError(
+                f"decision {self._decision.id!r} returned no score for its own question"
+            )
+        levels = len(self._decision.criteria)
+        normalized = (answer.score - 1.0) / (levels - 1)
+        if not 0.0 <= normalized <= 1.0:
+            raise EvalError(
+                f"decision {self._decision.id!r} answered {answer.score:g}, "
+                f"which is outside the declared 1..{levels} range"
+            )
+        return MetricResult(
+            metric=self.name,
+            score=normalized,
+            passed=normalized >= self._threshold,
+            detail=f"level {answer.score:g} of {levels}",
+        )
+
+    async def _ask(self, prediction: str) -> DecisionResponse:
+        if self._client is None:
+            self._client = (self._client_factory or DecisionClient)()
+        return await self._client.decide(
+            model=self._decision.model,
+            state=prediction,
+            questions={
+                self._decision.id: DecisionQuestion(
+                    type="score",
+                    instructions=self._decision.instructions,
+                    criteria=self._decision.criteria,
+                )
+            },
+            reproducible=True,
         )
 
 

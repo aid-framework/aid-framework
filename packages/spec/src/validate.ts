@@ -45,7 +45,16 @@ export const SUPPORTED_SECTIONS = [
 export const DEFERRED_SECTIONS = [] as const;
 
 /** The spec language versions this build reads. A document declares one of them. */
-export const SUPPORTED_SPEC_VERSIONS = ['0.1', '0.2', '0.3', '0.4', '0.5', '0.6', '0.7'] as const;
+export const SUPPORTED_SPEC_VERSIONS = [
+  '0.1',
+  '0.2',
+  '0.3',
+  '0.4',
+  '0.5',
+  '0.6',
+  '0.7',
+  '0.8',
+] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
 
@@ -79,6 +88,20 @@ export const MODEL_CACHE_MIN_VERSION: SpecVersion = '0.3';
  * is its own version.
  */
 export const GUARDRAIL_DECISION_MIN_VERSION: SpecVersion = '0.7';
+
+/**
+ * The first spec version that lets an eval score with a decision. The metric kind lives
+ * inside `evals`, so `SECTION_MIN_VERSION` cannot see it; a 0.7 document that declares
+ * one is refused rather than measured by a runtime it did not ask for.
+ */
+export const DECISION_METRIC_MIN_VERSION: SpecVersion = '0.8';
+
+/**
+ * The Jev aliases that move with the vendor's next release. Duplicated from the runtimes
+ * on purpose: `packages/spec` does not depend on a runtime, and the fixtures pin the same
+ * pair on both sides.
+ */
+const JEV_MOVING_ALIASES: ReadonlySet<string> = new Set(['jev-latest', 'jev-preview']);
 
 /**
  * The first spec version that accepts `deployments[].image`. Nested for the same reason
@@ -1393,6 +1416,126 @@ function metricDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnosti
  * broken declaration -- the duplicate would also silently collapse in the generated
  * gate, which keys metrics by name.
  */
+/**
+ * The rules a `decision` metric must satisfy.
+ *
+ * A `score` decision already carries the rubric as an ordered `criteria` list, so the
+ * metric is the answer's position mapped onto `[0, 1]`. That only works when the answer
+ * *is* a score: a `choice` would need an invented ordering and a `noul` has no position
+ * at all, so both are refused here rather than silently mis-scored later.
+ */
+function decisionMetricDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnostic[]): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  const decisions = asRecord(spec.decisions);
+
+  for (const [name, evalNode] of Object.entries(asRecord(spec.evals))) {
+    const node = asRecord(evalNode);
+    if (!Array.isArray(node.metrics)) {
+      continue;
+    }
+    const gate = asRecord(node.gate);
+
+    // Every decision metric reports under the same runtime name, so `metricBindings`
+    // would keep only the first and quietly drop the rest. Say so once, at the second.
+    const decisionIndexes = node.metrics.flatMap((raw, index) =>
+      asRecord(raw).kind === 'decision' ? [index] : [],
+    );
+    const secondDecision = decisionIndexes.length > 1 ? decisionIndexes[1] : undefined;
+    if (secondDecision !== undefined) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.schemaViolation,
+          message: `eval '${name}' declares ${decisionIndexes.length} decision metrics, but an eval measures one score`,
+          path: ['evals', name, 'metrics', secondDecision],
+          hint: 'keep one decision metric; the others would share its runtime name and be dropped',
+        }),
+      );
+    }
+
+    for (const [index, raw] of node.metrics.entries()) {
+      const metric = asRecord(raw);
+      if (metric.kind !== 'decision' || (secondDecision !== undefined && index >= secondDecision)) {
+        continue;
+      }
+      const path = ['evals', name, 'metrics', index];
+
+      if (
+        declared !== undefined &&
+        known &&
+        !specVersionAtLeast(declared, DECISION_METRIC_MIN_VERSION)
+      ) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.notSupported,
+            message: `'evals.${name}.metrics[${index}].kind: decision' requires specVersion ${DECISION_METRIC_MIN_VERSION}, but this specification declares version ${declared}`,
+            path,
+            hint: `set specVersion: "${DECISION_METRIC_MIN_VERSION}"; evals without a decision metric are unchanged`,
+          }),
+        );
+        continue;
+      }
+
+      if (gate.ci === true) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.metricUnavailableInCi,
+            message: `eval '${name}': the decision metric at index ${index} asks a model, so it cannot run under the CI eval gate`,
+            path,
+            hint: 'the CI gate runs against the deterministic fake provider, which cannot answer a decision; move this metric to an eval without `gate.ci`, or drop `gate.ci`',
+          }),
+        );
+      }
+
+      const reference = typeof metric.decision === 'string' ? metric.decision : undefined;
+      if (reference === undefined) {
+        continue;
+      }
+      if (!Object.hasOwn(decisions, reference)) {
+        const ids = Object.keys(decisions).sort();
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `eval '${name}': the decision metric at index ${index} names decision '${reference}', which the 'decisions' section does not declare`,
+            path,
+            hint:
+              ids.length > 0
+                ? `declare '${reference}', or use one of: ${ids.join(', ')}`
+                : "add a 'decisions' section that declares it",
+          }),
+        );
+        continue;
+      }
+
+      const decision = asRecord(decisions[reference]);
+      if (decision.type !== 'score') {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `eval '${name}': decision '${reference}' is a '${String(decision.type)}' decision, but a decision metric needs a 'score' decision`,
+            path,
+            hint: "a choice has no declared order and a noul has no position, so neither maps onto [0, 1]; declare the rubric with 'type: score'",
+          }),
+        );
+        continue;
+      }
+
+      const model = typeof decision.model === 'string' ? decision.model : undefined;
+      if (model !== undefined && JEV_MOVING_ALIASES.has(model)) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `eval '${name}' scores with decision '${reference}', whose model '${model}' is a moving alias`,
+            path: ['decisions', reference, 'model'],
+            hint: 'pin a Jev version such as jev-1.14.0: two runs of an eval would otherwise score two different models',
+          }),
+        );
+      }
+    }
+  }
+}
+
 function assertMetricDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnostic[]): void {
   const evals = asRecord(spec.evals);
 
@@ -1625,6 +1768,7 @@ export function validateSpec(value: unknown, options: ValidateOptions = {}): Dia
   bindingDiagnostics(spec, diagnostics);
   metricDiagnostics(spec, diagnostics);
   assertMetricDiagnostics(spec, diagnostics);
+  decisionMetricDiagnostics(spec, diagnostics);
   retrievalDiagnostics(spec, diagnostics);
   deploymentDiagnostics(spec, diagnostics);
 

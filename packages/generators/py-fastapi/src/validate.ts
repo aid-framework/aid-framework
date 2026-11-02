@@ -2346,6 +2346,37 @@ export function checkEvals(ir: IR): PlanProblem[] {
           );
         }
       }
+      if (metric.kind === 'decision') {
+        const decision = ir.decisions.find((entry) => entry.id === metric.decision);
+        if (decision === undefined) {
+          problems.push(
+            problem(
+              'unresolved-reference',
+              `${path}.decision`,
+              `decision '${metric.decision}' is not declared`,
+            ),
+          );
+        } else if (decision.type !== 'score') {
+          problems.push(
+            problem(
+              'unsupported-metric',
+              `${path}.decision`,
+              `decision '${metric.decision}' is a '${decision.type}' decision, and only a 'score' ` +
+                'decision can be measured: its ordered criteria give the answer a position, ' +
+                "which a choice's labels and a noul's confidence do not",
+            ),
+          );
+        } else if (!Array.isArray(decision.criteria) || decision.criteria.length < 2) {
+          problems.push(
+            problem(
+              'invalid-gate',
+              `${path}.decision`,
+              `decision '${metric.decision}' must declare at least two ordered criteria, because ` +
+                'the metric is the position of the answer among them',
+            ),
+          );
+        }
+      }
     }
     if (deterministic === 0) {
       problems.push(

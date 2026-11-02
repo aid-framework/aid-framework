@@ -202,6 +202,30 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
     code: DIAGNOSTIC_CODES.metricUnavailableInCi,
     path: ['evals', 'quality', 'metrics', 0],
   },
+  'decision-metric-below-version.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['evals', 'quality', 'metrics', 1],
+  },
+  'decision-metric-unknown.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['evals', 'quality', 'metrics', 1],
+  },
+  'decision-metric-not-score.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['evals', 'quality', 'metrics', 1],
+  },
+  'decision-metric-moving-alias.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['decisions', 'helpfulness', 'model'],
+  },
+  'decision-metric-in-ci.spec.yaml': {
+    code: DIAGNOSTIC_CODES.metricUnavailableInCi,
+    path: ['evals', 'quality', 'metrics', 1],
+  },
+  'decision-metric-two.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['evals', 'quality', 'metrics', 2],
+  },
   'malformed-template.spec.yaml': {
     code: DIAGNOSTIC_CODES.malformedTemplate,
     path: ['prompts', 'classify', 'template'],

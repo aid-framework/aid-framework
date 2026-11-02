@@ -18,7 +18,7 @@
  * variable. An eval that paraphrased the prompt would measure a prompt nobody calls.
  */
 
-import type { EvalShape, IR, MetricShape, PromptShape } from '@aid-framework/ir';
+import type { DecisionShape, EvalShape, IR, MetricShape, PromptShape } from '@aid-framework/ir';
 
 import {
   isRetrievalEval,
@@ -28,7 +28,14 @@ import {
   usesJudge,
 } from '../metrics.js';
 import { className, moduleName } from '../names.js';
-import { INDENT, MAX_LINE, pythonNumber, pythonStatement, pythonString } from '../python.js';
+import {
+  INDENT,
+  MAX_LINE,
+  pythonNumber,
+  pythonStatement,
+  pythonString,
+  pythonTuple,
+} from '../python.js';
 import {
   assemble,
   HEADER,
@@ -191,7 +198,11 @@ function gateBuilder(thresholds: readonly string[]): string {
   ].join('\n');
 }
 
-function metricsBuilder(inline: readonly string[], judge: string | undefined): string {
+function metricsBuilder(
+  inline: readonly string[],
+  judge: string | undefined,
+  scored: string | undefined,
+): string {
   const header =
     judge === undefined
       ? ['def metrics() -> tuple[Metric, ...]:']
@@ -203,20 +214,22 @@ function metricsBuilder(inline: readonly string[], judge: string | undefined): s
   const body = [
     ...header,
     pythonDoc(
-      judge === undefined
+      judge === undefined && scored === undefined
         ? 'The metrics the spec declares for this eval.'
-        : 'The metrics the spec declares for this eval, including the judge once a call is given.',
+        : 'The metrics the spec declares for this eval, including the model-backed ones.',
       INDENT,
     ),
   ];
-  if (judge === undefined) {
+  if (judge === undefined && scored === undefined) {
     return [...body, `${INDENT}return ${tupleLiteral(inline, INDENT, 'return ', '')}`].join('\n');
   }
   return [
     ...body,
     `${INDENT}declared: list[Metric] = [${inline.join(', ')}]`,
-    `${INDENT}if judge_call is not None:`,
-    `${INDENT}${INDENT}declared.append(${judge})`,
+    ...(judge === undefined
+      ? []
+      : [`${INDENT}if judge_call is not None:`, `${INDENT}${INDENT}declared.append(${judge})`]),
+    ...(scored === undefined ? [] : [`${INDENT}declared.append(${scored})`]),
     `${INDENT}return tuple(declared)`,
   ].join('\n');
 }
@@ -294,6 +307,30 @@ function runBuilder(samples: number, judged: boolean): string {
     .join('\n');
 }
 
+/**
+ * The `DecisionDefinition(...)` a scored eval asks, hoisted to a module constant.
+ *
+ * Hoisted for the same reason as `ASSERT_EXPR`: the instruction and rubric literals are
+ * long, so an inline argument would leave the line budget to chance. A module constant is
+ * also what lets the runtime refuse a decision with fewer than two criteria while the
+ * module is imported, rather than mid-run against a dataset row.
+ */
+function scoreDecisionConstant(decision: DecisionShape): string {
+  const criteria = require(Array.isArray(decision.criteria)
+    ? decision.criteria
+    : undefined, `the ordered criteria of the '${decision.type}' decision '${decision.id}'`);
+  const head = 'SCORE_DECISION = DecisionDefinition(';
+  const args = [
+    `id=${pythonString(decision.id)}`,
+    `model=${pythonString(decision.model)}`,
+    `instructions=${pythonString(decision.instructions)}`,
+    `criteria=${pythonTuple(criteria.map(pythonString))}`,
+  ];
+  const oneLine = `${head}${args.join(', ')})`;
+  if (oneLine.length <= MAX_LINE) return oneLine;
+  return [head, ...args.map((arg) => `${INDENT}${arg},`), ')'].join('\n');
+}
+
 export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
   if (isRetrievalEval(evaluation)) {
     return emitRetrievalEval(ir, evaluation);
@@ -309,11 +346,28 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
   const inline = bindings.filter((binding) => binding.deterministic);
   const judged = usesJudge(evaluation);
 
+  // A decision metric is model-backed too, so "not deterministic" no longer means "the
+  // judge": pick by what the expression is, not by the flag both kinds share.
   const judgedMetric = judged
     ? require(bindings.find(
-        (binding) => !binding.deterministic,
+        (binding) => metricClass(binding.expression) === 'LlmJudge',
       ), `the judge metric of eval '${evaluation.id}'`)
     : undefined;
+
+  const scored = evaluation.metrics.find((metric) => metric.kind === 'decision');
+  const scoreDecision =
+    scored === undefined || scored.kind !== 'decision'
+      ? undefined
+      : require(ir.decisions.find(
+          (decision) => decision.id === scored.decision,
+        ), `the decision '${scored.decision}' scored by eval '${evaluation.id}'`);
+
+  const scoredMetric = bindings.find(
+    (binding) => metricClass(binding.expression) === 'DecisionScore',
+  );
+
+  const scoreConstant =
+    scoreDecision === undefined ? undefined : scoreDecisionConstant(scoreDecision);
 
   const rubric = evaluation.metrics.find((metric) => metric.kind === 'llm-judge')?.rubric ?? '';
 
@@ -362,6 +416,7 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
     `DATASET_PATH = ${pathExpression(datasetRelativePath(evaluation.dataset.uri ?? ''))}`,
     `BASELINE_PATH = ${pathExpression(baselineRelativePath(evaluation.id))}`,
     assertConstant,
+    scoreConstant,
   ].filter((line): line is string => line !== undefined);
 
   const thresholds = inline.map((binding) => {
@@ -394,6 +449,9 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
         [
           importFrom('aid_runtime', ['CompletionRequest']),
           importFrom('aid_runtime.evals', runtimeEvals),
+          ...(scoreConstant === undefined
+            ? []
+            : [importFrom('aid_runtime.agents', ['DecisionDefinition'])]),
         ],
         [
           importFrom('..deps', ['Deps', 'build_deps']),
@@ -413,6 +471,7 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
         judgedMetric === undefined
           ? undefined
           : `LlmJudge(judge_call, rubric=${pythonString(rubric)})`,
+        scoredMetric?.expression,
       ),
       runnerBuilder(contextVariable),
       runBuilder(evaluation.gate.samples, judged),

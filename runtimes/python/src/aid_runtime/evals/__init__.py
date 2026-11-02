@@ -17,6 +17,7 @@ from aid_runtime.evals.gate import (
 )
 from aid_runtime.evals.metrics import (
     AssertMetric,
+    DecisionScore,
     ExactMatch,
     JsonSchemaValid,
     JudgeVerdict,
@@ -44,6 +45,7 @@ __all__ = [
     "CaseOutcome",
     "Dataset",
     "DatasetRun",
+    "DecisionScore",
     "EvalBaseline",
     "EvalCase",
     "EvalRun",

@@ -442,6 +442,7 @@ export type MetricShape =
   | { kind: 'latency'; maxMs: number }
   | { kind: 'llm-judge'; rubric: string; field?: string; model?: string; threshold?: number }
   | { kind: 'retrieval'; expectDocs: string[]; k: number }
+  | { kind: 'decision'; decision: string }
   | { kind: 'assert'; expr: PredicateNode; message: string };
 
 export interface EvalGate {
