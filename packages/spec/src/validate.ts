@@ -104,6 +104,14 @@ export const DECISION_METRIC_MIN_VERSION: SpecVersion = '0.8';
 const JEV_MOVING_ALIASES: ReadonlySet<string> = new Set(['jev-latest', 'jev-preview']);
 
 /**
+ * The question types whose answers carry a `confidence`. `choice` and `score` do; `noul`
+ * carries only its probability, and the wire contract forbids a confidence on it. Any
+ * rule that reads a confidence has to consult this, because the missing value cannot be
+ * defaulted: a missing confidence is not a high one.
+ */
+export const CONFIDENCE_ANSWER_TYPES: readonly string[] = ['choice', 'score'];
+
+/**
  * The first spec version that accepts `deployments[].image`. Nested for the same reason
  * as `models[].cache`: the section itself predates it, so the top-level gate cannot see
  * it, and a 0.2/0.3 document that declares an image must be told which version it needs
@@ -558,10 +566,26 @@ function guardrailDecisionDiagnostics(
 
     const target = asRecord(decisions[decision]);
     if (target.type !== 'choice') {
+      // A `minConfidence` floor reads a field the answer may not carry. A `noul` answer
+      // carries only its probability, so the floor could never be satisfied and must be
+      // refused here rather than defaulted at run time to "no opinion, therefore pass".
+      const floor = typeof guardrail.minConfidence === 'number' ? guardrail.minConfidence : 0;
+      const type = String(target.type ?? 'unknown');
+      if (floor > 0 && !CONFIDENCE_ANSWER_TYPES.includes(type)) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `'guardrails.${name}.minConfidence' reads a confidence, but decision '${decision}' is a '${type}' question and a '${type}' answer carries none, so the floor could never be satisfied`,
+            path: ['guardrails', name, 'minConfidence'],
+            hint: "a 'noul' answer carries only its probability; drop 'minConfidence' or declare a 'choice' decision",
+          }),
+        );
+        continue;
+      }
       diagnostics.push(
         errorDiagnostic({
           code: DIAGNOSTIC_CODES.schemaViolation,
-          message: `decision '${decision}' is a '${String(target.type ?? 'unknown')}' question; a guardrail needs a 'choice' decision whose labels it can act on`,
+          message: `decision '${decision}' is a '${type}' question; a guardrail needs a 'choice' decision whose labels it can act on`,
           path: ['guardrails', name, 'decision'],
           hint: 'declare the decision with type: choice and name each label under criteria',
         }),

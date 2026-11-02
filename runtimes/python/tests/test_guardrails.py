@@ -908,7 +908,7 @@ class FakeDecisionClient:
         self,
         label: str = "product",
         *,
-        confidence: float = 0.9,
+        confidence: float | None = 0.9,
         error: Exception | None = None,
     ) -> None:
         self.label = label
@@ -1007,6 +1007,18 @@ async def test_a_low_confidence_answer_is_a_blocked_check() -> None:
     client = FakeDecisionClient(label="product", confidence=0.4)
 
     with pytest.raises(GuardrailBlockedError, match="below the declared minimum"):
+        await decision_engine(client).check_input_async(
+            (decision_guardrail(min_confidence=0.6),), CLEAN
+        )
+
+
+async def test_a_missing_confidence_cannot_satisfy_a_declared_floor() -> None:
+    # A `noul` answer carries only its probability, and the wire contract forbids a
+    # confidence on it. The floor must not be defaulted to "pass": a check whose value
+    # cannot be read has not been passed.
+    client = FakeDecisionClient(label="product", confidence=None)
+
+    with pytest.raises(GuardrailBlockedError, match="without a confidence"):
         await decision_engine(client).check_input_async(
             (decision_guardrail(min_confidence=0.6),), CLEAN
         )
