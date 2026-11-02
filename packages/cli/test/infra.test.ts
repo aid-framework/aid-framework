@@ -393,7 +393,7 @@ describe('infra plan, apply and drift', () => {
 });
 
 describe('infra on a second cloud', () => {
-  /** A plan whose only deployment is `serverless`, which GCP has no module for yet. */
+  /** A plan whose only service is a `serverless` function, which GCP runs on Cloud Run. */
   const SERVERLESS_ONLY = `specVersion: "0.2"
 project:
   name: ping
@@ -436,6 +436,48 @@ pipelines:
           as: reply
 `;
 
+  /** The same project as a job, which GCP has no module for yet. */
+  const BATCH_ONLY = `specVersion: "0.5"
+project:
+  name: ping
+  namespace: aid.test
+  targets: [py-fastapi]
+models:
+  small:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  answer:
+    version: 1
+    model: small
+    template: "Answer the request."
+    output:
+      kind: text
+guardrails:
+  inbound:
+    stages: [input]
+    policies: [prompt-injection]
+    action: block
+    onFail:
+      message: rejected.
+      log: true
+deployments:
+  api:
+    target: batch
+    pipeline: ping
+    secrets: [OPENAI_API_KEY]
+pipelines:
+  ping:
+    trigger:
+      manual: true
+    steps:
+      - generate:
+          prompt: answer
+          as: reply
+`;
+
   it('rejects an unknown cloud before writing anything', () => {
     const made = scratch();
     const run = aid(made, ['infra', 'gen', '--cloud', 'mars', '--json']);
@@ -469,7 +511,7 @@ pipelines:
   });
 
   it('names the services a cloud cannot deploy rather than silently dropping them', () => {
-    const made = project(SERVERLESS_ONLY);
+    const made = project(BATCH_ONLY);
     created.push(made);
 
     const run = aid(made, ['infra', 'gen', '--cloud', 'gcp', '--json']);
@@ -479,6 +521,22 @@ pipelines:
     // The message has to say which service, or the operator cannot act on it.
     expect(diagnosticsOf(run)[0]?.message).toContain('api');
     expect(made.walk()).not.toContain(TFVARS);
+  });
+
+  it('deploys a serverless service to Cloud Run, since gen2 takes no image', () => {
+    const made = project(SERVERLESS_ONLY);
+    created.push(made);
+
+    const run = aid(made, ['infra', 'gen', '--cloud', 'gcp', '--json']);
+    expect(run.code).toBe(0);
+    const walked = made.walk();
+    expect(walked).toContain('infra/generated/modules/cloudrun/main.tf');
+    expect(walked.filter((path) => path.includes('/modules/serverless/'))).toEqual([]);
+    // One image-based packaging model on GCP: the same Dockerfile image serves both, and
+    // the generated README says so rather than leaving the operator to guess.
+    expect(made.read(`${GENERATED}/README.md`)).toContain(
+      'A `serverless` service also lands on Cloud Run',
+    );
   });
 
   it('keeps aws the default, so an existing invocation is unchanged', () => {

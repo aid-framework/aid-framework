@@ -155,7 +155,7 @@ resource "aws_lambda_function" "service" {
 
     precondition {
       condition     = !each.value.streaming
-      error_message = "Service \"${each.key}\" declares streaming, which an HTTP API cannot deliver. Serve it from a container target, or drop streaming."
+      error_message = "Service \"${each.key}\" declares streaming, which an HTTP API cannot deliver on AWS. Serve it from a container target here, or deploy it as serverless on GCP, where Cloud Run streams."
     }
 
     precondition {

@@ -10,6 +10,7 @@
  * What it provisions: one IAM role per service, one container-image Lambda per service,
  * and one HTTP API with a `$default` stage routing each pipeline's endpoints at its
  * service. What it refuses: a `streaming` service (HTTP API cannot stream a response
+ * body; the same service runs unchanged as `serverless` on GCP, where Cloud Run streams),
  * body), a service with no image URI, and a secret with no ARN -- all as `precondition`s,
  * so the refusal arrives at `plan` with a sentence rather than as a 502 after deploy.
  *
@@ -264,7 +265,7 @@ const MAIN_TF = hcl([
   '',
   '    precondition {',
   '      condition     = !each.value.streaming',
-  '      error_message = "Service \\"@{each.key}\\" declares streaming, which an HTTP API cannot deliver. Serve it from a container target, or drop streaming."',
+  '      error_message = "Service \\"@{each.key}\\" declares streaming, which an HTTP API cannot deliver on AWS. Serve it from a container target here, or deploy it as serverless on GCP, where Cloud Run streams."',
   '    }',
   '',
   '    precondition {',

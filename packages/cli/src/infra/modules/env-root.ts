@@ -405,9 +405,9 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         '}',
       ]
     : [
-        '# This plan targets no `container` service, and on GCP that is the only target a',
-        '# module exists for. `serverless` needs a Cloud Functions entrypoint, `batch` a',
-        '# Google Cloud Batch module, and `edge` has no GCP counterpart.',
+        '# This plan targets no service a module exists for. On GCP `container` and',
+        '# `serverless` both deploy to Cloud Run; `batch` needs a Google Cloud Batch module,',
+        '# and `edge` has no GCP counterpart.',
       ];
 
   return { variables: hcl(variables), main: hcl(main) };
