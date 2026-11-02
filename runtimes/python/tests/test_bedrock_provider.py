@@ -460,13 +460,13 @@ async def test_falls_back_to_aws_region_then_aws_default_region(
     monkeypatch.setenv("AWS_REGION", "eu-west-1")
     recorder = Recorder(_reply(_text("ok")))
     await _provider(recorder, region=None).complete(_ask("x"), model=_model())
-    assert "bedrock-runtime.eu-west-1.amazonaws.com" in str(recorder.requests[0].url)
+    assert recorder.requests[0].url.host == "bedrock-runtime.eu-west-1.amazonaws.com"
 
     monkeypatch.delenv("AWS_REGION")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-south-1")
     other = Recorder(_reply(_text("ok")))
     await _provider(other, region=None).complete(_ask("x"), model=_model())
-    assert "bedrock-runtime.ap-south-1.amazonaws.com" in str(other.requests[0].url)
+    assert other.requests[0].url.host == "bedrock-runtime.ap-south-1.amazonaws.com"
 
 
 @pytest.mark.asyncio
