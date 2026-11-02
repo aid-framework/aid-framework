@@ -30,6 +30,7 @@
 
 import { ConfigurationError, ProviderError, ProviderResponseError } from './errors.js';
 import { stripTrailingSlashes } from './internal/text.js';
+import { ATTRIBUTES, recordCost, recordUsage, withLlmSpan } from './tracing.js';
 
 export const DEFAULT_TYPESAFE_BASE_URL = 'https://api.typesafe.ai';
 
@@ -46,6 +47,13 @@ export const TYPESAFE_BASE_URL_ENV = 'TYPESAFE_BASE_URL';
  * `reproducible: true`.
  */
 export const JEV_MOVING_ALIASES: ReadonlySet<string> = new Set(['jev-latest', 'jev-preview']);
+
+/**
+ * Jev bills input tokens at $42 per billion ($0.042 per million) and states
+ * that output tokens are free. A call therefore needs an input row only, and a
+ * decision must never be reported as unpriceable.
+ */
+export const JEV_INPUT_USD_PER_MTOK = 0.042;
 
 export type DecisionQuestionType = 'choice' | 'score' | 'noul';
 
@@ -112,6 +120,19 @@ export function decisionKey(
 /** Whether `model` is pinned to one version rather than a moving alias. */
 export function isReproducibleModel(model: string): boolean {
   return !JEV_MOVING_ALIASES.has(model);
+}
+
+/**
+ * Price one decision call from its input tokens alone.
+ *
+ * Output tokens are free by contract, so they are deliberately not part of the
+ * arithmetic: a caller that passed a total would overcharge the run. `undefined`
+ * means the vendor reported no usage; `DecisionClient.decide` then records no cost
+ * at all, so the call stays unknown rather than free.
+ */
+export function decisionCostUsd(inputTokens?: number): number {
+  if (inputTokens === undefined) return 0;
+  return (inputTokens / 1_000_000) * JEV_INPUT_USD_PER_MTOK;
 }
 
 /**
@@ -284,8 +305,18 @@ export class DecisionClient {
         Object.entries(questions).map(([key, question]) => [key, question.asPayload()]),
       ),
     };
-    const body = await this.post(payload);
-    return this.parse(body, questions);
+    // A decision is billed like any other model call, so it gets the same span:
+    // `aid cost` and the eval budget read `aid.cost.usd` off it.
+    return withLlmSpan({ operation: 'decision', model, system: this._name }, async (handle) => {
+      const body = await this.post(payload);
+      const response = this.parse(body, questions);
+      if (response.inputTokens !== undefined) {
+        recordUsage(handle.span, response.inputTokens, response.outputTokens ?? 0);
+        recordCost(handle.span, decisionCostUsd(response.inputTokens));
+      }
+      handle.span.setAttribute(ATTRIBUTES.responseModel, response.model);
+      return response;
+    });
   }
 
   async close(): Promise<void> {

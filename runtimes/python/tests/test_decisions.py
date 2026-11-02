@@ -8,16 +8,25 @@ gone over the wire.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
-from aid_runtime import ConfigurationError, ProviderError, ProviderResponseError
+from aid_runtime import (
+    ATTRIBUTES,
+    TRACE_DIR_ENV,
+    ConfigurationError,
+    ProviderError,
+    ProviderResponseError,
+)
 from aid_runtime.decisions import (
     DEFAULT_TYPESAFE_BASE_URL,
+    JEV_INPUT_USD_PER_MTOK,
     DecisionClient,
     DecisionQuestion,
+    decision_cost_usd,
     decision_key,
     is_reproducible_model,
 )
@@ -281,3 +290,75 @@ def test_aliases_are_not_reproducible() -> None:
     assert is_reproducible_model("jev-1.14.0")
     assert not is_reproducible_model("jev-latest")
     assert not is_reproducible_model("jev-preview")
+
+
+def test_jev_prices_input_tokens_only() -> None:
+    assert JEV_INPUT_USD_PER_MTOK == 0.042
+    # $42 per billion: a ~430-token classification is about $0.000018.
+    assert decision_cost_usd(430) == pytest.approx(0.00001806)
+    assert decision_cost_usd(1_000_000) == pytest.approx(JEV_INPUT_USD_PER_MTOK)
+    assert decision_cost_usd(0) == 0.0
+    # No reported usage is unknown; the caller records no cost at all rather than
+    # claiming the call was free.
+    assert decision_cost_usd(None) == 0.0
+
+
+def _trace_lines(directory: Path) -> list[dict[str, Any]]:
+    (path,) = directory.glob("trace-*.jsonl")
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+@pytest.mark.asyncio
+async def test_a_decision_is_priced_on_its_span(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(TRACE_DIR_ENV, str(tmp_path))
+    client = _client(
+        Recorder(_reply({"triage": {"choice": "billing", "confidence": 0.91}})),
+    )
+
+    await client.decide(
+        model=MODEL,
+        state={"message": "I was charged twice"},
+        questions={
+            "triage": DecisionQuestion(
+                type="choice",
+                instructions="Which team should handle this",
+                criteria=("billing", "technical"),
+            )
+        },
+    )
+
+    (record,) = _trace_lines(tmp_path)
+    attributes = record["attributes"]
+    assert record["name"] == f"decision {MODEL}"
+    assert attributes[ATTRIBUTES["system"]] == "typesafe"
+    assert attributes[ATTRIBUTES["operation"]] == "decision"
+    assert attributes[ATTRIBUTES["input_tokens"]] == 430
+    assert attributes[ATTRIBUTES["output_tokens"]] == 0
+    assert attributes[ATTRIBUTES["cost_usd"]] == pytest.approx(0.00001806)
+    assert attributes[ATTRIBUTES["response_model"]] == MODEL
+
+
+@pytest.mark.asyncio
+async def test_a_reply_without_usage_records_no_cost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(TRACE_DIR_ENV, str(tmp_path))
+    body = {
+        "model": MODEL,
+        "answers": {"urgent": {"noul": 0.2}},
+    }
+    client = _client(Recorder(httpx.Response(200, json=body)))
+
+    await client.decide(
+        model=MODEL,
+        state="x",
+        questions={"urgent": DecisionQuestion(type="noul", instructions="Is it urgent")},
+    )
+
+    (record,) = _trace_lines(tmp_path)
+    assert ATTRIBUTES["cost_usd"] not in record["attributes"]
+    assert ATTRIBUTES["input_tokens"] not in record["attributes"]
+    # The serving model is recorded even when the vendor omits usage.
+    assert record["attributes"][ATTRIBUTES["response_model"]] == MODEL

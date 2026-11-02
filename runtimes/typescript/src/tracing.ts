@@ -121,7 +121,7 @@ export function llmSpan(options: LlmSpanOptions): LlmSpanHandle {
   const attributes = spanAttributes(options);
   const span = wrapSpan(tracer.startSpan(name, { attributes }), {
     name,
-    kind: GEN_AI_OPERATION_CHAT,
+    kind: options.operation ?? GEN_AI_OPERATION_CHAT,
     attributes,
   });
   let ended = false;

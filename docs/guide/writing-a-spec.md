@@ -274,6 +274,10 @@ they cannot be aliased, budgeted, or swapped by an eval. `onError` is `block` (d
 `allow`, and it is declared rather than inferred: a billing decision that silently degrades to
 "allow" fails open in the one place correctness matters.
 
+Jev bills input tokens at $0.042 per million and states that output tokens are free, so a
+decision is priced from its input count alone. The client records `aid.cost.usd` on the decision
+span, which means `aid cost` reports a route or guardrail call instead of counting it as unpriced.
+
 ## `memory`
 
 ```yaml

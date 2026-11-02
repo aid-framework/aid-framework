@@ -6,18 +6,25 @@
  * gone over the wire.
  */
 
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecisionAnswer, DecisionFetchLike, DecisionResponse } from '../src/index.js';
 import {
+  ATTRIBUTES,
   ConfigurationError,
   DEFAULT_TYPESAFE_BASE_URL,
   DecisionClient,
   DecisionQuestion,
+  decisionCostUsd,
   decisionKey,
   isReproducibleModel,
+  JEV_INPUT_USD_PER_MTOK,
   ProviderError,
   ProviderResponseError,
 } from '../src/index.js';
+import { TRACE_DIR_ENV } from '../src/local-trace.js';
 import { at } from './support.js';
 
 const API_KEY = 'ts-test-not-a-real-key';
@@ -27,12 +34,32 @@ const ENV_KEYS = ['TYPESAFE_API_KEY', 'TYPESAFE_AI_API_KEY', 'TYPESAFE_BASE_URL'
 const saved: Record<string, string | undefined> = {};
 for (const key of ENV_KEYS) saved[key] = process.env[key];
 
+const created: string[] = [];
+
+function traceDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'aid-decide-trace-'));
+  created.push(dir);
+  process.env[TRACE_DIR_ENV] = dir;
+  return dir;
+}
+
+function traceLines(dir: string): Record<string, unknown>[] {
+  const names = readdirSync(dir).filter((name) => name.endsWith('.jsonl'));
+  expect(names).toHaveLength(1);
+  return readFileSync(join(dir, names[0] as string), 'utf8')
+    .split('\n')
+    .filter((line) => line !== '')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
 afterEach(() => {
   for (const key of ENV_KEYS) {
     const value = saved[key];
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
+  delete process.env[TRACE_DIR_ENV];
+  for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 interface Reply {
@@ -329,5 +356,65 @@ describe('questions', () => {
     expect(isReproducibleModel('jev-1.14.0')).toBe(true);
     expect(isReproducibleModel('jev-latest')).toBe(false);
     expect(isReproducibleModel('jev-preview')).toBe(false);
+  });
+});
+
+describe('cost', () => {
+  it('prices input tokens only', () => {
+    expect(JEV_INPUT_USD_PER_MTOK).toBe(0.042);
+    // $42 per billion: a ~430-token classification is about $0.000018.
+    expect(decisionCostUsd(430)).toBeCloseTo(0.00001806, 12);
+    expect(decisionCostUsd(1_000_000)).toBeCloseTo(JEV_INPUT_USD_PER_MTOK, 12);
+    expect(decisionCostUsd(0)).toBe(0);
+    // No reported usage is unknown; the client records no cost at all rather than
+    // claiming the call was free.
+    expect(decisionCostUsd(undefined)).toBe(0);
+  });
+
+  it('records usage and cost on the decision span', async () => {
+    const dir = traceDir();
+
+    await clientFor(
+      stubFetch([{ body: body({ triage: { choice: 'billing', confidence: 0.9 } }) }]).fetchImpl,
+    ).decide({
+      model: MODEL,
+      state: { message: 'I was charged twice' },
+      questions: {
+        triage: new DecisionQuestion({
+          type: 'choice',
+          instructions: 'Which team should handle this',
+          criteria: ['billing', 'technical'],
+        }),
+      },
+    });
+
+    const [record = {}] = traceLines(dir);
+    const attributes = record.attributes as Record<string, unknown>;
+    expect(record.name).toBe(`decision ${MODEL}`);
+    expect(record.kind).toBe('decision');
+    expect(attributes[ATTRIBUTES.system]).toBe('typesafe');
+    expect(attributes[ATTRIBUTES.operation]).toBe('decision');
+    expect(attributes[ATTRIBUTES.inputTokens]).toBe(430);
+    expect(attributes[ATTRIBUTES.outputTokens]).toBe(0);
+    expect(attributes[ATTRIBUTES.costUsd] as number).toBeCloseTo(0.00001806, 12);
+    expect(attributes[ATTRIBUTES.responseModel]).toBe(MODEL);
+  });
+
+  it('records no cost when the reply carries no usage', async () => {
+    const dir = traceDir();
+    const reply = JSON.stringify({ model: MODEL, answers: { urgent: { noul: 0.2 } } });
+
+    await clientFor(stubFetch([{ body: reply }]).fetchImpl).decide({
+      model: MODEL,
+      state: 'x',
+      questions: { urgent: urgent() },
+    });
+
+    const [record = {}] = traceLines(dir);
+    const attributes = record.attributes as Record<string, unknown>;
+    expect(attributes[ATTRIBUTES.costUsd]).toBeUndefined();
+    expect(attributes[ATTRIBUTES.inputTokens]).toBeUndefined();
+    // The serving model is recorded even when the vendor omits usage.
+    expect(attributes[ATTRIBUTES.responseModel]).toBe(MODEL);
   });
 });
