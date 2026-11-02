@@ -303,7 +303,8 @@ export type ProviderAdapter =
   | 'AnthropicProvider'
   | 'BedrockProvider'
   | 'FakeProvider'
-  | 'OpenAICompatibleProvider';
+  | 'OpenAICompatibleProvider'
+  | 'VertexProvider';
 
 /**
  * What each adapter can do at all. A declared capability outside its set is not
@@ -330,17 +331,22 @@ export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, ReadonlySet<
   // Converse has no embeddings endpoint and /converse-stream is a binary event
   // stream the adapter does not decode.
   BedrockProvider: new Set<Capability>(['structured-output', 'tool-calling']),
+  // The TS provider seam is request/response only, so Vertex does not advertise
+  // streaming here even though the Python adapter does. No embeddings for the same
+  // reason as Converse: the adapter does not call the embeddings endpoint.
+  VertexProvider: new Set<Capability>(['structured-output', 'tool-calling']),
 };
 
 /**
  * The adapter a provider spelling maps onto, or `undefined` when the target has
- * none. `azure` and `google` are declared providers no TS adapter serves yet.
+ * none. `azure` is a declared provider no TS adapter serves yet.
  */
 export function providerAdapter(provider: string): ProviderAdapter | undefined {
   if (provider === 'fake') return 'FakeProvider';
   if (provider === 'openai' || provider === 'openai-compatible') return 'OpenAICompatibleProvider';
   if (provider === 'anthropic') return 'AnthropicProvider';
   if (provider === 'bedrock') return 'BedrockProvider';
+  if (provider === 'google') return 'VertexProvider';
   return undefined;
 }
 

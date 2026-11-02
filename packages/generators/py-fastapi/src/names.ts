@@ -288,6 +288,7 @@ export type ProviderAdapter =
   | 'OpenAICompatibleProvider'
   | 'AnthropicProvider'
   | 'BedrockProvider'
+  | 'VertexProvider'
   | 'FakeProvider';
 
 /** What each provider adapter can do at all, as `Capability` member expressions. */
@@ -315,6 +316,14 @@ export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, readonly str
   // Converse has no embeddings endpoint, and `/converse-stream` is a binary event
   // stream the adapter does not decode.
   BedrockProvider: ['Capability.STRUCTURED_OUTPUT', 'Capability.TOOL_CALLING'],
+  // Vertex serves SSE, so `streaming` is honest here -- unlike Converse, whose
+  // event stream the adapter cannot decode. No `EMBEDDINGS`: the pinned Gemini
+  // models are chat models and the adapter does not call the embeddings endpoint.
+  VertexProvider: [
+    'Capability.STREAMING',
+    'Capability.STRUCTURED_OUTPUT',
+    'Capability.TOOL_CALLING',
+  ],
 };
 
 /** What a pinned model advertises, and which declared capabilities that left out. */
@@ -351,6 +360,7 @@ export function providerAdapter(provider: string): ProviderAdapter | undefined {
   if (provider === 'fake') return 'FakeProvider';
   if (provider === 'anthropic') return 'AnthropicProvider';
   if (provider === 'bedrock') return 'BedrockProvider';
+  if (provider === 'google') return 'VertexProvider';
   if (provider === 'openai' || provider === 'openai-compatible') {
     return 'OpenAICompatibleProvider';
   }

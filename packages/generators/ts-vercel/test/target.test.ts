@@ -252,8 +252,8 @@ describe('the IR contract', () => {
     expect(offenders).toEqual([
       "src/emit/business.ts:341: importStatement('node:fs', [",
       "src/emit/eval-driver.ts:49: \"const modules = process.env.AID_EVAL_MODULES ?? join(root, 'dist', 'app', 'generated');\",",
-      "src/emit/infrastructure.ts:119: '  const apiKey = process.env[apiKeyEnv];',",
-      "src/emit/infrastructure.ts:129: '  const apiKey = process.env[apiKeyEnv];',",
+      "src/emit/infrastructure.ts:125: '  const apiKey = process.env[apiKeyEnv];',",
+      "src/emit/infrastructure.ts:135: '  const apiKey = process.env[apiKeyEnv];',",
       "src/emit/retrieval.ts:208: importStatement('node:fs', [{ name: 'existsSync', type: false }]),",
     ]);
 

@@ -7,6 +7,7 @@ import {
   DIAGNOSTIC_CODES,
   type Diagnostic,
   formatPath,
+  GOOGLE_PROVIDER_MIN_VERSION,
   MODEL_CACHE_MIN_VERSION,
   type PathSegment,
   RETIRED_STEP_KINDS,
@@ -426,6 +427,29 @@ describe('rule-level unit tests', () => {
     });
     expect(diagnostic?.message).toContain("'memory' requires specVersion 0.2");
     expect(diagnostic?.hint).toContain('set specVersion: "0.2"');
+  });
+
+  it('refuses the google provider below spec 0.6 and names the version it needs', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.5',
+      project: { name: 'p' },
+      models: { gemini: { provider: 'google', modelId: 'gemini-2.5-flash' } },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['models.gemini.provider']);
+    expect(diagnostics[0]?.message).toContain(
+      "'models.gemini.provider: google' requires specVersion 0.6",
+    );
+    expect(diagnostics[0]?.hint).toContain(`set specVersion: "${GOOGLE_PROVIDER_MIN_VERSION}"`);
+  });
+
+  it('accepts the google provider from spec 0.6', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.6',
+      project: { name: 'p' },
+      models: { gemini: { provider: 'google', modelId: 'gemini-2.5-flash' } },
+    });
+    expect(diagnostics).toEqual([]);
   });
 
   it('refuses a model cache below spec 0.3 and names the version it needs', () => {

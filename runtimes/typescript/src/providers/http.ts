@@ -44,7 +44,8 @@ export type FetchLike = (
   init: {
     readonly method: string;
     readonly headers: Readonly<Record<string, string>>;
-    readonly body: string;
+    /** Absent on the credential GETs some adapters make before a call. */
+    readonly body?: string;
     readonly signal?: AbortSignal;
   },
 ) => Promise<{

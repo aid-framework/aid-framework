@@ -6,7 +6,7 @@ description: "Every spec key, type and constraint, generated from the JSON Schem
 
 Every key, type, and constraint below is read from `packages/spec/src/schema/spec.schema.json`, the schema `aid validate` enforces. A `required` column of `yes` means `aid validate` rejects a spec that omits the key.
 
-Spec schema title: *AID Framework spec v0.5*.
+Spec schema title: *AID Framework spec v0.6*.
 
 **Required at the top level:** `specVersion`, `project`.
 
@@ -14,7 +14,7 @@ Spec schema title: *AID Framework spec v0.5*.
 
 | Key | Type | Description |
 | --- | --- | --- |
-| `specVersion` | `0.1`, `0.2`, `0.3`, `0.4`, `0.5` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
+| `specVersion` | `0.1`, `0.2`, `0.3`, `0.4`, `0.5`, `0.6` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
 | `project` | `project` | — |
 | `types` | map of `typeDef` | Named structured types referenced by prompts (structured output) and tools (input/output). |
 | `models` | map of `model` | Model aliases. The alias is what the rest of the spec refers to; the vendor id is pinned here and only here. |
@@ -70,7 +70,7 @@ Semantic cache settings. `threshold` is the minimum cosine similarity (0..1) a n
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `provider` | `openai`, `openai-compatible`, `anthropic`, `bedrock`, `fake` | yes | The provider set the shipped adapters serve. `fake` is deterministic and keyless, which is what lets the eval gate run offline in CI. `bedrock` takes its credentials from the execution role, so it needs no `apiKeyEnv`. |
+| `provider` | `openai`, `openai-compatible`, `anthropic`, `bedrock`, `google`, `fake` | yes | The provider set the shipped adapters serve. `fake` is deterministic and keyless, which is what lets the eval gate run offline in CI. `bedrock` takes its credentials from the execution role and `google` (Vertex AI) from a short-lived bearer token supplied by the environment or the metadata server, so neither needs an `apiKeyEnv`. |
 | `modelId` | `string` | yes | Pinned vendor model id. Never an alias or a moving target: the resolved id is recorded in the IR so a run is reproducible. |
 | `capabilities` | array of `json-schema`, `tools`, `streaming`, `embeddings` | no | Declared model capabilities. json-schema is negotiated within a prompt (a structured-output prompt must bind a model that declares it) and embeddings within a retriever (a retriever's embedModel must declare it); the others are recorded in the IR for the capability gate to use in later phases. The embeddings capability additionally requires a provider that serves an embeddings endpoint: the runtime routes embedding calls by provider, so declaring it on anthropic is refused rather than silently sent over the OpenAI-compatible wire. |
 | `params` | object | no | — |

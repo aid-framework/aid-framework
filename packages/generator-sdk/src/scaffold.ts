@@ -103,6 +103,14 @@ export interface EvalProfile {
    * cannot be measured without its credential.
    */
   readonly secrets: readonly string[];
+  /**
+   * What a project with no secret name must supply instead, for a real model whose
+   * credential comes from the environment: Bedrock's AWS chain, Vertex's Application
+   * Default Credentials. No step can probe that chain portably, so the workflow states the
+   * requirement in a notice rather than claiming a run is ready. Ignored when `secrets` is
+   * non-empty, and absent for a fake-only project, which needs nothing.
+   */
+  readonly credentialNote?: string;
 }
 
 /** `major.minor` of a semver string, used to pin the CLI a workflow installs. */
@@ -113,6 +121,32 @@ export function cliRangeFor(version: string): string {
 
 function lines(values: readonly string[], indent = '          '): string[] {
   return values.map((value) => `${indent}${value}`);
+}
+
+/**
+ * What a model provider without a secret name needs in place of one.
+ *
+ * Bedrock and Vertex read credentials from the SDK chain rather than a variable the
+ * gateway reads, so `declaredSecrets` finds no name to check. A provider absent from this
+ * table gets no note: silence is honest, an invented requirement is not.
+ */
+export function ambientCredentialNote(providers: readonly string[]): string | undefined {
+  const notes = new Set<string>();
+  for (const provider of providers) {
+    if (provider === 'bedrock') {
+      notes.add(
+        'Bedrock reads its credential from the AWS SDK chain: configure an OIDC role or ' +
+          'AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY for this repository.',
+      );
+    }
+    if (provider === 'google') {
+      notes.add(
+        'Vertex reads Application Default Credentials: configure Workload Identity ' +
+          'Federation or GOOGLE_APPLICATION_CREDENTIALS for this run.',
+      );
+    }
+  }
+  return notes.size === 0 ? undefined : [...notes].sort().join(' ');
 }
 
 /**
@@ -298,6 +332,19 @@ export function scaffoldEvals(profile: EvalProfile, cliRange: string): Generated
       ]
     : [];
 
+  /**
+   * A keyless provider has no variable to probe, but the run still needs a credential.
+   * The notice keeps the reason in the log next to the provider's own error, which
+   * otherwise reads as an unexplained authentication failure.
+   */
+  const noteSteps =
+    !guarded && profile.credentialNote !== undefined
+      ? [
+          '      - name: Note the credential this run needs',
+          `        run: echo "::notice::${profile.credentialNote}"`,
+        ]
+      : [];
+
   const content = [
     `# Generated once by \`aid gen\` for the \`${profile.target}\` target, then yours.`,
     '# A scaffold file is never overwritten and never recorded in aid.manifest.json.',
@@ -338,6 +385,7 @@ export function scaffoldEvals(profile: EvalProfile, cliRange: string): Generated
       ? []
       : ['      - name: Build the app', '        run: |', ...lines(profile.prepare, '          ')]),
     ...credentialSteps,
+    ...noteSteps,
     ...suiteSteps,
     '      - name: Cost ceiling',
     ...(guarded ? ["        if: steps.creds.outputs.ready == 'true'"] : []),

@@ -782,6 +782,7 @@ export const NON_COLLECTION_SECTIONS = ['specVersion', 'project'] as const;
 export const SERVED_PROVIDERS = [
   'anthropic',
   'bedrock',
+  'google',
   'openai',
   'openai-compatible',
   'fake',

@@ -17,10 +17,10 @@ Design boundaries worth stating up front, because they are deliberate:
   ``data`` frames with the first delta before completion. Anything not advertising
   the capability raises :class:`~aid_runtime.errors.CapabilityMismatchError`
   instead of pretending to stream.
-* **One narrow adapter seam, three dialects, and a fake.** Breadth of vendor
+* **One narrow adapter seam, four dialects, and a fake.** Breadth of vendor
   coverage stays a later concern; a correct seam is worth more than a wide shallow
-  one. Three dialects ship: OpenAI-compatible, Anthropic Messages, and Bedrock
-  Converse, alongside a deterministic fake that lets the eval gate run offline.
+  one. Four dialects ship: OpenAI-compatible, Anthropic Messages, Bedrock Converse,
+  and Vertex AI, alongside a deterministic fake that lets the eval gate run offline.
 """
 
 from __future__ import annotations
@@ -145,13 +145,18 @@ from aid_runtime.providers import (
     BEDROCK_SERVICE,
     DEFAULT_ANTHROPIC_BASE_URL,
     DEFAULT_BASE_URL,
+    DEFAULT_VERTEX_LOCATION,
+    METADATA_TOKEN_URL,
+    VERTEX_TOKEN_ENV,
     AnthropicProvider,
     BedrockProvider,
     FakeProvider,
     OpenAICompatibleProvider,
     Provider,
     ScriptedTurn,
+    VertexProvider,
     default_bedrock_base_url,
+    default_vertex_base_url,
 )
 from aid_runtime.retrieval import (
     DEFAULT_CANDIDATE_FACTOR,
@@ -277,7 +282,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.81"
+__version__ = "0.1.82"
 
 __all__ = [
     "ANTHROPIC_VERSION",
@@ -286,6 +291,7 @@ __all__ = [
     "DEFAULT_ANTHROPIC_BASE_URL",
     "DEFAULT_BASE_URL",
     "DEFAULT_CANDIDATE_FACTOR",
+    "DEFAULT_VERTEX_LOCATION",
     "DEPTH_KEY",
     "EMITTED_KEY",
     "GEN_AI_OPERATION_CHAT",
@@ -293,11 +299,13 @@ __all__ = [
     "ITEM_KEY",
     "LIMITER_KEY",
     "MAX_STEP_DEPTH",
+    "METADATA_TOKEN_URL",
     "PRINCIPAL_KEY",
     "REDUCED_KEY",
     "RESERVED_KEYS",
     "STEPS_KEY",
     "TRACE_DIR_ENV",
+    "VERTEX_TOKEN_ENV",
     "AgentBudgetDegradedError",
     "AgentCheckpoint",
     "AgentDefinition",
@@ -455,6 +463,7 @@ __all__ = [
     "UnknownModelAliasError",
     "VectorStore",
     "VectorStoreSpec",
+    "VertexProvider",
     "__version__",
     "agent_span",
     "aid_attributes",
@@ -471,6 +480,7 @@ __all__ = [
     "create_store",
     "default_bedrock_base_url",
     "default_metrics",
+    "default_vertex_base_url",
     "embedder_for",
     "emit_step",
     "estimate_cost_usd",

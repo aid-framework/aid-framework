@@ -39,8 +39,29 @@ function bedrockSpecText(): string {
     .replace('    costProfile: openai-gpt-4o-mini', '    costProfile: bedrock-claude-3-5-haiku');
 }
 
+function files(source: string): Map<string, string> {
+  return fileMap(buildForSpecText(source).plan.files);
+}
+
 function models(source: string): string {
-  return fileMap(buildForSpecText(source).plan.files).get(MODELS) ?? '';
+  return files(source).get(MODELS) ?? '';
+}
+
+/**
+ * The example repointed at Vertex AI.
+ *
+ * `specVersion` moves to 0.6 because that is the first version whose provider
+ * vocabulary includes `google`; the OpenAI key variable moves with the OpenAI provider,
+ * because Vertex resolves a bearer token instead.
+ */
+function vertexSpecText(): string {
+  return exampleSpecText()
+    .replace('specVersion: "0.2"', 'specVersion: "0.6"')
+    .replace(
+      '    provider: openai\n    modelId: gpt-4o-mini\n    apiKeyEnv: OPENAI_API_KEY',
+      '    provider: google\n    modelId: gemini-2.5-flash',
+    )
+    .replace('    costProfile: openai-gpt-4o-mini', '    costProfile: google-gemini-2-5-flash');
 }
 
 /** The `defaultProviders()` entry for one provider, up to the line's end. */
@@ -52,9 +73,9 @@ function providerEntry(text: string, key: string): string {
 }
 
 describe('provider selection', () => {
-  it('serves anthropic and bedrock alongside openai and the deterministic fake', () => {
+  it('serves anthropic, bedrock and google alongside openai and the deterministic fake', () => {
     expect([...SERVED_PROVIDERS].sort()).toEqual(
-      ['anthropic', 'bedrock', 'fake', 'openai', 'openai-compatible'].sort(),
+      ['anthropic', 'bedrock', 'google', 'fake', 'openai', 'openai-compatible'].sort(),
     );
   });
 
@@ -92,13 +113,25 @@ describe('provider selection', () => {
     expect(text).not.toContain('AnthropicProvider');
   });
 
-  it('refuses a provider no adapter serves, naming the ones that ship', () => {
+  it('plans a google model and emits the unkeyed Vertex adapter', () => {
+    const text = models(vertexSpecText());
+
+    expect(providerEntry(text, 'google')).toBe(
+      "    google: new VertexProvider({ name: 'google' }),",
+    );
+    expect(text).toMatch(/import \{[^}]*VertexProvider/u);
+    // Vertex authenticates with a bearer token, so the entry carries no credential.
+    expect(providerEntry(text, 'google')).not.toContain('apiKey');
+    expect(text).not.toContain('keyedVertexProvider');
+  });
+
+  it('refuses a provider outside the spec vocabulary, naming the ones that ship', () => {
     // The spec layer refuses it first, which is the right order: a caller learns the
     // closed set before an IR is built, and the message names the whole set.
-    const spec = exampleSpecText().replaceAll('provider: openai', 'provider: google');
+    const spec = exampleSpecText().replaceAll('provider: openai', 'provider: azure');
 
     expect(() => buildForSpecText(spec)).toThrow(/must be one of/u);
-    expect(() => buildForSpecText(spec)).toThrow(/bedrock/u);
+    expect(() => buildForSpecText(spec)).toThrow(/google/u);
   });
 });
 
@@ -120,5 +153,78 @@ describe('adapter capabilities', () => {
     );
 
     expect(() => buildForSpecText(spec)).toThrow(/model-capability-unsupported/u);
+  });
+
+  it('refuses Vertex streaming, which this target cannot carry', () => {
+    // Python's adapter decodes Vertex SSE; the TypeScript provider seam is
+    // request/response only, so the target must not advertise what it cannot frame.
+    const spec = vertexSpecText().replace(
+      'capabilities: [json-schema, tools]',
+      'capabilities: [json-schema, tools, streaming]',
+    );
+
+    expect(() => buildForSpecText(spec)).toThrow(/model-capability-unsupported/u);
+    expect(() => buildForSpecText(spec)).toThrow(/VertexProvider/u);
+  });
+
+  it('refuses Vertex embeddings, which the adapter does not call', () => {
+    const spec = vertexSpecText().replace(
+      'capabilities: [json-schema, tools]',
+      'capabilities: [json-schema, tools, embeddings]',
+    );
+
+    expect(() => buildForSpecText(spec)).toThrow(/model-capability-unsupported/u);
+  });
+});
+
+/**
+ * Swapping the adapter must not change the shape of the app.
+ *
+ * Three files may move, and each for a reason: `models.ts` resolves the adapter,
+ * `agents.ts` carries the model's identity and cost, and `evals.yml` preflights a
+ * credential only when the spec named one -- Vertex and Converse resolve theirs from
+ * the environment or the execution role, so there is no secret name to check.
+ */
+function differingFiles(left: Map<string, string>, right: Map<string, string>): string[] {
+  const keys = new Set([...left.keys(), ...right.keys()]);
+  return [...keys].filter((key) => left.get(key) !== right.get(key)).sort();
+}
+
+describe('provider conformance', () => {
+  it('moves only the model identity and the credential preflight, never the pipeline', () => {
+    const openai = files(exampleSpecText());
+    const openaiWorkflow = openai.get('.github/workflows/evals.yml') ?? '';
+    expect(openaiWorkflow).toContain('id: creds');
+
+    const cases = [
+      { spec: vertexSpecText(), notice: 'Application Default Credentials' },
+      { spec: bedrockSpecText(), notice: 'AWS SDK chain' },
+    ];
+    for (const { spec, notice } of cases) {
+      const other = files(spec);
+      expect(differingFiles(openai, other)).toEqual([
+        '.github/workflows/evals.yml',
+        'app/generated/agents.ts',
+        'app/generated/gateway/models.ts',
+      ]);
+
+      // `agents.ts` is the same file with a different model: the line count is
+      // unchanged and exactly the identity, wire id, and cost lines move.
+      const agents = (source: Map<string, string>) =>
+        (source.get('app/generated/agents.ts') ?? '').split('\n');
+      const before = agents(openai);
+      const after = agents(other);
+      expect(after).toHaveLength(before.length);
+      const moved = before.filter((line, index) => line !== after[index]);
+      expect(moved).toHaveLength(3);
+      expect(moved.join('\n')).toMatch(/costProfile|modelId|provider/u);
+
+      // A keyless provider has no variable to probe, so the credential check becomes a
+      // notice naming the ambient credential the run needs.
+      const workflow = other.get('.github/workflows/evals.yml') ?? '';
+      expect(workflow).toContain('::notice::');
+      expect(workflow).toContain(notice);
+      expect(workflow).not.toContain('id: creds');
+    }
   });
 });
