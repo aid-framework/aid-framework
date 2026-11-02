@@ -69,6 +69,18 @@ from aid_runtime.cost import (
     estimate_cost_usd,
     estimate_prompt_cost_usd,
 )
+from aid_runtime.decisions import (
+    DEFAULT_TYPESAFE_BASE_URL,
+    JEV_MOVING_ALIASES,
+    TYPESAFE_API_KEY_ENVS,
+    TYPESAFE_BASE_URL_ENV,
+    DecisionAnswer,
+    DecisionClient,
+    DecisionQuestion,
+    DecisionResponse,
+    decision_key,
+    is_reproducible_model,
+)
 from aid_runtime.errors import (
     AgentBudgetDegradedError,
     AgentHandoffUnsupportedError,
@@ -282,7 +294,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.87"
+__version__ = "0.1.88"
 
 __all__ = [
     "ANTHROPIC_VERSION",
@@ -291,12 +303,14 @@ __all__ = [
     "DEFAULT_ANTHROPIC_BASE_URL",
     "DEFAULT_BASE_URL",
     "DEFAULT_CANDIDATE_FACTOR",
+    "DEFAULT_TYPESAFE_BASE_URL",
     "DEFAULT_VERTEX_LOCATION",
     "DEPTH_KEY",
     "EMITTED_KEY",
     "GEN_AI_OPERATION_CHAT",
     "INDEX_KEY",
     "ITEM_KEY",
+    "JEV_MOVING_ALIASES",
     "LIMITER_KEY",
     "MAX_STEP_DEPTH",
     "METADATA_TOKEN_URL",
@@ -305,6 +319,8 @@ __all__ = [
     "RESERVED_KEYS",
     "STEPS_KEY",
     "TRACE_DIR_ENV",
+    "TYPESAFE_API_KEY_ENVS",
+    "TYPESAFE_BASE_URL_ENV",
     "VERTEX_TOKEN_ENV",
     "AgentBudgetDegradedError",
     "AgentCheckpoint",
@@ -338,6 +354,10 @@ __all__ = [
     "CostProfile",
     "Dataset",
     "DatasetRun",
+    "DecisionAnswer",
+    "DecisionClient",
+    "DecisionQuestion",
+    "DecisionResponse",
     "DeepAgentsEngineError",
     "DeepAgentsMaxStepsError",
     "DeepAgentsUnavailableError",
@@ -478,6 +498,7 @@ __all__ = [
     "chunker_for",
     "cite",
     "create_store",
+    "decision_key",
     "default_bedrock_base_url",
     "default_metrics",
     "default_vertex_base_url",
@@ -494,6 +515,7 @@ __all__ = [
     "gateway_judge",
     "generate_step",
     "get_tracer",
+    "is_reproducible_model",
     "lexical_ranking",
     "lexical_score",
     "llm_span",
