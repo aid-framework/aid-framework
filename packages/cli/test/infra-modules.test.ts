@@ -17,7 +17,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { emitInfra } from '../src/infra/emit.js';
 import {
+  CLOUDRUN_MODULE_DIR,
   CONTAINER_MODULE_DIR,
+  emitCloudRunModule,
   emitContainerModule,
   emitProviderModules,
   emitServerlessModule,
@@ -43,6 +45,9 @@ const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'infra
 
 /** The env root the fixture commits: one that has to satisfy both modules. */
 const BOTH = envRoot({ serverless: true, container: true });
+
+/** The GCP env root the fixture commits: Cloud Run is GCP's only module. */
+const GCP = envRoot({ serverless: false, container: true }, 'gcp');
 
 /** Enough of a `DeployPlan` to choose a target: the modules ignore everything else. */
 function planOf(...targets: string[]): DeployPlan {
@@ -122,6 +127,12 @@ const CONTAINER = SERVERLESS.replace('target: serverless', 'target: container');
 const AS_CONTAINER = {
   ...SERVING,
   services: SERVING.services.map((service) => ({ ...service, target: 'container' })),
+} as unknown as DeployPlan;
+
+/** Both targets at once, so the cloud alone decides which modules exist. */
+const MIXED = {
+  ...SERVING,
+  services: [...SERVING.services, { ...SERVING.services[0], id: 'web', target: 'container' }],
 } as unknown as DeployPlan;
 
 /** Biome reads a dollar-brace in a plain string as a botched template. */
@@ -286,6 +297,97 @@ describe('emitContainerModule', () => {
   });
 });
 
+describe('emitCloudRunModule', () => {
+  it('emits nothing when no deployment targets container', () => {
+    expect(emitCloudRunModule(planOf())).toEqual([]);
+    expect(emitCloudRunModule(planOf('serverless', 'batch', 'edge'))).toEqual([]);
+  });
+
+  it('emits the four module files under the generated tree', () => {
+    const files = emitCloudRunModule(planOf('container'));
+    expect(files.map((file) => file.path)).toEqual([
+      `${CLOUDRUN_MODULE_DIR}/versions.tf`,
+      `${CLOUDRUN_MODULE_DIR}/variables.tf`,
+      `${CLOUDRUN_MODULE_DIR}/main.tf`,
+      `${CLOUDRUN_MODULE_DIR}/outputs.tf`,
+    ]);
+    expect(CLOUDRUN_MODULE_DIR).toBe('infra/generated/modules/cloudrun');
+  });
+
+  it('is constant: two different plans yield identical bytes', () => {
+    expect(emitCloudRunModule(AS_CONTAINER)).toEqual(emitCloudRunModule(planOf('container')));
+  });
+
+  it('writes Terraform interpolation, not a half-substituted placeholder', () => {
+    const main = mainOf(emitCloudRunModule(planOf('container')));
+    expect(main).not.toContain('@{');
+    expect(main).toContain(`${dollar}{var.project.namespace}`);
+  });
+
+  it('runs the image it was given, on the port the Dockerfile reads', () => {
+    const main = mainOf(emitCloudRunModule(planOf('container')));
+    expect(main).toContain('google_cloud_run_v2_service');
+    expect(main).toContain('container_port = 8080');
+    // `lookup` so a missing entry becomes the precondition below, not an index error.
+    expect(main).toContain('lookup(var.image_uris, each.key, "")');
+  });
+
+  it('references a secret instead of inlining it', () => {
+    const main = mainOf(emitCloudRunModule(planOf('container')));
+    expect(main).toContain('secret_key_ref');
+    expect(main).toContain('version = "latest"');
+  });
+
+  it('grants the service account read on each secret the service declares', () => {
+    const main = mainOf(emitCloudRunModule(planOf('container')));
+    expect(main).toContain('google_secret_manager_secret_iam_member');
+    expect(main).toContain('roles/secretmanager.secretAccessor');
+  });
+
+  it('creates one registry for the images, not one per service', () => {
+    const main = mainOf(emitCloudRunModule(planOf('container')));
+    expect(main).toContain('google_artifact_registry_repository');
+    expect(main).toContain('length(local.container) > 0 ? { images = true } : {}');
+  });
+
+  it('makes a legal service name out of a namespace that carries a dot', () => {
+    // Cloud Run names allow lowercase letters, digits and hyphens, at most 63 characters.
+    const main = mainOf(emitCloudRunModule(planOf('container')));
+    expect(main).toContain('replace(');
+    expect(main).toContain('"/[^a-z0-9-]/"');
+    expect(main).toContain('substr(');
+    expect(main).toContain('63');
+  });
+
+  it('streams, because Cloud Run forwards a streamed body', () => {
+    const files = emitCloudRunModule(planOf('container'));
+    expect(mainOf(files)).not.toContain('!each.value.streaming');
+  });
+
+  it('refuses what it cannot deliver, in the plan rather than after deploy', () => {
+    const main = mainOf(emitCloudRunModule(planOf('container')));
+    expect(main).toContain('contains(keys(var.image_uris), each.key)');
+    expect(main).toContain('contains(keys(var.secret_ids), variable.name)');
+    expect(main).toContain('must start with a lowercase letter');
+  });
+
+  it('requires a region, because a region is an operator decision', () => {
+    const variables =
+      emitCloudRunModule(planOf('container')).find((file) => file.path.endsWith('/variables.tf'))
+        ?.contents ?? '';
+    expect(variables).toMatch(/variable "region"[\s\S]{0,160}type\s+= string\n\}/);
+    expect(variables).not.toMatch(/variable "region"[\s\S]{0,200}default/);
+  });
+
+  it('defaults to public invocation but does not grant it silently', () => {
+    // Cloud Run authenticates every request unless allUsers is bound; the binding is a
+    // separate resource gated on the input rather than something baked into the service.
+    const main = mainOf(emitCloudRunModule(planOf('container')));
+    expect(main).toContain('var.allow_unauthenticated ? local.container : {}');
+    expect(main).toContain('member   = "allUsers"');
+  });
+});
+
 describe('envRoot', () => {
   it('declares only the business inputs a present module reads', () => {
     const serverless = envRoot({ serverless: true, container: false });
@@ -328,6 +430,41 @@ describe('envRoot', () => {
   it('is pure: the same module set yields the same bytes', () => {
     expect(envRoot({ serverless: true, container: true })).toEqual(BOTH);
   });
+
+  it('configures the GCP provider once, and names no network inputs', () => {
+    expect(GCP.main).toContain('provider "google"');
+    expect(GCP.main).toContain('project = var.gcp_project');
+    expect(GCP.main).toContain('module "cloudrun"');
+    expect(GCP.main).toContain('source = "../../generated/modules/cloudrun"');
+    expect(GCP.variables).toContain('variable "gcp_project"');
+    expect(GCP.variables).toContain('variable "region"');
+    // Cloud Run terminates TLS and scales behind a managed frontend: no VPC, no CIDR.
+    expect(GCP.variables).not.toContain('variable "vpc_id"');
+    expect(GCP.variables).not.toContain('variable "vpc_cidr"');
+    expect(GCP.variables).not.toContain('variable "public_subnet_ids"');
+    expect(GCP.main).not.toContain('module "serverless"');
+    expect(GCP.main).not.toContain('module "container"');
+  });
+
+  it("does not leak one cloud's variables into the other cloud's root", () => {
+    expect(BOTH.variables).not.toContain('variable "gcp_project"');
+    expect(GCP.variables).not.toContain('variable "secret_arns"');
+    expect(BOTH.main).not.toContain('provider "google"');
+  });
+
+  it('keeps the GCP root to one blank line between blocks too', () => {
+    for (const rendered of [GCP.main, GCP.variables]) {
+      expect(rendered).not.toMatch(/\n\n\n/);
+      expect(rendered).not.toMatch(/\{\n\n/);
+    }
+    expect(GCP.main).toContain('}\n\n# The Cloud Run module');
+  });
+
+  it('says what GCP is missing rather than inventing a module', () => {
+    const none = envRoot({ serverless: true, container: false }, 'gcp');
+    expect(none.main).not.toContain('module "');
+    expect(none.main).toContain('only target a');
+  });
 });
 
 describe('modulesOf, the seam emit.ts reads', () => {
@@ -341,11 +478,29 @@ describe('modulesOf, the seam emit.ts reads', () => {
     expect(modulesOf(planOf('batch', 'edge'))).toEqual({ serverless: false, container: false });
   });
 
+  it('reports what the cloud can emit, not what the target is called', () => {
+    // On GCP only `container` has a module, so a serverless plan yields no module even
+    // though AWS would have emitted one.
+    expect(modulesOf(planOf('container'), 'gcp')).toEqual({ serverless: false, container: true });
+    expect(modulesOf(planOf('serverless'), 'gcp')).toEqual({ serverless: false, container: false });
+    expect(modulesOf(planOf('container'))).toEqual({ serverless: false, container: true });
+  });
+
   it('emits every module a plan needs in one call', () => {
     const paths = emitProviderModules(planOf('serverless', 'container')).map((file) => file.path);
     expect(paths).toContain(`${SERVERLESS_MODULE_DIR}/main.tf`);
     expect(paths).toContain(`${CONTAINER_MODULE_DIR}/main.tf`);
     expect(paths).toHaveLength(8);
+  });
+
+  it('emits only the Cloud Run module for a GCP plan', () => {
+    const paths = emitProviderModules(MIXED, 'gcp').map((file) => file.path);
+    expect(paths).toEqual([
+      `${CLOUDRUN_MODULE_DIR}/versions.tf`,
+      `${CLOUDRUN_MODULE_DIR}/variables.tf`,
+      `${CLOUDRUN_MODULE_DIR}/main.tf`,
+      `${CLOUDRUN_MODULE_DIR}/outputs.tf`,
+    ]);
   });
 });
 
@@ -416,6 +571,7 @@ describe('the validate fixture', () => {
     const cases = [
       { dir: SERVERLESS_MODULE_DIR, files: emitServerlessModule(planOf('serverless')) },
       { dir: CONTAINER_MODULE_DIR, files: emitContainerModule(planOf('container')) },
+      { dir: CLOUDRUN_MODULE_DIR, files: emitCloudRunModule(planOf('container')) },
     ];
     for (const { dir, files } of cases) {
       expect(files).toHaveLength(4);
@@ -435,11 +591,26 @@ describe('the validate fixture', () => {
     expect(main).toBe(BOTH.main);
   });
 
+  it('matches the GCP env root byte for byte', () => {
+    // A second root, not a variant of the AWS one: it is validated separately, because a
+    // plan that is wrong on GCP fails for a reason no AWS fixture can reveal.
+    const variables = readFileSync(join(FIXTURE, 'envs', 'gcp-dev', 'variables.tf'), 'utf8');
+    const main = readFileSync(join(FIXTURE, 'envs', 'gcp-dev', 'main.tf'), 'utf8');
+    expect(variables).toBe(GCP.variables);
+    expect(main).toBe(GCP.main);
+  });
+
   it('is wired to the modules the emitter writes', () => {
     // A fixture that pointed anywhere else would validate a module nobody gets.
     const main = readFileSync(join(FIXTURE, 'envs', 'dev', 'main.tf'), 'utf8');
     expect(main).toContain('source = "../../generated/modules/serverless"');
     expect(main).toContain('source = "../../generated/modules/container"');
+  });
+
+  it('wires the GCP root to the Cloud Run module it ships beside', () => {
+    const main = readFileSync(join(FIXTURE, 'envs', 'gcp-dev', 'main.tf'), 'utf8');
+    expect(main).toContain('source = "../../generated/modules/cloudrun"');
+    expect(main).toContain('provider "google"');
   });
 });
 
@@ -447,5 +618,19 @@ describe('the whole derived tree', () => {
   it('keeps the module in the same single emission', () => {
     const files = emitInfra(SERVING);
     expect(files.map((file) => file.path)).toContain(`${SERVERLESS_MODULE_DIR}/main.tf`);
+  });
+
+  it('emits the Cloud Run module, and no AWS module, for a GCP plan', () => {
+    const paths = emitInfra(MIXED, { cloud: 'gcp' }).map((file) => file.path);
+    expect(paths).toContain(`${CLOUDRUN_MODULE_DIR}/main.tf`);
+    expect(paths).not.toContain(`${SERVERLESS_MODULE_DIR}/main.tf`);
+    expect(paths).not.toContain(`${CONTAINER_MODULE_DIR}/main.tf`);
+  });
+
+  it('keeps the AWS modules for an AWS plan of the same targets', () => {
+    const paths = emitInfra(MIXED).map((file) => file.path);
+    expect(paths).toContain(`${SERVERLESS_MODULE_DIR}/main.tf`);
+    expect(paths).toContain(`${CONTAINER_MODULE_DIR}/main.tf`);
+    expect(paths).not.toContain(`${CLOUDRUN_MODULE_DIR}/main.tf`);
   });
 });

@@ -11,6 +11,7 @@
  * CIDRs, which are the operator's decisions, not the spec's.
  */
 
+import { type Cloud, DEFAULT_CLOUD } from '../cloud.js';
 import { hcl } from './hcl.js';
 
 export interface EnvRootModules {
@@ -47,6 +48,63 @@ const SECRET_ARNS = [
 ];
 
 const TAGS = ['', 'variable "tags" {', '  type    = map(string)', '  default = {}', '}'];
+
+/** GCP: Secret Manager ids, not ARNs, and no network inputs -- Cloud Run needs none. */
+const GCP_SECRET_IDS = [
+  '',
+  'variable "secret_ids" {',
+  '  description = "Secret name -> Secret Manager secret id. The module resolves these at runtime."',
+  '  type        = map(string)',
+  '  default     = {}',
+  '}',
+];
+
+const GCP_INPUTS = [
+  '',
+  '# Cloud Run needs a region it can name in a URL, and nothing else about the network: it',
+  '# terminates TLS and scales behind a managed frontend the module creates.',
+  'variable "region" {',
+  '  description = "The region every resource is created in."',
+  '  type        = string',
+  '}',
+  '',
+  'variable "cloudrun_sizing" {',
+  '  description = "Service id -> CPU, memory, instance bounds and concurrency."',
+  '  type = map(object({',
+  '    cpu           = optional(string)',
+  '    memory_mb     = optional(number)',
+  '    min_instances = optional(number)',
+  '    max_instances = optional(number)',
+  '    concurrency   = optional(number)',
+  '  }))',
+  '  default = {}',
+  '}',
+  '',
+  'variable "allow_unauthenticated" {',
+  '  description = "Whether the internet may invoke the services without a Google identity."',
+  '  type        = bool',
+  '  default     = true',
+  '}',
+  '',
+  'variable "deletion_protection" {',
+  '  description = "Leave on for anything real: destroying a protected service is refused."',
+  '  type        = bool',
+  '  default     = true',
+  '}',
+];
+
+/**
+ * The provider, not the module, owns the GCP project: a namespace and name are spec
+ * facts, but a project id is an account fact, so the env root supplies it and every
+ * resource inherits it rather than repeating it.
+ */
+const GCP_PROJECT = [
+  '',
+  'variable "gcp_project" {',
+  '  description = "The GCP project id resources are created in. Not the aid project name."',
+  '  type        = string',
+  '}',
+];
 
 const SERVERLESS_SIZING = [
   '',
@@ -131,7 +189,14 @@ function blocks(sections: readonly string[][]): string[] {
   return sections.flatMap((section, index) => (index === 0 ? section : ['', ...section]));
 }
 
-export function envRoot(modules: EnvRootModules): { variables: string; main: string } {
+export function envRoot(
+  modules: EnvRootModules,
+  cloud: Cloud = DEFAULT_CLOUD,
+): { variables: string; main: string } {
+  return cloud === 'gcp' ? gcpEnvRoot(modules) : awsEnvRoot(modules);
+}
+
+function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string } {
   const any = modules.serverless || modules.container;
 
   const variables = [
@@ -199,6 +264,61 @@ export function envRoot(modules: EnvRootModules): { variables: string; main: str
         '# This plan targets neither `serverless` nor `container`, so no provider module was',
         '# generated. Point a module call at `../../generated/modules/<platform>` once one',
         '# exists for the targets you deploy.',
+      ];
+
+  return { variables: hcl(variables), main: hcl(main) };
+}
+
+/**
+ * The GCP env root: one Cloud Run module call, and the inputs Cloud Run needs that the
+ * spec cannot know. There is no VPC, subnet or certificate variable here because Cloud
+ * Run provisions none of them -- which is why this root is much shorter than the AWS one.
+ */
+function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string } {
+  const run = modules.container;
+
+  const variables = [
+    ...PLAN_VARIABLES,
+    ...(run ? GCP_PROJECT : []),
+    ...(run ? IMAGE_URIS : []),
+    ...(run ? GCP_SECRET_IDS : []),
+    ...(run ? GCP_INPUTS : []),
+    ...(run ? TAGS : []),
+  ];
+
+  const main = run
+    ? [
+        '# The project a resource lands in is an account fact the spec cannot know, so the',
+        '# env root configures the provider once instead of every resource naming it.',
+        'provider "google" {',
+        '  project = var.gcp_project',
+        '  region  = var.region',
+        '}',
+        '',
+        '# The Cloud Run module, fed from the generated tfvars and the inputs below. dev and',
+        '# prod differ only in the values they supply, which is what lets one generated tree',
+        '# deploy to a second GCP project unchanged.',
+        '',
+        ...moduleCall('cloudrun', [
+          'project               = var.project',
+          'services              = var.services',
+          'image_uris            = var.image_uris',
+          'secret_ids            = var.secret_ids',
+          'cloudrun_sizing       = var.cloudrun_sizing',
+          'region                = var.region',
+          'allow_unauthenticated = var.allow_unauthenticated',
+          'deletion_protection   = var.deletion_protection',
+          'tags                  = var.tags',
+        ]),
+        '',
+        'output "cloudrun_urls" {',
+        '  value = module.cloudrun.service_urls',
+        '}',
+      ]
+    : [
+        '# This plan targets no `container` service, and on GCP that is the only target a',
+        '# module exists for. `serverless` needs a Cloud Functions entrypoint and `batch` a',
+        '# run-to-completion entrypoint, neither of which the generators emit yet.',
       ];
 
   return { variables: hcl(variables), main: hcl(main) };

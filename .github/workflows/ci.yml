@@ -384,11 +384,10 @@ jobs:
       - name: Lint workflows
         run: actionlint -color -shellcheck=shellcheck
 
-  # The provider module is generated HCL. The machine that writes it cannot run `tofu`
-  # -- an Application Control policy blocks the newly-downloaded binary -- so the
-  # committed fixture under `packages/cli/test/fixtures/infra` is the only place the
-  # module is ever validated. `infra-modules.test.ts` asserts the fixture is byte-for-byte
-  # what the emitter produces, so a module that stops validating also fails a unit test.
+  # The provider modules are generated HCL, and `infra-modules.test.ts` asserts every
+  # committed fixture is byte-for-byte what the emitter produces -- so a module that stops
+  # validating also fails a unit test. Each env root is validated separately: a plan that
+  # is wrong on one cloud fails for a reason the other cloud's fixture cannot reveal.
   # Advisory for a merge, like `typescript`: it gates nothing until the ruleset names it.
   tofu:
     name: tofu
@@ -406,16 +405,26 @@ jobs:
           sudo unzip -q -o /tmp/tofu.zip -d /usr/local/bin tofu
           tofu version
 
-      # -backend=false: validation needs the provider schema, not state. The fixture is
+      # -backend=false: validation needs the provider schema, not state. Each fixture is
       # an env root exactly as a project would hold one, so this also proves the
       # documented `source` path resolves.
-      - name: Init the fixture env root
-        working-directory: packages/cli/test/fixtures/infra/envs/dev
-        run: tofu init -backend=false -input=false -no-color
+      - name: Init the fixture env roots
+        working-directory: packages/cli/test/fixtures/infra/envs
+        run: |
+          set -euo pipefail
+          for env in dev gcp-dev; do
+            ( cd "$env" && tofu init -backend=false -input=false -no-color )
+          done
 
-      - name: Validate the serverless module
-        working-directory: packages/cli/test/fixtures/infra/envs/dev
-        run: tofu validate -no-color
+      - name: Validate the generated modules
+        working-directory: packages/cli/test/fixtures/infra/envs
+        run: |
+          set -euo pipefail
+          for env in dev gcp-dev; do
+            echo "::group::$env"
+            ( cd "$env" && tofu validate -no-color )
+            echo "::endgroup::"
+          done
 
   # release.yml tags whatever commit a releasable merge produces, and publish.yml only
   # publishes a tag whose manifests declare that exact version. Nothing used to check
