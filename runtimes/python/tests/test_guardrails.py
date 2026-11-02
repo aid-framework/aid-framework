@@ -908,7 +908,7 @@ class FakeDecisionClient:
         self,
         label: str = "product",
         *,
-        confidence: float = 0.9,
+        confidence: float | None = 0.9,
         error: Exception | None = None,
     ) -> None:
         self.label = label
