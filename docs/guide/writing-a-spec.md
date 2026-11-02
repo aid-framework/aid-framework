@@ -214,6 +214,33 @@ loop reaches it. `redact` must name the fields the stage's payload actually has 
 that payload is the rendered prompt under `text`, and any other name is refused rather than
 emitted as a redaction that could never run.
 
+### Answering a guardrail with a decision (0.7)
+
+A guardrail can ask a `choice` decision instead of naming detector policies. The decision
+becomes the evaluator; policies listed beside it still run first, so a detector hit costs no
+decision call:
+
+```yaml
+guardrails:
+  relevance:
+    stages: [input]
+    decision: topical
+    onDecision:
+      product: allow
+      billing: allow
+      off_topic: block
+    minConfidence: 0.6
+    onFail:
+      message: This request is outside the assistant's scope.
+      log: true
+```
+
+`onDecision` must map every label the decision can return, `allow` is the one outcome that
+lets the payload through, and `minConfidence` fails an answer closed when the model is less
+sure than that. A reference to an undeclared or non-`choice` decision is rejected, as is an
+`onDecision` key the decision never returns. `redact` is not available here: a decision
+returns a verdict, not a masked payload.
+
 ## `decisions`
 
 ```yaml

@@ -1,0 +1,24 @@
+specVersion: "0.7"
+
+project:
+  name: probe
+
+decisions:
+  triage:
+    provider: typesafe
+    model: jev-1.14.0
+    type: choice
+    instructions: Which queue
+    criteria:
+      billing: Money movement
+      technical: A bug report
+
+guardrails:
+  gate:
+    stages: [input]
+    decision: triage
+    onDecision:
+      billing: allow
+    onFail:
+      message: refused
+      log: true

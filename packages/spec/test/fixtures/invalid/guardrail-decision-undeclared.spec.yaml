@@ -1,0 +1,14 @@
+specVersion: "0.7"
+
+project:
+  name: probe
+
+guardrails:
+  gate:
+    stages: [input]
+    decision: triage
+    onDecision:
+      billing: allow
+    onFail:
+      message: refused
+      log: true

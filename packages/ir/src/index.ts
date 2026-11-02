@@ -191,6 +191,8 @@ export type {
   EvalTarget,
   EvalTargetKind,
   GenerateStep,
+  GUARDRAIL_DECISION_ACTIONS,
+  GuardrailDecisionAction,
   GuardrailShape,
   GuardStep,
   Idempotency,

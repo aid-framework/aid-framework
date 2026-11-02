@@ -659,6 +659,15 @@ export interface GuardrailShape {
   stages: ('input' | 'output' | 'retrieval' | 'tool-call')[];
   policies: GuardrailPolicyKind[];
   action: 'block' | 'redact' | 'flag' | 'escalate';
+  /**
+   * The `choice` decision this guardrail asks at the input stage, if any. The
+   * policy check still runs first; a decision is asked only when it is present.
+   */
+  decision?: string;
+  /** Label → action for the decision answer, covering every declared label. */
+  onDecision?: Record<string, GuardrailDecisionAction>;
+  /** Answer confidence below this fails closed as a block. Absent means 0. */
+  minConfidence?: number;
   /** Field names the `redact` action removes; required for that action. */
   redact: string[];
   /** Tools this guardrail covers; empty means every tool reaching the stage. */
@@ -688,6 +697,16 @@ export type GuardrailPolicyKind = (typeof GUARDRAIL_POLICY_KINDS)[number];
 export function isGuardrailPolicyKind(value: string): value is GuardrailPolicyKind {
   return (GUARDRAIL_POLICY_KINDS as readonly string[]).includes(value);
 }
+
+/**
+ * The closed vocabulary of answers a decision-backed guardrail may map. It is
+ * wider than `GuardrailShape['action']` by `allow` -- the one outcome that is *not*
+ * a record -- and narrower by `redact`, because a label cannot name the field a
+ * masking pass would rewrite.
+ */
+export const GUARDRAIL_DECISION_ACTIONS = ['allow', 'block', 'flag', 'escalate'] as const;
+
+export type GuardrailDecisionAction = (typeof GUARDRAIL_DECISION_ACTIONS)[number];
 
 /**
  * The deployment targets the spec schema admits, in the order it lists them.

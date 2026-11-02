@@ -79,13 +79,15 @@ export function guardrailPolicyGate(ir: IR, options: GateOptions): GateResult {
         }),
       );
     }
-    if (guardrail.policies.length === 0) {
+    // A decision is an evaluator too: the guardrail has something to ask even
+    // when it names no detector policy.
+    if (guardrail.policies.length === 0 && guardrail.decision === undefined) {
       diagnostics.push(
         report.error({
           code: IR_DIAGNOSTIC_CODES.policyEmpty,
-          message: `the guardrails gate rejected "${guardrail.id}": it declares no policy, so there is nothing for the stage to evaluate`,
+          message: `the guardrails gate rejected "${guardrail.id}": it declares neither a policy nor a decision, so there is nothing for the stage to evaluate`,
           path: ['guardrails', guardrail.id, 'policies'],
-          hint: `name one of ${GUARDRAIL_POLICY_KINDS.join(', ')}`,
+          hint: `name one of ${GUARDRAIL_POLICY_KINDS.join(', ')}, or answer the guardrail with a decision`,
         }),
       );
     }
@@ -100,6 +102,53 @@ export function guardrailPolicyGate(ir: IR, options: GateOptions): GateResult {
         }),
       );
     });
+    if (guardrail.decision !== undefined) {
+      const decision = ir.decisions.find((entry) => entry.id === guardrail.decision);
+      if (decision === undefined) {
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+            message: `the guardrails gate rejected "${guardrail.id}": decision "${guardrail.decision}" is not a declared decision`,
+            path: ['guardrails', guardrail.id, 'decision'],
+            hint: `declared decisions: ${[...ir.decisions.map((entry) => entry.id)].sort().join(', ') || 'none'}`,
+          }),
+        );
+      } else if (decision.type !== 'choice') {
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+            message: `the guardrails gate rejected "${guardrail.id}": decision "${decision.id}" is a "${decision.type}" question, which returns no label to map`,
+            path: ['guardrails', guardrail.id, 'decision'],
+            hint: 'only a choice decision returns the label onDecision keys',
+          }),
+        );
+      } else {
+        const criteria = decision.criteria;
+        const labels =
+          criteria === undefined ? [] : Array.isArray(criteria) ? criteria : Object.keys(criteria);
+        for (const label of Object.keys(guardrail.onDecision ?? {})) {
+          if (labels.length === 0 || labels.includes(label)) continue;
+          diagnostics.push(
+            report.error({
+              code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+              message: `the guardrails gate rejected "${guardrail.id}": onDecision names "${label}", which decision "${decision.id}" never returns`,
+              path: ['guardrails', guardrail.id, 'onDecision', label],
+              hint: `labels decision "${decision.id}" declares: ${[...labels].sort().join(', ') || 'none'}`,
+            }),
+          );
+        }
+      }
+      if (Object.keys(guardrail.onDecision ?? {}).length === 0) {
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.policyEmpty,
+            message: `the guardrails gate rejected "${guardrail.id}": it asks decision "${guardrail.decision}" but maps no label, so every answer would fail closed`,
+            path: ['guardrails', guardrail.id, 'onDecision'],
+            hint: 'map every label the decision can return to allow, block, flag or escalate',
+          }),
+        );
+      }
+    }
     if (guardrail.action === 'redact' && guardrail.redact.length === 0) {
       diagnostics.push(
         report.error({

@@ -26,6 +26,7 @@ from aid_runtime.agents import (
     DETECTORS,
     GUARDRAIL_ACTIONS,
     GUARDRAIL_STAGES,
+    DecisionDefinition,
     GuardrailDefinition,
     GuardrailEngine,
     HumanDecision,
@@ -34,6 +35,7 @@ from aid_runtime.agents import (
     detect,
 )
 from aid_runtime.agents.ir import from_ir
+from aid_runtime.decisions import DecisionAnswer, DecisionResponse
 from aid_runtime.errors import ConfigurationError
 from aid_runtime.retrieval import FakeDeterministicEmbedder, InMemoryVectorStore, Retriever
 
@@ -76,6 +78,9 @@ def definition(
     redact: tuple[str, ...] = (),
     tools: tuple[str, ...] = (),
     message: str = "stopped by a guardrail",
+    decision: str | None = None,
+    on_decision: tuple[tuple[str, str], ...] = (),
+    min_confidence: float = 0.0,
 ) -> GuardrailDefinition:
     """Build a guardrail, refusing the one mistake that would silently half-work.
 
@@ -95,6 +100,9 @@ def definition(
         message=message,
         fallback_prompt=None,
         log=True,
+        decision=decision,
+        on_decision=on_decision,
+        min_confidence=min_confidence,
     )
 
 
@@ -880,3 +888,167 @@ async def test_a_retrieval_escalation_blocks_because_a_retriever_has_no_human() 
 
     with pytest.raises(GuardrailBlockedError, match="no human channel"):
         await retriever.retrieve("contact")
+
+
+# --- the decision seam -----------------------------------------------------------
+
+
+TOPICAL = DecisionDefinition(
+    id="topical",
+    model="jev-1.14.0",
+    instructions="Is this message about our product",
+    criteria=("billing", "off_topic", "product"),
+)
+
+
+class FakeDecisionClient:
+    """Answers the one question with the label the test chose, recording every ask."""
+
+    def __init__(
+        self,
+        label: str = "product",
+        *,
+        confidence: float = 0.9,
+        error: Exception | None = None,
+    ) -> None:
+        self.label = label
+        self.confidence = confidence
+        self.error = error
+        self.calls: list[dict[str, Any]] = []
+
+    async def decide(
+        self,
+        *,
+        model: str,
+        state: Any,
+        questions: Any,
+        reproducible: bool = False,
+    ) -> DecisionResponse:
+        self.calls.append({"model": model, "state": state, "questions": questions})
+        if self.error is not None:
+            raise self.error
+        return DecisionResponse(
+            model=model,
+            answers={
+                "topical": DecisionAnswer(
+                    type="choice",
+                    choice=self.label,
+                    confidence=self.confidence,
+                )
+            },
+        )
+
+
+def decision_guardrail(
+    *,
+    policies: tuple[str, ...] = (),
+    on_decision: tuple[tuple[str, str], ...] = (("product", "allow"), ("off_topic", "block")),
+    min_confidence: float = 0.0,
+) -> GuardrailDefinition:
+    return definition(
+        "g-dec",
+        policies=policies,
+        decision="topical",
+        on_decision=on_decision,
+        min_confidence=min_confidence,
+    )
+
+
+def decision_engine(client: FakeDecisionClient, *, decisions: Any = None) -> GuardrailEngine:
+    return GuardrailEngine(
+        decisions={"topical": TOPICAL} if decisions is None else decisions,
+        client_factory=lambda: client,
+    )
+
+
+async def test_a_decision_label_mapped_to_allow_lets_the_text_through() -> None:
+    client = FakeDecisionClient(label="product")
+
+    verdict = await decision_engine(client).check_input_async((decision_guardrail(),), CLEAN)
+
+    assert verdict.action is None
+    assert verdict.records == ()
+    assert verdict.text == CLEAN
+    # The text, not a rendered prompt, is the state the classifier sees.
+    assert [call["state"] for call in client.calls] == [CLEAN]
+    assert client.calls[0]["model"] == "jev-1.14.0"
+
+
+async def test_a_decision_label_mapped_to_block_stops_the_turn() -> None:
+    client = FakeDecisionClient(label="off_topic", confidence=0.81)
+
+    verdict = await decision_engine(client).check_input_async((decision_guardrail(),), CLEAN)
+
+    assert verdict.action == "block"
+    assert len(verdict.records) == 1
+    deciding = verdict.deciding
+    assert deciding is not None
+    assert (deciding.guardrail, deciding.decision, deciding.label) == (
+        "g-dec",
+        "topical",
+        "off_topic",
+    )
+    assert deciding.confidence == 0.81
+
+
+async def test_a_decision_label_mapped_to_flag_does_not_stop_the_turn() -> None:
+    client = FakeDecisionClient(label="off_topic")
+
+    verdict = await decision_engine(client).check_input_async(
+        (decision_guardrail(on_decision=(("product", "allow"), ("off_topic", "flag"))),),
+        CLEAN,
+    )
+
+    assert verdict.action == "flag"
+    assert verdict.text == CLEAN
+
+
+async def test_a_low_confidence_answer_is_a_blocked_check() -> None:
+    client = FakeDecisionClient(label="product", confidence=0.4)
+
+    with pytest.raises(GuardrailBlockedError, match="below the declared minimum"):
+        await decision_engine(client).check_input_async(
+            (decision_guardrail(min_confidence=0.6),), CLEAN
+        )
+
+
+async def test_an_answer_outside_the_declared_labels_is_a_blocked_check() -> None:
+    client = FakeDecisionClient(label="maybe")
+
+    with pytest.raises(GuardrailBlockedError, match="does not map"):
+        await decision_engine(client).check_input_async((decision_guardrail(),), CLEAN)
+
+
+async def test_a_decision_call_that_raises_is_a_blocked_check() -> None:
+    # Fail closed: a 502 is not "no violation found".
+    client = FakeDecisionClient(error=RuntimeError("502 from Jev"))
+
+    with pytest.raises(GuardrailBlockedError, match="could not answer"):
+        await decision_engine(client).check_input_async((decision_guardrail(),), CLEAN)
+
+
+async def test_an_undeclared_decision_is_a_blocked_check() -> None:
+    with pytest.raises(GuardrailBlockedError, match="no definition"):
+        await decision_engine(FakeDecisionClient(), decisions={}).check_input_async(
+            (decision_guardrail(),), CLEAN
+        )
+
+
+async def test_a_decision_that_maps_no_label_is_a_blocked_check() -> None:
+    with pytest.raises(GuardrailBlockedError, match="maps no answer label"):
+        await decision_engine(FakeDecisionClient()).check_input_async(
+            (decision_guardrail(on_decision=()),), CLEAN
+        )
+
+
+async def test_policies_run_before_the_decision_so_a_match_costs_no_tokens() -> None:
+    client = FakeDecisionClient(label="product")
+
+    verdict = await decision_engine(client).check_input_async(
+        (decision_guardrail(policies=("prompt-injection",)),), INJECTION
+    )
+
+    assert verdict.action == "block"
+    assert verdict.deciding is not None
+    assert verdict.deciding.policies == ("prompt-injection",)
+    assert client.calls == []

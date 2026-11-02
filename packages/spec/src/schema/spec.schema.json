@@ -9,8 +9,8 @@
   "additionalProperties": false,
   "properties": {
     "specVersion": {
-      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
-      "enum": ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6"]
+      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
+      "enum": ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7"]
     },
     "project": { "$ref": "#/$defs/project" },
     "types": {
@@ -1144,8 +1144,31 @@
     },
     "guardrail": {
       "type": "object",
-      "required": ["stages", "policies", "action", "onFail"],
+      "description": "A check at one stage. A guardrail is either a policy check (`policies` + `action`) or a decision-backed check (`decision` + `onDecision`); it may declare both, and the policy check runs first.",
+      "required": ["stages", "onFail"],
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "required": ["policies"], "properties": { "policies": true } },
+          "then": { "required": ["action"], "properties": { "action": true } }
+        },
+        {
+          "if": { "required": ["decision"], "properties": { "decision": true } },
+          "then": { "required": ["onDecision"], "properties": { "onDecision": true } }
+        },
+        {
+          "if": { "required": ["decision"], "properties": { "decision": true } },
+          "then": {
+            "properties": {
+              "stages": {
+                "type": "array",
+                "description": "A decision runs at `input` only; the other stages see payloads a classifier question was not written for.",
+                "items": { "const": "input" }
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "stages": {
           "type": "array",
@@ -1171,6 +1194,23 @@
           }
         },
         "action": { "enum": ["block", "redact", "flag", "escalate"] },
+        "decision": {
+          "description": "A `choice` decision to ask before the stage runs. Only the `input` stage may carry one, and the name must be declared under `decisions` (spec 0.7).",
+          "$ref": "#/$defs/name"
+        },
+        "onDecision": {
+          "description": "What each answer label means. `allow` lets the run continue; the others record that action. Every label the decision declares must appear here, and no other label may (checked by the spec gate, which knows the criteria).",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "minLength": 1 },
+          "additionalProperties": { "enum": ["allow", "block", "flag", "escalate"] }
+        },
+        "minConfidence": {
+          "description": "The lowest answer confidence this guardrail accepts. A less confident answer counts as a failed check and fails closed as a block. Defaults to 0.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
         "redact": {
           "description": "Field names the `redact` action removes. Required when `action: redact`, which the guardrails gate enforces.",
           "type": "array",

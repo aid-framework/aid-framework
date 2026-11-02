@@ -1091,6 +1091,14 @@
           }
         },
         "action": { "enum": ["block", "redact", "flag", "escalate"] },
+        "decision": { "$ref": "#/$defs/identifier" },
+        "onDecision": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "minLength": 1 },
+          "additionalProperties": { "enum": ["allow", "block", "flag", "escalate"] }
+        },
+        "minConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "redact": { "type": "array", "items": { "type": "string" } },
         "tools": { "type": "array", "items": { "type": "string" } },
         "onFail": {

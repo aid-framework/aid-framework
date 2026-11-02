@@ -28,7 +28,7 @@ export interface DeployEnvVar {
   /** Only ever set for a non-secret declaration made in the spec. */
   value?: string;
   /** Which IR collection supplied the name, so a plan diff explains itself. */
-  from: 'deployment' | 'store' | 'model';
+  from: 'deployment' | 'store' | 'model' | 'decision';
 }
 
 export interface DeployEndpoint {
@@ -220,7 +220,26 @@ function serviceEnv(
     }
   }
 
+  for (const name of decisionSecrets(ir)) {
+    if (!byName.has(name)) byName.set(name, { name, secret: true, from: 'decision' });
+  }
+
   return [...byName.values()].sort((left, right) => compare(left.name, right.name));
+}
+
+/**
+ * The key a guardrail's decision model reads.
+ *
+ * A decision has no `apiKeyEnv` of its own -- the runtime client reads one fixed name --
+ * so a guardrail answered by one needs the platform to resolve it, or the check fails
+ * closed at the first request with a provider the deployment never provisioned.
+ */
+const DECISION_KEY_ENV = 'TYPESAFE_API_KEY';
+
+function decisionSecrets(ir: IR): string[] {
+  return ir.guardrails.some((guardrail) => guardrail.decision !== undefined)
+    ? [DECISION_KEY_ENV]
+    : [];
 }
 
 /** Every name the platform must resolve, from all four sources. */
@@ -241,6 +260,7 @@ function serviceSecrets(
   for (const model of ir.models) {
     if (model.apiKeyEnv !== undefined) names.add(model.apiKeyEnv);
   }
+  for (const name of decisionSecrets(ir)) names.add(name);
   return uniqueSorted([...names]);
 }
 

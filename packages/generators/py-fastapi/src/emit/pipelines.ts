@@ -466,6 +466,14 @@ function guardrailCheck(
   if (stageGuardrails(ir, stage).length === 0) return undefined;
   const table = stageTable(stage);
   for (const name of ['ENGINE', 'enforce_guardrail', table]) imports.guardrails.add(name);
+  // A decision is an HTTP call, so a stage with one asks the asynchronous engine; the
+  // synchronous `check_input` would skip it and let the payload through unexamined.
+  if (
+    stage === 'input' &&
+    stageGuardrails(ir, stage).some((guardrail) => guardrail.decision !== undefined)
+  ) {
+    return `enforce_guardrail(await ENGINE.check_input_async(${table}, ${value}))`;
+  }
   return `enforce_guardrail(ENGINE.check_${stage}(${table}, ${value}))`;
 }
 

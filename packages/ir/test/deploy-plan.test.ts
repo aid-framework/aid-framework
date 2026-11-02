@@ -137,6 +137,36 @@ describe('buildDeployPlan', () => {
     expect(service?.ingest).toEqual(['handbook']);
   });
 
+  it('requires the decision key wherever a guardrail asks a question', () => {
+    const { plan, ir } = planOf({
+      specVersion: '0.7',
+      decisions: {
+        topical: {
+          provider: 'typesafe',
+          model: 'jev-1.14.0',
+          type: 'choice',
+          instructions: 'Is this message about our product',
+          criteria: { product: 'A question about features', off_topic: 'Anything else' },
+        },
+      },
+      guardrails: {
+        relevance: {
+          stages: ['input'],
+          decision: 'topical',
+          onDecision: { product: 'allow', off_topic: 'block' },
+          onFail: { message: 'Out of scope.' },
+        },
+      },
+    });
+    expect(ir.guardrails[0]?.decision).toBe('topical');
+    expect(plan.services[0]?.env).toContainEqual({
+      name: 'TYPESAFE_API_KEY',
+      secret: true,
+      from: 'decision',
+    });
+    expect(plan.services[0]?.secrets).toContain('TYPESAFE_API_KEY');
+  });
+
   it('lets a deployment declaration win over a derived name', () => {
     const { plan } = planOf({
       deployments: {

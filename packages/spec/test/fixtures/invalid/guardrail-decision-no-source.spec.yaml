@@ -1,0 +1,11 @@
+specVersion: "0.7"
+
+project:
+  name: probe
+
+guardrails:
+  gate:
+    stages: [input]
+    onFail:
+      message: refused
+      log: true

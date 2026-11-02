@@ -28,6 +28,7 @@ from aid_runtime.types import (
 
 __all__ = [
     "AgentDefinition",
+    "DecisionDefinition",
     "GuardrailDefinition",
     "HumanApproval",
     "MemoryDefinition",
@@ -84,11 +85,31 @@ class ToolSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class DecisionDefinition:
+    """A ``choice`` decision a guardrail asks, resolved from the IR's ``decisions``.
+
+    Only the fields an input guardrail needs are here: the model that answers, the
+    question, and the labels an ``on_decision`` map may name. ``score`` and ``noul``
+    questions have no labels, so the spec gate refuses them as guardrail sources.
+    """
+
+    id: str
+    model: str
+    instructions: str
+    criteria: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class GuardrailDefinition:
     """One resolved guardrail: where it runs, what it detects, and what it does.
 
     ``tools`` holds tool *ids*, because that is how the IR scopes a tool-call
     guardrail; the loop translates a model's tool *name* to the id before asking.
+
+    ``decision`` names a ``choice`` decision to ask at the ``input`` stage, and
+    ``on_decision`` maps each of its labels to an outcome. ``allow`` is the one
+    outcome that produces no record; the rest are guardrail actions. The trailing
+    defaults keep every keyword call site written before decisions existed valid.
     """
 
     id: str
@@ -100,6 +121,9 @@ class GuardrailDefinition:
     message: str
     fallback_prompt: str | None
     log: bool
+    decision: str | None = None
+    on_decision: tuple[tuple[str, str], ...] = ()
+    min_confidence: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

@@ -170,6 +170,34 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
     code: DIAGNOSTIC_CODES.schemaViolation,
     path: ['models', 'offline'],
   },
+  'guardrail-decision-below-version.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['guardrails', 'gate', 'decision'],
+  },
+  'guardrail-decision-undeclared.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['guardrails', 'gate', 'decision'],
+  },
+  'guardrail-decision-not-choice.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['guardrails', 'gate', 'decision'],
+  },
+  'guardrail-decision-missing-label.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['guardrails', 'gate', 'onDecision'],
+  },
+  'guardrail-decision-extra-label.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['guardrails', 'gate', 'onDecision', 'sale'],
+  },
+  'guardrail-decision-no-source.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['guardrails', 'gate'],
+  },
+  'guardrail-decision-stray-map.spec.yaml': {
+    code: DIAGNOSTIC_CODES.schemaViolation,
+    path: ['guardrails', 'gate', 'onDecision'],
+  },
   'llm-judge-in-ci.spec.yaml': {
     code: DIAGNOSTIC_CODES.metricUnavailableInCi,
     path: ['evals', 'quality', 'metrics', 0],
