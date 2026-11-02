@@ -14,6 +14,7 @@
 
 import type { DeployPlan } from '@aid-framework/ir';
 
+import { type Cloud, DEFAULT_CLOUD } from './cloud.js';
 import { emitProviderModules, envRoot, modulesOf } from './modules/index.js';
 import { INFRA_CDK_CONTEXT_PATH, INFRA_GENERATED_DIR, INFRA_PLAN_PATH } from './paths.js';
 
@@ -122,13 +123,14 @@ export interface DeployContext {
  * Every derived file, in a stable order. Pure: the same plan always yields the same bytes,
  * so `aid infra gen --check` can compare content instead of trusting a timestamp.
  */
-export function emitInfra(plan: DeployPlan): InfraFile[] {
+export function emitInfra(plan: DeployPlan, options: { cloud?: Cloud } = {}): InfraFile[] {
+  const cloud = options.cloud ?? DEFAULT_CLOUD;
   return [
     { path: INFRA_PLAN_PATH, contents: json(plan) },
     { path: `${INFRA_GENERATED_DIR}/deploy.auto.tfvars.json`, contents: json(tfvars(plan)) },
     { path: INFRA_CDK_CONTEXT_PATH, contents: json(cdkContext(plan)) },
-    { path: `${INFRA_GENERATED_DIR}/README.md`, contents: readme(plan) },
-    ...emitProviderModules(plan),
+    { path: `${INFRA_GENERATED_DIR}/README.md`, contents: readme(plan, cloud) },
+    ...emitProviderModules(plan, cloud),
   ];
 }
 
@@ -234,11 +236,12 @@ export function cdkContext(plan: DeployPlan): DeployContext {
   };
 }
 
-function readme(plan: DeployPlan): string {
+function readme(plan: DeployPlan, cloud: Cloud): string {
   const routes = plan.services.reduce((total, service) => total + service.endpoints.length, 0);
-  const modules = modulesOf(plan);
+  const modules = modulesOf(plan, cloud);
   const active = modules.serverless || modules.container;
-  const root = envRoot(modules);
+  const root = envRoot(modules, cloud);
+  const envDir = cloud === 'gcp' ? 'infra/envs/gcp-dev' : 'infra/envs/dev';
   return [
     '# Generated infrastructure',
     '',
@@ -255,9 +258,14 @@ function readme(plan: DeployPlan): string {
           '| `modules/serverless/` | The Lambda + HTTP API module a `serverless` service deploys into. |',
         ]
       : []),
-    ...(modules.container
+    ...(modules.container && cloud === 'aws'
       ? [
           '| `modules/container/` | The ECS Fargate + load balancer module a `container` service deploys into. |',
+        ]
+      : []),
+    ...(modules.container && cloud === 'gcp'
+      ? [
+          '| `modules/cloudrun/` | The Cloud Run v2 + service account + Artifact Registry module a `container` service deploys into. |',
         ]
       : []),
     '',
@@ -267,19 +275,19 @@ function readme(plan: DeployPlan): string {
     'module tree:',
     '',
     '```sh',
-    'tofu -chdir=infra/envs/dev plan -var-file=../../generated/deploy.auto.tfvars.json',
+    `tofu -chdir=${envDir} plan -var-file=../../generated/deploy.auto.tfvars.json`,
     '```',
     '',
     ...(active
       ? [
-          'The env root is yours, not generated. `infra/envs/dev/variables.tf` declares the',
+          'The env root is yours, not generated. `' + envDir + '/variables.tf` declares the',
           'business inputs alongside the plan-shaped ones the tfvars already supplies:',
           '',
           '```hcl',
           ...root.variables.trimEnd().split('\n'),
           '```',
           '',
-          'and `infra/envs/dev/main.tf` calls the module:',
+          `and \`${envDir}/main.tf\` calls the module:`,
           '',
           '```hcl',
           ...root.main.trimEnd().split('\n'),
@@ -292,32 +300,52 @@ function readme(plan: DeployPlan): string {
                 '',
               ]
             : []),
-          ...(modules.container
+          ...(modules.container && cloud === 'aws'
             ? [
                 'The container module refuses two services that claim one path, since a load',
                 'balancer routes by path rather than by method.',
                 '',
               ]
             : []),
+          ...(modules.container && cloud === 'gcp'
+            ? [
+                'On GCP the env root also takes `gcp_project`: a namespace and name are spec',
+                'facts, but the project id is an account fact, so the provider is configured once',
+                'there and every resource inherits it.',
+                '',
+                'The Cloud Run module does not refuse a `streaming` service: Cloud Run forwards a',
+                'streamed body, so the same service that needs the container target on AWS needs',
+                'no change here. It does refuse a service name Cloud Run cannot route.',
+                '',
+              ]
+            : []),
         ]
       : [
-          'No provider module is generated for this plan yet: AWS modules exist for',
-          '`serverless` and `container`, so a batch or edge target needs a hand-written env',
-          'root. The plan document and tfvars above are still the contract to write it',
-          'against.',
+          cloud === 'gcp'
+            ? 'No provider module is generated for this plan: on GCP only a `container` target has a module (Cloud Run). `serverless` and `batch` need an entrypoint the generators do not emit yet, and `edge` has no GCP counterpart. The plan document and tfvars above are still the contract to write it against.'
+            : 'No provider module is generated for this plan yet: AWS modules exist for `serverless` and `container`, so a batch or edge target needs a hand-written env root. The plan document and tfvars above are still the contract to write it against.',
           '',
         ]),
-    'With CDK, an app in `infra/cdk/<env>` reads the context file and supplies the',
-    'constructs, account and region itself:',
-    '',
-    '```sh',
-    'aid infra plan  --iac cdk --env dev',
-    'aid infra apply --iac cdk --env dev',
-    '```',
-    '',
-    '`aid infra` defaults to `--iac tofu`; the generated bytes are identical either way,',
-    'because both backends consume this one plan.',
-    '',
+    ...(cloud === 'aws'
+      ? [
+          'With CDK, an app in `infra/cdk/<env>` reads the context file and supplies the',
+          'constructs, account and region itself:',
+          '',
+          '```sh',
+          'aid infra plan  --iac cdk --env dev',
+          'aid infra apply --iac cdk --env dev',
+          '```',
+          '',
+          '`aid infra` defaults to `--iac tofu`; the generated bytes are identical either way,',
+          'because both backends consume this one plan.',
+          '',
+        ]
+      : [
+          'CDK is not emitted for GCP: no constructs exist for these resources yet, and',
+          '`--iac cdk --cloud gcp` is refused rather than emitting a tree that cannot synth.',
+          'Use `--iac tofu`, or write the CDK app yourself against `deploy.cdk-context.json`.',
+          '',
+        ]),
     '## What is here, and what is not',
     '',
     `- Services: ${plan.services.length}`,

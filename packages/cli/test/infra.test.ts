@@ -331,6 +331,103 @@ describe('infra plan, apply and drift', () => {
   });
 });
 
+describe('infra on a second cloud', () => {
+  /** A plan whose only deployment is `serverless`, which GCP has no module for yet. */
+  const SERVERLESS_ONLY = `specVersion: "0.2"
+project:
+  name: ping
+  namespace: aid.test
+  targets: [py-fastapi]
+models:
+  small:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  answer:
+    version: 1
+    model: small
+    template: "Answer the request."
+    output:
+      kind: text
+guardrails:
+  inbound:
+    stages: [input]
+    policies: [prompt-injection]
+    action: block
+    onFail:
+      message: rejected.
+      log: true
+deployments:
+  api:
+    target: serverless
+    secrets: [OPENAI_API_KEY]
+pipelines:
+  ping:
+    trigger:
+      http:
+        method: get
+        path: /ping
+    steps:
+      - generate:
+          prompt: answer
+          as: reply
+`;
+
+  it('rejects an unknown cloud before writing anything', () => {
+    const made = scratch();
+    const run = aid(made, ['infra', 'gen', '--cloud', 'mars', '--json']);
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run).map((d) => d.code)).toEqual(['cli/infra-unknown-cloud']);
+    expect(made.walk()).not.toContain(TFVARS);
+  });
+
+  it('refuses cdk on gcp rather than emitting a tree that cannot synth', () => {
+    const made = scratch();
+    const run = aid(made, ['infra', 'gen', '--iac', 'cdk', '--cloud', 'gcp', '--json']);
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run).map((d) => d.code)).toEqual(['cli/infra-cloud-backend-unsupported']);
+    expect(made.walk()).not.toContain(TFVARS);
+  });
+
+  it('emits Cloud Run for the example, and no AWS module', () => {
+    const made = scratch();
+    expect(aid(made, ['infra', 'gen', '--cloud', 'gcp']).code).toBe(0);
+
+    const walked = made.walk();
+    expect(walked).toContain('infra/generated/modules/cloudrun/main.tf');
+    expect(walked.filter((path) => path.includes('/modules/serverless/'))).toEqual([]);
+    expect(walked.filter((path) => path.includes('/modules/container/'))).toEqual([]);
+
+    const readme = made.read(`${GENERATED}/README.md`);
+    expect(readme).toContain('modules/cloudrun/');
+    expect(readme).toContain('infra/envs/gcp-dev');
+  });
+
+  it('names the services a cloud cannot deploy rather than silently dropping them', () => {
+    const made = project(SERVERLESS_ONLY);
+    created.push(made);
+
+    const run = aid(made, ['infra', 'gen', '--cloud', 'gcp', '--json']);
+    expect(run.code).toBe(1);
+    const refused = diagnosticsOf(run).map((d) => d.code);
+    expect(refused).toEqual(['cli/infra-cloud-target-unsupported']);
+    // The message has to say which service, or the operator cannot act on it.
+    expect(diagnosticsOf(run)[0]?.message).toContain('api');
+    expect(made.walk()).not.toContain(TFVARS);
+  });
+
+  it('keeps aws the default, so an existing invocation is unchanged', () => {
+    const made = scratch();
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+    expect(made.walk()).toContain('infra/generated/modules/container/main.tf');
+    expect(made.read(`${GENERATED}/README.md`)).toContain('infra/envs/dev');
+  });
+});
+
 describe('infra with cdk', () => {
   function cdkGenerated(): ReturnType<typeof project> {
     const made = scratch();

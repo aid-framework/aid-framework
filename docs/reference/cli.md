@@ -221,15 +221,16 @@ aid eject <path> [--target <name>] [--dry-run]
 derive the deployment wiring from the spec and drive OpenTofu or AWS CDK
 
 ```sh
-aid infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--iac <tofu|cdk>] [--force]
+aid infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--iac <tofu|cdk>] [--cloud <aws|gcp>] [--force]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--dry-run` | gen: report what would change, and write nothing |
 | `--check` | gen: exit non-zero when the generated tree is out of date |
-| `--env <name>` | environment root (infra/envs/&lt;name&gt; or infra/cdk/&lt;name&gt;); plan, apply and drift use dev |
+| `--env <name>` | environment root (infra/envs/&lt;name&gt;, infra/envs/gcp-&lt;name&gt;, or infra/cdk/&lt;name&gt;); plan, apply and drift use dev |
 | `--iac <tofu\|cdk>` | plan, apply and drift: which backend to drive; defaults to tofu |
+| `--cloud <aws\|gcp>` | which cloud the module set targets, and so which env root an action runs in; defaults to aws |
 | `--confirm-prod` | required to apply to prod |
 | `--force` | gen: overwrite generated files that were edited by hand |
 | `--json` | print one JSON document on stdout |

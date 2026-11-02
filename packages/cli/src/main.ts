@@ -254,7 +254,7 @@ export const COMMANDS: readonly Command[] = [
     name: 'infra',
     summary: 'derive the deployment wiring from the spec and drive OpenTofu or AWS CDK',
     usage:
-      'infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--iac <tofu|cdk>] [--force]',
+      'infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--iac <tofu|cdk>] [--cloud <aws|gcp>] [--force]',
     maxPositionals: 2,
     flags: [
       booleanFlag('dry-run', 'gen: report what would change, and write nothing'),
@@ -262,12 +262,17 @@ export const COMMANDS: readonly Command[] = [
       valueFlag(
         'env',
         'name',
-        'environment root (infra/envs/<name> or infra/cdk/<name>); plan, apply and drift use dev',
+        'environment root (infra/envs/<name>, infra/envs/gcp-<name>, or infra/cdk/<name>); plan, apply and drift use dev',
       ),
       valueFlag(
         'iac',
         'tofu|cdk',
         'plan, apply and drift: which backend to drive; defaults to tofu',
+      ),
+      valueFlag(
+        'cloud',
+        'aws|gcp',
+        'which cloud the module set targets, and so which env root an action runs in; defaults to aws',
       ),
       booleanFlag('confirm-prod', 'required to apply to prod'),
       booleanFlag('force', 'gen: overwrite generated files that were edited by hand'),
@@ -282,6 +287,7 @@ export const COMMANDS: readonly Command[] = [
         force: args.booleans.has('force'),
         env: args.values.get('env'),
         iac: args.values.get('iac'),
+        cloud: args.values.get('cloud'),
         confirmProd: args.booleans.has('confirm-prod'),
         json: args.booleans.has('json'),
       }),

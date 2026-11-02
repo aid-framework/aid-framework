@@ -36,6 +36,7 @@ import type { CliDiagnostic, CliDiagnosticCode } from '../diagnostics.js';
 import { CLI_DIAGNOSTIC_CODES, cliError } from '../diagnostics.js';
 import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE } from '../exit.js';
 import { cdkRoot, classifyCdk, runCdk } from '../infra/cdk.js';
+import { CLOUDS, type Cloud, DEFAULT_CLOUD, isCloud, unsupportedTargets } from '../infra/cloud.js';
 import type { InfraFile } from '../infra/emit.js';
 import {
   emitInfra,
@@ -82,6 +83,8 @@ export interface InfraOptions {
   readonly confirmProd: boolean;
   /** `plan`, `apply`, `drift`: which tool to drive. Defaults to `tofu`. */
   readonly iac: string | undefined;
+  /** Which cloud the module set targets. An environment fact, so a flag; defaults to `aws`. */
+  readonly cloud: string | undefined;
   /** Whether stdout must stay a single JSON document, which decides how a tool streams. */
   readonly json: boolean;
 }
@@ -129,15 +132,45 @@ export function infra(context: CliContext, options: InfraOptions): CommandOutcom
     });
   }
 
+  const cloud = options.cloud ?? DEFAULT_CLOUD;
+  if (!isCloud(cloud)) {
+    return outcome({
+      command: 'infra',
+      exitCode: EXIT_USAGE,
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.infraUnknownCloud,
+          message: `Unknown cloud "${options.cloud}".`,
+          hint: `Use one of: ${CLOUDS.join(', ')}.`,
+        }),
+      ],
+    });
+  }
+
+  // An empty CDK app is worse than a refusal: it would synth cleanly and deploy nothing.
+  if (cloud === 'gcp' && options.iac === 'cdk') {
+    return outcome({
+      command: 'infra',
+      exitCode: EXIT_USAGE,
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.infraCloudBackendUnsupported,
+          message: 'CDK constructs are emitted for AWS only.',
+          hint: 'Use --iac tofu, which emits the Cloud Run module, or deploy this environment with --cloud aws.',
+        }),
+      ],
+    });
+  }
+
   return options.subcommand === 'gen'
-    ? generate(context, options)
-    : action(context, options, options.subcommand as InfraAction);
+    ? generate(context, options, cloud)
+    : action(context, options, options.subcommand as InfraAction, cloud);
 }
 
-function generate(context: CliContext, options: InfraOptions): CommandOutcome {
+function generate(context: CliContext, options: InfraOptions, cloud: Cloud): CommandOutcome {
   const command = 'infra';
   const specPath = options.spec ?? DEFAULT_SPEC_PATH;
-  const fields = { action: 'gen', spec: specPath };
+  const fields = { action: 'gen', spec: specPath, cloud };
 
   const read = readSpec(context, specPath);
   if (!read.ok) {
@@ -149,7 +182,35 @@ function generate(context: CliContext, options: InfraOptions): CommandOutcome {
     return outcome({ command, exitCode: EXIT_FAILURE, fields, diagnostics: lowered.diagnostics });
   }
 
-  const files: InfraFile[] = emitInfra(buildDeployPlan(lowered.ir));
+  const deployPlan = buildDeployPlan(lowered.ir);
+
+  // On GCP a plan with `serverless` or `batch` would otherwise emit *no* module for it and
+  // look successful, and `edge` has no counterpart at all. Refuse instead of deploying part
+  // of a project. AWS keeps its older answer -- an env root written by hand -- so this gate
+  // is deliberately GCP-only.
+  if (cloud === 'gcp') {
+    const missing = unsupportedTargets(deployPlan, cloud);
+    if (missing.length > 0) {
+      const services = deployPlan.services
+        .filter((service) => missing.includes(service.target))
+        .map((service) => `"${service.id}"`)
+        .join(', ');
+      return outcome({
+        command,
+        exitCode: EXIT_FAILURE,
+        fields,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.infraCloudTargetUnsupported,
+            message: `The plan targets ${missing.join(', ')}, which GCP has no module for: ${services}.`,
+            hint: 'On GCP only `container` (Cloud Run) has a module. Retarget the service, or deploy this environment with --cloud aws.',
+          }),
+        ],
+      });
+    }
+  }
+
+  const files: InfraFile[] = emitInfra(deployPlan, { cloud });
   const plan: Plan = {
     files: files.map((file) => ({ path: file.path, content: file.contents, owner: 'generated' })),
   };
@@ -273,6 +334,7 @@ function backendFor(
   iac: IacBackend,
   action: InfraAction,
   env: string,
+  cloud: Cloud,
 ): Backend {
   if (iac === 'cdk') {
     return {
@@ -286,24 +348,30 @@ function backendFor(
       classify: (status) => classifyCdk(action, status),
     };
   }
+  const root = envRoot(env, cloud);
   return {
-    root: envRoot(env),
+    root,
     planPath: TFVARS_PATH,
     missingCode: CLI_DIAGNOSTIC_CODES.infraTofuMissing,
     failedCode: CLI_DIAGNOSTIC_CODES.infraTofuFailed,
     installHint: 'Install OpenTofu, or point AID_TOFU at a tofu binary.',
-    rootHint: `Create ${envRoot(env)} with your module wiring; the generated tfvars is consumed there, not written to.`,
-    run: (stdio) => runTofu(context, action, env, stdio),
+    rootHint: `Create ${root} with your module wiring; the generated tfvars is consumed there, not written to.`,
+    run: (stdio) => runTofu(context, action, env, cloud, stdio),
     classify: (status) => classifyTofu(action, status),
   };
 }
 
-function action(context: CliContext, options: InfraOptions, action: InfraAction): CommandOutcome {
+function action(
+  context: CliContext,
+  options: InfraOptions,
+  action: InfraAction,
+  cloud: Cloud,
+): CommandOutcome {
   const command = 'infra';
   const iac: IacBackend = options.iac === 'cdk' ? 'cdk' : 'tofu';
   const env = options.env ?? DEFAULT_ENV;
-  const fields = { action, env, tool: iac };
-  const backend = backendFor(context, iac, action, env);
+  const fields = { action, env, tool: iac, cloud };
+  const backend = backendFor(context, iac, action, env, cloud);
 
   if (action === 'apply' && env === 'prod' && !options.confirmProd) {
     return outcome({

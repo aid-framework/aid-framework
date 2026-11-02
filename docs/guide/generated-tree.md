@@ -233,7 +233,15 @@ infra/
       variables.tf
       main.tf
       outputs.tf
+    modules/cloudrun/                   generated, when a deployment targets container on GCP
+      versions.tf
+      variables.tf
+      main.tf
+      outputs.tf
   envs/dev/                             yours
+    main.tf
+    variables.tf
+  envs/gcp-dev/                         yours, a sibling root for `--cloud gcp`
     main.tf
     variables.tf
 ```
@@ -245,9 +253,9 @@ instead of naming services, which is what lets it be validated once and be corre
 project.
 
 The env root is yours and is never written by `aid infra gen`. `infra/envs/<env>/main.tf`
-calls one module per platform the plan targets - `../../generated/modules/serverless`,
-`../../generated/modules/container`, or both - and `variables.tf` declares the inputs no spec
-can supply:
+(AWS) or `infra/envs/gcp-<env>/main.tf` (GCP) calls one module per platform the plan targets -
+`../../generated/modules/serverless`, `../../generated/modules/container`, `../../generated/modules/cloudrun`,
+or both AWS modules - and `variables.tf` declares the inputs no spec can supply:
 
 | Input | Why it cannot be derived |
 | --- | --- |
@@ -255,6 +263,10 @@ can supply:
 | `secret_arns` | An ARN names one account, so it belongs to the environment, not the spec. |
 | `sizing` | Memory and timeout are a cost decision, not an inference from the pipeline. |
 | `container_sizing` | CPU units, memory and task count are a budget decision. |
+| `gcp_project` | A GCP project id names one account, so the provider is configured from it. |
+| `region` | Cloud Run names the region in a URL; it is a deployment choice. |
+| `secret_ids` | A Secret Manager id names one project, the GCP counterpart of an ARN. |
+| `cloudrun_sizing` | CPU, memory, instance bounds and concurrency are a budget decision. |
 | `vpc_cidr` | A private range is an operator decision; the module refuses to guess one. |
 | `public_subnet_ids`, `private_subnet_ids` | Only meaningful with `vpc_id`, when you bring a VPC. |
 
@@ -263,7 +275,10 @@ serverless module refuses a `streaming` service (an HTTP API cannot deliver a st
 a service with no image, and a secret with no ARN. The container module refuses those too,
 plus two services claiming one path - a load balancer routes by path, not by method - a load
 balancer with fewer than two public subnets, and a service with fewer than two private
-subnets. Each refusal is a `precondition` whose message names the input to fix.
+subnets. The Cloud Run module refuses a service with no image, a secret with no Secret Manager
+id, and a name Cloud Run cannot route; it does not refuse `streaming`, because Cloud Run
+forwards a streamed body. Each refusal is a `precondition` whose message names the input to
+fix.
 
 The container module runs each service as a Fargate task behind one load balancer, in private
 subnets with egress through a single NAT gateway and reachable only from the balancer. Tasks
@@ -275,8 +290,19 @@ The module sets no registry credentials, so the tag in `image_uris` must be pull
 them: a public `ghcr.io` package, or the image copied to ECR. A private package needs a pull
 secret that belongs to your account, and the module will not invent one.
 
-Generated AWS modules exist for `serverless` and `container`; `batch` and `edge` still need a
-hand-written env root, and the plan document is the contract to write it against.
+`--cloud gcp` selects Cloud Run for a `container` service, and nothing else changes: the image
+is the same one the Dockerfile builds, because that Dockerfile already binds `$PORT` on
+`0.0.0.0`. The module creates a service account per service, grants it `secretAccessor` on
+each declared secret, references secrets by `secret_key_ref` rather than inlining them, and
+creates one Artifact Registry repository for the images. Invocation is public by default but
+through an explicit `allUsers` binding, so it can be turned off with
+`allow_unauthenticated = false`. `gcp_project` and `region` are the only account facts it
+needs; there is no VPC input, because Cloud Run provisions no network of its own.
+
+Generated AWS modules exist for `serverless` and `container`, and GCP has one for `container`.
+`batch` and `edge` still need a hand-written env root, and the plan document is the contract
+to write it against. `--cloud gcp` refuses a plan containing a target it has no module for,
+naming each service, rather than emitting a tree that silently omits it.
 
 `aid infra plan` and `aid infra apply` spawn the backend but never run `init`, because
 initialising is a decision about a backend and a lock table, not a consequence of the spec. Run
@@ -284,12 +310,13 @@ it yourself in the env root first:
 
 ```console
 tofu -chdir=infra/envs/dev init
+tofu -chdir=infra/envs/gcp-dev init
 aid infra plan --env dev
 ```
 
-The generated module is validated in CI, not here: a job runs `tofu init -backend=false` and
-`tofu validate` over the fixture at `packages/cli/test/fixtures/infra`, which is asserted
-byte-identical to what the emitter writes.
+The generated modules are validated in CI: a job runs `tofu init -backend=false` and
+`tofu validate` over both fixtures under `packages/cli/test/fixtures/infra/envs`, which are
+asserted byte-identical to what the emitter writes.
 
 ## What you write
 
