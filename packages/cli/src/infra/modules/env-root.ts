@@ -167,6 +167,21 @@ const BATCH_INPUTS = [
   '}',
 ];
 
+/**
+ * Bedrock is regional and a model id is not portable across regions, but the deployment
+ * region is already the provider's region and Lambda sets `AWS_REGION` itself. So this is
+ * an override with an empty default, not a required input: it exists for the case where
+ * the model lives somewhere other than the stack, and the modules decide the value.
+ */
+const BEDROCK_INPUTS = [
+  '',
+  'variable "bedrock_region" {',
+  '  description = "Region for Bedrock model calls, when it differs from the region this stack deploys into."',
+  '  type        = string',
+  '  default     = ""',
+  '}',
+];
+
 const CONTAINER_INPUTS = [
   '',
   'variable "container_sizing" {',
@@ -252,6 +267,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
     ...PLAN_VARIABLES,
     ...(any ? IMAGE_URIS : []),
     ...(any ? SECRET_ARNS : []),
+    ...(any ? BEDROCK_INPUTS : []),
     ...(modules.serverless ? SERVERLESS_SIZING : []),
     ...(modules.container ? CONTAINER_INPUTS : []),
     ...(modules.batch === true ? BATCH_INPUTS : []),
@@ -264,12 +280,13 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   if (modules.serverless) {
     calls.push(
       moduleCall('serverless', [
-        'project     = var.project',
-        'services    = var.services',
-        'image_uris  = var.image_uris',
-        'secret_arns = var.secret_arns',
-        'sizing      = var.sizing',
-        'tags        = var.tags',
+        'project        = var.project',
+        'services       = var.services',
+        'image_uris     = var.image_uris',
+        'secret_arns    = var.secret_arns',
+        'sizing         = var.sizing',
+        'bedrock_region = var.bedrock_region',
+        'tags           = var.tags',
       ]),
     );
     outputs.push([
@@ -294,6 +311,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         'health_check_path  = var.health_check_path',
         'idle_timeout       = var.idle_timeout',
         'log_retention_days = var.log_retention_days',
+        'bedrock_region     = var.bedrock_region',
         'tags               = var.tags',
       ]),
     );
@@ -313,6 +331,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         'assign_public_ip        = var.batch_assign_public_ip',
         'max_vcpus               = var.batch_max_vcpus',
         'log_retention_days      = var.batch_log_retention_days',
+        'bedrock_region          = var.bedrock_region',
         'tags                    = var.tags',
       ]),
     );

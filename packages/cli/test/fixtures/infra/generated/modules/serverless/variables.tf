@@ -54,3 +54,9 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "bedrock_region" {
+  description = "Region for Bedrock calls. Empty means the region this stack deploys into."
+  type        = string
+  default     = ""
+}

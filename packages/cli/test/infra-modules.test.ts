@@ -141,10 +141,52 @@ const AS_BATCH = {
   })),
 } as unknown as DeployPlan;
 
+/** A batch job naming a cloud-native model. */
+const BATCH_BEDROCK = {
+  ...AS_BATCH,
+  services: AS_BATCH.services.map((service) => ({
+    ...service,
+    providers: ['bedrock'],
+  })),
+} as unknown as DeployPlan;
+
 /** Both targets at once, so the cloud alone decides which modules exist. */
 const MIXED = {
   ...SERVING,
   services: [...SERVING.services, { ...SERVING.services[0], id: 'web', target: 'container' }],
+} as unknown as DeployPlan;
+
+/** The same plan naming a cloud-native model, which is what earns an IAM grant. */
+const AS_BEDROCK = {
+  ...SERVING,
+  services: SERVING.services.map((service) => ({ ...service, providers: ['bedrock'] })),
+} as unknown as DeployPlan;
+
+/** A serverless version of the same, streaming, so the grant adds the stream action. */
+const AS_BEDROCK_STREAMING = {
+  ...AS_BEDROCK,
+  services: AS_BEDROCK.services.map((service) => ({
+    ...service,
+    streaming: true,
+  })),
+} as unknown as DeployPlan;
+
+/** A container service naming a cloud-native model, which is what earns the grant. */
+const CONTAINER_BEDROCK = {
+  ...AS_CONTAINER,
+  services: AS_CONTAINER.services.map((service) => ({
+    ...service,
+    providers: ['bedrock'],
+  })),
+} as unknown as DeployPlan;
+
+/** The same, streaming, so the grant must include the streaming action. */
+const CONTAINER_BEDROCK_STREAMING = {
+  ...CONTAINER_BEDROCK,
+  services: CONTAINER_BEDROCK.services.map((service) => ({
+    ...service,
+    streaming: true,
+  })),
 } as unknown as DeployPlan;
 
 /** Biome reads a dollar-brace in a plain string as a botched template. */
@@ -189,6 +231,22 @@ describe('emitServerlessModule', () => {
     const main = mainOf(emitServerlessModule(planOf('serverless')));
     expect(main).toContain('secretsmanager:GetSecretValue');
     expect(main).toContain('Resource = values(var.secret_arns)');
+  });
+
+  it('grants Bedrock only to the function that names it', () => {
+    // The grant is keyed off `providers`, so an OpenAI-only build gets an empty map and
+    // Terraform creates no policy at all. The stream action follows `streaming`.
+    const main = mainOf(emitServerlessModule(AS_BEDROCK));
+    expect(main).toContain('for_each = local.bedrock');
+    expect(main).toContain('if contains(service.providers, "bedrock")');
+    expect(main).toContain('AWS_REGION = local.bedrock_region');
+    expect(main).toContain('each.value.streaming ? ["bedrock:InvokeModelWithResponseStream"] : []');
+    // Scoped to foundation models and this account's inference profiles, not `*`.
+    expect(main).toContain(':foundation-model/*');
+    expect(main).toContain(':inference-profile/*');
+
+    const streaming = mainOf(emitServerlessModule(AS_BEDROCK_STREAMING));
+    expect(streaming).toContain('bedrock:InvokeModelWithResponseStream');
   });
 
   it('makes a legal function name out of a namespace that carries a dot', () => {
@@ -306,6 +364,21 @@ describe('emitContainerModule', () => {
     // task is serving, so the probe accepts any answer below 500.
     const main = mainOf(emitContainerModule(planOf('container')));
     expect(main).toContain('matcher = "200-499"');
+  });
+
+  it('grants Bedrock on the task role, where the SDK looks for credentials', () => {
+    // The execution role resolves secrets for the agent; the task role is what the app
+    // signs an AWS call with. A grant on the wrong one fails at invocation.
+    const main = mainOf(emitContainerModule(CONTAINER_BEDROCK));
+    expect(main).toContain('resource "aws_iam_role_policy" "bedrock"');
+    expect(main).toContain('role     = aws_iam_role.task[each.key].id');
+    expect(main).toContain('for_each = local.bedrock');
+    expect(main).toContain('if contains(service.providers, "bedrock")');
+    expect(main).toContain('AWS_REGION = local.bedrock_region');
+    expect(main).toContain('each.value.streaming ? ["bedrock:InvokeModelWithResponseStream"] : []');
+
+    const streaming = mainOf(emitContainerModule(CONTAINER_BEDROCK_STREAMING));
+    expect(streaming).toContain('bedrock:InvokeModelWithResponseStream');
   });
 });
 
@@ -541,6 +614,18 @@ describe('emitBatchModule', () => {
     expect(main).toContain('secretsmanager:GetSecretValue');
     expect(main).toContain('Resource = values(var.secret_arns)');
     expect(main).toContain('secrets     = local.secret_env[each.key]');
+  });
+
+  it('gives the job a task role, since a job definition without one has no credentials', () => {
+    // A Bedrock call signs with the task role; omitting `taskRoleArn` leaves the job with
+    // no AWS credentials at all, and the failure surfaces at invocation, not at plan time.
+    const main = mainOf(emitBatchModule(BATCH_BEDROCK));
+    expect(main).toContain('resource "aws_iam_role" "task"');
+    expect(main).toContain('taskRoleArn = aws_iam_role.task[0].arn');
+    expect(main).toContain('resource "aws_iam_role_policy" "bedrock"');
+    expect(main).toContain('role  = aws_iam_role.task[0].id');
+    expect(main).toContain('anytrue([for service in local.bedrock : service.streaming])');
+    expect(main).toContain('AWS_REGION');
   });
 
   it('refuses the four inputs it cannot guess, at plan time', () => {

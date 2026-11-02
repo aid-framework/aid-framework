@@ -1,8 +1,23 @@
+data "aws_region" "current" {}
+
+data "aws_partition" "current" {}
+data "aws_caller_identity" "current" {}
+
 locals {
   serverless = {
     for id, service in var.services : id => service
     if service.target == "serverless"
   }
+
+  # A service that names Bedrock calls it with the function role, so the grant below is
+  # the only credential it needs. `providers` is derived from the build's models, so this
+  # is conservative: every function in a build that mentions Bedrock gets the grant.
+  bedrock = {
+    for id, service in local.serverless : id => service
+    if contains(service.providers, "bedrock")
+  }
+
+  bedrock_region = var.bedrock_region != "" ? var.bedrock_region : data.aws_region.current.name
 
   # Only a service with a route can be reached through the API, and a plan with no
   # route needs no API at all -- so the gateway is keyed off this, not off services.
@@ -35,10 +50,13 @@ locals {
   # A literal env value is copied; a secret reference becomes a Lambda dynamic
   # reference, so the value never enters state or a plan file.
   literal_env = {
-    for id, service in local.serverless : id => {
-      for variable in service.env : variable.name => variable.value
-      if variable.secret == false && variable.value != null
-    }
+    for id, service in local.serverless : id => merge(
+      contains(service.providers, "bedrock") ? { AWS_REGION = local.bedrock_region } : {},
+      {
+        for variable in service.env : variable.name => variable.value
+        if variable.secret == false && variable.value != null
+      }
+    )
   }
 
   secret_env = {
@@ -85,6 +103,30 @@ resource "aws_iam_role_policy" "secrets" {
       Effect   = "Allow"
       Action   = ["secretsmanager:GetSecretValue"]
       Resource = values(var.secret_arns)
+    }]
+  })
+}
+
+# Bedrock authenticates with this role, so the function needs no API key. The stream
+# action is granted only to a service that streams, so the policy describes what the
+# spec asked for.
+resource "aws_iam_role_policy" "bedrock" {
+  for_each = local.bedrock
+  name     = "${local.name[each.key]}-bedrock"
+  role     = aws_iam_role.service[each.key].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = concat(
+        ["bedrock:InvokeModel"],
+        each.value.streaming ? ["bedrock:InvokeModelWithResponseStream"] : [],
+      )
+      Resource = [
+        "arn:${data.aws_partition.current.partition}:bedrock:*::foundation-model/*",
+        "arn:${data.aws_partition.current.partition}:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+      ]
     }]
   })
 }

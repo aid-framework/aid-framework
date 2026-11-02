@@ -1,10 +1,23 @@
 data "aws_region" "current" {}
 
+data "aws_partition" "current" {}
+data "aws_caller_identity" "current" {}
+
 locals {
   batch = {
     for id, service in var.services : id => service
     if service.target == "batch"
   }
+
+  # A job that names Bedrock calls it with the task role, so the grant below is the only
+  # credential it needs. `providers` is derived from the build's models, so this is
+  # conservative: every job in a build that mentions Bedrock gets the grant.
+  bedrock = {
+    for id, service in local.batch : id => service
+    if contains(service.providers, "bedrock")
+  }
+
+  bedrock_region = var.bedrock_region != "" ? var.bedrock_region : data.aws_region.current.name
 
   # IAM and Batch names allow letters, digits, hyphens and underscores, while a namespace
   # may carry a dot; the replacement is what keeps `aid.test` a legal name.
@@ -20,13 +33,19 @@ locals {
   # A literal env value is copied; a secret becomes a job-definition `secrets` entry, so
   # the value never enters state or a plan file.
   literal_env = {
-    for id, service in local.batch : id => [
-      for variable in service.env : {
-        name  = variable.name
-        value = variable.value
-      }
-      if variable.secret == false && variable.value != null
-    ]
+    for id, service in local.batch : id => concat(
+      contains(service.providers, "bedrock") ? [{
+        name  = "AWS_REGION"
+        value = local.bedrock_region
+      }] : [],
+      [
+        for variable in service.env : {
+          name  = variable.name
+          value = variable.value
+        }
+        if variable.secret == false && variable.value != null
+      ],
+    )
   }
 
   secret_env = {
@@ -90,6 +109,47 @@ resource "aws_iam_role_policy_attachment" "execution" {
   count      = length(local.batch) > 0 ? 1 : 0
   role       = aws_iam_role.execution[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+# A job definition with no task role runs with no AWS credentials at all, so a Bedrock
+# call would fail with an auth error while every other secret still resolved. The role
+# exists for every batch job; the grant below only exists when a job names Bedrock.
+resource "aws_iam_role" "task" {
+  count = length(local.batch) > 0 ? 1 : 0
+  name  = "${substr(replace("${var.project.namespace}-${var.project.name}", "/[^A-Za-z0-9-_]/", "-"), 0, 46)}-batch-task"
+  tags  = var.tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+# The stream action is granted only when a job streams, so the policy describes what the
+# spec asked for rather than the union of everything Bedrock can do.
+resource "aws_iam_role_policy" "bedrock" {
+  count = length(local.bedrock) > 0 ? 1 : 0
+  name  = "batch-bedrock"
+  role  = aws_iam_role.task[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = concat(
+        ["bedrock:InvokeModel"],
+        anytrue([for service in local.bedrock : service.streaming]) ? ["bedrock:InvokeModelWithResponseStream"] : [],
+      )
+      Resource = [
+        "arn:${data.aws_partition.current.partition}:bedrock:*::foundation-model/*",
+        "arn:${data.aws_partition.current.partition}:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+      ]
+    }]
+  })
 }
 
 # The job definition's `secrets` are resolved by the execution role, so a declared secret
@@ -169,6 +229,8 @@ resource "aws_batch_job_definition" "job" {
   container_properties = jsonencode({
     image   = try(var.image_uris[each.key], "")
     command = local.command[each.key]
+
+    taskRoleArn = aws_iam_role.task[0].arn
 
     resourceRequirements = [
       {

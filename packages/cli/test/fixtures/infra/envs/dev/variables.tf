@@ -17,6 +17,12 @@ variable "secret_arns" {
   default     = {}
 }
 
+variable "bedrock_region" {
+  description = "Region for Bedrock model calls, when it differs from the region this stack deploys into."
+  type        = string
+  default     = ""
+}
+
 variable "sizing" {
   description = "Service id -> memory and timeout. The module defaults are deliberately modest."
   type = map(object({
