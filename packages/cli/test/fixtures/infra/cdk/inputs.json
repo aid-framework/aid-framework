@@ -1,0 +1,14 @@
+{
+  "images": {
+    "api": "111111111111.dkr.ecr.us-east-1.amazonaws.com/aid-ping:latest"
+  },
+  "secretArns": {
+    "OPENAI_API_KEY": "arn:aws:secretsmanager:us-east-1:111111111111:secret:openai"
+  },
+  "sizing": {
+    "api": { "memoryMb": 512, "timeoutSeconds": 15 }
+  },
+  "tags": {
+    "project": "aid-ping"
+  }
+}

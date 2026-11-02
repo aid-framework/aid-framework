@@ -1,0 +1,16 @@
+{
+  "name": "aid-cdk-fixture",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Synthesises the generated CDK construct so a broken one fails CI, like the tofu fixture.",
+  "scripts": {
+    "synth": "cdk synth --no-color"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.275.0",
+    "constructs": "^10.5.0"
+  },
+  "devDependencies": {
+    "aws-cdk": "2.1147.0"
+  }
+}

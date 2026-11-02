@@ -18,11 +18,14 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { emitInfra } from '../src/infra/emit.js';
 import {
   BATCH_MODULE_DIR,
+  CDK_DIR,
+  CDK_SERVERLESS_MODULE,
   CLOUDRUN_MODULE_DIR,
   CLOUDRUNJOB_MODULE_DIR,
   CONTAINER_MODULE_DIR,
   EDGE_MODULE_DIR,
   emitBatchModule,
+  emitCdkModules,
   emitCloudRunJobModule,
   emitCloudRunModule,
   emitContainerModule,
@@ -980,14 +983,17 @@ describe('modulesOf, the seam emit.ts reads', () => {
     const paths = emitProviderModules(planOf('serverless', 'container')).map((file) => file.path);
     expect(paths).toContain(`${SERVERLESS_MODULE_DIR}/main.tf`);
     expect(paths).toContain(`${CONTAINER_MODULE_DIR}/main.tf`);
-    expect(paths).toHaveLength(8);
+    // Two provider modules, plus the CDK construct that mirrors the serverless one.
+    expect(paths).toContain(CDK_SERVERLESS_MODULE);
+    expect(paths).toHaveLength(9);
 
     const all = emitProviderModules(planOf('serverless', 'container', 'batch', 'edge')).map(
       (file) => file.path,
     );
     expect(all).toContain(`${BATCH_MODULE_DIR}/main.tf`);
     expect(all).toContain(`${EDGE_MODULE_DIR}/main.tf`);
-    expect(all).toHaveLength(16);
+    // Four provider modules (16 files) plus the CDK construct.
+    expect(all).toHaveLength(17);
   });
 
   it('emits only the Cloud Run module for a GCP plan with no job', () => {
@@ -1128,6 +1134,34 @@ describe('the validate fixture', () => {
     expect(main).toContain('source = "../../generated/modules/cloudrunjob"');
     expect(main).toContain('provider "google"');
   });
+
+  it('matches the emitted CDK construct byte for byte', () => {
+    // CI runs `cdk synth` here, so this file must be exactly what `aid infra gen` writes.
+    const [construct] = emitCdkModules(planOf('serverless'), 'aws');
+    const fixture = readFileSync(join(FIXTURE, 'generated', 'cdk', 'serverless.cjs'), 'utf8');
+    expect(fixture).toBe(construct.contents);
+  });
+
+  it('wires the CDK app to the construct it synthesises', () => {
+    const app = readFileSync(join(FIXTURE, 'cdk', 'bin', 'app.js'), 'utf8');
+    expect(app).toContain("require('../../generated/cdk/serverless.cjs')");
+    expect(app).toContain("path.join(here, 'context.json')");
+  });
+
+  it('keeps the CDK dependencies at the fixture root', () => {
+    // Node resolves `aws-cdk-lib` from the construct's directory upward. `generated/cdk`
+    // is a sibling of `cdk/`, so a package.json beside the app would never be found.
+    const pkg = JSON.parse(readFileSync(join(FIXTURE, 'package.json'), 'utf8'));
+    expect(pkg.dependencies['aws-cdk-lib']).toBe('2.275.0');
+    expect(pkg.devDependencies['aws-cdk']).toBe('2.1147.0');
+  });
+
+  it('synthesises the serverless app, not an empty stack', () => {
+    const app = readFileSync(join(FIXTURE, 'cdk', 'bin', 'app.js'), 'utf8');
+    // `cdk synth` exits 0 for an empty stack, so the fixture asserts the shape itself.
+    expect(app).toContain('expected one Lambda function');
+    expect(app).toContain('expected one HTTP API route');
+  });
 });
 
 describe('the whole derived tree', () => {
@@ -1148,5 +1182,85 @@ describe('the whole derived tree', () => {
     expect(paths).toContain(`${SERVERLESS_MODULE_DIR}/main.tf`);
     expect(paths).toContain(`${CONTAINER_MODULE_DIR}/main.tf`);
     expect(paths).not.toContain(`${CLOUDRUN_MODULE_DIR}/main.tf`);
+  });
+});
+
+describe('the CDK construct', () => {
+  it('is a constant, so `cdk synth` can validate it once', () => {
+    const files = emitCdkModules(planOf('serverless'), 'aws');
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe(CDK_SERVERLESS_MODULE);
+    // The construct loops over the context at synth time, so its bytes cannot depend on
+    // the plan. A construct that baked in services could not be validated once.
+    expect(emitCdkModules(planOf('serverless', 'serverless'), 'aws')[0].contents).toBe(
+      files[0].contents,
+    );
+  });
+
+  it('is not emitted for GCP or for a plan with no serverless service', () => {
+    expect(emitCdkModules(planOf('serverless'), 'gcp')).toEqual([]);
+    expect(emitCdkModules(planOf('container', 'batch'), 'aws')).toEqual([]);
+  });
+
+  it('refuses what the HCL module refuses, in the same words', () => {
+    const construct = emitCdkModules(planOf('serverless'), 'aws')[0].contents;
+    const module = emitServerlessModule(planOf('serverless'))
+      .map((file) => file.contents)
+      .join('\n');
+
+    // A refusal that drifted from the module would fail at synth for a different reason
+    // than `tofu plan`, and the two backends would stop being interchangeable.
+    for (const sentence of [
+      'declares streaming, which an HTTP API cannot deliver on AWS.',
+      'Cloud Run streams.',
+      'Name the container image this service runs;',
+      'ghcr.io registry, which Lambda cannot pull from.',
+      'Add name -> ARN for every secret it declares.',
+    ]) {
+      expect(construct, sentence).toContain(sentence);
+      expect(module, sentence).toContain(sentence);
+    }
+
+    // The map names differ because one backend reads HCL variables and the other JSON.
+    expect(construct).toContain('No images entry for');
+    expect(module).toContain('No image_uris entry for');
+    expect(construct).toContain('references a secret with no secretArns entry.');
+    expect(module).toContain('references a secret with no secret_arns entry.');
+  });
+
+  it('mirrors every resource the HCL module renders', () => {
+    const contents = emitCdkModules(planOf('serverless'), 'aws')[0].contents;
+    for (const kind of [
+      'CfnFunction', // aws_lambda_function
+      'CfnApi', // aws_apigatewayv2_api
+      'CfnStage', // aws_apigatewayv2_stage
+      'CfnIntegration', // aws_apigatewayv2_integration
+      'CfnRoute', // aws_apigatewayv2_route
+      'CfnPermission', // aws_lambda_permission
+      'Role', // aws_iam_role
+      'PolicyStatement', // aws_iam_role_policy
+    ]) {
+      expect(contents, kind).toContain(kind);
+    }
+  });
+
+  it('is .cjs, because a generated project may be an ES module', () => {
+    // `packages/cli` is `"type": "module"`; a `.js` construct is parsed as ESM and
+    // `require` throws before synth starts. The fixture caught exactly that.
+    expect(CDK_SERVERLESS_MODULE.startsWith(CDK_DIR)).toBe(true);
+    expect(CDK_SERVERLESS_MODULE.endsWith('.cjs')).toBe(true);
+  });
+});
+
+describe('the whole derived tree, CDK included', () => {
+  it('emits the construct beside the module it mirrors', () => {
+    const paths = emitInfra(SERVING).map((file) => file.path);
+    expect(paths).toContain(`${SERVERLESS_MODULE_DIR}/main.tf`);
+    expect(paths).toContain(CDK_SERVERLESS_MODULE);
+  });
+
+  it('emits no construct on GCP', () => {
+    const paths = emitInfra(SERVING, { cloud: 'gcp' }).map((file) => file.path);
+    expect(paths).not.toContain(CDK_SERVERLESS_MODULE);
   });
 });
