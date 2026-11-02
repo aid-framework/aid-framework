@@ -47,9 +47,13 @@ describe('the version the site reports', () => {
   });
 
   it('names the current spec language version on the homepage', () => {
-    const source = readFileSync(join(repoRoot, 'packages', 'spec', 'src', 'index.ts'), 'utf8');
-    const latest = /SPEC_VERSION_LATEST = '([0-9.]+)'/.exec(source)?.[1];
-    expect(latest).toBeTruthy();
+    // The newest version is the last entry of the array the validator reads, not a
+    // hand-maintained constant: the constant was `0.6` while the build already read `0.8`.
+    const source = readFileSync(join(repoRoot, 'packages', 'spec', 'src', 'validate.ts'), 'utf8');
+    const block = /SUPPORTED_SPEC_VERSIONS = \[([\s\S]*?)\] as const;/.exec(source)?.[1] ?? '';
+    const versions = [...block.matchAll(/'([0-9]+\.[0-9]+)'/g)].map((match) => match[1]);
+    expect(versions.length).toBeGreaterThan(0);
+    const latest = versions[versions.length - 1];
     const homepage = readFileSync(join(repoRoot, 'docs', 'index.md'), 'utf8');
     expect(homepage).toContain(`\`${latest}\``);
   });

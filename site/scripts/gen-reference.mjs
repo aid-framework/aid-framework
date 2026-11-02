@@ -19,6 +19,15 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  AI_INFRA,
+  CAPABILITY_AXES,
+  CLOUD_REFUSALS,
+  CLOUD_SERVICES,
+  REFUSALS,
+  SHIPPED_FEATURES,
+} from './features-data.mjs';
+import { loadSupportData } from './support-data.mjs';
 
 const siteRoot = fileURLToPath(new URL('..', import.meta.url));
 const repoRoot = join(siteRoot, '..');
@@ -730,49 +739,15 @@ function conformancePage() {
  * matrix is a second copy that goes stale the day a cloud or provider ships.
  */
 function supportPage() {
-  const shapes = readSource('packages/ir/src/shapes.ts');
-  const providerBlock = shapes.match(/export const SERVED_PROVIDERS = \[([\s\S]*?)\] as const;/);
-  if (providerBlock === null) {
-    failures.push('cannot parse `SERVED_PROVIDERS` from packages/ir/src/shapes.ts');
-  }
-  const providers = [...(providerBlock?.[1] ?? '').matchAll(/'([^']+)'/g)].map(
-    (match) => match[1] ?? '',
-  );
-
-  const cloudSource = readSource('packages/cli/src/infra/cloud.ts');
-  const cloudBlock = cloudSource.match(/CLOUD_TARGETS[^=]*=\s*\{([\s\S]*?)\n\};/);
-  if (cloudBlock === null) {
-    failures.push('cannot parse `CLOUD_TARGETS` from packages/cli/src/infra/cloud.ts');
-  }
-  /** @type {Map<string, string[]>} */
-  const clouds = new Map();
-  for (const match of (cloudBlock?.[1] ?? '').matchAll(/^\s*([a-z][a-z0-9]*):\s*\[([^\]]*)\],/gm)) {
-    clouds.set(
-      match[1] ?? '',
-      [...(match[2] ?? '').matchAll(/'([^']+)'/g)].map((entry) => entry[1] ?? ''),
-    );
-  }
-  if (clouds.size === 0) {
-    failures.push('parsed `CLOUD_TARGETS` as an empty map; expected at least one cloud');
-  }
-
-  const schema = readJson('packages/spec/src/schema/spec.schema.json');
-  const versions = /** @type {string[]} */ (
-    /** @type {any} */ (schema)?.properties?.specVersion?.enum ?? []
-  );
-  if (versions.length === 0) {
-    failures.push('cannot parse the spec version enum from the spec JSON Schema');
-  }
-  const latestVersion = versions[versions.length - 1] ?? '';
-
-  const corpus = /** @type {any} */ (readJson('conformance/corpus.json'));
-  const cases = Array.isArray(corpus?.cases) ? corpus.cases.length : 0;
-  const operations = new Set(
-    /** @type {{ op?: string }[]} */ (corpus?.cases ?? []).map((entry) => entry.op),
-  ).size;
+  const data = loadSupportData();
+  const providers = data.providers;
+  const clouds = new Map(data.clouds.map((entry) => [entry.cloud, entry.targets]));
+  const latestVersion = data.latestSpecVersion;
+  const cases = data.corpus.cases;
+  const operations = data.corpus.operations;
 
   const allTargets = [...new Set([...clouds.values()].flat())].sort();
-  const generatedTargets = targetIds();
+  const generatedTargets = data.targets;
 
   const lines = [];
   lines.push('# Support');
@@ -837,6 +812,186 @@ function supportPage() {
   return lines.join('\n');
 }
 
+/**
+ * Escape a value so it is safe inside an HTML attribute.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function attribute(text) {
+  return text
+    .replace(/`/g, '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * A dash that says why the cell is empty.
+ *
+ * A bare em dash reads as missing work. An absent cell is always either a refusal
+ * the compiler enforces or a provider fact, and the tooltip carries that reason
+ * without turning the table into paragraphs.
+ *
+ * @param {string} reason
+ * @returns {string}
+ */
+function absent(reason) {
+  return `<span title="${attribute(reason)}">—</span>`;
+}
+
+/**
+ * The marketing surface: what ships, which cloud runs it, and what is refused.
+ *
+ * The provider and cloud matrices come from `loadSupportData()`, so they cannot
+ * disagree with the gates. The registries in `features-data.mjs` supply the part
+ * no declaration states (the service behind a target, the release that first
+ * shipped a feature), and `features-page.test.mjs` holds them to the tree.
+ */
+function featuresPage() {
+  const data = loadSupportData();
+  const pageClouds = data.clouds.map((entry) => entry.cloud);
+  const targets = [...new Set(data.clouds.flatMap((entry) => entry.targets))];
+
+  const lines = [];
+  lines.push('# Features');
+  lines.push('');
+  lines.push(
+    `The provider and cloud matrices are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each row. The spec language is at \`${data.latestSpecVersion}\`.`,
+  );
+  lines.push('');
+
+  lines.push('## Deployment targets');
+  lines.push('');
+  lines.push(
+    'A deployment names one target, and the generated infrastructure runs it on one cloud. A cell names the managed service the emitted OpenTofu configures. A dash is a refusal with a named diagnostic, not a target that is still to come.',
+  );
+  lines.push('');
+  lines.push(`| Target | ${pageClouds.map((cloud) => `\`${cloud}\``).join(' | ')} |`);
+  lines.push(`| --- | ${pageClouds.map(() => '---').join(' | ')} |`);
+  for (const target of targets) {
+    const cells = pageClouds.map((cloud) => {
+      const service = CLOUD_SERVICES[cloud]?.[target];
+      if (service !== undefined) return cell(service);
+      const refusal = CLOUD_REFUSALS.find(
+        (entry) => entry.cloud === cloud && entry.target === target,
+      );
+      return absent(refusal?.reason ?? `\`${target}\` has no module on ${cloud}.`);
+    });
+    lines.push(`| \`${target}\` | ${cells.join(' | ')} |`);
+  }
+  lines.push('');
+  for (const refusal of CLOUD_REFUSALS) {
+    lines.push(
+      `\`${refusal.target}\` on \`${refusal.cloud}\` is refused with \`${refusal.code}\`: ${refusal.reason}`,
+    );
+    lines.push('');
+  }
+
+  lines.push('## Model providers');
+  lines.push('');
+  lines.push(
+    "Every provider in `SERVED_PROVIDERS` is a row. A check means the generated adapter advertises the capability the spec's `capabilities` enum names; a dash means a spec that declares it is refused with `ir/model-capability-missing`, because the provider's API has no such endpoint.",
+  );
+  lines.push('');
+  lines.push(
+    `| Provider | Adapter | ${CAPABILITY_AXES.map((axis) => axis.label).join(' | ')} | Catalog |`,
+  );
+  lines.push(`| --- | --- | ${CAPABILITY_AXES.map(() => '---').join(' | ')} | --- |`);
+  for (const provider of data.providers) {
+    const adapter = data.providerAdapters[provider] ?? '';
+    const advertised = data.adapterCapabilities[adapter] ?? [];
+    const cells = CAPABILITY_AXES.map((axis) =>
+      advertised.includes(axis.member)
+        ? 'yes'
+        : absent(`\`${adapter}\` does not advertise \`${axis.member}\`.`),
+    );
+    const catalog = data.providerCatalog[provider];
+    const catalogCell =
+      catalog === undefined
+        ? absent(
+            'No pinned model or cost profile is published for this provider, so the spec must give an explicit `modelId` and the call prices as unknown.',
+          )
+        : `${catalog.models} models, ${catalog.priced} priced`;
+    lines.push(
+      `| \`${provider}\` | ${adapter === '' ? absent('No adapter is generated.') : `\`${adapter}\``} | ${cells.join(' | ')} | ${catalogCell} |`,
+    );
+  }
+  lines.push('');
+
+  lines.push('## Cloud AI infrastructure');
+  lines.push('');
+  lines.push(
+    'The generated infrastructure does not only run the service; it grants the service the cloud identity it needs to call a managed model. Where a cloud needs extra configuration to reach its model platform, the module sets that too.',
+  );
+  lines.push('');
+  lines.push('| Managed service | Declared by | Emitted | Runtime credential | Since |');
+  lines.push('| --- | --- | --- | --- | --- |');
+  for (const entry of AI_INFRA) {
+    lines.push(
+      `| **${entry.title}** | \`${entry.declares}\` | ${cell(entry.emits)} | ${cell(entry.credential)} | \`${entry.since}\` |`,
+    );
+  }
+  lines.push('');
+
+  lines.push('## Out of the box');
+  lines.push('');
+  lines.push(
+    'Each row is behaviour the generator writes for you, the spec key or command that turns it on, and the release that first shipped it. A construct that needs a later spec version is refused by name rather than ignored.',
+  );
+  lines.push('');
+  lines.push('| Feature | What it does | Turned on by | Reference | Since |');
+  lines.push('| --- | --- | --- | --- | --- |');
+  for (const feature of SHIPPED_FEATURES) {
+    const section =
+      feature.href.split('#')[0]?.split('/').pop()?.replace(/\.md$/, '') ?? 'reference';
+    lines.push(
+      `| **${feature.title}** | ${cell(feature.detail)} | \`${feature.declaredBy}\` | [${section}](${feature.href}) | \`${feature.since}\` |`,
+    );
+  }
+  lines.push('');
+
+  lines.push('## Refused, on purpose');
+  lines.push('');
+  lines.push(
+    'An absent capability is stated once, here, with the diagnostic that enforces it, instead of being discovered during an apply or debugged in production.',
+  );
+  lines.push('');
+  lines.push('| Not supported | Why | Enforced by |');
+  lines.push('| --- | --- | --- |');
+  for (const refusal of REFUSALS) {
+    lines.push(`| ${refusal.title} | ${cell(refusal.reason)} | \`${refusal.code}\` |`);
+  }
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+  lines.push(
+    'Next: [the full support matrix](./reference/support.md), [the generator targets](./reference/targets.md), or [the spec reference](./reference/spec.md).',
+  );
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+/**
+ * Run a page builder, reporting a parse failure as a message instead of a stack trace.
+ *
+ * A builder that reads the tree throws a sentence naming the declaration that
+ * stopped matching. Without this the script dies before it can say which one.
+ *
+ * @param {() => string} builder
+ * @returns {string}
+ */
+function attempt(builder) {
+  try {
+    return builder();
+  } catch (cause) {
+    failures.push(cause instanceof Error ? cause.message : String(cause));
+    return '';
+  }
+}
+
 function withDescription(description, body) {
   return `---\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`;
 }
@@ -866,9 +1021,20 @@ const pages = [
   ],
   [
     'docs/reference/support.md',
-    withDescription(
-      'The shipped provider, cloud and target matrix, generated from the declarations the compiler enforces.',
-      supportPage(),
+    attempt(() =>
+      withDescription(
+        'The shipped provider, cloud and target matrix, generated from the declarations the compiler enforces.',
+        supportPage(),
+      ),
+    ),
+  ],
+  [
+    'docs/features.md',
+    attempt(() =>
+      withDescription(
+        'What ships out of the box, which cloud runs each deployment target, and what the compiler refuses, with the release that first shipped each feature.',
+        featuresPage(),
+      ),
     ),
   ],
   // `conformancePage` applies its own description, because the counts in it are read
