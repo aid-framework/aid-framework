@@ -17,6 +17,7 @@ module "cloudrun" {
   image_uris            = var.image_uris
   secret_ids            = var.secret_ids
   cloudrun_sizing       = var.cloudrun_sizing
+  project_id            = var.gcp_project
   region                = var.region
   allow_unauthenticated = var.allow_unauthenticated
   deletion_protection   = var.deletion_protection

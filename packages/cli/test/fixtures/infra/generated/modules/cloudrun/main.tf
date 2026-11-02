@@ -54,12 +54,48 @@ locals {
       ]
     ]) : "${pair.service}/${pair.name}" => pair
   }
+
+  # A service whose models name Vertex calls it with its own service account, so the
+  # project role below is the only credential it needs -- the same shape as the AWS
+  # modules' `local.bedrock`, and derived from `providers` rather than from a flag.
+  vertex = {
+    for id, service in local.container : id => service
+    if contains(service.providers, "google")
+  }
+
+  # The Vertex adapter reads its project and location from the environment, and Cloud Run
+  # sets neither. Both facts are already inputs here, so they are supplied rather than
+  # left to fail on the first model call. A variable the spec declares itself wins:
+  # pointing a service at another project is a decision, not a mistake to overwrite.
+  vertex_defaults = {
+    GOOGLE_CLOUD_PROJECT = var.project_id
+    GOOGLE_CLOUD_REGION  = var.region
+  }
+
+  vertex_env = {
+    for id, service in local.vertex : id => {
+      for name, value in local.vertex_defaults : name => value
+      if !contains([for variable in service.env : variable.name], name)
+    }
+  }
 }
 
 resource "google_service_account" "service" {
   for_each     = local.container
   account_id   = local.account_id[each.key]
   display_name = "${var.project.namespace}-${var.project.name}-${each.key}"
+}
+
+# Vertex AI authenticates with the service account, so a `google`-backed service needs
+# no key in state -- the same bargain as the AWS modules' Bedrock grant. The role is
+# project-scoped because `aiplatform.user` has no per-service resource to attach to, and
+# it is granted only to a service that names the provider.
+resource "google_project_iam_member" "vertex" {
+  for_each = local.vertex
+
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.service[each.key].email}"
 }
 
 resource "google_cloud_run_v2_service" "service" {
@@ -129,6 +165,16 @@ resource "google_cloud_run_v2_service" "service" {
               version = "latest"
             }
           }
+        }
+      }
+
+      # Vertex reads the project and location it should call from the environment, so a
+      # service that names `google` gets both without the spec restating them.
+      dynamic "env" {
+        for_each = lookup(local.vertex_env, each.key, {})
+        content {
+          name  = env.key
+          value = env.value
         }
       }
     }

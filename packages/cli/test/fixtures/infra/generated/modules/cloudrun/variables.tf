@@ -35,6 +35,11 @@ variable "image_uris" {
   type        = map(string)
 }
 
+variable "project_id" {
+  description = "Business input: the GCP project a service account is granted a role in."
+  type        = string
+}
+
 variable "secret_ids" {
   description = "Business input: Secret Manager secret id per secret name."
   type        = map(string)

@@ -321,8 +321,13 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
           ...(modules.container && cloud === 'gcp'
             ? [
                 'On GCP the env root also takes `gcp_project`: a namespace and name are spec',
-                'facts, but the project id is an account fact, so the provider is configured once',
-                'there and every resource inherits it.',
+                'facts, but the project id is an account fact, so the root supplies it once -- to',
+                'the provider, and to the module, which has to name it in one grant.',
+                '',
+                'A service whose models name the `google` provider gets `roles/aiplatform.user`',
+                'on that project and `GOOGLE_CLOUD_PROJECT`/`GOOGLE_CLOUD_REGION` in its',
+                'environment, so Vertex authenticates as the service account with no key in',
+                'state. A service that declares either variable itself keeps its own value.',
                 '',
                 'The Cloud Run module does not refuse a `streaming` service: Cloud Run forwards a',
                 'streamed body, so the same service that needs the container target on AWS needs',

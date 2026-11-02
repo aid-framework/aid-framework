@@ -273,7 +273,7 @@ declares the inputs no spec can supply:
 | `batch_subnet_ids`, `batch_security_group_ids` | A batch task runs in a network you own; the module refuses an empty subnet list rather than guessing a default VPC. |
 | `batch_assign_public_ip`, `batch_max_vcpus`, `batch_log_retention_days` | Public addressing, queue ceiling and log retention are operator decisions. |
 | `bedrock_region` | Bedrock models may live in a different region than the stack; empty means the stack's region. |
-| `gcp_project` | A GCP project id names one account, so the provider is configured from it. |
+| `gcp_project` | A GCP project id names one account, so the provider is configured from it and the module names it in a Vertex grant. |
 | `region` | Cloud Run names the region in a URL; it is a deployment choice. |
 | `secret_ids` | A Secret Manager id names one project, the GCP counterpart of an ARN. |
 | `cloudrun_sizing` | CPU, memory, instance bounds and concurrency are a budget decision. |
@@ -329,6 +329,16 @@ creates one Artifact Registry repository for the images. Invocation is public by
 through an explicit `allUsers` binding, so it can be turned off with
 `allow_unauthenticated = false`. `gcp_project` and `region` are the only account facts it
 needs; there is no VPC input, because Cloud Run provisions no network of its own.
+
+A service whose models name the `google` provider gets `roles/aiplatform.user` on that
+project, and `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_REGION` in its environment. Both are
+needed: the Vertex adapter reads its project and location from the environment and Cloud Run
+sets neither, and the role is what lets the service account call the model. No key is stored,
+because the same service account authenticates. This mirrors the AWS `bedrock` grant, and it
+is derived from `services[].providers` rather than from a flag, so a build that names no
+provider gets no grant and no extra variable. A service that declares either variable itself
+keeps its own value, so pointing one service at another project is a decision, not an
+overwrite.
 
 Generated AWS modules exist for `serverless`, `container` and `batch`, and GCP has one for
 `container`. `edge` still needs a hand-written env root, and the plan document is the contract
