@@ -426,6 +426,53 @@ jobs:
             echo "::endgroup::"
           done
 
+  # The CDK construct is a constant too, and `infra-modules.test.ts` asserts the committed
+  # fixture is byte-for-byte what the emitter produces. That proves the file has not
+  # drifted; it cannot prove `cdk synth` still accepts it. CDK validates a construct at
+  # synth, not at import, so a library bump can break it without this repo changing --
+  # which is why the pinned CLI and `aws-cdk-lib` move together.
+  # Advisory for a merge, like `typescript` and `tofu`: it gates nothing until the ruleset
+  # names it.
+  cdk:
+    name: cdk
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: packages/cli/test/fixtures/infra/package-lock.json
+
+      # The dependencies live at the fixture root, not beside the app: the construct
+      # resolves `aws-cdk-lib` from its own path upward.
+      - name: Install the fixture's CDK toolchain
+        working-directory: packages/cli/test/fixtures/infra
+        run: npm ci --no-audit --no-fund
+
+      # `cdk synth` exits 0 for an empty stack, so the fixture app asserts the resource
+      # shape itself. A construct that emits nothing fails here rather than passing green.
+      - name: Synthesise the generated construct
+        working-directory: packages/cli/test/fixtures/infra/cdk
+        run: node ../node_modules/aws-cdk/bin/cdk synth --no-color
+
+      # Synth writes a `.messages.json` per stack when CDK's own validation objects. The
+      # fixture is valid when that file does not exist at all, so its presence is the
+      # failure -- exiting 0 is not enough.
+      - name: Assert the construct produced no validation messages
+        working-directory: packages/cli/test/fixtures/infra/cdk
+        run: |
+          set -euo pipefail
+          if compgen -G "cdk.out/*.messages.json" > /dev/null; then
+            echo "cdk synth reported validation messages:"
+            cat cdk.out/*.messages.json
+            exit 1
+          fi
+
   # release.yml tags whatever commit a releasable merge produces, and publish.yml only
   # publishes a tag whose manifests declare that exact version. Nothing used to check
   # the two agreed, so a releasable merge without a stamp minted an empty release and

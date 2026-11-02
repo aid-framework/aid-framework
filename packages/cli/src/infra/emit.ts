@@ -2,10 +2,10 @@
  * The deployment wiring, derived from the deployment plan.
  *
  * This emits the *derived* layer only: the plan itself, the two spellings an env root
- * consumes (Terraform tfvars, CDK context), and a README that says who owns what.
- * Provider code -- the OpenTofu `modules/` and `envs/` trees, and CDK stacks -- is not
- * emitted here, because it carries no information the IR has, and because an emitter
- * that wrote AWS resources it could not `tofu validate` or `cdk synth` would be guessing.
+ * consumes (Terraform tfvars, CDK context), a README that says who owns what, and the
+ * constant provider modules behind `modules/index.ts` -- which include the one CDK
+ * construct, validated once by `cdk synth`. Env roots and CDK stacks are not emitted:
+ * they carry the account, region and sizing decisions the plan deliberately omits.
  *
  * The load-bearing rule is enforced by construction: nothing in this file accepts an
  * account id, a region, a CIDR, a domain, or a sizing number, so none can appear in the
@@ -289,6 +289,11 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
           '| `modules/edge/` | The Lambda@Edge + CloudFront module an `edge` deployment deploys into. |',
         ]
       : []),
+    ...(modules.serverless && cloud === 'aws'
+      ? [
+          '| `cdk/serverless.cjs` | The CDK construct a `serverless` service is added to (AWS only). |',
+        ]
+      : []),
     '',
     '## Using it',
     '',
@@ -406,7 +411,8 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
     ...(cloud === 'aws'
       ? [
           'With CDK, an app in `infra/cdk/<env>` reads the context file and supplies the',
-          'constructs, account and region itself:',
+          'constructs, account and region itself. `generated/cdk/serverless.cjs` exports',
+          '`addServerless(scope, context, inputs)`; call it from the stack:',
           '',
           '```sh',
           'aid infra plan  --iac cdk --env dev',

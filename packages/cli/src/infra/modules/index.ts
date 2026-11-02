@@ -12,6 +12,7 @@ import { type Cloud, DEFAULT_CLOUD } from '../cloud.js';
 import type { ModuleFile } from './hcl.js';
 
 export { BATCH_MODULE_DIR, emitBatchModule } from './batch.js';
+export { CDK_DIR, CDK_SERVERLESS_MODULE, emitCdkModules } from './cdk.js';
 export { CLOUDRUN_MODULE_DIR, emitCloudRunModule } from './cloudrun.js';
 export { CLOUDRUNJOB_MODULE_DIR, emitCloudRunJobModule } from './cloudrunjob.js';
 export { CONTAINER_MODULE_DIR, emitContainerModule } from './container.js';
@@ -22,6 +23,7 @@ export { hcl } from './hcl.js';
 export { emitServerlessModule, SERVERLESS_MODULE_DIR } from './serverless.js';
 
 import { emitBatchModule } from './batch.js';
+import { emitCdkModules } from './cdk.js';
 import { emitCloudRunModule } from './cloudrun.js';
 import { emitCloudRunJobModule } from './cloudrunjob.js';
 import { emitContainerModule } from './container.js';
@@ -69,5 +71,6 @@ export function emitProviderModules(plan: DeployPlan, cloud: Cloud = DEFAULT_CLO
         ...emitContainerModule(plan),
         ...emitBatchModule(plan),
         ...emitEdgeModule(plan),
+        ...emitCdkModules(plan, cloud),
       ];
 }
