@@ -9,7 +9,7 @@
   "additionalProperties": false,
   "properties": {
     "specVersion": {
-      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
+      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
       "enum": ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6"]
     },
     "project": { "$ref": "#/$defs/project" },
@@ -66,6 +66,13 @@
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/name" },
       "additionalProperties": { "$ref": "#/$defs/guardrail" }
+    },
+    "decisions": {
+      "description": "Decision points answered by TypeSafe AI Jev: a named question with its own reply shape, referenced by guardrails, routers and evals. Declarable from spec v0.6. A decision is not a provider, because Jev has no chat surface: it returns a typed answer rather than text. `choice` and `score` require `criteria`; `noul` forbids it. A pinned model version is the reproducible choice; an eval reference refuses a moving alias, while interactive routing may use one.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/decision" }
     },
     "memory": {
       "description": "Memory tiers: what is remembered, for how long, within what token budget, and where it lives. Declarable from spec v0.2; the kinds a target cannot serve are refused by its plan gate rather than approximated.",
@@ -1063,6 +1070,77 @@
           }
         }
       }
+    },
+    "decision": {
+      "type": "object",
+      "required": ["provider", "model", "type", "instructions"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "description": "The decision vendor. Closed: `typesafe` is the only one the runtime serves.",
+          "const": "typesafe"
+        },
+        "model": {
+          "description": "A pinned Jev version such as `jev-1.14.0`. Moving aliases (`jev-latest`, `jev-preview`) are refused inside `evals`, where a score must be reproducible.",
+          "type": "string",
+          "minLength": 1
+        },
+        "type": { "enum": ["choice", "score", "noul"] },
+        "instructions": {
+          "description": "The question, in one sentence. Not a prompt template: Jev does not carry a conversation.",
+          "type": "string",
+          "minLength": 1
+        },
+        "criteria": {
+          "oneOf": [
+            {
+              "description": "`choice`: a label -> description map. Labels are the answers.",
+              "type": "object",
+              "minProperties": 1,
+              "maxProperties": 255,
+              "propertyNames": { "minLength": 1 },
+              "additionalProperties": { "type": "string", "minLength": 1 }
+            },
+            {
+              "description": "`score`: 2 to 10 ordered levels; position is the score.",
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 10,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          ]
+        },
+        "onError": {
+          "description": "What a failed call means. `block` (the default) keeps a gate closed when the vendor is unreachable; `allow` keeps an advisory check from stopping traffic.",
+          "enum": ["allow", "block"]
+        },
+        "description": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "noul" } }, "required": ["type"] },
+          "then": {
+            "not": {
+              "required": ["criteria"],
+              "properties": { "criteria": true }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "choice" } }, "required": ["type"] },
+          "then": {
+            "required": ["criteria"],
+            "properties": { "criteria": { "type": "object" } }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "score" } }, "required": ["type"] },
+          "then": {
+            "required": ["criteria"],
+            "properties": { "criteria": { "type": "array" } }
+          }
+        }
+      ]
     },
     "guardrail": {
       "type": "object",

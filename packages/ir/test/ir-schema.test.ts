@@ -86,6 +86,7 @@ describe('ir.schema.json', () => {
       'memory',
       'agents',
       'guardrails',
+      'decisions',
       'deployments',
     ]) {
       expect(validate(omit(base, key)), `${key} must be present`).toBe(false);

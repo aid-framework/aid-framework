@@ -39,9 +39,10 @@ describe('spec version', () => {
     expect([...SUPPORTED_SPEC_VERSIONS]).toContain(SPEC_VERSION);
   });
 
-  it('lists the fourteen supported sections, four of which need spec 0.2', () => {
+  it('lists the fifteen supported sections, five of which need a later version', () => {
     expect([...SUPPORTED_SECTIONS].sort()).toEqual([
       'agents',
+      'decisions',
       'deployments',
       'evals',
       'guardrails',
@@ -56,16 +57,17 @@ describe('spec version', () => {
       'tools',
       'types',
     ]);
-    // The version boundary, named explicitly: these four are supported, and only from
-    // 0.2. A section that gains a minimum version without appearing here would be
-    // enforced by the schema and quietly refused by the scope rule.
+    // The version boundary, named explicitly: four sections are supported from 0.2 and
+    // `decisions` from 0.6. A section that gains a minimum version without appearing
+    // here would be enforced by the schema and quietly refused by the scope rule.
     expect(Object.keys(SECTION_MIN_VERSION).sort()).toEqual([
       'agents',
+      'decisions',
       'deployments',
       'guardrails',
       'memory',
     ]);
-    expect(Object.values(SECTION_MIN_VERSION)).toEqual(['0.2', '0.2', '0.2', '0.2']);
+    expect(Object.values(SECTION_MIN_VERSION)).toEqual(['0.2', '0.2', '0.2', '0.2', '0.6']);
   });
 
   it('keeps the supported, deferred and retired step kinds pairwise disjoint', () => {
@@ -109,15 +111,24 @@ describe('valid fixtures', () => {
   );
 
   it('accepts every section declared as supported', () => {
-    // No single fixture can carry all fourteen: four sections require spec 0.2 and the
-    // v0.1 fixture is the byte-identical baseline this layer must leave alone. The union
-    // is the assertion, so a supported section that no valid fixture carries fails here.
-    const v01 = checkSpecText(readFixture('valid/full.spec.yaml')).value as Record<string, unknown>;
-    const v02 = checkSpecText(readFixture('valid/v02-sections.spec.yaml')).value as Record<
-      string,
-      unknown
-    >;
-    const carried = new Set([...Object.keys(v01), ...Object.keys(v02)]);
+    // No single fixture carries every section: four require spec 0.2, `decisions` needs
+    // 0.6, and the v0.1 fixture is the byte-identical baseline this layer must leave
+    // alone. The union is the assertion, so a supported section that no valid fixture
+    // carries fails here.
+    const fixtureNames = [
+      'valid/full.spec.yaml',
+      'valid/v02-sections.spec.yaml',
+      'valid/v06-decisions.spec.yaml',
+    ] as const;
+    const documents = fixtureNames.map(
+      (name) => checkSpecText(readFixture(name)).value as Record<string, unknown>,
+    );
+    const [v01, v02, v06] = documents as [
+      Record<string, unknown>,
+      Record<string, unknown>,
+      Record<string, unknown>,
+    ];
+    const carried = new Set(documents.flatMap((document) => Object.keys(document)));
     expect([...carried].sort()).toEqual([...SUPPORTED_SECTIONS].sort());
 
     // The split is exactly the version boundary, so nothing was silently promoted by
@@ -125,7 +136,10 @@ describe('valid fixtures', () => {
     expect(Object.keys(v01).sort()).toEqual(
       [...SUPPORTED_SECTIONS].filter((section) => !(section in SECTION_MIN_VERSION)).sort(),
     );
-    expect(Object.keys(v02).sort()).toEqual([...SUPPORTED_SECTIONS].sort());
+    expect(Object.keys(v02).sort()).toEqual(
+      [...SUPPORTED_SECTIONS].filter((section) => section !== 'decisions').sort(),
+    );
+    expect(Object.keys(v06).sort()).toEqual(['decisions', 'project', 'specVersion']);
   });
 });
 
@@ -886,6 +900,112 @@ describe('the batch surface', () => {
 
     expect(codes(diagnostics)).toContain(DIAGNOSTIC_CODES.schemaViolation);
     expect(paths(diagnostics)).toContain('pipelines.brief.trigger');
+  });
+});
+
+describe('the decisions section', () => {
+  function doc(decisions: Record<string, unknown>, specVersion = '0.6'): Record<string, unknown> {
+    return { specVersion, project: { name: 'gate' }, decisions };
+  }
+
+  const choice = {
+    provider: 'typesafe',
+    model: 'jev-1.14.0',
+    type: 'choice',
+    instructions: 'Which queue should handle this ticket',
+    criteria: { billing: 'Money movement', technical: 'A bug report' },
+  };
+  const score = {
+    provider: 'typesafe',
+    model: 'jev-1.14.0',
+    type: 'score',
+    instructions: 'How urgent is this ticket',
+    criteria: ['low', 'medium', 'high'],
+  };
+  const noul = {
+    provider: 'typesafe',
+    model: 'jev-1.14.0',
+    type: 'noul',
+    instructions: 'The message conveys urgency',
+  };
+
+  it('accepts all three question shapes', () => {
+    expect(validateSpec(doc({ triage: choice, urgency: score, is_urgent: noul }))).toEqual([]);
+  });
+
+  it('accepts a declared failure posture and a description', () => {
+    expect(
+      validateSpec(doc({ is_urgent: { ...noul, onError: 'allow', description: 'Advisory only' } })),
+    ).toEqual([]);
+  });
+
+  it('tells a 0.5 document to move to 0.6 before it declares a decision', () => {
+    const diagnostics = validateSpec(doc({ triage: choice }, '0.5'));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['decisions']);
+    expect(diagnostics[0]?.message).toContain("'decisions' requires specVersion 0.6");
+  });
+
+  it('closes the provider to typesafe, the only one the runtime serves', () => {
+    const diagnostics = validateSpec(doc({ triage: { ...choice, provider: 'jev' } }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['decisions.triage.provider']);
+  });
+
+  it('refuses criteria on a noul question, which has nothing to choose between', () => {
+    const diagnostics = validateSpec(doc({ is_urgent: { ...noul, criteria: ['urgent'] } }));
+
+    expect(codes(diagnostics)).toContain(DIAGNOSTIC_CODES.schemaViolation);
+    expect(paths(diagnostics)).toContain('decisions.is_urgent');
+  });
+
+  it('refuses a choice question without criteria', () => {
+    const withoutCriteria: Record<string, unknown> = { ...choice };
+    delete withoutCriteria.criteria;
+    const diagnostics = validateSpec(doc({ triage: withoutCriteria }));
+
+    expect(codes(diagnostics)).toContain(DIAGNOSTIC_CODES.schemaViolation);
+    expect(paths(diagnostics)).toContain('decisions.triage.criteria');
+  });
+
+  it('refuses a choice whose criteria are an ordered list rather than a label map', () => {
+    const diagnostics = validateSpec(
+      doc({ triage: { ...choice, criteria: ['billing', 'technical'] } }),
+    );
+
+    expect(codes(diagnostics)).toContain(DIAGNOSTIC_CODES.schemaViolation);
+    expect(paths(diagnostics)).toContain('decisions.triage.criteria');
+  });
+
+  it('refuses a score question with fewer than two levels', () => {
+    const diagnostics = validateSpec(doc({ urgency: { ...score, criteria: ['high'] } }));
+
+    expect(codes(diagnostics)).toContain(DIAGNOSTIC_CODES.schemaViolation);
+    expect(paths(diagnostics)).toContain('decisions.urgency.criteria');
+  });
+
+  it('refuses a score question with more than ten levels', () => {
+    const diagnostics = validateSpec(
+      doc({ urgency: { ...score, criteria: Array.from({ length: 11 }, (_, i) => `level-${i}`) } }),
+    );
+
+    expect(codes(diagnostics)).toContain(DIAGNOSTIC_CODES.schemaViolation);
+    expect(paths(diagnostics)).toContain('decisions.urgency.criteria');
+  });
+
+  it('refuses a blank instruction, which is not a question', () => {
+    const diagnostics = validateSpec(doc({ is_urgent: { ...noul, instructions: '' } }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['decisions.is_urgent.instructions']);
+  });
+
+  it('keeps a moving alias legal here; only an eval reference refuses one', () => {
+    // The refusal belongs at the reference site (`evals[].scorer`), not in the
+    // declaration: interactive routing may deliberately want the newest Jev.
+    expect(validateSpec(doc({ triage: { ...choice, model: 'jev-latest' } }))).toEqual([]);
   });
 });
 

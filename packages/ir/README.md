@@ -48,12 +48,12 @@ pipeline.
 `IR_VERSION` is `"0.1.0"`. `specVersion` is carried through from the spec, so a consumer can always tell which
 spec revision produced an IR. The two are independent: neither implies the other.
 
-An IR always carries all nineteen top-level keys, even when a collection is empty:
+An IR always carries all twenty top-level keys, even when a collection is empty:
 
 ```text
 irVersion, specVersion, project, types, models, prompts, tools, retrievers, embeddings,
-stores, memory, agents, pipelines, evals, guardrails, deployments, observability, runtime,
-requiredCapabilities
+stores, memory, agents, pipelines, evals, guardrails, decisions, deployments,
+observability, runtime, requiredCapabilities
 ```
 
 ### An empty collection is a contract
@@ -61,7 +61,7 @@ requiredCapabilities
 An empty array here is not "missing" — it is a statement. The collections are present and required by the schema
 even when empty, so a later version can fill one in without touching a single consumer:
 
-- `agents`, `guardrails`, `memory`, `deployments` — declared by the spec language but unused by this document.
+- `agents`, `guardrails`, `memory`, `deployments`, `decisions` — declared by the spec language but unused by this document.
 - `embeddings` — not a spec section at all. A spec declares embedding capacity by giving a model the `embeddings`
   capability and pointing a retriever at it, so this collection is **derived** from that content. Empty means the
   app embeds nothing.

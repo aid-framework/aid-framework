@@ -1,0 +1,35 @@
+specVersion: "0.6"
+
+project:
+  name: gate
+  namespace: acme.gate
+  description: Exercises every decision question shape and the declared failure posture.
+  targets:
+    - py-fastapi
+
+decisions:
+  triage:
+    provider: typesafe
+    model: jev-1.14.0
+    type: choice
+    instructions: Which queue should handle this ticket
+    criteria:
+      billing: Money movement, refunds, and invoices
+      technical: A bug report or an outage
+      sales: Pricing and procurement
+    description: The first routing decision in the support path.
+  urgency:
+    provider: typesafe
+    model: jev-1.14.0
+    type: score
+    instructions: How urgent is this ticket
+    criteria:
+      - low
+      - medium
+      - high
+    onError: allow
+  is_urgent:
+    provider: typesafe
+    model: jev-1.14.0
+    type: noul
+    instructions: The message conveys urgency

@@ -13,7 +13,7 @@ Top-level keys, in the order the schema declares them:
 
 ```text
 specVersion  project  types  models  prompts  tools  stores  retrievers
-agents  guardrails  memory  deployments  evals  pipelines
+agents  guardrails  decisions  memory  deployments  evals  pipelines
 ```
 
 ## `project`
@@ -213,6 +213,36 @@ guardrails:
 loop reaches it. `redact` must name the fields the stage's payload actually has - on `input`
 that payload is the rendered prompt under `text`, and any other name is refused rather than
 emitted as a redaction that could never run.
+
+## `decisions`
+
+```yaml
+decisions:
+  triage:
+    provider: typesafe
+    model: jev-1.14.0
+    type: choice
+    instructions: classify_ticket
+    criteria:
+      billing: Money owed, refunded, or charged twice.
+      technical: The product is broken or unreachable.
+      account: Access, seats, or identity.
+    onError: block
+```
+
+A decision is a sealed question answered by one model on one call - a classifier, not a
+prompt you can shape. `type` is `choice` (pick one criterion), `score` (rank each criterion,
+2-10 of them) or `noul` (yes/no membership in `instructions`, with no confidence). `choice`
+takes a label-to-description map; `score` takes a list. `noul` takes neither - a confidence
+on a membership question is a number that means nothing.
+
+`provider` is `typesafe` and `model` names a Jev version such as `jev-1.14.0`. A moving alias
+(`jev-latest`, `jev-preview`) is legal in the declaration - interactive routing may deliberately
+want the newest model - but an eval reference refuses one, because a recorded decision has to name
+the exact model that produced it. Decisions are not `models` entries, so they cannot be aliased,
+budgeted, or swapped by an eval. `onError` is `block` (default) or `allow`, and it is declared
+rather than inferred: a billing decision that silently degrades to "allow" fails open in the one
+place correctness matters.
 
 ## `memory`
 

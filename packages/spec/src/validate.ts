@@ -29,6 +29,7 @@ export const SUPPORTED_SECTIONS = [
   'retrievers',
   'agents',
   'guardrails',
+  'decisions',
   'memory',
   'deployments',
   'evals',
@@ -60,6 +61,7 @@ export const SECTION_MIN_VERSION: Partial<
   guardrails: '0.2',
   memory: '0.2',
   deployments: '0.2',
+  decisions: '0.6',
 };
 
 /**
