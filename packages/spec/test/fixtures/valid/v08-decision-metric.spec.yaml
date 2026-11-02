@@ -1,0 +1,31 @@
+specVersion: "0.8"
+
+project:
+  name: scored
+  description: An eval scores every answer with a decision's ordered criteria.
+
+decisions:
+  helpfulness:
+    provider: typesafe
+    model: jev-1.14.0
+    type: score
+    instructions: How helpful is this answer
+    criteria:
+      - unusable
+      - partial
+      - complete
+
+evals:
+  quality:
+    target: pipeline:answer
+    dataset:
+      source: file
+      uri: evals/quality.jsonl
+    metrics:
+      - kind: exact
+        field: text
+      - kind: decision
+        decision: helpfulness
+    gate:
+      maxRegression: 0.05
+      samples: 3

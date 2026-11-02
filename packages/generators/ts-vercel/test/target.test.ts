@@ -452,6 +452,17 @@ describe('the fail-closed plan', () => {
     expect(checkPlan(ir).map((problem) => problem.code)).toContain('eval-metric-unsupported');
   });
 
+  it('refuses a decision-scored metric, which only the Python target measures', () => {
+    const ir = mutated((copy) => {
+      const evalShape = copy.evals[0];
+      const metric = evalShape?.metrics[0];
+      if (metric === undefined) throw new Error('the example has no metrics');
+      (metric as { kind: string }).kind = 'decision';
+    });
+
+    expect(checkPlan(ir).map((problem) => problem.code)).toContain('eval-metric-unsupported');
+  });
+
   /**
    * The example's IR with `step` first in the pipeline, which is enough to be refused.
    *

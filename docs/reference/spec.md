@@ -14,7 +14,7 @@ Spec schema title: *AID Framework spec v0.6*.
 
 | Key | Type | Description |
 | --- | --- | --- |
-| `specVersion` | `0.1`, `0.2`, `0.3`, `0.4`, `0.5`, `0.6`, `0.7` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
+| `specVersion` | `0.1`, `0.2`, `0.3`, `0.4`, `0.5`, `0.6`, `0.7`, `0.8` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). 0.8 adds the `decision` metric kind, which scores an eval prediction with a `score` decision. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
 | `project` | `project` | — |
 | `types` | map of `typeDef` | Named structured types referenced by prompts (structured output) and tools (input/output). |
 | `models` | map of `model` | Model aliases. The alias is what the rest of the spec refers to; the vendor id is pinned here and only here. |
@@ -152,7 +152,7 @@ Semantic cache settings. `threshold` is the minimum cosine similarity (0..1) a n
 
 ## `metric`
 
-A `metric` is exactly one of the 9 forms below; each form is recognised by its discriminating key.
+A `metric` is exactly one of the 10 forms below; each form is recognised by its discriminating key.
 
 ### `kind` = `exact`
 
@@ -195,6 +195,12 @@ Takes the value `"retrieval"` and no other keys.
 Deterministic and offline: a closed predicate evaluated against the prediction and the case, so unlike llm-judge it is allowed under gate.ci. Needs `gate.minMean: 1.0`, which a spec-local rule enforces.
 
 Takes the value `"assert"` and no other keys.
+
+### `kind` = `decision`
+
+Scores a prediction with a `score` decision: the rubric is declared once in `decisions` and the answer's position becomes the metric. Not deterministic, so a spec-local rule rejects it under gate.ci.
+
+Takes the value `"decision"` and no other keys.
 
 ## `pipeline`
 

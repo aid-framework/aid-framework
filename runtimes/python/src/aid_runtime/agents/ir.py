@@ -86,11 +86,12 @@ class ToolSpec:
 
 @dataclass(frozen=True, slots=True)
 class DecisionDefinition:
-    """A ``choice`` decision a guardrail asks, resolved from the IR's ``decisions``.
+    """A decision resolved from the IR's ``decisions`` collection.
 
-    Only the fields an input guardrail needs are here: the model that answers, the
-    question, and the labels an ``on_decision`` map may name. ``score`` and ``noul``
-    questions have no labels, so the spec gate refuses them as guardrail sources.
+    Only the fields a runtime needs are here: the model that answers, the
+    question, and the ordered labels or levels. A guardrail uses a ``choice``
+    decision's labels through an ``on_decision`` map; an eval's ``DecisionScore``
+    uses a ``score`` decision's criteria, where the position is the score.
     """
 
     id: str

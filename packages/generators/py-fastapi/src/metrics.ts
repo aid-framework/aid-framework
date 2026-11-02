@@ -1,8 +1,8 @@
 /**
  * The IR's eval metric vocabulary mapped onto the runtime's metrics.
  *
- * The mapping is deliberately partial. Of the IR's nine kinds, six reach a runtime
- * metric here; the other three are *rejected* rather than silently dropped, because a
+ * The mapping is deliberately partial. Of the IR's nine kinds, seven reach a runtime
+ * metric here; the other two are *rejected* rather than silently dropped, because a
  * metric that is declared but not measured makes a baseline report a passing gate over
  * an unmeasured claim, which is worse than refusing to generate -- and each rejection
  * carries the reason it cannot be measured. `tool-trace`, `cost`, and `latency` have no
@@ -134,6 +134,17 @@ export function mapMetric(metric: MetricShape): MetricMapping {
         name: 'retrieval',
         deterministic: true,
         expression: 'retrieval_metrics()',
+      };
+    case 'decision':
+      return {
+        measured: true,
+        name: 'decision',
+        deterministic: false,
+        // The decision travels as a module constant (`SCORE_DECISION`), so the generated
+        // eval carries the rubric the spec declared and asks the vendor the same question
+        // the guardrail path would. No floor: a model-produced score is reported, and
+        // `BaselineGate` refuses to gate on it.
+        expression: 'DecisionScore(SCORE_DECISION)',
       };
     case 'assert':
       return {

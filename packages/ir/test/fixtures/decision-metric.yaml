@@ -1,0 +1,31 @@
+specVersion: "0.8"
+
+project:
+  name: support-desk
+  namespace: acme.support
+
+decisions:
+  helpfulness:
+    provider: typesafe
+    model: jev-1.14.0
+    type: score
+    instructions: How helpful is this answer
+    criteria:
+      - unusable
+      - partial
+      - complete
+
+evals:
+  answer_quality:
+    target: pipeline:handle_ticket
+    dataset:
+      source: file
+      uri: datasets/answers.jsonl
+    metrics:
+      - kind: json-schema
+        schema: RefundResult
+      - kind: decision
+        decision: helpfulness
+    gate:
+      maxRegression: 0.05
+      samples: 3

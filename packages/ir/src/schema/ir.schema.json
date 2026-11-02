@@ -845,6 +845,15 @@
             "expr": { "$ref": "#/$defs/predicate" },
             "message": { "type": "string", "minLength": 1 }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "decision"],
+          "properties": {
+            "kind": { "const": "decision" },
+            "decision": { "type": "string", "minLength": 1 }
+          }
         }
       ]
     },

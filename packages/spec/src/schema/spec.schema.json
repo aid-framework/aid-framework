@@ -9,8 +9,8 @@
   "additionalProperties": false,
   "properties": {
     "specVersion": {
-      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
-      "enum": ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7"]
+      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). 0.8 adds the `decision` metric kind, which scores an eval prediction with a `score` decision. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
+      "enum": ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8"]
     },
     "project": { "$ref": "#/$defs/project" },
     "types": {
@@ -715,6 +715,21 @@
               "description": "The failure detail, verbatim. Required: it is the whole value of a failing assertion.",
               "type": "string",
               "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "decision"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "description": "Scores a prediction with a `score` decision: the rubric is declared once in `decisions` and the answer's position becomes the metric. Not deterministic, so a spec-local rule rejects it under gate.ci.",
+              "const": "decision"
+            },
+            "decision": {
+              "description": "The name of a `decisions` entry whose `type` is `score`. A moving alias is refused, because two runs of an eval would otherwise score two different models.",
+              "$ref": "#/$defs/name"
             }
           }
         }

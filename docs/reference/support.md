@@ -34,7 +34,7 @@ The emitted infrastructure is OpenTofu. A plan targets one cloud at a time, beca
 
 ## Spec language
 
-The current spec language version is `0.7`.
+The current spec language version is `0.8`.
 A construct that needs a later version is reported as `spec/not-supported`, naming the version it needs, instead of being ignored.
 
 ## Conformance
