@@ -38,7 +38,7 @@ function costExpression(model: ModelShape): string {
 }
 
 function modelExpression(model: ModelShape): string {
-  const { advertised } = modelCapabilities(model.capabilities);
+  const { advertised } = modelCapabilities(providerAdapter(model.provider), model.capabilities);
   const capabilities =
     advertised.length === 0
       ? '[]'
@@ -69,27 +69,44 @@ export function emitGatewayModels(ir: IR): EmittedFile {
     .filter((model) => providerAdapter(model.provider) !== undefined)
     .map((model) => {
       const adapter = providerAdapter(model.provider);
+      const name = stringLiteral(model.provider);
       if (adapter === 'FakeProvider') return `    fake: new FakeProvider(),`;
+      if (adapter === 'BedrockProvider') {
+        // Converse credentials come from the execution role, never from a spec-named
+        // variable, so a `keyedProvider` form here would be a credential the app never uses.
+        return `    ${propertyKey(model.provider)}: new BedrockProvider({ name: ${name} }),`;
+      }
+      if (adapter === 'AnthropicProvider') {
+        if (model.apiKeyEnv === undefined) {
+          return `    ${propertyKey(model.provider)}: new AnthropicProvider({ name: ${name} }),`;
+        }
+        return `    ${propertyKey(model.provider)}: keyedAnthropicProvider(${name}, ${stringLiteral(
+          model.apiKeyEnv,
+        )}),`;
+      }
       const apiKey = model.apiKeyEnv;
       if (apiKey === undefined) {
-        return `    ${propertyKey(model.provider)}: new OpenAICompatibleProvider({ name: ${stringLiteral(
-          model.provider,
-        )} }),`;
+        return `    ${propertyKey(model.provider)}: new OpenAICompatibleProvider({ name: ${name} }),`;
       }
-      return `    ${propertyKey(model.provider)}: keyedProvider(${stringLiteral(
-        model.provider,
-      )}, ${stringLiteral(apiKey)}),`;
+      return `    ${propertyKey(model.provider)}: keyedProvider(${name}, ${stringLiteral(apiKey)}),`;
     });
 
-  const header = importStatement(RUNTIME, [
-    { name: 'CostProfile', type: false },
+  const adapters = new Set(
+    ir.models.map((model) => providerAdapter(model.provider)).filter((adapter) => adapter),
+  );
+  const imports: ImportName[] = [{ name: 'CostProfile', type: false }];
+  if (adapters.has('AnthropicProvider')) imports.push({ name: 'AnthropicProvider', type: false });
+  if (adapters.has('BedrockProvider')) imports.push({ name: 'BedrockProvider', type: false });
+  imports.push(
     { name: 'FakeProvider', type: false },
     { name: 'ModelSpec', type: false },
     { name: 'OpenAICompatibleProvider', type: false },
     { name: 'Provider', type: true },
-  ]);
+  );
+  const header = importStatement(RUNTIME, imports);
 
   const needsKeyed = providers.some((line) => line.includes('keyedProvider('));
+  const needsKeyedAnthropic = providers.some((line) => line.includes('keyedAnthropicProvider('));
   const body = [
     ...(needsKeyed
       ? [
@@ -101,6 +118,16 @@ export function emitGatewayModels(ir: IR): EmittedFile {
           'function keyedProvider(name: string, apiKeyEnv: string): OpenAICompatibleProvider {',
           '  const apiKey = process.env[apiKeyEnv];',
           '  return new OpenAICompatibleProvider(apiKey === undefined ? { name } : { name, apiKey });',
+          '}',
+          '',
+        ]
+      : []),
+    ...(needsKeyedAnthropic
+      ? [
+          '/** The same rule as `keyedProvider`, for the Messages adapter. */',
+          'function keyedAnthropicProvider(name: string, apiKeyEnv: string): AnthropicProvider {',
+          '  const apiKey = process.env[apiKeyEnv];',
+          '  return new AnthropicProvider(apiKey === undefined ? { name } : { name, apiKey });',
           '}',
           '',
         ]
@@ -294,7 +321,10 @@ export function emitObservability(ir: IR): EmittedFile {
   const modelWired: Record<string, string[]> = {};
   const unrepresentable: Record<string, string[]> = {};
   for (const model of ir.models) {
-    const { advertised, dropped } = modelCapabilities(model.capabilities);
+    const { advertised, dropped } = modelCapabilities(
+      providerAdapter(model.provider),
+      model.capabilities,
+    );
     modelWired[model.id] = [...advertised];
     if (dropped.length > 0) unrepresentable[model.id] = dropped;
   }

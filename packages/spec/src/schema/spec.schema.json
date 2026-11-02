@@ -190,8 +190,8 @@
       "additionalProperties": false,
       "properties": {
         "provider": {
-          "description": "The provider set the shipped adapters serve. `fake` is deterministic and keyless, which is what lets the eval gate run offline in CI.",
-          "enum": ["openai", "openai-compatible", "anthropic", "fake"]
+          "description": "The provider set the shipped adapters serve. `fake` is deterministic and keyless, which is what lets the eval gate run offline in CI. `bedrock` takes its credentials from the execution role, so it needs no `apiKeyEnv`.",
+          "enum": ["openai", "openai-compatible", "anthropic", "bedrock", "fake"]
         },
         "modelId": {
           "description": "Pinned vendor model id. Never an alias or a moving target: the resolved id is recorded in the IR so a run is reproducible.",
