@@ -28,7 +28,7 @@
  * `text` on the first three -- `./validate.ts` refuses anything else at plan time.
  */
 
-import type { GuardrailShape, IR } from '@aid-framework/ir';
+import type { DecisionShape, GuardrailShape, IR } from '@aid-framework/ir';
 
 import { INDENT, MAX_LINE, pythonString, pythonTuple } from '../python.js';
 import { assemble, HEADER, importBlock, importFrom } from '../template.js';
@@ -71,9 +71,57 @@ function definition(guardrail: GuardrailShape): string {
     }`,
     `log=${guardrail.onFail.log ? 'True' : 'False'}`,
   ];
+  if (guardrail.decision !== undefined) {
+    const outcomes = Object.entries(guardrail.onDecision ?? {}).map(([label, action]) =>
+      pythonTuple([pythonString(label), pythonString(action)]),
+    );
+    arguments_.push(`decision=${pythonString(guardrail.decision)}`);
+    arguments_.push(`on_decision=${pythonTuple(outcomes)}`);
+    if (guardrail.minConfidence !== undefined) {
+      arguments_.push(`min_confidence=${String(guardrail.minConfidence)}`);
+    }
+  }
   const inner = `${INDENT}${INDENT}`;
   return [
     `${INDENT}GuardrailDefinition(`,
+    ...arguments_.map((argument) => `${inner}${argument},`),
+    `${INDENT}),`,
+  ].join('\n');
+}
+
+/**
+ * The decisions the guardrails in this document actually ask, in IR order.
+ *
+ * A decision declared but never named by a guardrail is not emitted: the generated
+ * module is the wiring a guardrail needs, not a copy of the document's analysis.
+ */
+function referencedDecisions(ir: IR): DecisionShape[] {
+  const used = new Set(
+    orderedGuardrails(ir)
+      .map((guardrail) => guardrail.decision)
+      .filter((id): id is string => id !== undefined),
+  );
+  return (ir.decisions ?? []).filter((decision) => used.has(decision.id));
+}
+
+/** The labels a `choice` decision offers; a record names each label's intent. */
+function decisionLabels(decision: DecisionShape): string[] {
+  const criteria = decision.criteria;
+  if (criteria === undefined) return [];
+  return Array.isArray(criteria) ? [...criteria] : Object.keys(criteria);
+}
+
+/** The `DecisionDefinition(...)` literal for one decision a guardrail asks. */
+function decisionDefinition(decision: DecisionShape): string {
+  const arguments_ = [
+    `id=${pythonString(decision.id)}`,
+    `model=${pythonString(decision.model)}`,
+    `instructions=${pythonString(decision.instructions)}`,
+    `criteria=${pythonTuple(decisionLabels(decision).map(pythonString))}`,
+  ];
+  const inner = `${INDENT}${INDENT}`;
+  return [
+    `${INDENT}${pythonString(decision.id)}: DecisionDefinition(`,
     ...arguments_.map((argument) => `${inner}${argument},`),
     `${INDENT}),`,
   ].join('\n');
@@ -163,6 +211,9 @@ const BLOCK = [
 
 export function emitGuardrails(ir: IR): EmittedFile {
   const definitions = orderedGuardrails(ir).map(definition);
+  const decisions = referencedDecisions(ir);
+  const agentImports = ['GuardrailDefinition', 'GuardrailEngine', 'GuardrailVerdict'];
+  if (decisions.length > 0) agentImports.unshift('DecisionDefinition');
   return generated(
     GUARDRAILS_PATH,
     assemble([
@@ -185,17 +236,24 @@ export function emitGuardrails(ir: IR): EmittedFile {
         ['import logging'],
         [
           importFrom('aid_runtime', ['GuardrailBlockedError']),
-          importFrom('aid_runtime.agents', [
-            'GuardrailDefinition',
-            'GuardrailEngine',
-            'GuardrailVerdict',
-          ]),
+          importFrom('aid_runtime.agents', agentImports),
         ],
       ]),
       exports(ir),
       '_LOGGER = logging.getLogger(__name__)',
       '_STOPPING = frozenset({"block", "escalate"})',
-      'ENGINE = GuardrailEngine()',
+      ...(decisions.length > 0
+        ? [
+            [
+              'DECISIONS: dict[str, DecisionDefinition] = {',
+              ...decisions.map(decisionDefinition),
+              '}',
+            ].join('\n'),
+          ]
+        : []),
+      decisions.length > 0
+        ? 'ENGINE = GuardrailEngine(decisions=DECISIONS)'
+        : 'ENGINE = GuardrailEngine()',
       ['GUARDRAILS: tuple[GuardrailDefinition, ...] = (', ...definitions, ')'].join('\n'),
       'BY_ID: dict[str, GuardrailDefinition] = {g.id: g for g in GUARDRAILS}',
       ...tables(ir).map((table) => ['', table].join('\n')),

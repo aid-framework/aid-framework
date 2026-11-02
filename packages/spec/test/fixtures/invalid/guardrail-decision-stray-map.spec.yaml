@@ -1,0 +1,15 @@
+specVersion: "0.7"
+
+project:
+  name: probe
+
+guardrails:
+  gate:
+    stages: [input]
+    policies: [pii-detect]
+    action: block
+    onDecision:
+      billing: allow
+    onFail:
+      message: refused
+      log: true

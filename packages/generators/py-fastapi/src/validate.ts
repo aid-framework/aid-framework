@@ -1996,6 +1996,20 @@ export function checkPipelines(ir: IR): PlanProblem[] {
               ),
             );
           }
+          // A pipeline step is emitted as a synchronous call, and a decision-backed
+          // guardrail needs an HTTP round trip, so the step would silently pass the
+          // payload on without ever asking. Refuse rather than skip the check.
+          if (guardrail.decision !== undefined) {
+            problems.push(
+              problem(
+                'unsupported-guardrail',
+                `${path}.guardrail`,
+                `guardrail '${guardrail.id}' is answered by decision '${guardrail.decision}', ` +
+                  'which a pipeline step cannot ask: the step check is synchronous and the ' +
+                  'answer is a network call',
+              ),
+            );
+          }
           // A pipeline step has three observable outcomes and no fourth: carry on, raise, or
           // say nothing. `escalate` needs a checkpoint a step cannot return (and would make a
           // pipeline a second pause mechanism beside `agents[].humanInTheLoop`); `redact`
@@ -2423,6 +2437,17 @@ function checkGuardrails(ir: IR): PlanProblem[] {
           ),
         );
       }
+    }
+    if (guardrail.decision !== undefined && guardrail.action === 'redact') {
+      problems.push(
+        problem(
+          'unsupported-guardrail',
+          `${path}.action`,
+          `'${guardrail.id}' is answered by a decision, which returns a verdict rather than a ` +
+            'masked payload, so action: redact has nothing to rewrite; map the decision with ' +
+            'onDecision and use block, flag or escalate',
+        ),
+      );
     }
     if (guardrail.action !== 'redact') continue;
     for (const policy of guardrail.policies) {

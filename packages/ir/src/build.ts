@@ -41,6 +41,8 @@ import {
   type EvalShape,
   type EvalTarget,
   type GenerateStep,
+  GUARDRAIL_DECISION_ACTIONS,
+  type GuardrailDecisionAction,
   type GuardrailShape,
   type GuardStep,
   type Idempotency,
@@ -887,7 +889,9 @@ function buildGuardrails(raw: unknown): GuardrailShape[] {
         (GUARDRAIL_STAGES as readonly string[]).includes(stage),
     );
     const action = asString(entry.action);
-    return {
+    const decision = asString(entry.decision);
+    const onDecision = asRecord(entry.onDecision) ?? {};
+    const guardrail: GuardrailShape = {
       id,
       stages,
       policies: asStringArray(entry.policies).filter(isGuardrailPolicyKind),
@@ -899,6 +903,18 @@ function buildGuardrails(raw: unknown): GuardrailShape[] {
       onFail,
       traits: [],
     };
+    if (decision !== undefined) guardrail.decision = decision;
+    const outcomes: Record<string, GuardrailDecisionAction> = {};
+    for (const label of Object.keys(onDecision).sort()) {
+      const outcome = asString(onDecision[label]);
+      if ((GUARDRAIL_DECISION_ACTIONS as readonly string[]).includes(outcome ?? '')) {
+        outcomes[label] = outcome as GuardrailDecisionAction;
+      }
+    }
+    if (Object.keys(outcomes).length > 0) guardrail.onDecision = outcomes;
+    const minConfidence = asNumber(entry.minConfidence);
+    if (minConfidence !== undefined) guardrail.minConfidence = minConfidence;
+    return guardrail;
   });
 }
 

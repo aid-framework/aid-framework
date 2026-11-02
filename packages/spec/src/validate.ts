@@ -45,7 +45,7 @@ export const SUPPORTED_SECTIONS = [
 export const DEFERRED_SECTIONS = [] as const;
 
 /** The spec language versions this build reads. A document declares one of them. */
-export const SUPPORTED_SPEC_VERSIONS = ['0.1', '0.2', '0.3', '0.4', '0.5', '0.6'] as const;
+export const SUPPORTED_SPEC_VERSIONS = ['0.1', '0.2', '0.3', '0.4', '0.5', '0.6', '0.7'] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
 
@@ -71,6 +71,14 @@ export const SECTION_MIN_VERSION: Partial<
  * document would silently drop it.
  */
 export const MODEL_CACHE_MIN_VERSION: SpecVersion = '0.3';
+
+/**
+ * The first spec version that lets a guardrail name a decision. Spec 0.6 introduced
+ * the `decisions` section itself; coupling the two would have made a 0.6 document
+ * that already declares decisions silently gain an enforcement path, so the wiring
+ * is its own version.
+ */
+export const GUARDRAIL_DECISION_MIN_VERSION: SpecVersion = '0.7';
 
 /**
  * The first spec version that accepts `deployments[].image`. Nested for the same reason
@@ -398,6 +406,7 @@ function scopeDiagnostics(
 
   modelCacheDiagnostics(spec, diagnostics, reported);
   googleProviderDiagnostics(spec, diagnostics, reported);
+  guardrailDecisionDiagnostics(spec, diagnostics, reported);
   deploymentImageDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
@@ -435,6 +444,135 @@ function googleProviderDiagnostics(
       }),
     );
     reported.add(JSON.stringify(['models', name, 'provider']));
+  }
+}
+
+/**
+ * The rules a decision-backed guardrail needs that JSON Schema cannot state.
+ *
+ * Three checks live here. **Version**: `decision` is a 0.7 construct, while the
+ * `decisions` section itself is 0.6, so this is a nested gate like
+ * `models[].cache`. **Reference**: the decision must exist and be a `choice` --
+ * `noul` has no labels and `score` has an order, neither of which an `onDecision`
+ * map can answer. **Coverage**: `onDecision` must map every declared label and no
+ * other, because a missing label would otherwise be an allow nobody declared and
+ * an extra one a typo that silently never fires.
+ *
+ * The stage restriction is in the schema (`items: {const: "input"}`), and stated
+ * again nowhere else: there is one place to look.
+ */
+function guardrailDecisionDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  const decisions = asRecord(spec.decisions);
+
+  for (const [name, raw] of Object.entries(asRecord(spec.guardrails))) {
+    const guardrail = asRecord(raw);
+    const decision = typeof guardrail.decision === 'string' ? guardrail.decision : undefined;
+    const hasPolicies = Array.isArray(guardrail.policies) && guardrail.policies.length > 0;
+
+    if (decision === undefined) {
+      if (!hasPolicies) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `guardrail '${name}' declares neither 'policies' nor 'decision', so it has nothing to check`,
+            path: ['guardrails', name],
+            hint: "add 'policies' with an 'action', or a 'decision' with 'onDecision'",
+          }),
+        );
+      }
+      for (const stray of ['onDecision', 'minConfidence'] as const) {
+        if (guardrail[stray] === undefined) continue;
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `'guardrails.${name}.${stray}' is only meaningful beside 'decision', which this guardrail does not declare`,
+            path: ['guardrails', name, stray],
+          }),
+        );
+      }
+      continue;
+    }
+
+    if (
+      declared !== undefined &&
+      known &&
+      !specVersionAtLeast(declared, GUARDRAIL_DECISION_MIN_VERSION)
+    ) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'guardrails.${name}.decision' requires specVersion ${GUARDRAIL_DECISION_MIN_VERSION}, but this specification declares version ${declared}`,
+          path: ['guardrails', name, 'decision'],
+          hint: `set specVersion: "${GUARDRAIL_DECISION_MIN_VERSION}"; documents without a decision-backed guardrail are unchanged`,
+        }),
+      );
+      reported.add(JSON.stringify(['guardrails', name, 'decision']));
+      continue;
+    }
+
+    if (!Object.hasOwn(decisions, decision)) {
+      const ids = Object.keys(decisions).sort();
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.schemaViolation,
+          message: `guardrail '${name}' names decision '${decision}', which the 'decisions' section does not declare`,
+          path: ['guardrails', name, 'decision'],
+          hint:
+            ids.length > 0
+              ? `declare '${decision}', or use one of: ${ids.join(', ')}`
+              : "add a 'decisions' section that declares it",
+        }),
+      );
+      continue;
+    }
+
+    const target = asRecord(decisions[decision]);
+    if (target.type !== 'choice') {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.schemaViolation,
+          message: `decision '${decision}' is a '${String(target.type ?? 'unknown')}' question; a guardrail needs a 'choice' decision whose labels it can act on`,
+          path: ['guardrails', name, 'decision'],
+          hint: 'declare the decision with type: choice and name each label under criteria',
+        }),
+      );
+      continue;
+    }
+
+    const criteria = Object.keys(asRecord(target.criteria));
+    const onDecision = asRecord(guardrail.onDecision);
+    for (const label of criteria) {
+      if (Object.hasOwn(onDecision, label)) continue;
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.schemaViolation,
+          message: `'guardrails.${name}.onDecision' does not say what the '${label}' answer means`,
+          path: ['guardrails', name, 'onDecision'],
+          hint: `add '${label}': allow, block, flag or escalate`,
+        }),
+      );
+    }
+    for (const label of Object.keys(onDecision)) {
+      if (criteria.includes(label)) continue;
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.schemaViolation,
+          message: `'guardrails.${name}.onDecision.${label}' names no criterion of decision '${decision}'`,
+          path: ['guardrails', name, 'onDecision', label],
+          hint:
+            criteria.length > 0
+              ? `declared criteria: ${criteria.join(', ')}`
+              : 'the decision declares no criteria',
+        }),
+      );
+    }
   }
 }
 

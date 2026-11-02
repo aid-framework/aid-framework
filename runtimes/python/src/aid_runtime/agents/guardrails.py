@@ -43,13 +43,14 @@ detector matched, and the run carried on because the spec said the run may.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict
 
-from aid_runtime.agents.ir import GuardrailDefinition
+from aid_runtime.agents.ir import DecisionDefinition, GuardrailDefinition
+from aid_runtime.decisions import DecisionClient, DecisionQuestion, DecisionResponse
 from aid_runtime.errors import ConfigurationError, GuardrailBlockedError
 
 __all__ = [
@@ -108,6 +109,11 @@ class GuardrailRecord(BaseModel):
     action: GuardrailAction
     policies: tuple[str, ...]
     message: str
+    #: Set when a decision answered rather than a detector, so a reviewer can tell
+    #: "the classifier said block" from "the regex matched" without the log message.
+    decision: str | None = None
+    label: str | None = None
+    confidence: float | None = None
 
 
 class GuardrailEscalation(BaseModel):
@@ -243,6 +249,10 @@ DETECTORS: Mapping[str, tuple[re.Pattern[str], ...]] = {
 #: safe -- which is why a ``redact`` guardrail over them fails closed below.
 _REDACTABLE = frozenset({"pii-detect", "pii-redact", "secret-scan"})
 
+#: The outcomes a decision label may map to. ``allow`` is the one that records
+#: nothing; ``redact`` is absent because a label cannot name the field to rewrite.
+_DECISION_OUTCOMES = frozenset({"allow", "block", "flag", "escalate"})
+
 
 def detect(policy: str, text: str) -> tuple[Detection, ...]:
     """Every match of ``policy`` in ``text``, in document order.
@@ -287,6 +297,19 @@ def _texts(payload: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
     )
 
 
+class DecisionAsker(Protocol):
+    """The one call the engine makes, so a test double need not subclass the client."""
+
+    async def decide(
+        self,
+        *,
+        model: str,
+        state: Any,
+        questions: Mapping[str, DecisionQuestion],
+        reproducible: bool = False,
+    ) -> DecisionResponse: ...
+
+
 class GuardrailEngine:
     """Evaluates an agent's guardrails at one stage.
 
@@ -295,8 +318,18 @@ class GuardrailEngine:
     same way, which is what makes the corpus results reproducible.
     """
 
-    def __init__(self, guardrails: Mapping[str, GuardrailDefinition] | None = None) -> None:
+    def __init__(
+        self,
+        guardrails: Mapping[str, GuardrailDefinition] | None = None,
+        decisions: Mapping[str, DecisionDefinition] | None = None,
+        client_factory: Callable[[], DecisionAsker] | None = None,
+    ) -> None:
         self._declared = dict(guardrails or {})
+        self._decisions = dict(decisions or {})
+        #: Built on first use, not at import: an app with no TypeSafe key must still
+        #: boot when no request reaches a decision-backed guardrail.
+        self._client_factory = client_factory or DecisionClient
+        self._client: DecisionAsker | None = None
 
     def declared(self, guardrail_id: str) -> GuardrailDefinition | None:
         return self._declared.get(guardrail_id)
@@ -307,6 +340,154 @@ class GuardrailEngine:
         text: str,
     ) -> GuardrailVerdict:
         return self._check("input", guardrails, {"text": text}, tool_id=None)
+
+    async def check_input_async(
+        self,
+        guardrails: Sequence[GuardrailDefinition],
+        text: str,
+    ) -> GuardrailVerdict:
+        """The ``input`` stage with decisions: the same rules, one awaitable question.
+
+        This is the only stage a decision may guard, so it is the only stage with an
+        async twin; ``check_input`` stays synchronous and unchanged for callers that
+        have no network check to make. Order is preserved across both kinds of
+        guardrail -- declaration order still decides between comparable actions, and
+        ``block`` still outranks it.
+
+        A guardrail that declares both policies and a decision asks the decision only
+        when its policies found nothing: asking a model about input a detector already
+        refused would spend tokens to learn what the detector said.
+        """
+        payload: Mapping[str, Any] = {"text": text}
+        applicable = [guardrail for guardrail in guardrails if "input" in guardrail.stages]
+        records: list[GuardrailRecord] = []
+        fired: list[GuardrailDefinition] = []
+        for guardrail in applicable:
+            policies = _firing_policies(guardrail, "input", payload)
+            record: GuardrailRecord | None = None
+            if policies:
+                record = GuardrailRecord(
+                    guardrail=guardrail.id,
+                    stage="input",
+                    action=_action(guardrail),
+                    policies=policies,
+                    message=guardrail.message,
+                )
+            elif guardrail.decision is not None:
+                record = await self._ask_decision(guardrail, text)
+            if record is None:
+                continue
+            fired.append(guardrail)
+            records.append(record)
+
+        deciding = _decide(records)
+        if deciding is None:
+            return GuardrailVerdict(stage="input", text=text, arguments=dict(payload))
+
+        redacted = payload
+        if deciding.action == ACTION_REDACT:
+            redacted = _redact(
+                "input",
+                [guardrail for guardrail in fired if guardrail.action == ACTION_REDACT],
+                payload,
+            )
+        return GuardrailVerdict(
+            stage="input",
+            records=tuple(records),
+            action=deciding.action,
+            deciding=deciding,
+            text=_text_of(redacted),
+            arguments=dict(redacted),
+        )
+
+    async def _ask_decision(
+        self,
+        guardrail: GuardrailDefinition,
+        text: str,
+    ) -> GuardrailRecord | None:
+        """Ask one ``choice`` decision and turn its label into a record, or ``None``.
+
+        Everything that is not a usable answer is a :class:`GuardrailBlockedError`:
+        an undeclared decision, an unmapped label, a confidence below the declared
+        floor, or a call that raised. That is the same rule the policy path follows
+        -- there is no path from "the check could not run" to "no violation found".
+        """
+        name = guardrail.decision or ""
+        definition = self._decisions.get(name)
+        if definition is None:
+            raise GuardrailBlockedError(
+                guardrail.id,
+                "input",
+                f"decision {name!r} has no definition in this runtime",
+            )
+        outcomes = dict(guardrail.on_decision)
+        if not outcomes:
+            raise GuardrailBlockedError(
+                guardrail.id,
+                "input",
+                f"decision {name!r} maps no answer label, so no answer could be acted on",
+            )
+        if self._client is None:
+            self._client = self._client_factory()
+        question = DecisionQuestion(
+            type="choice",
+            instructions=definition.instructions,
+            criteria=definition.criteria,
+        )
+        try:
+            response = await self._client.decide(
+                model=definition.model,
+                state=text,
+                questions={name: question},
+            )
+        except Exception as error:
+            raise GuardrailBlockedError(
+                guardrail.id,
+                "input",
+                f"decision {name!r} could not answer: {error}",
+            ) from error
+
+        answer = response.answers.get(name)
+        if answer is None:
+            raise GuardrailBlockedError(
+                guardrail.id,
+                "input",
+                f"decision {name!r} returned no answer for its own question",
+            )
+        label = answer.choice
+        if label is None or label not in outcomes:
+            raise GuardrailBlockedError(
+                guardrail.id,
+                "input",
+                f"decision {name!r} answered {label!r}, which this guardrail does not map",
+            )
+        if answer.confidence is not None and answer.confidence < guardrail.min_confidence:
+            raise GuardrailBlockedError(
+                guardrail.id,
+                "input",
+                f"decision {name!r} answered {label!r} with confidence "
+                f"{answer.confidence:.2f}, below the declared minimum "
+                f"{guardrail.min_confidence:.2f}",
+            )
+        outcome = outcomes[label]
+        if outcome not in _DECISION_OUTCOMES:
+            raise GuardrailBlockedError(
+                guardrail.id,
+                "input",
+                f"decision {name!r} maps {label!r} to unknown outcome {outcome!r}",
+            )
+        if outcome == "allow":
+            return None
+        return GuardrailRecord(
+            guardrail=guardrail.id,
+            stage="input",
+            action=cast(GuardrailAction, outcome),
+            policies=(),
+            message=guardrail.message,
+            decision=name,
+            label=label,
+            confidence=answer.confidence,
+        )
 
     def check_output(
         self,

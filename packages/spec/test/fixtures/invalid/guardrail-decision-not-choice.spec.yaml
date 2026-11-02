@@ -1,0 +1,25 @@
+specVersion: "0.7"
+
+project:
+  name: probe
+
+decisions:
+  urgency:
+    provider: typesafe
+    model: jev-1.14.0
+    type: score
+    instructions: How urgent is this ticket
+    criteria:
+      - low
+      - high
+
+guardrails:
+  gate:
+    stages: [input]
+    decision: urgency
+    onDecision:
+      low: allow
+      high: block
+    onFail:
+      message: refused
+      log: true

@@ -143,6 +143,58 @@ describe('guardrails/policies', () => {
     );
     expect(empty.path).toEqual(['guardrails', 'inbound', 'policies']);
   });
+
+  it('accepts a decision as the evaluator when the guardrail declares no policy', () => {
+    expect(
+      gateFixture('guardrails-decision.yaml').byGate['guardrails/policies'].diagnostics,
+    ).toEqual([]);
+  });
+
+  it('rejects a decision the IR does not declare', () => {
+    const ir = mutateIR('guardrails-decision.yaml');
+    byId(ir.guardrails, 'relevance').decision = 'missing';
+    const unknown = diagnosticAt(
+      runGates(ir).byGate['guardrails/policies'].diagnostics,
+      'guardrails.relevance.decision',
+    );
+    expect(unknown.message).toContain('"missing" is not a declared decision');
+    expect(unknown.hint).toContain('topical');
+  });
+
+  it('rejects a question type that returns no label to map', () => {
+    const ir = mutateIR('guardrails-decision.yaml');
+    const [decision] = ir.decisions;
+    if (decision === undefined) throw new Error('the fixture declared no decision');
+    (decision as unknown as { type: string }).type = 'noul';
+    expect(
+      diagnosticAt(
+        runGates(ir).byGate['guardrails/policies'].diagnostics,
+        'guardrails.relevance.decision',
+      ).message,
+    ).toContain('returns no label to map');
+  });
+
+  it('rejects an onDecision key the referenced choice never returns', () => {
+    const ir = mutateIR('guardrails-decision.yaml');
+    const guardrail = byId(ir.guardrails, 'relevance');
+    guardrail.onDecision = { ...guardrail.onDecision, sales: 'block' };
+    const unknown = diagnosticAt(
+      runGates(ir).byGate['guardrails/policies'].diagnostics,
+      'guardrails.relevance.onDecision.sales',
+    );
+    expect(unknown.message).toContain('never returns');
+    expect(unknown.hint).toContain('billing, off_topic, product');
+  });
+
+  it('rejects a decision guardrail that maps no label, which fails every answer closed', () => {
+    const ir = mutateIR('guardrails-decision.yaml');
+    byId(ir.guardrails, 'relevance').onDecision = {};
+    const empty = onlyDiagnosticWith(
+      runGates(ir).byGate['guardrails/policies'].diagnostics,
+      IR_DIAGNOSTIC_CODES.policyEmpty,
+    );
+    expect(empty.path).toEqual(['guardrails', 'relevance', 'onDecision']);
+  });
 });
 
 describe('hitl/side-effects', () => {

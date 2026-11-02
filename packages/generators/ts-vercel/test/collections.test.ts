@@ -25,6 +25,16 @@ const GUARDRAILS = `guardrails:
       message: The payload was refused.
       log: true`;
 
+const DECISIONS = `decisions:
+  topical:
+    provider: typesafe
+    model: jev-1.14.0
+    type: choice
+    instructions: Is this message about our product
+    criteria:
+      product: A question about features
+      off_topic: Anything unrelated`;
+
 const MEMORY = `memory:
   thread:
     kind: buffer
@@ -55,16 +65,18 @@ interface Collections {
   readonly guardrails?: string | undefined;
   readonly memory?: string | undefined;
   readonly agents?: string | undefined;
+  readonly decisions?: string | undefined;
 }
 
-/** A whole 0.2 spec whose collection blocks are the only interesting part. */
-function specWith(collections: Collections = {}): string {
+/** A whole spec whose collection blocks are the only interesting part. */
+function specWith(collections: Collections = {}, version = '0.2'): string {
   const blocks = [
+    collections.decisions ?? '',
     collections.guardrails === undefined ? GUARDRAILS : collections.guardrails,
     collections.memory === undefined ? MEMORY : collections.memory,
     collections.agents === undefined ? AGENTS : collections.agents,
   ].filter((block) => block !== '');
-  return `specVersion: "0.2"
+  return `specVersion: "${version}"
 
 project:
   name: demo
@@ -153,8 +165,8 @@ function codes(ir: IR): string[] {
   return checkPlan(ir).map((problem) => problem.code);
 }
 
-function refusalCodes(collections: Collections): string[] {
-  return codes(irForSpecText(specWith(collections)));
+function refusalCodes(collections: Collections, version = '0.2'): string[] {
+  return codes(irForSpecText(specWith(collections, version)));
 }
 
 const AGENTS_PATH = 'app/generated/agents.ts';
@@ -217,6 +229,25 @@ describe('the guardrails collection', () => {
     const redacting = GUARDRAILS.replace('action: block', 'action: redact\n    redact: [text]');
 
     expect(refusalCodes({ guardrails: redacting })).toEqual([]);
+  });
+
+  it('refuses a guardrail answered by a decision, which this engine cannot ask', () => {
+    // The ts-vercel engine is synchronous and owns no decision client, so the check
+    // would never run. Refusing keeps the generated app from silently allowing it.
+    const decided = `guardrails:
+  handbook_pii:
+    stages: [input]
+    decision: topical
+    onDecision:
+      product: allow
+      off_topic: block
+    onFail:
+      message: The payload was refused.
+      log: true`;
+
+    expect(refusalCodes({ decisions: DECISIONS, guardrails: decided }, '0.7')).toContain(
+      'guardrail-unsupported',
+    );
   });
 });
 

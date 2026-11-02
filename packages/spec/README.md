@@ -100,9 +100,11 @@ const diagnostics = [
 | `memory` | 0.2 | Conversation, user and global memory scopes |
 | `deployments` | 0.2 | Trigger, concurrency and streaming declarations |
 
-The build reads spec versions `0.1` through `0.6`. A section listed as `0.2` is rejected in a 0.1 document,
+The build reads spec versions `0.1` through `0.7`. A section listed as `0.2` is rejected in a 0.1 document,
 with a diagnostic naming the version that accepts it. `deployments[].image` is a 0.4 construct and needs
-`target: container`; both rules are reported at `deployments.<id>.image`.
+`target: container`; both rules are reported at `deployments.<id>.image`. `guardrails[].decision` is a 0.7
+construct: it answers the guardrail with a `choice` decision instead of detector policies, and is rejected
+in an earlier document.
 
 ## Pipeline step kinds
 

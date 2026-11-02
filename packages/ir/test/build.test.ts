@@ -140,6 +140,33 @@ describe('buildIR', () => {
     expect(byId(promoted.deployments, 'prod').secrets).toEqual(['OPENAI_API_KEY']);
   });
 
+  it('carries a decision-backed guardrail through the build', () => {
+    const built = buildFixture('guardrails-decision.yaml');
+    expect(built.diagnostics).toEqual([]);
+    const decision = byId(built.ir.decisions, 'topical');
+    expect(decision).toMatchObject({ provider: 'typesafe', type: 'choice' });
+    // Labels are a set, so the build sorts them; the descriptions survive intact.
+    expect(decision.criteria).toEqual({
+      billing: 'A question about an invoice or a refund',
+      off_topic: 'Anything unrelated',
+      product: 'A question about features, pricing, or usage',
+    });
+    expect(byId(built.ir.guardrails, 'relevance')).toMatchObject({
+      decision: 'topical',
+      onDecision: { billing: 'allow', off_topic: 'block', product: 'allow' },
+      minConfidence: 0.6,
+    });
+  });
+
+  it('omits the decision fields from a policy-only guardrail', () => {
+    // Absent, not defaulted: the serialized IR of a policy guardrail must not change
+    // shape just because the decision construct exists.
+    const inbound = byId(buildFixture('guardrails-policies.yaml').ir.guardrails, 'inbound');
+    expect(Object.hasOwn(inbound, 'decision')).toBe(false);
+    expect(Object.hasOwn(inbound, 'onDecision')).toBe(false);
+    expect(Object.hasOwn(inbound, 'minConfidence')).toBe(false);
+  });
+
   it('leaves the IR-only collection empty until retrieval content declares it', () => {
     // `embeddings` has no spec section: it is derived from the embedding models and
     // retrievers a spec declares, so `full.yaml` populates nothing here.

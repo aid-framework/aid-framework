@@ -1012,6 +1012,18 @@ export function checkGuardrails(ir: IR): PlanProblem[] {
   const problems: PlanProblem[] = [];
   for (const guardrail of ir.guardrails) {
     const at = `guardrails.${guardrail.id}`;
+    if (guardrail.decision !== undefined) {
+      // Answering a guardrail with a decision means calling a decision model, and this
+      // target's engine is synchronous and has no client; the check would never run.
+      problems.push(
+        problem(
+          'guardrail-unsupported',
+          `${at}.decision`,
+          `guardrail '${guardrail.id}' is answered by decision '${guardrail.decision}', which this target cannot ask; decision-backed guardrails are implemented by the Python target`,
+        ),
+      );
+      continue;
+    }
     for (const policy of guardrail.policies) {
       if (IMPLEMENTED_POLICIES.has(policy)) continue;
       problems.push(

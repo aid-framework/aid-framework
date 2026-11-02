@@ -19,6 +19,7 @@ from aid_runtime.agents.guardrails import (
     DETECTORS,
     GUARDRAIL_ACTIONS,
     GUARDRAIL_STAGES,
+    DecisionAsker,
     Detection,
     GuardrailEngine,
     GuardrailEscalation,
@@ -28,6 +29,7 @@ from aid_runtime.agents.guardrails import (
 )
 from aid_runtime.agents.ir import (
     AgentDefinition,
+    DecisionDefinition,
     GuardrailDefinition,
     HumanApproval,
     MemoryDefinition,
@@ -65,6 +67,8 @@ __all__ = [
     "AgentCheckpoint",
     "AgentDefinition",
     "AgentRuntime",
+    "DecisionAsker",
+    "DecisionDefinition",
     "Detection",
     "FileMemoryStore",
     "GuardrailDefinition",
