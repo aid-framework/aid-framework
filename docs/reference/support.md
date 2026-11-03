@@ -14,6 +14,7 @@ Every provider below is served by `py-fastapi` and `ts-vercel` and is accepted b
 | --- | --- |
 | `anthropic` | `py-fastapi`, `ts-vercel` |
 | `bedrock` | `py-fastapi`, `ts-vercel` |
+| `gemini` | `py-fastapi`, `ts-vercel` |
 | `google` | `py-fastapi`, `ts-vercel` |
 | `openai` | `py-fastapi`, `ts-vercel` |
 | `openai-compatible` | `py-fastapi`, `ts-vercel` |
@@ -34,7 +35,7 @@ The emitted infrastructure is OpenTofu. A plan targets one cloud at a time, beca
 
 ## Spec language
 
-The current spec language version is `0.9`.
+The current spec language version is `0.10`.
 A construct that needs a later version is reported as `spec/not-supported`, naming the version it needs, instead of being ignored.
 
 ## Conformance

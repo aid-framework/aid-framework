@@ -22,7 +22,7 @@ The developer writes a spec (models, prompts, tools, retrievers, agents, pipelin
 
 Every AI app re-implements the same non-differentiating plumbing, and it is *more* boilerplate than a CRUD app, not less:
 
-- Provider adapters (OpenAI / Anthropic / Azure / Bedrock / Google / Ollama / vLLM) + auth + retries + streaming
+- Provider adapters (OpenAI / Anthropic / Azure / Bedrock / Google Vertex / Gemini / Ollama / vLLM) + auth + retries + streaming
 - Rate limiting, token budgeting, cost accounting, fallbacks, model routing (cheap vs. strong)
 - Prompt templating, versioning, few-shot assembly, and prompt caching
 - Structured output enforcement (JSON Schema / zod / Pydantic) + parse-repair loops
@@ -446,7 +446,7 @@ type Capability =
 
 type ModelShape = {
   id: string;                      // alias, e.g. "fast"
-  provider: 'openai'|'anthropic'|'azure'|'bedrock'|'google'|'ollama'|'vllm'|'custom';
+  provider: 'openai'|'anthropic'|'azure'|'bedrock'|'google'|'gemini'|'ollama'|'vllm'|'custom';
   modelId: string;                 // PINNED vendor id
   capabilities: Capability[];
   params: { temperature?: number; topP?: number; maxTokens?: number; seed?: number; stop?: string[] };
@@ -1024,7 +1024,7 @@ The runtime is the real framework. One library per stack, versioned independentl
 
 **Model Gateway**
 
-- Provider adapters (OpenAI/Anthropic/Azure/Bedrock/Google/Ollama/vLLM) with a unified streaming interface.
+- Provider adapters (OpenAI/Anthropic/Azure/Bedrock/Google Vertex/Gemini/Ollama/vLLM) with a unified streaming interface.
 - Alias -> pinned model resolution; capability negotiation; ordered fallbacks; escalation routing (cheap -> strong).
 - Retries + backoff, rate-limit/token-bucket, prompt cache, semantic cache, token + cost accounting.
 

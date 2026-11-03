@@ -303,6 +303,7 @@ export type ProviderAdapter =
   | 'AnthropicProvider'
   | 'BedrockProvider'
   | 'FakeProvider'
+  | 'GeminiProvider'
   | 'OpenAICompatibleProvider'
   | 'VertexProvider';
 
@@ -335,6 +336,10 @@ export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, ReadonlySet<
   // streaming here even though the Python adapter does. No embeddings for the same
   // reason as Converse: the adapter does not call the embeddings endpoint.
   VertexProvider: new Set<Capability>(['structured-output', 'tool-calling']),
+  // The TS provider seam is request/response only, so Gemini does not advertise
+  // streaming here even though the Python adapter does. No embeddings: a spec that
+  // wants one pins `gemini-embedding-001`, which `embedderFor` routes separately.
+  GeminiProvider: new Set<Capability>(['structured-output', 'tool-calling']),
 };
 
 /**
@@ -347,6 +352,7 @@ export function providerAdapter(provider: string): ProviderAdapter | undefined {
   if (provider === 'anthropic') return 'AnthropicProvider';
   if (provider === 'bedrock') return 'BedrockProvider';
   if (provider === 'google') return 'VertexProvider';
+  if (provider === 'gemini') return 'GeminiProvider';
   return undefined;
 }
 

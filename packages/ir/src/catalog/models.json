@@ -13,7 +13,8 @@
     "bedrock-claude-3-5-haiku": { "inputPerMTok": 0.8, "outputPerMTok": 4 },
     "bedrock-claude-3-5-sonnet": { "inputPerMTok": 3, "outputPerMTok": 15 },
     "google-gemini-2-5-flash": { "inputPerMTok": 0.3, "outputPerMTok": 2.5 },
-    "google-gemini-2-5-pro": { "inputPerMTok": 1.25, "outputPerMTok": 10 }
+    "google-gemini-2-5-pro": { "inputPerMTok": 1.25, "outputPerMTok": 10 },
+    "gemini-gemini-embedding-001": { "inputPerMTok": 0.15, "outputPerMTok": 0 }
   },
   "models": {
     "gpt-4o-mini": {
@@ -71,6 +72,12 @@
       "provider": "google",
       "limits": { "contextTokens": 1048576, "maxOutputTokens": 65536 },
       "costProfiles": ["google-gemini-2-5-pro"]
+    },
+    "gemini-embedding-001": {
+      "provider": "gemini",
+      "limits": { "contextTokens": 2048 },
+      "costProfiles": ["gemini-gemini-embedding-001"],
+      "dimensions": 3072
     }
   }
 }

@@ -64,6 +64,23 @@ function vertexSpecText(): string {
     .replace('    costProfile: openai-gpt-4o-mini', '    costProfile: google-gemini-2-5-flash');
 }
 
+/**
+ * The example repointed at the Gemini API.
+ *
+ * `specVersion` moves to 0.10 because that is the first version whose provider
+ * vocabulary includes `gemini`. Unlike Vertex, this provider authenticates with an API
+ * key, so the key variable travels with it.
+ */
+function geminiSpecText(): string {
+  return exampleSpecText()
+    .replace('specVersion: "0.2"', 'specVersion: "0.10"')
+    .replace(
+      '    provider: openai\n    modelId: gpt-4o-mini\n    apiKeyEnv: OPENAI_API_KEY',
+      '    provider: gemini\n    modelId: gemini-2.5-flash\n    apiKeyEnv: GEMINI_API_KEY',
+    )
+    .replace('    costProfile: openai-gpt-4o-mini', '    costProfile: google-gemini-2-5-flash');
+}
+
 /** The `defaultProviders()` entry for one provider, up to the line's end. */
 function providerEntry(text: string, key: string): string {
   const start = text.indexOf(`\n    ${key}: `);
@@ -73,9 +90,9 @@ function providerEntry(text: string, key: string): string {
 }
 
 describe('provider selection', () => {
-  it('serves anthropic, bedrock and google alongside openai and the deterministic fake', () => {
+  it('serves anthropic, bedrock, gemini and google alongside openai and the deterministic fake', () => {
     expect([...SERVED_PROVIDERS].sort()).toEqual(
-      ['anthropic', 'bedrock', 'google', 'fake', 'openai', 'openai-compatible'].sort(),
+      ['anthropic', 'bedrock', 'gemini', 'google', 'fake', 'openai', 'openai-compatible'].sort(),
     );
   });
 
@@ -125,6 +142,17 @@ describe('provider selection', () => {
     expect(text).not.toContain('keyedVertexProvider');
   });
 
+  it('plans a gemini model and emits the keyed Gemini adapter', () => {
+    const text = models(geminiSpecText());
+
+    expect(providerEntry(text, 'gemini')).toBe(
+      "    gemini: keyedGeminiProvider('gemini', 'GEMINI_API_KEY'),",
+    );
+    expect(text).toMatch(/import \{[^}]*GeminiProvider/u);
+    expect(text).toContain('function keyedGeminiProvider(');
+    expect(text).not.toContain('VertexProvider');
+  });
+
   it('refuses a provider outside the spec vocabulary, naming the ones that ship', () => {
     // The spec layer refuses it first, which is the right order: a caller learns the
     // closed set before an IR is built, and the message names the whole set.
@@ -169,6 +197,25 @@ describe('adapter capabilities', () => {
 
   it('refuses Vertex embeddings, which the adapter does not call', () => {
     const spec = vertexSpecText().replace(
+      'capabilities: [json-schema, tools]',
+      'capabilities: [json-schema, tools, embeddings]',
+    );
+
+    expect(() => buildForSpecText(spec)).toThrow(/model-capability-unsupported/u);
+  });
+
+  it('refuses gemini streaming, which this target cannot carry', () => {
+    const spec = geminiSpecText().replace(
+      'capabilities: [json-schema, tools]',
+      'capabilities: [json-schema, tools, streaming]',
+    );
+
+    expect(() => buildForSpecText(spec)).toThrow(/model-capability-unsupported/u);
+    expect(() => buildForSpecText(spec)).toThrow(/GeminiProvider/u);
+  });
+
+  it('refuses gemini embeddings, which the adapter does not call', () => {
+    const spec = geminiSpecText().replace(
       'capabilities: [json-schema, tools]',
       'capabilities: [json-schema, tools, embeddings]',
     );
@@ -226,5 +273,21 @@ describe('provider conformance', () => {
       expect(workflow).toContain(notice);
       expect(workflow).not.toContain('id: creds');
     }
+  });
+});
+
+describe('gemini credential preflight', () => {
+  it('preflights the variable the spec named, because the provider is keyed', () => {
+    const gemini = files(geminiSpecText());
+    const workflow = gemini.get('.github/workflows/evals.yml') ?? '';
+
+    expect(workflow).toContain('id: creds');
+    expect(workflow).toContain('GEMINI_API_KEY');
+    expect(workflow).not.toContain('::notice::');
+    expect(differingFiles(files(exampleSpecText()), gemini)).toEqual([
+      '.github/workflows/evals.yml',
+      'app/generated/agents.ts',
+      'app/generated/gateway/models.ts',
+    ]);
   });
 });

@@ -172,6 +172,8 @@ export {
 } from './providers/bedrock.js';
 export type { FakeProviderOptions, Responder } from './providers/fake.js';
 export { FakeProvider, ScriptedTurn } from './providers/fake.js';
+export type { GeminiOptions } from './providers/gemini.js';
+export { DEFAULT_GEMINI_BASE_URL, GEMINI_API_KEY_ENV, GeminiProvider } from './providers/gemini.js';
 export type { FetchLike, OpenAICompatibleOptions } from './providers/http.js';
 export { DEFAULT_BASE_URL, OpenAICompatibleProvider } from './providers/http.js';
 export type { VertexOptions } from './providers/vertex.js';
@@ -205,6 +207,7 @@ export {
   embedderFor,
   estimateTokens,
   FakeDeterministicEmbedder,
+  GeminiEmbedder,
   OpenAICompatibleEmbedder,
 } from './retrieval/embedding.js';
 export { RetrievalGate } from './retrieval/gate.js';

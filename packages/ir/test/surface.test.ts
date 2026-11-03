@@ -151,6 +151,21 @@ describe('the offline catalog', () => {
     );
     expect(priced).toBeDefined();
   });
+
+  it('prices every catalogued Gemini model, including the embedder', () => {
+    // `gemini` names the wire the Gemini API adapter speaks, so its models are
+    // catalogued beside the Vertex-served ones. The embedder carries `dimensions`
+    // because a vector store has to be sized from it.
+    const embedder = catalogModel('gemini-embedding-001');
+
+    expect(embedder?.provider).toBe('gemini');
+    expect(embedder?.dimensions).toBeGreaterThan(0);
+    expect(catalogCostProfile('gemini-embedding-001')?.id).toBe('gemini-gemini-embedding-001');
+
+    for (const modelId of ['gemini-embedding-001', 'gemini-2.5-flash', 'gemini-2.5-pro']) {
+      expect(catalogCostProfile(modelId)).toBeDefined();
+    }
+  });
 });
 
 describe('IR shape constants', () => {

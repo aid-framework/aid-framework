@@ -85,6 +85,12 @@ answers correctly only a fraction of the time, so it is what the eval gate is te
 not what you ship. Examples run offline by injecting a scripted fake through the generated
 dependency seam.
 
+A `provider` names the **wire**, not the vendor. `google` is Vertex AI: a project, a region,
+and Application Default Credentials, so the entry names no `apiKeyEnv`. `gemini` is the Gemini
+API: an API key in `apiKeyEnv`, and no project or region. The two share a request body, so
+moving a model between them changes `provider`, `modelId`, and whether `apiKeyEnv` is present -
+nothing downstream. `gemini` needs `specVersion: "0.10"`.
+
 ## `prompts`
 
 ```yaml

@@ -160,12 +160,15 @@ from aid_runtime.providers import (
     BEDROCK_SERVICE,
     DEFAULT_ANTHROPIC_BASE_URL,
     DEFAULT_BASE_URL,
+    DEFAULT_GEMINI_BASE_URL,
     DEFAULT_VERTEX_LOCATION,
+    GEMINI_API_KEY_ENV,
     METADATA_TOKEN_URL,
     VERTEX_TOKEN_ENV,
     AnthropicProvider,
     BedrockProvider,
     FakeProvider,
+    GeminiProvider,
     OpenAICompatibleProvider,
     Provider,
     ScriptedTurn,
@@ -191,6 +194,7 @@ from aid_runtime.retrieval import (
     FakeDeterministicEmbedder,
     FileConnector,
     FixedChunker,
+    GeminiEmbedder,
     IndexSpec,
     IngestReport,
     InMemoryVectorStore,
@@ -297,7 +301,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.96"
+__version__ = "0.1.97"
 
 __all__ = [
     "ANTHROPIC_VERSION",
@@ -306,10 +310,12 @@ __all__ = [
     "DEFAULT_ANTHROPIC_BASE_URL",
     "DEFAULT_BASE_URL",
     "DEFAULT_CANDIDATE_FACTOR",
+    "DEFAULT_GEMINI_BASE_URL",
     "DEFAULT_TYPESAFE_BASE_URL",
     "DEFAULT_VERTEX_LOCATION",
     "DEPTH_KEY",
     "EMITTED_KEY",
+    "GEMINI_API_KEY_ENV",
     "GEN_AI_OPERATION_CHAT",
     "INDEX_KEY",
     "ITEM_KEY",
@@ -387,6 +393,8 @@ __all__ = [
     "GateConfigurationError",
     "GateResult",
     "GatewayRunner",
+    "GeminiEmbedder",
+    "GeminiProvider",
     "GenerationResult",
     "GuardrailBlockedError",
     "HumanApproval",

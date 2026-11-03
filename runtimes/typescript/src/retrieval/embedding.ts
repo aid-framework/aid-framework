@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import { ConfigurationError, ProviderError, ProviderResponseError } from '../errors.js';
 import { repr } from '../internal/json.js';
 import { stripTrailingSlashes } from '../internal/text.js';
+import { DEFAULT_GEMINI_BASE_URL, GEMINI_API_KEY_ENV } from '../providers/gemini.js';
 import { DEFAULT_BASE_URL, type FetchLike } from '../providers/http.js';
 import { TokenUsage } from '../types.js';
 import type { PinnedEmbedding } from './types.js';
@@ -30,6 +31,12 @@ import type { PinnedEmbedding } from './types.js';
  * rule in this runtime rather than one rule per adapter.
  */
 const RETRYABLE_STATUS: ReadonlySet<number> = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+
+/** `batchEmbedContents` takes at most this many inputs per call. */
+const GEMINI_EMBEDDING_BATCH_LIMIT = 100;
+
+/** Models that accept `outputDimensionality`; the older ones reject the field. */
+const GEMINI_DIMENSIONED_MODELS: ReadonlySet<string> = new Set(['gemini-embedding-001']);
 
 /**
  * Rough tokeniser. Deliberately the same arithmetic as `estimatePromptCostUsd`
@@ -215,54 +222,12 @@ export class OpenAICompatibleEmbedder implements Embedder {
   }
 
   private async post(path: string, payload: unknown): Promise<Record<string, unknown>> {
-    const url = `${this._baseUrl}${path}`;
-    let lastError: string = 'unknown error';
-    for (let attempt = 1; attempt <= this._maxAttempts; attempt += 1) {
-      let response:
-        | { readonly ok: boolean; readonly status: number; text(): Promise<string> }
-        | undefined;
-      try {
-        response = await this._fetch(url, {
-          method: 'POST',
-          headers: this.headers(),
-          body: JSON.stringify(payload),
-        });
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-      }
-      if (response !== undefined) {
-        const text = await response.text();
-        if (response.status < 400) {
-          return this.asObject(text);
-        }
-        const failure = `${this._name} returned HTTP ${response.status}: ${text.slice(0, 200)}`;
-        // A status outside the retryable set is a decision, not a hiccup: retrying a
-        // 400 only wastes the caller's time.
-        if (!RETRYABLE_STATUS.has(response.status)) {
-          throw new ProviderError(failure);
-        }
-        lastError = failure;
-      }
-      if (attempt < this._maxAttempts) {
-        await delay(this._backoffSeconds * 2 ** (attempt - 1));
-      }
-    }
-    throw new ProviderError(
-      `${this._name} failed after ${this._maxAttempts} attempt(s): ${lastError}`,
-    );
-  }
-
-  private asObject(text: string): Record<string, unknown> {
-    let body: unknown;
-    try {
-      body = JSON.parse(text) as unknown;
-    } catch {
-      throw new ProviderResponseError(`${this._name} returned a body that is not JSON`);
-    }
-    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-      throw new ProviderResponseError(`${this._name} returned a JSON body that is not an object`);
-    }
-    return body as Record<string, unknown>;
+    return postJsonEmbeddings(`${this._baseUrl}${path}`, payload, this.headers(), {
+      name: this._name,
+      maxAttempts: this._maxAttempts,
+      backoffSeconds: this._backoffSeconds,
+      fetchImpl: this._fetch,
+    });
   }
 
   private parse(body: Record<string, unknown>, model: PinnedEmbedding): EmbeddingBatch {
@@ -321,6 +286,216 @@ export class OpenAICompatibleEmbedder implements Embedder {
   }
 }
 
+/**
+ * `batchEmbedContents` on the Gemini API.
+ *
+ * Not an OpenAI-compatible endpoint with a different base URL: the text is nested in
+ * `content.parts[].text`, the response is `embeddings[].values` rather than
+ * `data[].embedding`, and the key travels in `x-goog-api-key`. A batch over 100 inputs
+ * is split and reassembled in order. The response carries no token counts, so usage is
+ * the same offline estimate the fake adapter reports -- a budget signal, not a bill.
+ */
+export class GeminiEmbedder implements Embedder {
+  private readonly _baseUrl: string;
+  private readonly _apiKey: string | undefined;
+  private readonly _name: string;
+  private readonly _maxAttempts: number;
+  private readonly _backoffSeconds: number;
+  private readonly _extraHeaders: Readonly<Record<string, string>>;
+  private readonly _fetch: FetchLike;
+  private _closed = false;
+
+  constructor(
+    options: {
+      readonly baseUrl?: string;
+      readonly apiKey?: string;
+      readonly name?: string;
+      readonly maxAttempts?: number;
+      readonly backoffSeconds?: number;
+      readonly fetchImpl?: FetchLike;
+      readonly extraHeaders?: Readonly<Record<string, string>>;
+    } = {},
+  ) {
+    const baseUrl = options.baseUrl ?? DEFAULT_GEMINI_BASE_URL;
+    if (!/^https?:\/\/./i.test(baseUrl)) {
+      throw new ConfigurationError(
+        `base_url must be an absolute http(s) URL, got ${repr(baseUrl)}`,
+      );
+    }
+    const maxAttempts = options.maxAttempts ?? 3;
+    if (maxAttempts < 1) {
+      throw new ConfigurationError('max_attempts must be at least 1');
+    }
+    this._baseUrl = stripTrailingSlashes(baseUrl);
+    this._apiKey = options.apiKey;
+    this._name = options.name ?? 'gemini-embedder';
+    this._maxAttempts = maxAttempts;
+    this._backoffSeconds = options.backoffSeconds ?? 0.5;
+    this._extraHeaders = { ...(options.extraHeaders ?? {}) };
+    this._fetch = options.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+  }
+
+  get name(): string {
+    return this._name;
+  }
+
+  async embed(
+    texts: readonly string[],
+    init: { readonly model: PinnedEmbedding },
+  ): Promise<EmbeddingBatch> {
+    if (this._closed) throw new ProviderError(`${this._name} is closed`);
+    const vectors: number[][] = [];
+    for (let start = 0; start < texts.length; start += GEMINI_EMBEDDING_BATCH_LIMIT) {
+      const batch = texts.slice(start, start + GEMINI_EMBEDDING_BATCH_LIMIT);
+      const body = await this.post(batch, init.model);
+      vectors.push(...this.parse(body, init.model, batch.length));
+    }
+    return new EmbeddingBatch({
+      vectors,
+      usage: new TokenUsage({
+        inputTokens: texts.reduce((total, text) => total + estimateTokens(text), 0),
+        outputTokens: 0,
+      }),
+    });
+  }
+
+  async close(): Promise<void> {
+    this._closed = true;
+  }
+
+  private headers(): Record<string, string> {
+    const apiKey = this._apiKey ?? process.env[GEMINI_API_KEY_ENV];
+    if (apiKey === undefined || apiKey.length === 0) {
+      throw new ProviderError(
+        `${this._name} has no API key: set embedding provider 'apiKeyEnv' or ${GEMINI_API_KEY_ENV}`,
+      );
+    }
+    return { 'x-goog-api-key': apiKey, 'content-type': 'application/json', ...this._extraHeaders };
+  }
+
+  private async post(
+    texts: readonly string[],
+    model: PinnedEmbedding,
+  ): Promise<Record<string, unknown>> {
+    const requests = texts.map((text) => ({
+      model: `models/${model.modelId}`,
+      content: { parts: [{ text }] },
+      ...(GEMINI_DIMENSIONED_MODELS.has(model.modelId)
+        ? { outputDimensionality: model.dimensions }
+        : {}),
+    }));
+    const url = `${this._baseUrl}/v1beta/models/${model.modelId}:batchEmbedContents`;
+    return postJsonEmbeddings(url, { requests }, this.headers(), {
+      name: this._name,
+      maxAttempts: this._maxAttempts,
+      backoffSeconds: this._backoffSeconds,
+      fetchImpl: this._fetch,
+    });
+  }
+
+  private parse(
+    body: Record<string, unknown>,
+    model: PinnedEmbedding,
+    expected: number,
+  ): number[][] {
+    const entries = body.embeddings;
+    if (!Array.isArray(entries) || entries.length !== expected) {
+      const found = Array.isArray(entries) ? entries.length : 0;
+      throw new ProviderResponseError(
+        `${this._name} returned ${found} embeddings for ${expected} input(s)`,
+      );
+    }
+    const vectors: number[][] = [];
+    for (const entry of entries as unknown[]) {
+      const values =
+        typeof entry === 'object' && entry !== null && !Array.isArray(entry)
+          ? (entry as Record<string, unknown>).values
+          : undefined;
+      if (!Array.isArray(values)) {
+        throw new ProviderResponseError(`${this._name} returned a non-list embedding`);
+      }
+      const vector: number[] = [];
+      for (const value of values) {
+        const numeric = typeof value === 'number' ? value : Number(value);
+        if (!Number.isFinite(numeric)) {
+          throw new ProviderResponseError(`${this._name} returned a non-numeric embedding`);
+        }
+        vector.push(numeric);
+      }
+      if (vector.length !== model.dimensions) {
+        throw new ProviderResponseError(
+          `${this._name} returned ${vector.length} dimensions for ${repr(model.modelId)} but ` +
+            `${model.dimensions} are pinned; the pin and the response must agree`,
+        );
+      }
+      vectors.push(vector);
+    }
+    return vectors;
+  }
+}
+
+interface EmbeddingPostOptions {
+  readonly name: string;
+  readonly maxAttempts: number;
+  readonly backoffSeconds: number;
+  readonly fetchImpl: FetchLike;
+}
+
+/** One POST with the retry rule both embedding adapters share. */
+async function postJsonEmbeddings(
+  url: string,
+  payload: unknown,
+  headers: Readonly<Record<string, string>>,
+  options: EmbeddingPostOptions,
+): Promise<Record<string, unknown>> {
+  const { name, maxAttempts, backoffSeconds, fetchImpl } = options;
+  let lastError = 'unknown error';
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let response:
+      | { readonly ok: boolean; readonly status: number; text(): Promise<string> }
+      | undefined;
+    try {
+      response = await fetchImpl(url, {
+        method: 'POST',
+        headers: { ...headers },
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    if (response !== undefined) {
+      const text = await response.text();
+      if (response.status < 400) {
+        return asObject(text, name);
+      }
+      const failure = `${name} returned HTTP ${response.status}: ${text.slice(0, 200)}`;
+      // A status outside the retryable set is a decision, not a hiccup: retrying a
+      // 400 only wastes the caller's time.
+      if (!RETRYABLE_STATUS.has(response.status)) {
+        throw new ProviderError(failure);
+      }
+      lastError = failure;
+    }
+    if (attempt < maxAttempts) {
+      await delay(backoffSeconds * 2 ** (attempt - 1));
+    }
+  }
+  throw new ProviderError(`${name} failed after ${maxAttempts} attempt(s): ${lastError}`);
+}
+
+function asObject(text: string, name: string): Record<string, unknown> {
+  let body: unknown;
+  try {
+    body = JSON.parse(text) as unknown;
+  } catch {
+    throw new ProviderResponseError(`${name} returned a body that is not JSON`);
+  }
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw new ProviderResponseError(`${name} returned a JSON body that is not an object`);
+  }
+  return body as Record<string, unknown>;
+}
+
 function delay(seconds: number): Promise<void> {
   if (seconds <= 0) return Promise.resolve();
   return new Promise((resolve) => {
@@ -346,6 +521,13 @@ export function embedderFor(
 ): Embedder {
   if (model.provider === 'fake') {
     return new FakeDeterministicEmbedder();
+  }
+  if (model.provider === 'gemini') {
+    return new GeminiEmbedder({
+      ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
+      ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+      ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+    });
   }
   return new OpenAICompatibleEmbedder({
     baseUrl: options.baseUrl ?? DEFAULT_BASE_URL,

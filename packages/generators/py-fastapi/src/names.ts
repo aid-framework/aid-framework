@@ -289,6 +289,7 @@ export type ProviderAdapter =
   | 'AnthropicProvider'
   | 'BedrockProvider'
   | 'VertexProvider'
+  | 'GeminiProvider'
   | 'FakeProvider';
 
 /** What each provider adapter can do at all, as `Capability` member expressions. */
@@ -320,6 +321,14 @@ export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, readonly str
   // event stream the adapter cannot decode. No `EMBEDDINGS`: the pinned Gemini
   // models are chat models and the adapter does not call the embeddings endpoint.
   VertexProvider: [
+    'Capability.STREAMING',
+    'Capability.STRUCTURED_OUTPUT',
+    'Capability.TOOL_CALLING',
+  ],
+  // The Gemini API serves SSE and the adapter decodes it, so `streaming` is honest.
+  // No `EMBEDDINGS`: the pinned Gemini chat models are not embedders, and a spec that
+  // wants one pins `gemini-embedding-001`, which `embedder_for` routes separately.
+  GeminiProvider: [
     'Capability.STREAMING',
     'Capability.STRUCTURED_OUTPUT',
     'Capability.TOOL_CALLING',
@@ -361,6 +370,7 @@ export function providerAdapter(provider: string): ProviderAdapter | undefined {
   if (provider === 'anthropic') return 'AnthropicProvider';
   if (provider === 'bedrock') return 'BedrockProvider';
   if (provider === 'google') return 'VertexProvider';
+  if (provider === 'gemini') return 'GeminiProvider';
   if (provider === 'openai' || provider === 'openai-compatible') {
     return 'OpenAICompatibleProvider';
   }

@@ -19,9 +19,11 @@ import httpx
 import pytest
 
 from aid_runtime import ConfigurationError, ProviderError, ProviderResponseError
+from aid_runtime.providers import GEMINI_API_KEY_ENV
 from aid_runtime.retrieval import (
     Embedder,
     FakeDeterministicEmbedder,
+    GeminiEmbedder,
     OpenAICompatibleEmbedder,
     embedder_for,
     estimate_tokens,
@@ -419,3 +421,124 @@ async def test_aclose_leaves_a_caller_supplied_client_open() -> None:
         batch = await embedder.embed(["alpha"], model=pinned())
 
     assert batch.vectors[0][0] == pytest.approx(0.5)
+
+
+# --- Gemini -----------------------------------------------------------------
+
+
+def _gemini(recorder: Recorder, **kwargs: Any) -> GeminiEmbedder:
+    options: dict[str, Any] = {"api_key": API_KEY, "backoff_seconds": 0.0}
+    options.update(kwargs)
+    return GeminiEmbedder(client=_client(recorder), **options)
+
+
+def _gemini_reply(vectors: list[list[float]]) -> httpx.Response:
+    return httpx.Response(200, json={"embeddings": [{"values": v} for v in vectors]})
+
+
+def test_a_gemini_pin_selects_the_gemini_adapter() -> None:
+    assert isinstance(embedder_for(pinned(provider="gemini")), GeminiEmbedder)
+
+
+async def test_gemini_posts_batch_embed_contents_with_the_key_header() -> None:
+    recorder = Recorder(_gemini_reply([_vector()]))
+    embed = _gemini(recorder, base_url="https://gemini.test")
+
+    batch = await embed.embed(
+        ["alpha"], model=pinned(provider="gemini", model_id="gemini-embedding-001")
+    )
+
+    request = recorder.requests[0]
+    assert str(request.url) == (
+        "https://gemini.test/v1beta/models/gemini-embedding-001:batchEmbedContents"
+    )
+    assert request.headers["x-goog-api-key"] == API_KEY
+    body = json.loads(request.content)
+    assert body["requests"][0] == {
+        "model": "models/gemini-embedding-001",
+        "content": {"parts": [{"text": "alpha"}]},
+        "outputDimensionality": DIMENSIONS,
+    }
+    assert len(batch.vectors) == 1
+
+
+async def test_gemini_only_sends_output_dimensionality_for_models_that_accept_it() -> None:
+    recorder = Recorder(_gemini_reply([_vector()]))
+    embed = _gemini(recorder)
+
+    await embed.embed(["alpha"], model=pinned(provider="gemini", model_id="text-embedding-004"))
+
+    body = json.loads(recorder.requests[0].content)
+    assert "outputDimensionality" not in body["requests"][0]
+
+
+async def test_gemini_splits_batches_of_more_than_one_hundred() -> None:
+    recorder = Recorder(
+        *[_gemini_reply([_vector() for _ in range(100)]), _gemini_reply([_vector()])]
+    )
+    embed = _gemini(recorder)
+
+    batch = await embed.embed(
+        [f"text-{index}" for index in range(101)],
+        model=pinned(provider="gemini", model_id="gemini-embedding-001"),
+    )
+
+    assert len(recorder.requests) == 2
+    assert len(json.loads(recorder.requests[0].content)["requests"]) == 100
+    assert len(json.loads(recorder.requests[1].content)["requests"]) == 1
+    assert len(batch.vectors) == 101
+
+
+async def test_gemini_reports_an_offline_token_estimate() -> None:
+    recorder = Recorder(_gemini_reply([_vector(), _vector()]))
+    embed = _gemini(recorder)
+
+    batch = await embed.embed(
+        ["abcd", "abcdefgh"], model=pinned(provider="gemini", model_id="gemini-embedding-001")
+    )
+
+    assert batch.usage.input_tokens == estimate_tokens("abcd") + estimate_tokens("abcdefgh")
+    assert batch.usage.output_tokens == 0
+
+
+async def test_gemini_reads_the_key_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(GEMINI_API_KEY_ENV, "from-env")
+    recorder = Recorder(_gemini_reply([_vector()]))
+    embed = _gemini(recorder, api_key=None)
+
+    await embed.embed(["alpha"], model=pinned(provider="gemini"))
+
+    assert recorder.requests[0].headers["x-goog-api-key"] == "from-env"
+
+
+async def test_gemini_requires_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(GEMINI_API_KEY_ENV, raising=False)
+    embed = _gemini(Recorder(), api_key=None)
+
+    with pytest.raises(ProviderError, match=GEMINI_API_KEY_ENV):
+        await embed.embed(["alpha"], model=pinned(provider="gemini"))
+
+
+async def test_gemini_does_not_retry_a_bad_key() -> None:
+    recorder = Recorder(httpx.Response(400, json={"error": {"status": "FAILED_PRECONDITION"}}))
+    embed = _gemini(recorder)
+
+    with pytest.raises(ProviderError, match="400"):
+        await embed.embed(["alpha"], model=pinned(provider="gemini"))
+    assert len(recorder.requests) == 1
+
+
+async def test_gemini_refuses_a_reply_with_the_wrong_number_of_embeddings() -> None:
+    recorder = Recorder(_gemini_reply([_vector()]))
+    embed = _gemini(recorder)
+
+    with pytest.raises(ProviderResponseError, match="1 embeddings for 2 input"):
+        await embed.embed(["alpha", "beta"], model=pinned(provider="gemini"))
+
+
+async def test_gemini_refuses_a_width_that_disagrees_with_the_pin() -> None:
+    recorder = Recorder(_gemini_reply([[0.5, 0.5]]))
+    embed = _gemini(recorder)
+
+    with pytest.raises(ProviderResponseError, match="dimensions"):
+        await embed.embed(["alpha"], model=pinned(provider="gemini"))
