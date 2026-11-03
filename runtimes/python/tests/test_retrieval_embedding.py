@@ -542,4 +542,3 @@ async def test_gemini_refuses_a_width_that_disagrees_with_the_pin() -> None:
 
     with pytest.raises(ProviderResponseError, match="dimensions"):
         await embed.embed(["alpha"], model=pinned(provider="gemini"))
-
