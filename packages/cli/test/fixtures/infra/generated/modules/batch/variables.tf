@@ -13,6 +13,8 @@ variable "services" {
     providers    = list(string)
     ingest       = list(string)
     secret_names = list(string)
+    # Every guardrail engine the spec names; `bedrock` means this build calls one.
+    guardrail_engines = list(string)
     pipeline     = optional(string)
     routes = list(object({
       pipeline = string
@@ -82,6 +84,19 @@ variable "bedrock_region" {
   description = "Region for Bedrock calls. Empty means the region this stack deploys into."
   type        = string
   default     = ""
+}
+
+variable "guardrails" {
+  description = "Managed guardrails to provision, keyed by service id. Empty means no service owns one."
+  type = map(object({
+    id      = string
+    message = string
+    content = list(object({ type = string, strength = string }))
+    topics  = list(object({ name = string, definition = string }))
+    words   = list(string)
+    pii     = list(object({ type = string, action = string }))
+  }))
+  default = {}
 }
 
 variable "tags" {

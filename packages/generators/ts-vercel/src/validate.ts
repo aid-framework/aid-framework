@@ -1129,6 +1129,19 @@ export function checkGuardrails(ir: IR): PlanProblem[] {
   const problems: PlanProblem[] = [];
   for (const guardrail of ir.guardrails) {
     const at = `guardrails.${guardrail.id}`;
+    if (guardrail.engine !== 'builtin') {
+      // A managed guardrail is evaluated by a cloud service over HTTP, and this target's
+      // engine is synchronous and ships no client for it -- the check would never run.
+      problems.push(
+        problem(
+          'guardrail-unsupported',
+          `${at}.engine`,
+          `guardrail '${guardrail.id}' is evaluated by '${guardrail.engine}', which this target ` +
+            'cannot call; managed guardrails are implemented by the Python target',
+        ),
+      );
+      continue;
+    }
     if (guardrail.decision !== undefined) {
       // Answering a guardrail with a decision means calling a decision model, and this
       // target's engine is synchronous and has no client; the check would never run.

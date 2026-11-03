@@ -7,6 +7,7 @@ module "serverless" {
 
   project        = var.project
   services       = var.services
+  guardrails     = var.guardrails
   image_uris     = var.image_uris
   secret_arns    = var.secret_arns
   sizing         = var.sizing
@@ -19,6 +20,7 @@ module "container" {
 
   project            = var.project
   services           = var.services
+  guardrails         = var.guardrails
   image_uris         = var.image_uris
   secret_arns        = var.secret_arns
   container_sizing   = var.container_sizing
@@ -38,6 +40,7 @@ module "batch" {
 
   project            = var.project
   services           = var.services
+  guardrails         = var.guardrails
   image_uris         = var.image_uris
   secret_arns        = var.secret_arns
   batch_sizing       = var.batch_sizing

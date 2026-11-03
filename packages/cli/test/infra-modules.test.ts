@@ -1246,11 +1246,48 @@ describe('the CDK construct', () => {
       'CfnIntegration', // aws_apigatewayv2_integration
       'CfnRoute', // aws_apigatewayv2_route
       'CfnPermission', // aws_lambda_permission
+      'CfnGuardrail', // aws_bedrock_guardrail
+      'CfnGuardrailVersion', // aws_bedrock_guardrail_version
       'Role', // aws_iam_role
       'PolicyStatement', // aws_iam_role_policy
     ]) {
       expect(contents, kind).toContain(kind);
     }
+  });
+
+  it('provisions the guardrail, and only when the plan names one', () => {
+    const contents = cdkModule().contents;
+
+    // A service that names the engine but owns no policy block leaves its guardrail to
+    // its operator, so the construct must return before the resources rather than
+    // provisioning an empty one.
+    expect(contents).toContain('const policy = (context.guardrails || {})[id];');
+    expect(contents).toContain('if (!policy) return undefined;');
+
+    // Evaluating a guardrail is the app's job; provisioning it is the construct's.
+    expect(contents).toContain("actions: ['bedrock:ApplyGuardrail']");
+    expect(contents).not.toContain('bedrock:CreateGuardrail');
+    // The app is wired to the immutable version the construct publishes, not to the
+    // mutable guardrail resource itself.
+    expect(contents).toContain('guardrailIdentifier: guardrail.attrGuardrailId');
+
+    // The app learns where the guardrail is from the resources, not from an input.
+    expect(contents).toContain('variables.BEDROCK_GUARDRAIL_ID');
+    expect(contents).toContain('variables.BEDROCK_GUARDRAIL_VERSION');
+    expect(contents).toContain('guardrail.attrGuardrailId');
+    expect(contents).toContain('version.attrVersion');
+  });
+
+  it('fires the guardrail assertions the fixture app makes', () => {
+    // `cdk synth` exits 0 for a stack with no guardrail, so the fixture asserts the
+    // resource itself. The assertion is only meaningful if the context asks for one.
+    const context = JSON.parse(readFileSync(join(FIXTURE, 'cdk', 'context.json'), 'utf8'));
+    expect(context.services.api.guardrailEngines).toEqual(['bedrock']);
+    expect(context.guardrails.api.content).toHaveLength(1);
+
+    const app = readFileSync(join(FIXTURE, 'cdk', 'bin', 'app.js'), 'utf8');
+    expect(app).toContain('expected one managed guardrail');
+    expect(app).toContain('expected one guardrail version');
   });
 
   it('is .cjs, because a generated project may be an ES module', () => {

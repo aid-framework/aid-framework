@@ -14,6 +14,7 @@
 
 const cdk = require('aws-cdk-lib');
 const apigwv2 = require('aws-cdk-lib/aws-apigatewayv2');
+const bedrock = require('aws-cdk-lib/aws-bedrock');
 const iam = require('aws-cdk-lib/aws-iam');
 const lambda = require('aws-cdk-lib/aws-lambda');
 
@@ -22,6 +23,88 @@ function nameOf(project, id) {
   return (project.namespace + '-' + project.name + '-' + id)
     .replace(/[^A-Za-z0-9-_]/g, '-')
     .slice(0, 64);
+}
+
+/**
+ * Provision the managed guardrail for one service, and nothing when the spec leaves it to
+ * its operator.
+ *
+ * The HCL module spells the same two resources, so the two backends must agree about which
+ * service owns a guardrail and which immutable version the app calls. A spec that names
+ * the engine but carries no policy block owns no guardrail here either.
+ */
+function addGuardrail(scope, context, id, service, role) {
+  if (!(service.guardrailEngines || []).includes('bedrock')) return undefined;
+
+  const policy = (context.guardrails || {})[id];
+  if (!policy) return undefined;
+
+  // A guardrail name caps at 50 characters and allows letters, digits, hyphens and
+  // underscores; `nameOf` is already sanitised, so only the cap is left.
+  const props = {
+    name: (nameOf(context.project, id) + '-guardrail').slice(0, 50),
+    description: policy.message,
+    blockedInputMessaging: policy.message,
+    blockedOutputsMessaging: policy.message,
+  };
+
+  if (policy.content.length > 0) {
+    props.contentPolicyConfig = {
+      filtersConfig: policy.content.map((filter) => ({
+        type: filter.type,
+        inputStrength: filter.strength,
+        outputStrength: filter.strength,
+      })),
+    };
+  }
+
+  if (policy.topics.length > 0) {
+    props.topicPolicyConfig = {
+      topicsConfig: policy.topics.map((topic) => ({
+        name: topic.name,
+        definition: topic.definition,
+        type: 'DENY',
+      })),
+    };
+  }
+
+  // Only the author's own words, never a managed list: adding one here would block
+  // vocabulary the spec did not ask for.
+  if (policy.words.length > 0) {
+    props.wordPolicyConfig = {
+      wordsConfig: policy.words.map((text) => ({ text: text })),
+    };
+  }
+
+  if (policy.pii.length > 0) {
+    props.sensitiveInformationPolicyConfig = {
+      piiEntitiesConfig: policy.pii.map((entity) => ({
+        type: entity.type,
+        action: entity.action,
+      })),
+    };
+  }
+
+  const guardrail = new bedrock.CfnGuardrail(scope, id + 'Guardrail', props);
+
+  // A guardrail is mutable and every change mints a new immutable version, so the app is
+  // pinned to this one. Pointing it at DRAFT would let a later edit change a live
+  // deployment without a plan.
+  const version = new bedrock.CfnGuardrailVersion(scope, id + 'GuardrailVersion', {
+    guardrailIdentifier: guardrail.attrGuardrailId,
+    description: 'Published by aid infra gen from the spec.',
+  });
+
+  // Evaluating a guardrail is the app's job; provisioning it is this construct's. Scoping
+  // the grant to the ARN means a compromised function cannot apply another guardrail.
+  role.addToPolicy(
+    new iam.PolicyStatement({
+      actions: ['bedrock:ApplyGuardrail'],
+      resources: [guardrail.attrGuardrailArn],
+    }),
+  );
+
+  return { guardrail: guardrail, version: version };
 }
 
 /**
@@ -104,6 +187,13 @@ function addServerless(scope, context, inputs) {
 
     const variables = {};
     if (usesBedrock) variables.AWS_REGION = inputs.bedrockRegion || cdk.Aws.REGION;
+
+    const managed = addGuardrail(scope, context, id, service, role);
+    if (managed) {
+      variables.BEDROCK_GUARDRAIL_ID = managed.guardrail.attrGuardrailId;
+      variables.BEDROCK_GUARDRAIL_VERSION = managed.version.attrVersion;
+    }
+
     for (const variable of service.env) {
       if (variable.secret) {
         variables[variable.name] =

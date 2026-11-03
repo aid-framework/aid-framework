@@ -23,6 +23,13 @@ import {
   type AgentEngine,
   type AgentOnBudgetExhausted,
   type AgentShape,
+  BEDROCK_CONTENT_FILTERS,
+  BEDROCK_CONTENT_STRENGTHS,
+  BEDROCK_PII_ENTITIES,
+  type BedrockContentFilter,
+  type BedrockContentStrength,
+  type BedrockGuardrailPolicy,
+  type BedrockPiiEntity,
   type BranchStep,
   DECISION_ON_ERROR,
   DECISION_QUESTION_TYPES,
@@ -927,6 +934,7 @@ function buildGuardrails(raw: unknown): GuardrailShape[] {
     const onDecision = asRecord(entry.onDecision) ?? {};
     const guardrail: GuardrailShape = {
       id,
+      engine: entry.engine === 'bedrock' ? 'bedrock' : 'builtin',
       stages,
       policies: asStringArray(entry.policies).filter(isGuardrailPolicyKind),
       action: (GUARDRAIL_ACTIONS as readonly string[]).includes(action ?? '')
@@ -948,8 +956,56 @@ function buildGuardrails(raw: unknown): GuardrailShape[] {
     if (Object.keys(outcomes).length > 0) guardrail.onDecision = outcomes;
     const minConfidence = asNumber(entry.minConfidence);
     if (minConfidence !== undefined) guardrail.minConfidence = minConfidence;
+    const bedrock = buildBedrockPolicy(entry.bedrock);
+    if (bedrock !== undefined) guardrail.bedrock = bedrock;
     return guardrail;
   });
+}
+
+/**
+ * The managed policy block, with the closed vocabularies applied.
+ *
+ * Filtering an unknown category here is the same rule the detectors follow: the IR is a
+ * published contract, so a producer that writes an enum this build does not know loses
+ * the entry instead of shipping a policy the module would render as nothing. An empty
+ * policy is `undefined`, which is how "the operator owns the guardrail" is spelled.
+ */
+function buildBedrockPolicy(raw: unknown): BedrockGuardrailPolicy | undefined {
+  const record = asRecord(raw);
+  if (record === undefined) return undefined;
+  const policy: BedrockGuardrailPolicy = {};
+
+  const content = asRecord(record.content);
+  if (content !== undefined) {
+    const filters: Partial<Record<BedrockContentFilter, BedrockContentStrength>> = {};
+    for (const key of sortedKeys(content)) {
+      if (!(BEDROCK_CONTENT_FILTERS as readonly string[]).includes(key)) continue;
+      const strength = asString(content[key]);
+      if (!(BEDROCK_CONTENT_STRENGTHS as readonly string[]).includes(strength ?? '')) continue;
+      filters[key as BedrockContentFilter] = strength as BedrockContentStrength;
+    }
+    if (Object.keys(filters).length > 0) policy.content = filters;
+  }
+
+  const topics = asRecord(record.topics);
+  if (topics !== undefined) {
+    const definitions: Record<string, string> = {};
+    for (const name of sortedKeys(topics)) {
+      const definition = asString(topics[name]);
+      if (definition !== undefined) definitions[name] = definition;
+    }
+    if (Object.keys(definitions).length > 0) policy.topics = definitions;
+  }
+
+  const pii = asStringArray(record.pii).filter((entity): entity is BedrockPiiEntity =>
+    (BEDROCK_PII_ENTITIES as readonly string[]).includes(entity),
+  );
+  if (pii.length > 0) policy.pii = pii;
+
+  const words = asStringArray(record.words);
+  if (words.length > 0) policy.words = words;
+
+  return Object.keys(policy).length > 0 ? policy : undefined;
 }
 
 function buildDecisions(raw: unknown): DecisionShape[] {

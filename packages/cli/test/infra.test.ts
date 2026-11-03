@@ -97,6 +97,160 @@ deployments:
     secrets: []
 `;
 
+/**
+ * A managed guardrail: the spec names the policy, the provider names the enums, and
+ * `emit.ts` is the one seam between them.
+ */
+const MANAGED_SPEC = `specVersion: "0.11"
+project:
+  name: shielded
+  namespace: aid.test.shielded
+  targets: [py-fastapi]
+models:
+  fast:
+    provider: fake
+    modelId: fake-deterministic-1
+    capabilities: [json-schema]
+prompts:
+  draft:
+    version: 1
+    model: fast
+    template: "Summarise {{ subject }}."
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: text
+guardrails:
+  inbound:
+    engine: bedrock
+    stages: [input, output]
+    action: block
+    bedrock:
+      content:
+        prompt-attack: high
+        hate: medium
+      pii: [email, credit-card]
+      words: [swordfish]
+    onFail:
+      message: Request rejected.
+      log: true
+pipelines:
+  brief:
+    trigger:
+      manual: true
+    steps:
+      - generate:
+          prompt: draft
+          input:
+            subject: "{{ event.subject }}"
+          as: brief
+deployments:
+  api:
+    target: serverless
+    secrets: []
+`;
+
+/** The same guardrail, but with the policy left to the operator: no `bedrock:` block. */
+const OPERATOR_OWNED_SPEC = `specVersion: "0.11"
+project:
+  name: shielded
+  namespace: aid.test.shielded
+  targets: [py-fastapi]
+models:
+  fast:
+    provider: fake
+    modelId: fake-deterministic-1
+    capabilities: [json-schema]
+prompts:
+  draft:
+    version: 1
+    model: fast
+    template: "Summarise {{ subject }}."
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: text
+guardrails:
+  inbound:
+    engine: bedrock
+    stages: [input, output]
+    action: block
+    onFail:
+      message: Request rejected.
+      log: true
+pipelines:
+  brief:
+    trigger:
+      manual: true
+    steps:
+      - generate:
+          prompt: draft
+          input:
+            subject: "{{ event.subject }}"
+          as: brief
+deployments:
+  api:
+    target: serverless
+    secrets: []
+`;
+
+/** Two compute targets in one plan, so both spellings of the role reference are emitted. */
+const MANAGED_MULTI_TARGET_SPEC = `specVersion: "0.11"
+project:
+  name: shielded
+  namespace: aid.test.shielded
+  targets: [py-fastapi]
+models:
+  fast:
+    provider: fake
+    modelId: fake-deterministic-1
+    capabilities: [json-schema]
+prompts:
+  draft:
+    version: 1
+    model: fast
+    template: "Summarise {{ subject }}."
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: text
+guardrails:
+  inbound:
+    engine: bedrock
+    stages: [input, output]
+    action: block
+    bedrock:
+      content:
+        hate: medium
+    onFail:
+      message: Request rejected.
+      log: true
+pipelines:
+  brief:
+    trigger:
+      manual: true
+    steps:
+      - generate:
+          prompt: draft
+          input:
+            subject: "{{ event.subject }}"
+          as: brief
+deployments:
+  api:
+    target: container
+    secrets: []
+  nightly:
+    target: batch
+    pipeline: brief
+    secrets: []
+`;
+
 /** Everything a derived file must never contain, because the spec does not say it. */
 function assertDerivedOnly(files: Record<string, string>): void {
   for (const [path, text] of Object.entries(files)) {
@@ -156,6 +310,90 @@ describe('infra gen', () => {
     expect(made.walk()).toContain(`${GENERATED}/modules/batch/main.tf`);
     expect(made.walk()).not.toContain(`${GENERATED}/modules/container/main.tf`);
     expect(made.read(`${GENERATED}/README.md`)).toContain('modules/batch/');
+  });
+
+  it('spells a managed guardrail with the provider identifiers, not the spec vocabulary', () => {
+    const made = scratchSpec(MANAGED_SPEC);
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+
+    const tfvars = JSON.parse(made.read(TFVARS));
+    expect(tfvars.services.api.guardrail_engines).toEqual(['bedrock']);
+    expect(tfvars.guardrails.api).toEqual({
+      id: 'inbound',
+      message: 'Request rejected.',
+      // Content keys are canonicalised, so this is a sorted map to an AWS enum.
+      content: [
+        { type: 'HATE', strength: 'MEDIUM' },
+        { type: 'PROMPT_ATTACK', strength: 'HIGH' },
+      ],
+      topics: [],
+      words: ['swordfish'],
+      // Declared order, and BLOCK because the action blocks rather than redacts.
+      pii: [
+        { type: 'EMAIL', action: 'BLOCK' },
+        { type: 'CREDIT_DEBIT_CARD_NUMBER', action: 'BLOCK' },
+      ],
+    });
+
+    const context = JSON.parse(made.read(CDK_CONTEXT));
+    expect(context.guardrails).toEqual(tfvars.guardrails);
+    expect(context.services.api.guardrailEngines).toEqual(['bedrock']);
+  });
+
+  it('provisions the managed guardrail beside the compute and grants only the runtime call', () => {
+    const made = scratchSpec(MANAGED_SPEC);
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+
+    const main = made.read(`${GENERATED}/modules/serverless/main.tf`);
+    expect(main).toContain('resource "aws_bedrock_guardrail" "managed"');
+    expect(main).toContain('resource "aws_bedrock_guardrail_version" "managed"');
+    expect(main).toContain('resource "aws_iam_role_policy" "guardrail"');
+    // Evaluating a guardrail is the app's job; provisioning it is the module's. The role
+    // therefore carries the runtime action and none of the provisioning ones.
+    expect(main).toContain('"bedrock:ApplyGuardrail"');
+    expect(main).not.toContain('bedrock:CreateGuardrail');
+    // A live deployment is pinned to a numbered version. `DRAFT` moves with every edit,
+    // so wiring the app to it would let a policy change without a plan.
+    expect(main).not.toContain('"DRAFT"');
+    expect(main).not.toContain('aws_bedrock_guardrail.managed[id].version');
+    // The app learns where the guardrail is from the resources, not from a tfvar.
+    expect(main).toContain('BEDROCK_GUARDRAIL_ID');
+    expect(main).toContain('BEDROCK_GUARDRAIL_VERSION');
+    expect(main).toContain('aws_bedrock_guardrail_version.managed[id].version');
+  });
+
+  it('attaches the grant to the role each target actually runs under', () => {
+    const made = scratchSpec(MANAGED_MULTI_TARGET_SPEC);
+    const run = aid(made, ['infra', 'gen', '--json']);
+    expect(run.code).toBe(0);
+
+    // ECS keys its task role by service, so the grant does too.
+    expect(made.read(`${GENERATED}/modules/container/main.tf`)).toContain(
+      'role     = aws_iam_role.task[each.key].id',
+    );
+    // Batch runs every job under one count-indexed task role. `[each.key]` would not
+    // resolve here, and `tofu validate` would reject the module.
+    expect(made.read(`${GENERATED}/modules/batch/main.tf`)).toContain(
+      'role     = aws_iam_role.task[0].id',
+    );
+  });
+
+  it('provisions nothing when the spec names the engine but leaves the policy to its operator', () => {
+    // `engine: bedrock` without a `bedrock:` block is the "I already own a guardrail"
+    // form. The app still calls Bedrock, but the deployment must not create a second one.
+    const made = scratchSpec(OPERATOR_OWNED_SPEC);
+    const run = aid(made, ['infra', 'gen', '--json']);
+    expect(run.code).toBe(0);
+
+    const tfvars = JSON.parse(made.read(TFVARS));
+    expect(tfvars.services.api.guardrail_engines).toEqual(['bedrock']);
+    expect(tfvars.guardrails).toEqual({});
+
+    // The module is plan-independent, so it still carries the resources -- but they loop
+    // over a local that this plan leaves empty, which is what provisions nothing.
+    const main = made.read(`${GENERATED}/modules/serverless/main.tf`);
+    expect(main).toContain('for_each = local.managed_guardrails');
+    expect(main).toContain('contains(local.serverless[id].guardrail_engines, "bedrock")');
   });
 
   it('emits derived shape only', () => {
@@ -258,6 +496,7 @@ describe('infra gen', () => {
     expect(aid(made, ['infra', 'gen']).code).toBe(0);
     const tfvars = JSON.parse(made.read(TFVARS));
     expect(tfvars.services).toEqual({});
+    expect(tfvars.guardrails).toEqual({});
     expect(tfvars.data_stores).toEqual({});
     expect(tfvars.tasks).toEqual([]);
     expect(tfvars.alarms).toEqual([]);
@@ -521,6 +760,52 @@ pipelines:
           as: reply
 `;
 
+  /** An edge deployment whose guardrail asks Bedrock to evaluate it. */
+  const MANAGED_EDGE = `specVersion: "0.11"
+project:
+  name: ping
+  namespace: aid.test
+  targets: [py-fastapi]
+models:
+  small:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  answer:
+    version: 1
+    model: small
+    template: "Answer the request."
+    output:
+      kind: text
+guardrails:
+  inbound:
+    engine: bedrock
+    stages: [input]
+    action: block
+    bedrock:
+      content:
+        prompt-attack: high
+    onFail:
+      message: rejected.
+      log: true
+deployments:
+  api:
+    target: edge
+    secrets: [OPENAI_API_KEY]
+pipelines:
+  ping:
+    trigger:
+      http:
+        method: get
+        path: /ping
+    steps:
+      - generate:
+          prompt: answer
+          as: reply
+`;
+
   it('rejects an unknown cloud before writing anything', () => {
     const made = scratch();
     const run = aid(made, ['infra', 'gen', '--cloud', 'mars', '--json']);
@@ -581,6 +866,30 @@ pipelines:
     expect(refused).toEqual(['cli/infra-cloud-target-unsupported']);
     // The message has to say which service, or the operator cannot act on it.
     expect(diagnosticsOf(run)[0]?.message).toContain('api');
+    expect(made.walk()).not.toContain(TFVARS);
+  });
+
+  it('refuses a Bedrock guardrail on GCP, which has nothing to evaluate it', () => {
+    const made = project(MANAGED_SPEC);
+    created.push(made);
+
+    const run = aid(made, ['infra', 'gen', '--cloud', 'gcp', '--json']);
+    expect(run.code).toBe(1);
+    const [diagnostic] = diagnosticsOf(run);
+    expect(diagnostic?.code).toBe('cli/infra-guardrail-unsupported');
+    expect(diagnostic?.message).toContain('api');
+    expect(made.walk()).not.toContain(TFVARS);
+  });
+
+  it('refuses a Bedrock guardrail on an edge function, which has no environment', () => {
+    const made = project(MANAGED_EDGE);
+    created.push(made);
+
+    const run = aid(made, ['infra', 'gen', '--json']);
+    expect(run.code).toBe(1);
+    const [diagnostic] = diagnosticsOf(run);
+    expect(diagnostic?.code).toBe('cli/infra-guardrail-unsupported');
+    expect(diagnostic?.message).toContain('edge');
     expect(made.walk()).not.toContain(TFVARS);
   });
 

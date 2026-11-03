@@ -211,6 +211,36 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
     }
   }
 
+  // A managed guardrail is evaluated by Bedrock, so a plan that asks for one cannot run
+  // where Bedrock does not exist. An edge function is refused for a second reason: it has
+  // no environment variables, so it could not be told which guardrail to call.
+  const misplaced = deployPlan.services.filter(
+    (service) =>
+      service.guardrailEngines.includes('bedrock') &&
+      (cloud === 'gcp' || service.target === 'edge'),
+  );
+  if (misplaced.length > 0) {
+    const services = misplaced.map((service) => `"${service.id}"`).join(', ');
+    return outcome({
+      command,
+      exitCode: EXIT_FAILURE,
+      fields,
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.infraGuardrailUnsupported,
+          message:
+            cloud === 'gcp'
+              ? `Service ${services} asks Bedrock to evaluate its guardrail, which GCP cannot do.`
+              : `Service ${services} targets edge, which has no environment to name a Bedrock guardrail.`,
+          hint:
+            cloud === 'gcp'
+              ? 'Remove `engine: bedrock` from the guardrail, or deploy this environment with --cloud aws.'
+              : 'Serve the service from `serverless` or `container`, or evaluate the guardrail in the edge handler itself.',
+        }),
+      ],
+    });
+  }
+
   const files: InfraFile[] = emitInfra(deployPlan, { cloud });
   const plan: Plan = {
     files: files.map((file) => ({ path: file.path, content: file.contents, owner: 'generated' })),

@@ -1,6 +1,7 @@
 # Declared so the generated tfvars binds without an "undeclared variable" warning.
 variable "project" {}
 variable "services" {}
+variable "guardrails" {}
 variable "data_stores" {}
 variable "tasks" {}
 variable "alarms" {}

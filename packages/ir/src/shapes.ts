@@ -678,8 +678,68 @@ export function decisionIdentity(id: string): string {
   return `decision:${id}`;
 }
 
+/** The engines a guardrail's policy can live in. */
+export const GUARDRAIL_ENGINES = ['builtin', 'bedrock'] as const;
+
+export type GuardrailEngine = (typeof GUARDRAIL_ENGINES)[number];
+
+/** The content categories a managed guardrail filters, in AWS's order. */
+export const BEDROCK_CONTENT_FILTERS = [
+  'sexual',
+  'violence',
+  'hate',
+  'insults',
+  'misconduct',
+  'prompt-attack',
+] as const;
+
+export type BedrockContentFilter = (typeof BEDROCK_CONTENT_FILTERS)[number];
+
+/** How strongly the managed filter reacts to a category. */
+export const BEDROCK_CONTENT_STRENGTHS = ['low', 'medium', 'high'] as const;
+
+export type BedrockContentStrength = (typeof BEDROCK_CONTENT_STRENGTHS)[number];
+
+/** The personal-information entities a managed guardrail can detect. */
+export const BEDROCK_PII_ENTITIES = [
+  'email',
+  'phone',
+  'name',
+  'address',
+  'ssn',
+  'credit-card',
+  'bank-account',
+  'passport',
+  'drivers-license',
+  'ip-address',
+  'url',
+  'aws-access-key',
+  'aws-secret-key',
+] as const;
+
+export type BedrockPiiEntity = (typeof BEDROCK_PII_ENTITIES)[number];
+
+/**
+ * The managed policy a `bedrock`-engine guardrail owns.
+ *
+ * The spec vocabulary is the DSL's, not AWS's: `prompt-attack` and `credit-card` are
+ * mapped to the vendor's identifiers in one place, so a spec never spells an enum it
+ * cannot see the effect of. `topics` maps a name to the definition the classifier is
+ * given, because the definition *is* the policy.
+ */
+export interface BedrockGuardrailPolicy {
+  content?: Partial<Record<BedrockContentFilter, BedrockContentStrength>>;
+  topics?: Record<string, string>;
+  words?: string[];
+  pii?: BedrockPiiEntity[];
+}
+
 export interface GuardrailShape {
   id: string;
+  /** Where the policy is evaluated; `builtin` when the document does not say. */
+  engine: GuardrailEngine;
+  /** The managed policy, when `engine` is `bedrock` and the spec owns it. */
+  bedrock?: BedrockGuardrailPolicy;
   stages: ('input' | 'output' | 'retrieval' | 'tool-call')[];
   policies: GuardrailPolicyKind[];
   action: 'block' | 'redact' | 'flag' | 'escalate';

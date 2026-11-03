@@ -478,11 +478,12 @@ function guardrailCheck(
   for (const name of ['ENGINE', 'enforce_guardrail', table]) imports.guardrails.add(name);
   // A decision is an HTTP call, so a stage with one asks the asynchronous engine; the
   // synchronous `check_input` would skip it and let the payload through unexamined.
-  if (
-    stage === 'input' &&
-    stageGuardrails(ir, stage).some((guardrail) => guardrail.decision !== undefined)
-  ) {
-    return `enforce_guardrail(await ENGINE.check_input_async(${table}, ${value}))`;
+  const needsAsync = stageGuardrails(ir, stage).some(
+    (guardrail) =>
+      guardrail.engine === 'bedrock' || (stage === 'input' && guardrail.decision !== undefined),
+  );
+  if (needsAsync) {
+    return `enforce_guardrail(await ENGINE.check_${stage}_async(${table}, ${value}))`;
   }
   return `enforce_guardrail(ENGINE.check_${stage}(${table}, ${value}))`;
 }
@@ -783,6 +784,7 @@ function guardPayload(step: GuardShape, context: ExpressionContext): string {
  * the verdict a caller may ignore is exactly the one it must not.
  */
 function emitGuardStep(
+  ir: IR,
   step: StepShape,
   context: ExpressionContext,
   imports: StepImports,
@@ -790,9 +792,13 @@ function emitGuardStep(
   bodyName?: string,
 ): string {
   const guard = require(step.kind === 'guard' ? step : undefined, 'a guard step');
-  const method = require(guard.stage === 'tool-call'
+  const baseMethod = require(guard.stage === 'tool-call'
     ? undefined
     : GUARD_METHODS[guard.stage], 'an emitter for a guard step at the tool-call stage');
+  const managed = (ir.guardrails ?? []).some(
+    (guardrail) => guardrail.id === guard.guardrail && guardrail.engine === 'bedrock',
+  );
+  const method = managed ? `${baseMethod}_async` : baseMethod;
   const fn = bodyName ?? stepFunctionName(step);
   imports.runtime.add('PipelineContext');
   for (const name of ['BY_ID', 'ENGINE', 'enforce_guardrail']) imports.guardrails.add(name);
@@ -815,7 +821,7 @@ function emitGuardStep(
     [`(BY_ID[${pythonString(guard.guardrail)}],)`, '_payload'],
     INDENT,
   );
-  lines.push(callStatement('', 'enforce_guardrail', [check], INDENT));
+  lines.push(callStatement('', 'enforce_guardrail', [managed ? `await ${check}` : check], INDENT));
   lines.push(`${INDENT}return ctx`);
   return lines.join('\n');
 }
@@ -1371,7 +1377,7 @@ function stepBlock(
     case 'rerank':
       return emitRerankStep(step, context, imports, request, bodyName);
     case 'guard':
-      return emitGuardStep(step, context, imports, request, bodyName);
+      return emitGuardStep(ir, step, context, imports, request, bodyName);
     case 'agent':
       return emitAgentStep(step, context, imports, request, bodyName);
     default:

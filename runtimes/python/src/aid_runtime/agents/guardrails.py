@@ -50,6 +50,7 @@ from typing import Any, Literal, Protocol, cast
 from pydantic import BaseModel, ConfigDict
 
 from aid_runtime.agents.ir import DecisionDefinition, GuardrailDefinition
+from aid_runtime.agents.managed import BedrockGuardrailClient, GuardrailClient
 from aid_runtime.decisions import DecisionClient, DecisionQuestion, DecisionResponse
 from aid_runtime.errors import ConfigurationError, GuardrailBlockedError
 
@@ -76,6 +77,9 @@ ACTION_BLOCK: GuardrailAction = "block"
 ACTION_REDACT: GuardrailAction = "redact"
 ACTION_FLAG: GuardrailAction = "flag"
 ACTION_ESCALATE: GuardrailAction = "escalate"
+
+#: The one managed engine. ``builtin`` is the default and needs no name here.
+ENGINE_BEDROCK = "bedrock"
 
 GUARDRAIL_STAGES: tuple[GuardrailStage, ...] = ("input", "retrieval", "tool-call", "output")
 GUARDRAIL_ACTIONS: tuple[GuardrailAction, ...] = (
@@ -323,6 +327,7 @@ class GuardrailEngine:
         guardrails: Mapping[str, GuardrailDefinition] | None = None,
         decisions: Mapping[str, DecisionDefinition] | None = None,
         client_factory: Callable[[], DecisionAsker] | None = None,
+        guardrail_client_factory: Callable[[], GuardrailClient] | None = None,
     ) -> None:
         self._declared = dict(guardrails or {})
         self._decisions = dict(decisions or {})
@@ -330,9 +335,18 @@ class GuardrailEngine:
         #: boot when no request reaches a decision-backed guardrail.
         self._client_factory = client_factory or DecisionClient
         self._client: DecisionAsker | None = None
+        #: Same rule for a managed engine: a document with no ``engine: bedrock``
+        #: guardrail must never require Bedrock credentials to start.
+        self._guardrail_client_factory = guardrail_client_factory or BedrockGuardrailClient
+        self._guardrail_client: GuardrailClient | None = None
 
     def declared(self, guardrail_id: str) -> GuardrailDefinition | None:
         return self._declared.get(guardrail_id)
+
+    def _managed(self) -> GuardrailClient:
+        if self._guardrail_client is None:
+            self._guardrail_client = self._guardrail_client_factory()
+        return self._guardrail_client
 
     def check_input(
         self,
@@ -346,33 +360,74 @@ class GuardrailEngine:
         guardrails: Sequence[GuardrailDefinition],
         text: str,
     ) -> GuardrailVerdict:
-        """The ``input`` stage with decisions: the same rules, one awaitable question.
+        """The ``input`` stage when a guardrail needs more than a detector.
 
-        This is the only stage a decision may guard, so it is the only stage with an
-        async twin; ``check_input`` stays synchronous and unchanged for callers that
-        have no network check to make. Order is preserved across both kinds of
-        guardrail -- declaration order still decides between comparable actions, and
-        ``block`` still outranks it.
-
-        A guardrail that declares both policies and a decision asks the decision only
-        when its policies found nothing: asking a model about input a detector already
-        refused would spend tokens to learn what the detector said.
+        The async twin of :meth:`check_input`: decisions and managed engines are the
+        two guardrails that need a round trip, and both are awaited here. A caller
+        that has neither can keep using the synchronous method.
         """
-        payload: Mapping[str, Any] = {"text": text}
-        applicable = [guardrail for guardrail in guardrails if "input" in guardrail.stages]
+        return await self._check_async("input", guardrails, {"text": text}, tool_id=None)
+
+    async def check_output_async(
+        self,
+        guardrails: Sequence[GuardrailDefinition],
+        text: str,
+    ) -> GuardrailVerdict:
+        """The ``output`` stage: managed engines only, since a decision guards input.
+
+        The response text is what ``ApplyGuardrail`` rewrites, so a managed
+        ``redact`` returns the provider's rewritten text rather than a local mask.
+        """
+        return await self._check_async("output", guardrails, {"text": text}, tool_id=None)
+
+    async def _check_async(
+        self,
+        stage: GuardrailStage,
+        guardrails: Sequence[GuardrailDefinition],
+        payload: Mapping[str, Any],
+        tool_id: str | None,
+    ) -> GuardrailVerdict:
+        """One stage, allowing the guardrails that need an await.
+
+        Order and precedence are the synchronous path's: a policy hit is recorded
+        before any network check is considered, declaration order still decides
+        between comparable actions, and ``block`` still outranks it.
+        """
+        text = _text_of(payload)
+        applicable = [
+            guardrail
+            for guardrail in guardrails
+            if stage in guardrail.stages and _covers(guardrail, stage, tool_id)
+        ]
         records: list[GuardrailRecord] = []
         fired: list[GuardrailDefinition] = []
+        rewritten: dict[str, str] = {}
         for guardrail in applicable:
-            policies = _firing_policies(guardrail, "input", payload)
+            policies = _firing_policies(guardrail, stage, payload)
             record: GuardrailRecord | None = None
             if policies:
                 record = GuardrailRecord(
                     guardrail=guardrail.id,
-                    stage="input",
+                    stage=stage,
                     action=_action(guardrail),
                     policies=policies,
                     message=guardrail.message,
                 )
+            elif guardrail.engine == ENGINE_BEDROCK:
+                outcome = await self._managed().apply(
+                    source="INPUT" if stage == "input" else "OUTPUT",
+                    text=text,
+                )
+                if outcome.intervened:
+                    if outcome.text is not None:
+                        rewritten[guardrail.id] = outcome.text
+                    record = GuardrailRecord(
+                        guardrail=guardrail.id,
+                        stage=stage,
+                        action=_action(guardrail),
+                        policies=outcome.policies,
+                        message=guardrail.message or ", ".join(outcome.policies),
+                    )
             elif guardrail.decision is not None:
                 record = await self._ask_decision(guardrail, text)
             if record is None:
@@ -380,25 +435,7 @@ class GuardrailEngine:
             fired.append(guardrail)
             records.append(record)
 
-        deciding = _decide(records)
-        if deciding is None:
-            return GuardrailVerdict(stage="input", text=text, arguments=dict(payload))
-
-        redacted = payload
-        if deciding.action == ACTION_REDACT:
-            redacted = _redact(
-                "input",
-                [guardrail for guardrail in fired if guardrail.action == ACTION_REDACT],
-                payload,
-            )
-        return GuardrailVerdict(
-            stage="input",
-            records=tuple(records),
-            action=deciding.action,
-            deciding=deciding,
-            text=_text_of(redacted),
-            arguments=dict(redacted),
-        )
+        return _assemble(stage, payload, fired, records, rewritten)
 
     async def _ask_decision(
         self,
@@ -550,6 +587,15 @@ class GuardrailEngine:
         records: list[GuardrailRecord] = []
         fired: list[GuardrailDefinition] = []
         for guardrail in applicable:
+            if guardrail.engine != "builtin":
+                # Fail closed rather than skip: a synchronous caller cannot await the
+                # provider, and returning "no violation" would be an allow nobody
+                # declared. The generated pipeline calls the async variant instead.
+                raise GuardrailBlockedError(
+                    guardrail.id,
+                    stage,
+                    f"guardrail uses engine {guardrail.engine!r}, which needs the async check",
+                )
             policies = _firing_policies(guardrail, stage, payload)
             if not policies:
                 continue
@@ -564,29 +610,49 @@ class GuardrailEngine:
                 )
             )
 
-        deciding = _decide(records)
-        if deciding is None:
-            return GuardrailVerdict(
-                stage=stage,
-                text=_text_of(payload),
-                arguments=dict(payload),
-            )
+        return _assemble(stage, payload, fired, records)
 
-        redacted = payload
-        if deciding.action == ACTION_REDACT:
+
+def _assemble(
+    stage: GuardrailStage,
+    payload: Mapping[str, Any],
+    fired: Sequence[GuardrailDefinition],
+    records: Sequence[GuardrailRecord],
+    rewritten: Mapping[str, str] | None = None,
+) -> GuardrailVerdict:
+    """Turn the records a stage produced into the verdict the pipeline acts on.
+
+    ``rewritten`` maps a managed guardrail to the provider's replacement text. Only
+    the deciding guardrail's text is substituted: a provider that anonymised one
+    policy's spans did not necessarily see the others.
+    """
+    deciding = _decide(records)
+    if deciding is None:
+        return GuardrailVerdict(
+            stage=stage,
+            text=_text_of(payload),
+            arguments=dict(payload),
+        )
+
+    redacted = payload
+    if deciding.action == ACTION_REDACT:
+        replacement = (rewritten or {}).get(deciding.guardrail)
+        if replacement is not None:
+            redacted = {**payload, "text": replacement}
+        else:
             redacted = _redact(
                 stage,
                 [guardrail for guardrail in fired if guardrail.action == ACTION_REDACT],
                 payload,
             )
-        return GuardrailVerdict(
-            stage=stage,
-            records=tuple(records),
-            action=deciding.action,
-            deciding=deciding,
-            text=_text_of(redacted),
-            arguments=dict(redacted),
-        )
+    return GuardrailVerdict(
+        stage=stage,
+        records=tuple(records),
+        action=deciding.action,
+        deciding=deciding,
+        text=_text_of(redacted),
+        arguments=dict(redacted),
+    )
 
 
 def _covers(guardrail: GuardrailDefinition, stage: str, tool_id: str | None) -> bool:

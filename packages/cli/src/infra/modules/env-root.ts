@@ -28,6 +28,7 @@ const PLAN_VARIABLES = [
   '# Declared so the generated tfvars binds without an "undeclared variable" warning.',
   'variable "project" {}',
   'variable "services" {}',
+  'variable "guardrails" {}',
   'variable "data_stores" {}',
   'variable "tasks" {}',
   'variable "alarms" {}',
@@ -356,6 +357,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
       moduleCall('serverless', [
         'project        = var.project',
         'services       = var.services',
+        'guardrails     = var.guardrails',
         'image_uris     = var.image_uris',
         'secret_arns    = var.secret_arns',
         'sizing         = var.sizing',
@@ -375,6 +377,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
       moduleCall('container', [
         'project            = var.project',
         'services           = var.services',
+        'guardrails         = var.guardrails',
         'image_uris         = var.image_uris',
         'secret_arns        = var.secret_arns',
         'container_sizing   = var.container_sizing',
@@ -397,6 +400,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
       moduleCall('batch', [
         'project            = var.project',
         'services           = var.services',
+        'guardrails         = var.guardrails',
         'image_uris         = var.image_uris',
         'secret_arns        = var.secret_arns',
         'batch_sizing       = var.batch_sizing',

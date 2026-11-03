@@ -26,6 +26,7 @@
 import type { DeployPlan } from '@aid-framework/ir';
 
 import { INFRA_GENERATED_DIR } from '../paths.js';
+import { GUARDRAIL_VARIABLES, guardrailLocals, guardrailResources } from './guardrails.js';
 import { hcl, type ModuleFile, moduleFiles, targets } from './hcl.js';
 
 export const BATCH_MODULE_DIR = `${INFRA_GENERATED_DIR}/modules/batch`;
@@ -61,6 +62,8 @@ const VARIABLES_TF = hcl([
   '    providers    = list(string)',
   '    ingest       = list(string)',
   '    secret_names = list(string)',
+  '    # Every guardrail engine the spec names; `bedrock` means this build calls one.',
+  '    guardrail_engines = list(string)',
   '    pipeline     = optional(string)',
   '    routes = list(object({',
   '      pipeline = string',
@@ -131,6 +134,7 @@ const VARIABLES_TF = hcl([
   '  type        = string',
   '  default     = ""',
   '}',
+  ...GUARDRAIL_VARIABLES,
   '',
   'variable "tags" {',
   '  type    = map(string)',
@@ -186,6 +190,14 @@ const MAIN_TF = hcl([
   '        }',
   '        if variable.secret == false && variable.value != null',
   '      ],',
+  '      # A provisioned guardrail is named here, so the job never learns an id by hand.',
+  '      contains(keys(local.managed_guardrails), id) ? [{',
+  '        name  = "BEDROCK_GUARDRAIL_ID"',
+  '        value = aws_bedrock_guardrail.managed[id].guardrail_id',
+  '      }, {',
+  '        name  = "BEDROCK_GUARDRAIL_VERSION"',
+  '        value = aws_bedrock_guardrail_version.managed[id].version',
+  '      }] : [],',
   '    )',
   '  }',
   '',
@@ -206,6 +218,7 @@ const MAIN_TF = hcl([
   '    for id, service in local.batch :',
   '    id => ["python", "-m", "app.generated.batch", coalesce(service.pipeline, "")]',
   '  }',
+  ...guardrailLocals('batch'),
   '}',
   '',
   '# Batch itself needs a role to manage the compute environment, and ECS needs a second',
@@ -357,6 +370,7 @@ const MAIN_TF = hcl([
   '  retention_in_days = var.log_retention_days',
   '  tags              = var.tags',
   '}',
+  ...guardrailResources('aws_iam_role.task[0].id'),
   '',
   'resource "aws_batch_job_definition" "job" {',
   '  for_each = local.batch',

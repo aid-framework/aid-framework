@@ -67,6 +67,7 @@ export function guardrailPolicyGate(ir: IR, options: GateOptions): GateResult {
   const report = reporter(options);
   const tools = new Set(ir.tools.map((tool) => tool.id));
   const prompts = new Set(ir.prompts.map((prompt) => prompt.id));
+  const managed = ir.guardrails.filter((guardrail) => guardrail.engine === 'bedrock');
 
   for (const guardrail of ir.guardrails) {
     if (guardrail.stages.length === 0) {
@@ -79,6 +80,82 @@ export function guardrailPolicyGate(ir: IR, options: GateOptions): GateResult {
         }),
       );
     }
+
+    if (guardrail.engine === 'bedrock') {
+      // A managed guardrail is evaluated by `ApplyGuardrail`, which takes prompt text and
+      // returns prompt text. The local detector and decision vocabularies do not apply,
+      // and the two stages that have no text -- chunks and tool arguments -- cannot be
+      // expressed on this wire at all.
+      if (guardrail.policies.length > 0) {
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+            message: `the guardrails gate rejected "${guardrail.id}": engine "bedrock" is evaluated by the managed service, so it cannot also name local policies (${guardrail.policies.join(', ')})`,
+            path: ['guardrails', guardrail.id, 'policies'],
+            hint: 'move the rule under "bedrock", or set engine: builtin',
+          }),
+        );
+      }
+      if (guardrail.decision !== undefined) {
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+            message: `the guardrails gate rejected "${guardrail.id}": engine "bedrock" cannot ask decision "${guardrail.decision}"; the managed service evaluates its own policy`,
+            path: ['guardrails', guardrail.id, 'decision'],
+            hint: 'split the check: a builtin guardrail asks the decision, a bedrock guardrail owns the managed policy',
+          }),
+        );
+      }
+      for (const [index, stage] of guardrail.stages.entries()) {
+        if (stage === 'input' || stage === 'output') continue;
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+            message: `the guardrails gate rejected "${guardrail.id}": the "${stage}" stage has no prompt text, and the managed guardrail API only evaluates text`,
+            path: ['guardrails', guardrail.id, 'stages', index],
+            hint: 'a bedrock guardrail runs at input and output; use a builtin guardrail for retrieval and tool-call',
+          }),
+        );
+      }
+      if (guardrail.action === 'escalate') {
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+            message: `the guardrails gate rejected "${guardrail.id}": a managed guardrail cannot escalate to a human, and a pipeline route has no checkpoint to resume from`,
+            path: ['guardrails', guardrail.id, 'action'],
+            hint: 'use block, redact or flag',
+          }),
+        );
+      }
+      if (guardrail.action === 'redact') {
+        const policy = guardrail.bedrock;
+        if (policy?.pii === undefined) {
+          diagnostics.push(
+            report.error({
+              code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+              message: `the guardrails gate rejected "${guardrail.id}": action "redact" needs a "bedrock.pii" entity to anonymise`,
+              path: ['guardrails', guardrail.id, 'action'],
+              hint: 'name the entities under "bedrock.pii", or use action: block',
+            }),
+          );
+        }
+        const blocking = (['content', 'topics', 'words'] as const).filter(
+          (key) => policy?.[key] !== undefined,
+        );
+        if (blocking.length > 0) {
+          diagnostics.push(
+            report.error({
+              code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+              message: `the guardrails gate rejected "${guardrail.id}": action "redact" cannot carry a blocking policy (${blocking.join(', ')}); one managed guardrail either anonymises personal information or refuses text`,
+              path: ['guardrails', guardrail.id, 'action'],
+              hint: 'keep only "pii" under "bedrock", or change the action to block',
+            }),
+          );
+        }
+      }
+      continue;
+    }
+
     // A decision is an evaluator too: the guardrail has something to ask even
     // when it names no detector policy.
     if (guardrail.policies.length === 0 && guardrail.decision === undefined) {
@@ -181,6 +258,22 @@ export function guardrailPolicyGate(ir: IR, options: GateOptions): GateResult {
         }),
       );
     }
+  }
+
+  // One deployment owns one managed guardrail, addressed by one pair of environment
+  // names (`BEDROCK_GUARDRAIL_ID`, `BEDROCK_GUARDRAIL_VERSION`). A second declaration
+  // would either overwrite the first's wiring or need a naming scheme the generated
+  // runtime does not have, so it is refused rather than silently collapsed onto one
+  // resource. Two stages one policy covers belong on the same declaration.
+  for (const guardrail of managed.slice(1)) {
+    diagnostics.push(
+      report.error({
+        code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+        message: `the guardrails gate rejected "${guardrail.id}": the document already declares a managed guardrail ("${managed[0]?.id}"), and a deployment wires one managed guardrail through one pair of environment variables`,
+        path: ['guardrails', guardrail.id, 'engine'],
+        hint: 'list every stage the managed policy covers on that one declaration, or make this one engine: builtin',
+      }),
+    );
   }
 
   return { diagnostics, suppressed: NO_SUPPRESSIONS };

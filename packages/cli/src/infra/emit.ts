@@ -12,7 +12,13 @@
  * output (design §12.2). An env root is the same for dev and prod; only its inputs differ.
  */
 
-import type { DeployPlan } from '@aid-framework/ir';
+import type {
+  BedrockContentFilter,
+  BedrockContentStrength,
+  BedrockPiiEntity,
+  DeployManagedGuardrail,
+  DeployPlan,
+} from '@aid-framework/ir';
 
 import { type Cloud, DEFAULT_CLOUD } from './cloud.js';
 import { emitProviderModules, envRoot, modulesOf } from './modules/index.js';
@@ -29,6 +35,70 @@ export interface InfraFile {
   /** Repository-relative, POSIX-separated. */
   readonly path: string;
   readonly contents: string;
+}
+
+/**
+ * A managed guardrail spelled for the AWS provider: the spec's vocabulary mapped to the
+ * vendor's once, here, so neither the plan nor a generated app carries AWS enums.
+ */
+export interface DeployGuardrail {
+  readonly id: string;
+  readonly message: string;
+  readonly content: readonly { readonly type: string; readonly strength: string }[];
+  readonly topics: readonly { readonly name: string; readonly definition: string }[];
+  readonly words: readonly string[];
+  readonly pii: readonly { readonly type: string; readonly action: 'ANONYMIZE' | 'BLOCK' }[];
+}
+
+const BEDROCK_CONTENT_TYPES: Record<BedrockContentFilter, string> = {
+  sexual: 'SEXUAL',
+  violence: 'VIOLENCE',
+  hate: 'HATE',
+  insults: 'INSULTS',
+  misconduct: 'MISCONDUCT',
+  'prompt-attack': 'PROMPT_ATTACK',
+};
+
+const BEDROCK_CONTENT_STRENGTHS: Record<BedrockContentStrength, string> = {
+  low: 'LOW',
+  medium: 'MEDIUM',
+  high: 'HIGH',
+};
+
+const BEDROCK_PII_TYPES: Record<BedrockPiiEntity, string> = {
+  email: 'EMAIL',
+  phone: 'PHONE',
+  name: 'NAME',
+  address: 'ADDRESS',
+  ssn: 'US_SOCIAL_SECURITY_NUMBER',
+  'credit-card': 'CREDIT_DEBIT_CARD_NUMBER',
+  'bank-account': 'US_BANK_ACCOUNT_NUMBER',
+  passport: 'PASSPORT_NUMBER',
+  'drivers-license': 'DRIVERS_LICENSE_NUMBER',
+  'ip-address': 'IP_ADDRESS',
+  url: 'URL',
+  'aws-access-key': 'AWS_ACCESS_KEY',
+  'aws-secret-key': 'AWS_SECRET_KEY',
+};
+
+export function deployGuardrail(guardrail: DeployManagedGuardrail): DeployGuardrail {
+  return {
+    id: guardrail.id,
+    message: guardrail.message,
+    content: Object.entries(guardrail.policy.content ?? {}).map(([type, strength]) => ({
+      type: BEDROCK_CONTENT_TYPES[type as BedrockContentFilter],
+      strength: BEDROCK_CONTENT_STRENGTHS[strength],
+    })),
+    topics: Object.entries(guardrail.policy.topics ?? {}).map(([name, definition]) => ({
+      name,
+      definition,
+    })),
+    words: [...(guardrail.policy.words ?? [])],
+    pii: (guardrail.policy.pii ?? []).map((entity) => ({
+      type: BEDROCK_PII_TYPES[entity],
+      action: guardrail.action === 'redact' ? ('ANONYMIZE' as const) : ('BLOCK' as const),
+    })),
+  };
 }
 
 /**
@@ -59,9 +129,20 @@ export interface DeployTfvars {
         readonly pipeline?: string;
         readonly providers: readonly string[];
         readonly ingest: readonly string[];
+        /** Engines the service's guardrails use; `bedrock` needs the managed grant. */
+        readonly guardrail_engines: readonly string[];
       }
     >
   >;
+  /**
+   * The managed guardrail each service owns, spelled with the provider's identifiers.
+   *
+   * Keyed by service id because a deployment wires one managed guardrail. The mapping
+   * from the spec's vocabulary (`prompt-attack`, `credit-card`) to AWS's lives here and
+   * only here: `emit.ts` is the seam that knows it emits AWS, while the plan and the
+   * spec must not name an enum a different cloud would read differently.
+   */
+  readonly guardrails: Readonly<Record<string, DeployGuardrail>>;
   readonly data_stores: Readonly<
     Record<
       string,
@@ -105,9 +186,11 @@ export interface DeployContext {
         readonly pipeline?: string;
         readonly providers: readonly string[];
         readonly ingest: readonly string[];
+        readonly guardrailEngines: readonly string[];
       }
     >
   >;
+  readonly guardrails: Readonly<Record<string, DeployGuardrail>>;
   readonly stores: Readonly<
     Record<
       string,
@@ -158,8 +241,15 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
       secret_names: [...service.secrets],
       providers: [...service.providers],
       ingest: [...service.ingest],
+      guardrail_engines: [...(service.guardrailEngines ?? [])],
       ...(service.pipeline === undefined ? {} : { pipeline: service.pipeline }),
     };
+  }
+
+  const guardrails: Record<string, DeployGuardrail> = {};
+  for (const service of plan.services) {
+    if (service.managedGuardrail === undefined) continue;
+    guardrails[service.id] = deployGuardrail(service.managedGuardrail);
   }
 
   const dataStores: Record<string, DeployTfvars['data_stores'][string]> = {};
@@ -177,6 +267,7 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
   return {
     project: { name: plan.project.name, namespace: plan.project.namespace },
     services,
+    guardrails,
     data_stores: dataStores,
     tasks: plan.tasks.map((task) => ({
       id: task.id,
@@ -217,7 +308,20 @@ export function cdkContext(plan: DeployPlan): DeployContext {
       secrets: [...service.secret_names],
       providers: [...service.providers],
       ingest: [...service.ingest],
+      guardrailEngines: [...service.guardrail_engines],
       ...(service.pipeline === undefined ? {} : { pipeline: service.pipeline }),
+    };
+  }
+
+  const guardrails: Record<string, DeployGuardrail> = {};
+  for (const [id, guardrail] of Object.entries(spelled.guardrails ?? {})) {
+    guardrails[id] = {
+      id: guardrail.id,
+      message: guardrail.message,
+      content: guardrail.content.map((filter) => ({ ...filter })),
+      topics: guardrail.topics.map((topic) => ({ ...topic })),
+      words: [...guardrail.words],
+      pii: guardrail.pii.map((entity) => ({ ...entity })),
     };
   }
 
@@ -236,6 +340,7 @@ export function cdkContext(plan: DeployPlan): DeployContext {
   return {
     project: { name: spelled.project.name, namespace: spelled.project.namespace },
     services,
+    guardrails,
     stores,
     tasks: spelled.tasks.map((task) => ({ ...task })),
     alarms: spelled.alarms.map((alarm) => ({ ...alarm })),

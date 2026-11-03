@@ -85,6 +85,55 @@ const BENIGN: readonly Fixture[] = [
 
 const FIXTURES: readonly Fixture[] = [...KNOWN_BAD, ...BENIGN];
 
+/**
+ * A spec whose policy runs in Bedrock rather than in this process: the engine calls
+ * `ApplyGuardrail`, so measuring it needs the guardrail a deployment created.
+ */
+const MANAGED_SPEC = `specVersion: "0.11"
+project:
+  name: shielded
+  namespace: aid.test.shielded
+  targets: [py-fastapi]
+models:
+  fast:
+    provider: fake
+    modelId: fake-deterministic-1
+    capabilities: [json-schema]
+prompts:
+  draft:
+    version: 1
+    model: fast
+    template: "Summarise {{ subject }}."
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: text
+guardrails:
+  inbound:
+    engine: bedrock
+    stages: [input, output]
+    action: block
+    bedrock:
+      content:
+        prompt-attack: high
+      pii: [email]
+    onFail:
+      message: Request rejected.
+      log: true
+pipelines:
+  brief:
+    trigger:
+      manual: true
+    steps:
+      - generate:
+          prompt: draft
+          input:
+            subject: "{{ event.subject }}"
+          as: brief
+`;
+
 function corpusText(
   fixtures: readonly Fixture[] = FIXTURES,
   threshold?: Readonly<Record<string, number>>,
@@ -156,6 +205,26 @@ function codes(run: ReturnType<typeof aid>): readonly string[] {
   return diagnosticsOf(run).map((diagnostic) => diagnostic.code);
 }
 
+/** Runs `body` with exactly `env` set for the two managed-guardrail names, then restores. */
+function withGuardrailEnv(env: Record<string, string>, body: () => void): void {
+  const saved = {
+    id: process.env.BEDROCK_GUARDRAIL_ID,
+    version: process.env.BEDROCK_GUARDRAIL_VERSION,
+  };
+  delete process.env.BEDROCK_GUARDRAIL_ID;
+  delete process.env.BEDROCK_GUARDRAIL_VERSION;
+  Object.assign(process.env, env);
+
+  try {
+    body();
+  } finally {
+    if (saved.id === undefined) delete process.env.BEDROCK_GUARDRAIL_ID;
+    else process.env.BEDROCK_GUARDRAIL_ID = saved.id;
+    if (saved.version === undefined) delete process.env.BEDROCK_GUARDRAIL_VERSION;
+    else process.env.BEDROCK_GUARDRAIL_VERSION = saved.version;
+  }
+}
+
 describe('aid guard', () => {
   it('is listed as a command, and documents its usage', () => {
     const listed = aid(scratch(), []).stdout;
@@ -164,6 +233,70 @@ describe('aid guard', () => {
     const usage = aid(scratch(), ['guard', '-h']);
     expect(usage.stdout).toContain('guard [spec]');
     expect(usage.stdout).toContain('--red-team');
+  });
+
+  it('refuses to measure a Bedrock guardrail with no guardrail to call', () => {
+    // `engine: bedrock` evaluates through `ApplyGuardrail`, so a measurement without the
+    // two names a deployment injects has no policy to run. Falling back to the local
+    // detectors would report their verdicts under a managed policy's name -- a pass that
+    // means nothing -- so the command fails and names what is missing.
+    withGuardrailEnv({}, () => {
+      const made = scratch();
+      made.setSpec(MANAGED_SPEC);
+      made.write(CORPUS_PATH, corpusText());
+
+      const spawn = recordingSpawn({ stdout: reportText() });
+      const run = aid(made, ['guard', '--json'], spawn);
+
+      // Nothing about the project was judged, so this is a usage error, not a gate.
+      expect(run.code).toBe(2);
+      expect(codes(run)).toContain('cli/guard-credentials-missing');
+
+      const [diagnostic] = diagnosticsOf(run);
+      expect(diagnostic?.message).toContain('BEDROCK_GUARDRAIL_ID');
+      expect(diagnostic?.message).toContain('BEDROCK_GUARDRAIL_VERSION');
+      // The table was never imported, which is the difference between failing and
+      // silently measuring the wrong engine.
+      expect(spawn.calls).toEqual([]);
+    });
+  });
+
+  it('leaves a fully configured guardrail to the module and driver checks', () => {
+    // With both names set the refusal has nothing to say, so the next precondition is
+    // reached instead. That is the proof it keys on the environment and not on the spec.
+    withGuardrailEnv(
+      { BEDROCK_GUARDRAIL_ID: 'abcdefghijkl', BEDROCK_GUARDRAIL_VERSION: '1' },
+      () => {
+        const made = scratch();
+        made.setSpec(MANAGED_SPEC);
+        made.write(CORPUS_PATH, corpusText());
+
+        const run = aid(made, ['guard', '--json'], recordingSpawn({ stdout: reportText() }));
+
+        expect(codes(run)).not.toContain('cli/guard-credentials-missing');
+        expect(codes(run)).toContain('cli/guard-module-missing');
+      },
+    );
+  });
+
+  it('names only the guardrail variable that is actually missing', () => {
+    // Half a pair is the common case: a shell that exported the id it kept from `tofu
+    // output` but not the version. Naming both would send the operator looking for a
+    // variable they already set.
+    withGuardrailEnv({ BEDROCK_GUARDRAIL_ID: 'abcdefghijkl' }, () => {
+      const made = scratch();
+      made.setSpec(MANAGED_SPEC);
+      made.write(CORPUS_PATH, corpusText());
+
+      const run = aid(made, ['guard', '--json'], recordingSpawn({ stdout: reportText() }));
+
+      expect(run.code).toBe(2);
+      expect(codes(run)).toContain('cli/guard-credentials-missing');
+
+      const [diagnostic] = diagnosticsOf(run);
+      expect(diagnostic?.message).toContain('BEDROCK_GUARDRAIL_VERSION');
+      expect(diagnostic?.message).not.toContain('BEDROCK_GUARDRAIL_ID');
+    });
   });
 
   it('measures the emitted table through the runtime, from the project root', () => {

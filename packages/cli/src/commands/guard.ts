@@ -80,6 +80,12 @@ const GUARD_STAGES = ['input', 'output', 'retrieval', 'tool-call'] as const;
 
 type GuardStage = (typeof GUARD_STAGES)[number];
 
+/**
+ * The two names a `bedrock` engine reads at runtime. The deployment writes them, so a
+ * measurement without them has no policy to call.
+ */
+const MANAGED_GUARDRAIL_ENV = ['BEDROCK_GUARDRAIL_ID', 'BEDROCK_GUARDRAIL_VERSION'] as const;
+
 /** What one fixture turned out to be. `caught` is per-fixture; the words depend on intent. */
 type GuardVerdict = 'caught' | 'missed' | 'false-positive' | 'clean';
 
@@ -617,6 +623,34 @@ export function guard(context: CliContext, options: GuardOptions): CommandOutcom
         }),
       ],
     });
+  }
+
+  // A `bedrock` engine calls ApplyGuardrail at measurement time. Without the two names the
+  // deployment injects there is no policy to call, and running the local detectors in its
+  // place would report a pass for a policy that never ran. This is checked before the tree
+  // is: no tree can make the measurement possible, so a stale one is not the reason.
+  const managed = declarations.filter((guardrail) => guardrail.engine === 'bedrock');
+  if (managed.length > 0) {
+    const missing = MANAGED_GUARDRAIL_ENV.filter((name) => !process.env[name]);
+    if (missing.length > 0) {
+      return outcome({
+        command,
+        exitCode: EXIT_USAGE,
+        fields: { ...fields, engine: 'bedrock' },
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.guardCredentialsMissing,
+            message: `The spec declares ${
+              managed.length === 1
+                ? 'a managed Bedrock guardrail'
+                : `${managed.length} managed Bedrock guardrails`
+            }, but ${missing.join(' and ')} ${missing.length === 1 ? 'is' : 'are'} not set.`,
+            path: [specPath],
+            hint: `Set ${MANAGED_GUARDRAIL_ENV.join(' and ')} to the guardrail the deployment created, then run \`aid guard\` again.`,
+          }),
+        ],
+      });
+    }
   }
 
   if (!existsSync(absolutePath(context.cwd, surface.file))) {

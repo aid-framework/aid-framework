@@ -11,7 +11,18 @@
       ],
       "secrets": ["OPENAI_API_KEY"],
       "providers": ["bedrock"],
-      "ingest": []
+      "ingest": [],
+      "guardrailEngines": ["bedrock"]
+    }
+  },
+  "guardrails": {
+    "api": {
+      "id": "api",
+      "message": "I can't help with that.",
+      "content": [{ "type": "HATE", "strength": "HIGH" }],
+      "topics": [{ "name": "medical-advice", "definition": "Advice about a medical condition." }],
+      "words": ["forbidden-term"],
+      "pii": [{ "type": "EMAIL", "action": "BLOCK" }]
     }
   },
   "stores": {},

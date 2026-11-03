@@ -23,6 +23,7 @@
 import type { DeployPlan } from '@aid-framework/ir';
 
 import { INFRA_GENERATED_DIR } from '../paths.js';
+import { GUARDRAIL_VARIABLES, guardrailLocals, guardrailResources } from './guardrails.js';
 import { hcl, type ModuleFile, moduleFiles, targets } from './hcl.js';
 
 export const SERVERLESS_MODULE_DIR = `${INFRA_GENERATED_DIR}/modules/serverless`;
@@ -58,6 +59,8 @@ const VARIABLES_TF = hcl([
   '    providers    = list(string)',
   '    ingest       = list(string)',
   '    secret_names = list(string)',
+  '    # Every guardrail engine the spec names; `bedrock` means this build calls one.',
+  '    guardrail_engines = list(string)',
   '    # Set only by a `batch` service; the other targets ignore it and the entrypoint does',
   '    # not read it, but the shared variable type must admit it.',
   '    pipeline = optional(string)',
@@ -105,6 +108,7 @@ const VARIABLES_TF = hcl([
   '  type        = string',
   '  default     = ""',
   '}',
+  ...GUARDRAIL_VARIABLES,
 ]);
 
 const MAIN_TF = hcl([
@@ -165,7 +169,12 @@ const MAIN_TF = hcl([
   '      {',
   '        for variable in service.env : variable.name => variable.value',
   '        if variable.secret == false && variable.value != null',
-  '      }',
+  '      },',
+  '      # A provisioned guardrail is named here, so the app never learns an id by hand.',
+  '      contains(keys(local.managed_guardrails), id) ? {',
+  '        BEDROCK_GUARDRAIL_ID      = aws_bedrock_guardrail.managed[id].guardrail_id',
+  '        BEDROCK_GUARDRAIL_VERSION = aws_bedrock_guardrail_version.managed[id].version',
+  '      } : {},',
   '    )',
   '  }',
   '',
@@ -176,6 +185,7 @@ const MAIN_TF = hcl([
   '      if variable.secret',
   '    }',
   '  }',
+  ...guardrailLocals('serverless'),
   '}',
   '',
   'resource "aws_iam_role" "service" {',
@@ -240,6 +250,7 @@ const MAIN_TF = hcl([
   '    }]',
   '  })',
   '}',
+  ...guardrailResources('aws_iam_role.service[each.key].id'),
   '',
   'resource "aws_lambda_function" "service" {',
   '  for_each = local.serverless',
