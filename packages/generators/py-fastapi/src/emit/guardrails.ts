@@ -28,7 +28,7 @@
  * `text` on the first three -- `./validate.ts` refuses anything else at plan time.
  */
 
-import type { DecisionShape, GuardrailShape, IR } from '@aid-framework/ir';
+import type { BedrockGuardrailPolicy, DecisionShape, GuardrailShape, IR } from '@aid-framework/ir';
 
 import { INDENT, MAX_LINE, pythonString, pythonTuple } from '../python.js';
 import { assemble, HEADER, importBlock, importFrom } from '../template.js';
@@ -53,15 +53,48 @@ export function stageGuardrails(ir: IR, stage: GuardrailStage): GuardrailShape[]
   return orderedGuardrails(ir).filter((guardrail) => guardrail.stages.includes(stage));
 }
 
+/** Whether any guardrail in this document is evaluated by the managed service. */
+function hasManagedEngine(ir: IR): boolean {
+  return orderedGuardrails(ir).some((guardrail) => guardrail.engine === 'bedrock');
+}
+
+/**
+ * The `BedrockGuardrailPolicy(...)` literal for a managed guardrail.
+ *
+ * Lines are emitted unindented here and re-indented by `definition()`, so this helper
+ * stays independent of where the value is nested.
+ */
+function bedrockPolicy(policy: BedrockGuardrailPolicy): string {
+  const pairs = (entries: [string, string][]): string =>
+    pythonTuple(
+      entries.map(([name, value]) => pythonTuple([pythonString(name), pythonString(value)])),
+    );
+  const parts = [
+    `content=${pairs(Object.entries(policy.content ?? {}))}`,
+    `topics=${pairs(Object.entries(policy.topics ?? {}))}`,
+    `words=${pythonTuple((policy.words ?? []).map(pythonString))}`,
+    `pii=${pythonTuple((policy.pii ?? []).map(pythonString))}`,
+  ];
+  return [
+    'BedrockGuardrailPolicy(',
+    ...parts.map((part) => `${INDENT}${part},`),
+    `${INDENT})`,
+  ].join('\n');
+}
+
 /** The `GuardrailDefinition(...)` literal for one declaration, one argument per line. */
 function definition(guardrail: GuardrailShape): string {
   const tuples = (values: readonly string[]): string => pythonTuple(values.map(pythonString));
+  // The managed service rewrites the one field it is handed, so a managed `redact`
+  // names `text` even though the document carries no `redact:` list.
+  const redact =
+    guardrail.engine === 'bedrock' && guardrail.action === 'redact' ? ['text'] : guardrail.redact;
   const arguments_ = [
     `id=${pythonString(guardrail.id)}`,
     `stages=${tuples(guardrail.stages)}`,
     `policies=${tuples(guardrail.policies)}`,
     `action=${pythonString(guardrail.action)}`,
-    `redact=${tuples(guardrail.redact)}`,
+    `redact=${tuples(redact)}`,
     `tools=${tuples(guardrail.tools)}`,
     `message=${pythonString(guardrail.onFail.message)}`,
     `fallback_prompt=${
@@ -71,6 +104,10 @@ function definition(guardrail: GuardrailShape): string {
     }`,
     `log=${guardrail.onFail.log ? 'True' : 'False'}`,
   ];
+  if (guardrail.engine === 'bedrock' && guardrail.bedrock !== undefined) {
+    arguments_.push(`engine=${pythonString('bedrock')}`);
+    arguments_.push(`bedrock=${bedrockPolicy(guardrail.bedrock)}`);
+  }
   if (guardrail.decision !== undefined) {
     const outcomes = Object.entries(guardrail.onDecision ?? {}).map(([label, action]) =>
       pythonTuple([pythonString(label), pythonString(action)]),
@@ -84,7 +121,7 @@ function definition(guardrail: GuardrailShape): string {
   const inner = `${INDENT}${INDENT}`;
   return [
     `${INDENT}GuardrailDefinition(`,
-    ...arguments_.map((argument) => `${inner}${argument},`),
+    ...arguments_.map((argument) => `${inner}${argument.split('\n').join(`\n${inner}`)},`),
     `${INDENT}),`,
   ].join('\n');
 }
@@ -212,8 +249,37 @@ const BLOCK = [
 export function emitGuardrails(ir: IR): EmittedFile {
   const definitions = orderedGuardrails(ir).map(definition);
   const decisions = referencedDecisions(ir);
+  const managed = hasManagedEngine(ir);
   const agentImports = ['GuardrailDefinition', 'GuardrailEngine', 'GuardrailVerdict'];
   if (decisions.length > 0) agentImports.unshift('DecisionDefinition');
+  if (managed) {
+    agentImports.push('BedrockGuardrailClient', 'BedrockGuardrailPolicy');
+    agentImports.push('managed_guardrail_settings');
+    agentImports.sort();
+  }
+  const engine: string[] = [];
+  if (managed) {
+    // Reading the two names at import is what makes a missing resource fail at
+    // start-up rather than on the first request that needs a check.
+    engine.push('_MANAGED_SETTINGS = managed_guardrail_settings()');
+  }
+  const factory =
+    `${INDENT}guardrail_client_factory=lambda: BedrockGuardrailClient(` +
+    'settings=_MANAGED_SETTINGS)';
+  if (managed) {
+    engine.push(
+      [
+        'ENGINE = GuardrailEngine(',
+        ...(decisions.length > 0 ? [`${INDENT}decisions=DECISIONS,`] : []),
+        `${factory},`,
+        ')',
+      ].join('\n'),
+    );
+  } else if (decisions.length > 0) {
+    engine.push('ENGINE = GuardrailEngine(decisions=DECISIONS)');
+  } else {
+    engine.push('ENGINE = GuardrailEngine()');
+  }
   return generated(
     GUARDRAILS_PATH,
     assemble([
@@ -230,7 +296,12 @@ export function emitGuardrails(ir: IR): EmittedFile {
           'rather than the stage table. A guardrail evaluates the stage payload the runtime ' +
           'defines -- ' +
           "{'text': ...} for the `input`, `output` and `retrieval` stages, the tool's own " +
-          'arguments for `tool-call` -- so a `redact` action names `text` on the first three.',
+          'arguments for `tool-call` -- so a `redact` action names `text` on the first three.' +
+          (managed
+            ? ' A document that declares an `engine: bedrock` guardrail reads its resource' +
+              ' id and pinned version at import, so a deployment that forgot them fails at' +
+              ' start-up instead of at the first request that needs a check.'
+            : ''),
       ),
       importBlock([
         ['import logging'],
@@ -251,9 +322,7 @@ export function emitGuardrails(ir: IR): EmittedFile {
             ].join('\n'),
           ]
         : []),
-      decisions.length > 0
-        ? 'ENGINE = GuardrailEngine(decisions=DECISIONS)'
-        : 'ENGINE = GuardrailEngine()',
+      ...engine,
       ['GUARDRAILS: tuple[GuardrailDefinition, ...] = (', ...definitions, ')'].join('\n'),
       'BY_ID: dict[str, GuardrailDefinition] = {g.id: g for g in GUARDRAILS}',
       ...tables(ir).map((table) => ['', table].join('\n')),

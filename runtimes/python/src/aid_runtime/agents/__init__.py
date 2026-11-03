@@ -29,6 +29,7 @@ from aid_runtime.agents.guardrails import (
 )
 from aid_runtime.agents.ir import (
     AgentDefinition,
+    BedrockGuardrailPolicy,
     DecisionDefinition,
     GuardrailDefinition,
     HumanApproval,
@@ -37,6 +38,13 @@ from aid_runtime.agents.ir import (
     ToolSpec,
 )
 from aid_runtime.agents.loop import AgentRuntime
+from aid_runtime.agents.managed import (
+    BedrockGuardrailClient,
+    GuardrailClient,
+    GuardrailOutcome,
+    ManagedGuardrailSettings,
+    managed_guardrail_settings,
+)
 from aid_runtime.agents.memory import (
     IMPLEMENTED_MEMORY_KINDS,
     MEMORY_SCOPES,
@@ -67,18 +75,23 @@ __all__ = [
     "AgentCheckpoint",
     "AgentDefinition",
     "AgentRuntime",
+    "BedrockGuardrailClient",
+    "BedrockGuardrailPolicy",
     "DecisionAsker",
     "DecisionDefinition",
     "Detection",
     "FileMemoryStore",
+    "GuardrailClient",
     "GuardrailDefinition",
     "GuardrailEngine",
     "GuardrailEscalation",
+    "GuardrailOutcome",
     "GuardrailRecord",
     "GuardrailVerdict",
     "HumanApproval",
     "HumanDecision",
     "InProcessMemoryStore",
+    "ManagedGuardrailSettings",
     "MemoryDefinition",
     "MemoryStore",
     "PendingApproval",
@@ -93,6 +106,7 @@ __all__ = [
     "check_memory_supported",
     "detect",
     "evaluate_policy",
+    "managed_guardrail_settings",
     "policy_source",
     "render_context",
 ]

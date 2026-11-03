@@ -90,6 +90,7 @@ describe('buildDeployPlan', () => {
     expect(Object.keys(service ?? {}).sort()).toEqual([
       'endpoints',
       'env',
+      'guardrailEngines',
       'id',
       'ingest',
       'providers',

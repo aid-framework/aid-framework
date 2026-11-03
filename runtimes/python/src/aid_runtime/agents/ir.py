@@ -28,6 +28,7 @@ from aid_runtime.types import (
 
 __all__ = [
     "AgentDefinition",
+    "BedrockGuardrailPolicy",
     "DecisionDefinition",
     "GuardrailDefinition",
     "HumanApproval",
@@ -57,6 +58,29 @@ _ON_BUDGET_EXHAUSTED = frozenset({"fail", "degrade"})
 #: rejects it again rather than trusting that every document came through a gate.
 _GUARDRAIL_STAGES = frozenset({"input", "output", "retrieval", "tool-call"})
 _GUARDRAIL_ACTIONS = frozenset({"block", "redact", "flag", "escalate"})
+_GUARDRAIL_ENGINES = frozenset({"builtin", "bedrock"})
+_BEDROCK_CONTENT_FILTERS = frozenset(
+    {"sexual", "violence", "hate", "insults", "misconduct", "prompt-attack"}
+)
+_BEDROCK_CONTENT_STRENGTHS = frozenset({"low", "medium", "high"})
+_BEDROCK_PII_ENTITIES = frozenset(
+    {
+        "email",
+        "phone",
+        "name",
+        "address",
+        "ssn",
+        "credit-card",
+        "bank-account",
+        "passport",
+        "drivers-license",
+        "ip-address",
+        "url",
+        "aws-access-key",
+        "aws-secret-key",
+    }
+)
+
 _GUARDRAIL_POLICIES = frozenset(
     {
         "pii-detect",
@@ -101,6 +125,22 @@ class DecisionDefinition:
 
 
 @dataclass(frozen=True, slots=True)
+class BedrockGuardrailPolicy:
+    """The policy a managed guardrail asks Bedrock to enforce.
+
+    The IR's vocabulary is kept here, not AWS's: lowercase content filters and
+    strengths, hyphenated entity names. ``agents.managed`` is the one place that
+    maps it to the wire enums, which is what keeps the conversion testable without
+    an AWS call and stops the generator from owning a second copy of the table.
+    """
+
+    content: tuple[tuple[str, str], ...] = ()
+    topics: tuple[tuple[str, str], ...] = ()
+    words: tuple[str, ...] = ()
+    pii: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class GuardrailDefinition:
     """One resolved guardrail: where it runs, what it detects, and what it does.
 
@@ -111,6 +151,9 @@ class GuardrailDefinition:
     ``on_decision`` maps each of its labels to an outcome. ``allow`` is the one
     outcome that produces no record; the rest are guardrail actions. The trailing
     defaults keep every keyword call site written before decisions existed valid.
+
+    ``engine`` is ``builtin`` (this process runs the detectors) or ``bedrock`` (the
+    managed service evaluates ``bedrock`` instead, and ``policies`` stays empty).
     """
 
     id: str
@@ -125,6 +168,8 @@ class GuardrailDefinition:
     decision: str | None = None
     on_decision: tuple[tuple[str, str], ...] = ()
     min_confidence: float = 0.0
+    engine: str = "builtin"
+    bedrock: BedrockGuardrailPolicy | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,12 +436,27 @@ def _guardrail(
         raise ConfigurationError(
             f"{where} has action {action!r}; expected one of {sorted(_GUARDRAIL_ACTIONS)}"
         )
+    engine = _str(entry.get("engine")) or "builtin"
+    if engine not in _GUARDRAIL_ENGINES:
+        raise ConfigurationError(
+            f"{where} has engine {engine!r}; expected one of {sorted(_GUARDRAIL_ENGINES)}"
+        )
+    bedrock = _bedrock_policy(entry.get("bedrock"), where) if engine == "bedrock" else None
+    if engine == "bedrock" and bedrock is None:
+        raise ConfigurationError(
+            f"{where} uses engine 'bedrock' with no bedrock policy; name at least one of "
+            "content, topics, words, pii"
+        )
     redact = tuple(_str_list(entry.get("redact"), f"{where} redact"))
-    if action == "redact" and not redact:
+    if action == "redact" and not redact and engine == "builtin":
         raise ConfigurationError(
             f"{where} uses action 'redact' with no redact fields; a redaction that names "
             "no field cannot redact anything"
         )
+    if action == "redact" and engine == "bedrock":
+        # The managed service rewrites the one field it is given, so a managed
+        # redaction is always over the prompt text.
+        redact = ("text",)
     tool_ids = tuple(_str_list(entry.get("tools"), f"{where} tools"))
     missing = sorted(set(tool_ids) - set(tools))
     if missing:
@@ -415,6 +475,52 @@ def _guardrail(
         message=_required_str(on_fail, "message", f"{where} onFail"),
         fallback_prompt=_str(on_fail.get("fallbackPrompt")),
         log=on_fail.get("log") is True,
+        engine=engine,
+        bedrock=bedrock,
+    )
+
+
+def _bedrock_policy(raw: Any, where: str) -> BedrockGuardrailPolicy | None:
+    """The managed policy, with each name checked against the closed vocabulary.
+
+    The build-time gate already refuses an unknown name; repeating the check here
+    is what keeps a hand-written document from reaching the wire, where the
+    service would answer with a validation error naming its own enum instead of
+    the spec's word.
+    """
+    if not isinstance(raw, Mapping):
+        return None
+    content: list[tuple[str, str]] = []
+    content_raw = raw.get("content")
+    if isinstance(content_raw, Mapping):
+        for name, strength in content_raw.items():
+            if name not in _BEDROCK_CONTENT_FILTERS:
+                raise ConfigurationError(f"{where} names unknown content filter {name!r}")
+            if strength not in _BEDROCK_CONTENT_STRENGTHS:
+                raise ConfigurationError(
+                    f"{where} gives {name!r} strength {strength!r}; expected one of "
+                    f"{sorted(_BEDROCK_CONTENT_STRENGTHS)}"
+                )
+            content.append((name, strength))
+    topics: list[tuple[str, str]] = []
+    topics_raw = raw.get("topics")
+    if isinstance(topics_raw, Mapping):
+        topics = [(name, definition) for name, definition in topics_raw.items()]
+    words = tuple(_str_list(raw.get("words"), f"{where} bedrock.words"))
+    pii_raw = _str_list(raw.get("pii"), f"{where} bedrock.pii")
+    unknown_pii = sorted(set(pii_raw) - _BEDROCK_PII_ENTITIES)
+    if unknown_pii:
+        raise ConfigurationError(
+            f"{where} names unknown PII entities {unknown_pii}; expected a subset of "
+            f"{sorted(_BEDROCK_PII_ENTITIES)}"
+        )
+    if not content and not topics and not words and not pii_raw:
+        return None
+    return BedrockGuardrailPolicy(
+        content=tuple(content),
+        topics=tuple(topics),
+        words=words,
+        pii=tuple(pii_raw),
     )
 
 

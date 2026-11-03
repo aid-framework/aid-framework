@@ -13,6 +13,9 @@ variable "services" {
     providers    = list(string)
     ingest       = list(string)
     secret_names = list(string)
+    # Declared for shape parity with the AWS modules; `aid infra gen` refuses a managed
+    # guardrail engine on GCP, since nothing there evaluates one.
+    guardrail_engines = list(string)
     pipeline     = optional(string)
     routes = list(object({
       pipeline = string

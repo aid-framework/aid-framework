@@ -197,6 +197,107 @@ describe('guardrails/policies', () => {
   });
 });
 
+describe('guardrails/policies — a managed engine', () => {
+  function managed() {
+    const ir = mutateIR(POSITIVE);
+    const guardrail = byId(ir.guardrails, 'inbound');
+    guardrail.engine = 'bedrock';
+    guardrail.policies = [];
+    guardrail.stages = ['input', 'output'];
+    guardrail.bedrock = { pii: ['email'] };
+    return ir;
+  }
+
+  it('accepts a managed guardrail whose policy the document owns', () => {
+    expect(runGates(managed()).byGate['guardrails/policies'].diagnostics).toEqual([]);
+  });
+
+  it('accepts a managed guardrail the operator owns, when no policy is declared', () => {
+    const ir = managed();
+    byId(ir.guardrails, 'inbound').bedrock = undefined;
+    expect(runGates(ir).byGate['guardrails/policies'].diagnostics).toEqual([]);
+  });
+
+  it('rejects local policies beside the managed engine', () => {
+    const ir = managed();
+    byId(ir.guardrails, 'inbound').policies = ['pii-detect'];
+    const diagnostic = diagnosticAt(
+      runGates(ir).byGate['guardrails/policies'].diagnostics,
+      'guardrails.inbound.policies',
+    );
+    expect(diagnostic.message).toContain('cannot also name local policies');
+  });
+
+  it('rejects a decision beside the managed engine', () => {
+    const ir = managed();
+    byId(ir.guardrails, 'inbound').decision = 'relevance';
+    expect(
+      diagnosticAt(
+        runGates(ir).byGate['guardrails/policies'].diagnostics,
+        'guardrails.inbound.decision',
+      ).message,
+    ).toContain('the managed service evaluates its own policy');
+  });
+
+  it('rejects a retrieval or tool-call stage, which has no text to send', () => {
+    const ir = managed();
+    byId(ir.guardrails, 'inbound').stages = ['input', 'tool-call'];
+    const diagnostic = diagnosticAt(
+      runGates(ir).byGate['guardrails/policies'].diagnostics,
+      'guardrails.inbound.stages.1',
+    );
+    expect(diagnostic.message).toContain('only evaluates text');
+    expect(diagnostic.hint).toContain('builtin guardrail');
+  });
+
+  it('rejects escalation, which a managed check has no checkpoint for', () => {
+    const ir = managed();
+    byId(ir.guardrails, 'inbound').action = 'escalate';
+    expect(
+      diagnosticAt(
+        runGates(ir).byGate['guardrails/policies'].diagnostics,
+        'guardrails.inbound.action',
+      ).message,
+    ).toContain('cannot escalate to a human');
+  });
+
+  it('rejects redaction with no pii entity to anonymise', () => {
+    const ir = managed();
+    byId(ir.guardrails, 'inbound').action = 'redact';
+    byId(ir.guardrails, 'inbound').bedrock = {};
+    expect(
+      diagnosticAt(
+        runGates(ir).byGate['guardrails/policies'].diagnostics,
+        'guardrails.inbound.action',
+      ).message,
+    ).toContain('needs a "bedrock.pii" entity');
+  });
+
+  it('rejects redaction that also carries a blocking policy', () => {
+    const ir = managed();
+    byId(ir.guardrails, 'inbound').action = 'redact';
+    byId(ir.guardrails, 'inbound').bedrock = { content: { hate: 'low' }, pii: ['email'] };
+    const diagnostic = diagnosticAt(
+      runGates(ir).byGate['guardrails/policies'].diagnostics,
+      'guardrails.inbound.action',
+    );
+    expect(diagnostic.message).toContain('cannot carry a blocking policy (content)');
+  });
+
+  it('refuses a second managed guardrail, which one env pair cannot address', () => {
+    const ir = managed();
+    const second = byId(ir.guardrails, 'refund_writes');
+    second.engine = 'bedrock';
+    second.policies = [];
+    second.stages = ['output'];
+    second.bedrock = { pii: ['phone'] };
+    const diagnostics = runGates(ir).byGate['guardrails/policies'].diagnostics;
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.path).toEqual(['guardrails', 'refund_writes', 'engine']);
+    expect(diagnostics[0]?.message).toContain('one pair of environment variables');
+  });
+});
+
 describe('hitl/side-effects', () => {
   it('accepts an agent whose side-effecting tool path declares human review', () => {
     expect(gateFixture(POSITIVE).byGate['hitl/side-effects'].diagnostics).toEqual([]);

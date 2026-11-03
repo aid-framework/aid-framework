@@ -691,6 +691,99 @@ describe('rule-level unit tests', () => {
     expect(paths(diagnostics)).toEqual(['guardrails.inbound.policies[0]']);
   });
 
+  it('accepts a managed guardrail at 0.11, with its policy under heading bedrock', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.11',
+      project: { name: 'p' },
+      guardrails: {
+        inbound: {
+          engine: 'bedrock',
+          stages: ['input', 'output'],
+          action: 'block',
+          bedrock: {
+            content: { 'prompt-attack': 'high', hate: 'medium' },
+            pii: ['email', 'credit-card'],
+          },
+          onFail: { message: 'nope', log: true },
+        },
+      },
+    });
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('refuses a managed policy below 0.11 rather than silently ignoring it', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.10',
+      project: { name: 'p' },
+      guardrails: {
+        inbound: {
+          engine: 'bedrock',
+          stages: ['input'],
+          action: 'block',
+          bedrock: { pii: ['email'] },
+          onFail: { message: 'nope', log: true },
+        },
+      },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['guardrails.inbound.engine']);
+  });
+
+  it('refuses local policies on a guardrail the managed service evaluates', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.11',
+      project: { name: 'p' },
+      guardrails: {
+        inbound: {
+          engine: 'bedrock',
+          stages: ['input'],
+          policies: ['prompt-injection'],
+          action: 'block',
+          bedrock: { pii: ['email'] },
+          onFail: { message: 'nope', log: true },
+        },
+      },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['guardrails.inbound']);
+  });
+
+  it('refuses a managed policy block on a builtin guardrail', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.11',
+      project: { name: 'p' },
+      guardrails: {
+        inbound: {
+          stages: ['input'],
+          policies: ['prompt-injection'],
+          action: 'block',
+          bedrock: { pii: ['email'] },
+          onFail: { message: 'nope', log: true },
+        },
+      },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['guardrails.inbound.engine']);
+  });
+
+  it('refuses redaction that also blocks a content category', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.11',
+      project: { name: 'p' },
+      guardrails: {
+        inbound: {
+          engine: 'bedrock',
+          stages: ['input'],
+          action: 'redact',
+          bedrock: { content: { hate: 'low' }, pii: ['email'] },
+          onFail: { message: 'nope', log: true },
+        },
+      },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['guardrails.inbound.action']);
+  });
+
   it('refuses a memory scope outside the three the runtime can honour', () => {
     const diagnostics = validateSpec({
       specVersion: '0.2',

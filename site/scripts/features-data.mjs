@@ -101,6 +101,16 @@ export const AI_INFRA = [
     credential: 'the service account the module creates',
     since: '0.1.83',
   },
+  {
+    id: 'bedrock-guardrails',
+    cloud: 'aws',
+    title: 'Bedrock Guardrails as the guardrail engine',
+    declares: 'guardrails[].engine: bedrock',
+    emits:
+      'an `aws_bedrock_guardrail` and its numbered version from the `bedrock:` block, `BEDROCK_GUARDRAIL_ID` and `BEDROCK_GUARDRAIL_VERSION` on the service, and `bedrock:ApplyGuardrail` on that guardrail alone — the CDK construct mirrors all of it; omit the block and the app reads the two variables for a guardrail the operator owns',
+    credential: 'the IAM role the module creates for the service',
+    since: '0.1.98',
+  },
 ];
 
 /**

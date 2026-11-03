@@ -56,6 +56,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.8',
   '0.9',
   '0.10',
+  '0.11',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -154,6 +155,18 @@ export const GOOGLE_PROVIDER_MIN_VERSION: SpecVersion = '0.6';
  * auth story from `baseUrl`, which the adapter mapping deliberately never does.
  */
 export const GEMINI_PROVIDER_MIN_VERSION: SpecVersion = '0.10';
+
+/**
+ * The first spec version that lets a guardrail delegate its policy to a managed engine
+ * (`engine: bedrock` and the `bedrock` policy block).
+ *
+ * A managed guardrail is not a new provider and not a new section: it is a different
+ * *location* for a guardrail's policy, with a different wire — `ApplyGuardrail` takes
+ * text and returns text, and it cannot run at `retrieval` or `tool-call` because those
+ * stages have no prompt text to send. A 0.10 document that names an engine is told
+ * which version it needs rather than having the key dropped.
+ */
+export const BEDROCK_GUARDRAIL_MIN_VERSION: SpecVersion = '0.11';
 
 /** The version gate for every provider id that arrived after the spec that introduced it. */
 const PROVIDER_MIN_VERSIONS: Readonly<Record<string, SpecVersion>> = {
@@ -533,6 +546,54 @@ function guardrailDecisionDiagnostics(
     const guardrail = asRecord(raw);
     const decision = typeof guardrail.decision === 'string' ? guardrail.decision : undefined;
     const hasPolicies = Array.isArray(guardrail.policies) && guardrail.policies.length > 0;
+    const engine = guardrail.engine === 'bedrock' ? 'bedrock' : 'builtin';
+    const managed = guardrail.bedrock !== undefined;
+
+    if ((engine === 'bedrock' || managed) && declared !== undefined && known) {
+      if (!specVersionAtLeast(declared, BEDROCK_GUARDRAIL_MIN_VERSION)) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.notSupported,
+            message: `'guardrails.${name}.engine' requires specVersion ${BEDROCK_GUARDRAIL_MIN_VERSION}, but this specification declares version ${declared}`,
+            path: ['guardrails', name, 'engine'],
+            hint: `set specVersion: "${BEDROCK_GUARDRAIL_MIN_VERSION}"; documents whose guardrails all use the builtin engine are unchanged`,
+          }),
+        );
+        reported.add(JSON.stringify(['guardrails', name, 'engine']));
+        continue;
+      }
+    }
+
+    if (engine === 'bedrock') {
+      // The engine is the evaluator, so "nothing to check" is not this guardrail's
+      // problem. What is: a managed guardrail can only refuse or rewrite text, and a
+      // redaction that also blocks cannot be represented -- `pii` is the one policy the
+      // API can anonymise, so a blocking category beside `action: redact` would ship a
+      // guardrail that anonymises what it was asked to stop.
+      const policy = asRecord(guardrail.bedrock);
+      const blocking = ['content', 'topics', 'words'].filter((key) => policy[key] !== undefined);
+      if (guardrail.action === 'redact' && blocking.length > 0) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `guardrail '${name}' sets action 'redact' but its bedrock policy also blocks (${blocking.join(', ')}); a managed guardrail either anonymises personal information or refuses the text`,
+            path: ['guardrails', name, 'action'],
+            hint: "keep only 'pii' under 'bedrock' for a redacting guardrail, or change the action to 'block'",
+          }),
+        );
+      }
+      if (guardrail.action === 'redact' && policy.pii === undefined) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `guardrail '${name}' sets action 'redact' but its bedrock policy declares no 'pii' entity to anonymise`,
+            path: ['guardrails', name, 'action'],
+            hint: "name the entities under 'bedrock.pii', or use action 'block'",
+          }),
+        );
+      }
+      continue;
+    }
 
     if (decision === undefined) {
       if (!hasPolicies) {

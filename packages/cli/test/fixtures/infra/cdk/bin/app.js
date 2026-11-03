@@ -18,6 +18,7 @@ const path = require('node:path');
 
 const cdk = require('aws-cdk-lib');
 const apigwv2 = require('aws-cdk-lib/aws-apigatewayv2');
+const bedrock = require('aws-cdk-lib/aws-bedrock');
 const lambda = require('aws-cdk-lib/aws-lambda');
 
 const { addServerless } = require('../../generated/cdk/serverless.cjs');
@@ -36,7 +37,28 @@ addServerless(stack, context, inputs);
 const nodes = stack.node.findAll();
 const functions = nodes.filter((node) => node instanceof lambda.CfnFunction);
 const routes = nodes.filter((node) => node instanceof apigwv2.CfnRoute);
+const guardrails = nodes.filter((node) => node instanceof bedrock.CfnGuardrail);
+const versions = nodes.filter((node) => node instanceof bedrock.CfnGuardrailVersion);
 
 assert.strictEqual(functions.length, 1, 'expected one Lambda function');
 assert.strictEqual(routes.length, 1, 'expected one HTTP API route');
 assert.strictEqual(routes[0].routeKey, 'GET /ping', 'expected the spec route key');
+
+// The plan names the engine and carries a policy block, so the construct owns a guardrail
+// and pins the app to its numbered version rather than DRAFT.
+assert.strictEqual(guardrails.length, 1, 'expected one managed guardrail');
+assert.strictEqual(versions.length, 1, 'expected one guardrail version');
+const entity = guardrails[0].sensitiveInformationPolicyConfig.piiEntitiesConfig[0];
+assert.strictEqual(entity.type, 'EMAIL', 'expected the spec PII entity');
+assert.strictEqual(entity.action, 'BLOCK', 'expected the spec PII action');
+
+// The app reads the guardrail from its environment, the same two names the HCL module
+// injects, so the Python runtime's managed client finds it either way.
+assert.ok(
+  functions[0].environment.variables.BEDROCK_GUARDRAIL_ID,
+  'expected the guardrail id in the function environment',
+);
+assert.ok(
+  functions[0].environment.variables.BEDROCK_GUARDRAIL_VERSION,
+  'expected the guardrail version in the function environment',
+);

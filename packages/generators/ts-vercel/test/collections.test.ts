@@ -249,6 +249,27 @@ describe('the guardrails collection', () => {
       'guardrail-unsupported',
     );
   });
+
+  it('refuses a guardrail a managed service evaluates, which this target cannot call', () => {
+    // The managed engine makes an HTTP call from an asynchronous runtime; this target
+    // ships a synchronous engine and no client, so the check would never run.
+    const managed = `guardrails:
+  handbook_pii:
+    stages: [input]
+    engine: bedrock
+    action: block
+    bedrock:
+      content:
+        hate: high
+    onFail:
+      message: The payload was refused.
+      log: true`;
+
+    const problems = checkPlan(irForSpecText(specWith({ guardrails: managed }, '0.11')));
+
+    expect(problems.map((problem) => problem.code)).toContain('guardrail-unsupported');
+    expect(problems.map((problem) => problem.path)).toContain('guardrails.handbook_pii.engine');
+  });
 });
 
 describe('the agents collection', () => {

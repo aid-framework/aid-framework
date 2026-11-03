@@ -73,7 +73,12 @@ locals {
       {
         for variable in service.env : variable.name => variable.value
         if variable.secret == false && variable.value != null
-      }
+      },
+      # A provisioned guardrail is named here, so the app never learns an id by hand.
+      contains(keys(local.managed_guardrails), id) ? {
+        BEDROCK_GUARDRAIL_ID      = aws_bedrock_guardrail.managed[id].guardrail_id
+        BEDROCK_GUARDRAIL_VERSION = aws_bedrock_guardrail_version.managed[id].version
+      } : {},
     )
   }
 
@@ -85,6 +90,12 @@ locals {
       variable.name => var.secret_arns[variable.name]
       if variable.secret
     }
+  }
+
+  # A service the module runs, whose spec asks Bedrock to run the policy, owns one.
+  managed_guardrails = {
+    for id, guardrail in var.guardrails : id => guardrail
+    if contains(keys(local.container), id) && contains(local.container[id].guardrail_engines, "bedrock")
   }
 }
 
@@ -328,6 +339,101 @@ resource "aws_ecs_cluster" "this" {
   count = length(local.container) > 0 ? 1 : 0
   name  = "${local.prefix}-cluster"
   tags  = var.tags
+}
+
+# The spec names filters and strengths, never a vendor enum -- `aid infra gen` maps them
+# once, so this resource reads like the policy the author wrote.
+resource "aws_bedrock_guardrail" "managed" {
+  for_each = local.managed_guardrails
+
+  # A guardrail name caps at 50 characters and allows letters, digits, hyphens and
+  # underscores; `local.name` is already sanitised, so only the cap is left.
+  name = substr("${local.name[each.key]}-guardrail", 0, 50)
+
+  description               = each.value.message
+  blocked_input_messaging   = each.value.message
+  blocked_outputs_messaging = each.value.message
+
+  dynamic "content_policy_config" {
+    for_each = length(each.value.content) > 0 ? [1] : []
+    content {
+      dynamic "filters_config" {
+        for_each = each.value.content
+        content {
+          type            = filters_config.value.type
+          input_strength  = filters_config.value.strength
+          output_strength = filters_config.value.strength
+        }
+      }
+    }
+  }
+
+  dynamic "topic_policy_config" {
+    for_each = length(each.value.topics) > 0 ? [1] : []
+    content {
+      dynamic "topics_config" {
+        for_each = each.value.topics
+        content {
+          name       = topics_config.value.name
+          definition = topics_config.value.definition
+          type       = "DENY"
+        }
+      }
+    }
+  }
+
+  # Only the author's own words, never a managed list: adding one here would block
+  # vocabulary the spec did not ask for.
+  dynamic "word_policy_config" {
+    for_each = length(each.value.words) > 0 ? [1] : []
+    content {
+      dynamic "words_config" {
+        for_each = each.value.words
+        content {
+          text = words_config.value
+        }
+      }
+    }
+  }
+
+  dynamic "sensitive_information_policy_config" {
+    for_each = length(each.value.pii) > 0 ? [1] : []
+    content {
+      dynamic "pii_entities_config" {
+        for_each = each.value.pii
+        content {
+          type   = pii_entities_config.value.type
+          action = pii_entities_config.value.action
+        }
+      }
+    }
+  }
+}
+
+# A guardrail is mutable and every change mints a new immutable version, so the app is
+# pinned to this one. Pointing it at DRAFT would let a later edit change a live
+# deployment without a plan.
+resource "aws_bedrock_guardrail_version" "managed" {
+  for_each      = local.managed_guardrails
+  guardrail_arn = aws_bedrock_guardrail.managed[each.key].guardrail_arn
+  description   = "Published by aid infra gen from the spec."
+}
+
+# Evaluating a guardrail is the app's job; provisioning it is this module's. Scoping the
+# grant to the ARN means a compromised function cannot apply or edit another guardrail.
+resource "aws_iam_role_policy" "guardrail" {
+  for_each = local.managed_guardrails
+  name     = substr("${local.name[each.key]}-guardrail", 0, 64)
+  role     = aws_iam_role.task[each.key].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["bedrock:ApplyGuardrail"]
+      Resource = [aws_bedrock_guardrail.managed[each.key].guardrail_arn]
+    }]
+  })
 }
 
 resource "aws_ecs_task_definition" "service" {

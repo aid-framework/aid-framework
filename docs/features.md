@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud matrices are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each row. The spec language is at `0.10`.
+The provider and cloud matrices are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each row. The spec language is at `0.11`.
 
 ## Deployment targets
 
@@ -41,6 +41,7 @@ The generated infrastructure does not only run the service; it grants the servic
 | --- | --- | --- | --- | --- |
 | **Bedrock from the AWS module** | `models[].provider: bedrock` | `bedrock:InvokeModel`, plus `bedrock:InvokeModelWithResponseStream` when a service declares `streaming`, scoped to the foundation-model and inference-profile ARNs | the IAM role the module creates for the service | `0.1.81` |
 | **Vertex AI from the GCP modules** | `models[].provider: google` | `roles/aiplatform.user` on the project, plus `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_REGION` on the Cloud Run service or job, which Cloud Run does not set | the service account the module creates | `0.1.83` |
+| **Bedrock Guardrails as the guardrail engine** | `guardrails[].engine: bedrock` | an `aws_bedrock_guardrail` and its numbered version from the `bedrock:` block, `BEDROCK_GUARDRAIL_ID` and `BEDROCK_GUARDRAIL_VERSION` on the service, and `bedrock:ApplyGuardrail` on that guardrail alone — the CDK construct mirrors all of it; omit the block and the app reads the two variables for a guardrail the operator owns | the IAM role the module creates for the service | `0.1.98` |
 
 ## Out of the box
 

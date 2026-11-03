@@ -1103,9 +1103,59 @@
     "guardrail": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "stages", "policies", "action", "redact", "tools", "onFail", "traits"],
+      "required": [
+        "id",
+        "engine",
+        "stages",
+        "policies",
+        "action",
+        "redact",
+        "tools",
+        "onFail",
+        "traits"
+      ],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
+        "engine": { "enum": ["builtin", "bedrock"] },
+        "bedrock": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "object",
+              "propertyNames": {
+                "enum": ["sexual", "violence", "hate", "insults", "misconduct", "prompt-attack"]
+              },
+              "additionalProperties": { "enum": ["low", "medium", "high"] }
+            },
+            "topics": {
+              "type": "object",
+              "propertyNames": { "minLength": 1 },
+              "additionalProperties": { "type": "string", "minLength": 1 }
+            },
+            "words": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "pii": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "email",
+                  "phone",
+                  "name",
+                  "address",
+                  "ssn",
+                  "credit-card",
+                  "bank-account",
+                  "passport",
+                  "drivers-license",
+                  "ip-address",
+                  "url",
+                  "aws-access-key",
+                  "aws-secret-key"
+                ]
+              }
+            }
+          }
+        },
         "stages": {
           "type": "array",
           "items": { "enum": ["input", "output", "retrieval", "tool-call"] }

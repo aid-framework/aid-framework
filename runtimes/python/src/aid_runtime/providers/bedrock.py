@@ -49,7 +49,13 @@ from aid_runtime.types import (
     ToolCall,
 )
 
-__all__ = ["BEDROCK_SERVICE", "BedrockProvider", "default_bedrock_base_url", "rfc3986"]
+__all__ = [
+    "BEDROCK_SERVICE",
+    "BedrockProvider",
+    "default_bedrock_base_url",
+    "rfc3986",
+    "sigv4_headers",
+]
 
 BEDROCK_SERVICE = "bedrock"
 
@@ -86,6 +92,72 @@ def rfc3986(value: str) -> str:
 
 def _sha256_hex(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def sigv4_headers(
+    *,
+    url: str,
+    body: str,
+    region: str,
+    credentials: dict[str, Any],
+    moment: datetime,
+    service: str = BEDROCK_SERVICE,
+) -> dict[str, str]:
+    """The SigV4 headers for one JSON ``POST`` to ``url``.
+
+    Shared by the model adapter and the managed-guardrail adapter because both
+    sign with the ``bedrock`` service name -- Converse is served by
+    ``bedrock-runtime`` but signed as ``bedrock``, and ``ApplyGuardrail`` is served
+    by ``bedrock`` itself. Keeping one signer means a fix to the canonical request
+    cannot land in one caller and miss the other.
+    """
+    stamp = _amz_date(moment)
+    date = stamp[:8]
+    parsed = urlparse(url)
+    host = parsed.netloc
+    canonical_headers: list[tuple[str, str]] = [
+        ("content-type", "application/json"),
+        ("host", host),
+        ("x-amz-date", stamp),
+    ]
+    token = credentials.get("session_token")
+    if isinstance(token, str):
+        canonical_headers.append(("x-amz-security-token", token))
+    signed_headers = ";".join(header for header, _ in canonical_headers)
+    canonical_request = "\n".join(
+        [
+            "POST",
+            parsed.path,
+            "",
+            "".join(f"{header}:{value}\n" for header, value in canonical_headers),
+            signed_headers,
+            _sha256_hex(body),
+        ]
+    )
+    scope = f"{date}/{region}/{service}/aws4_request"
+    string_to_sign = "\n".join(["AWS4-HMAC-SHA256", stamp, scope, _sha256_hex(canonical_request)])
+    signing_key = _hmac(
+        _hmac(
+            _hmac(
+                _hmac(f"AWS4{credentials['secret_access_key']}", date),
+                region,
+            ),
+            service,
+        ),
+        "aws4_request",
+    )
+    signature = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
+    headers = {
+        "content-type": "application/json",
+        "x-amz-date": stamp,
+        "authorization": (
+            f"AWS4-HMAC-SHA256 Credential={credentials['access_key_id']}/{scope}, "
+            f"SignedHeaders={signed_headers}, Signature={signature}"
+        ),
+    }
+    if isinstance(token, str):
+        headers["x-amz-security-token"] = token
+    return headers
 
 
 def _hmac(key: bytes | str, value: str) -> bytes:
@@ -290,56 +362,34 @@ class BedrockProvider:
         credentials: dict[str, Any],
         moment: datetime,
     ) -> dict[str, str]:
-        stamp = _amz_date(moment)
-        date = stamp[:8]
-        parsed = urlparse(url)
-        host = parsed.netloc
-        canonical_headers: list[tuple[str, str]] = [
-            ("content-type", "application/json"),
-            ("host", host),
-            ("x-amz-date", stamp),
-        ]
-        token = credentials.get("session_token")
-        if isinstance(token, str):
-            canonical_headers.append(("x-amz-security-token", token))
-        signed_headers = ";".join(header for header, _ in canonical_headers)
-        canonical_request = "\n".join(
-            [
-                "POST",
-                parsed.path,
-                "",
-                "".join(f"{header}:{value}\n" for header, value in canonical_headers),
-                signed_headers,
-                _sha256_hex(body),
-            ]
-        )
-        scope = f"{date}/{region}/{BEDROCK_SERVICE}/aws4_request"
-        string_to_sign = "\n".join(
-            ["AWS4-HMAC-SHA256", stamp, scope, _sha256_hex(canonical_request)]
-        )
-        signing_key = _hmac(
-            _hmac(
-                _hmac(
-                    _hmac(f"AWS4{credentials['secret_access_key']}", date),
-                    region,
-                ),
-                BEDROCK_SERVICE,
-            ),
-            "aws4_request",
-        )
-        signature = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
-        headers = {
-            "content-type": "application/json",
-            "x-amz-date": stamp,
-            "authorization": (
-                f"AWS4-HMAC-SHA256 Credential={credentials['access_key_id']}/{scope}, "
-                f"SignedHeaders={signed_headers}, Signature={signature}"
+        return {
+            **sigv4_headers(
+                url=url,
+                body=body,
+                region=region,
+                credentials=credentials,
+                moment=moment,
+                service=BEDROCK_SERVICE,
             ),
             **self._extra_headers,
         }
-        if isinstance(token, str):
-            headers["x-amz-security-token"] = token
-        return headers
+
+    def resolve_region(self) -> str:
+        """The region this adapter signs for, or a :class:`ProviderError`."""
+        return self._resolve_region()
+
+    async def send(self, url: str, *, body: str, headers: dict[str, str]) -> httpx.Response:
+        """One signed POST, uninterpreted: shared with the managed-guardrail adapter."""
+        return await self._client.post(url, content=body, headers=headers)
+
+    async def credentials(self) -> dict[str, Any]:
+        """The SigV4 credentials, resolved lazily.
+
+        Public because the managed-guardrail adapter signs with the same identity:
+        a deployment that can invoke a model can also apply a guardrail, and
+        reading the role twice would be two chances to read it differently.
+        """
+        return await self._credentials()
 
     def _build_payload(self, request: CompletionRequest, model: ModelSpec) -> dict[str, Any]:
         inference_config: dict[str, Any] = {"maxTokens": _max_tokens(request, model)}

@@ -9,7 +9,15 @@
  * from becoming two truths.
  */
 
-import type { DeploymentTarget, IR, Provider, VectorStoreKind } from './shapes.js';
+import type {
+  BedrockGuardrailPolicy,
+  DeploymentTarget,
+  GuardrailEngine,
+  GuardrailShape,
+  IR,
+  Provider,
+  VectorStoreKind,
+} from './shapes.js';
 
 /**
  * Bumped when the plan's shape changes incompatibly. Independent of `irVersion`:
@@ -57,8 +65,25 @@ export interface DeployService {
   pipeline?: string;
   /** Providers the service may call, for an emitter to reason about egress. */
   providers: Provider[];
+  /** Guardrail engines the service evaluates with, so an emitter can grant access. */
+  guardrailEngines: GuardrailEngine[];
+  /**
+   * The managed guardrail this service wires, when the spec owns its policy. Absent means
+   * either no managed guardrail or one the operator already owns, which the deployment
+   * names through environment variables instead of provisioning.
+   */
+  managedGuardrail?: DeployManagedGuardrail;
   /** Retriever ids whose corpus must exist before this service serves traffic. */
   ingest: string[];
+}
+
+/** The managed policy a service's `bedrock`-engine guardrail owns, spelled spec-side. */
+export interface DeployManagedGuardrail {
+  /** The guardrail declaration id; the provisioned resource carries it in its name. */
+  id: string;
+  action: GuardrailShape['action'];
+  message: string;
+  policy: BedrockGuardrailPolicy;
 }
 
 export interface DeployStore {
@@ -108,6 +133,12 @@ export function buildDeployPlan(ir: IR): DeployPlan {
   const endpoints = httpEndpoints(ir);
   const providers = uniqueSorted(ir.models.map((model) => model.provider));
   const ingest = uniqueSorted(ir.retrievers.map((retriever) => retriever.id));
+  const guardrailEngines = uniqueSorted(
+    (ir.guardrails ?? []).map((guardrail) => guardrail.engine),
+  ) as GuardrailEngine[];
+  const managed = (ir.guardrails ?? []).find(
+    (guardrail) => guardrail.engine === 'bedrock' && guardrail.bedrock !== undefined,
+  );
 
   const services: DeployService[] = ir.deployments.map((deployment) => {
     const service: DeployService = {
@@ -118,9 +149,18 @@ export function buildDeployPlan(ir: IR): DeployPlan {
       env: serviceEnv(ir, deployment.env),
       secrets: serviceSecrets(ir, deployment),
       providers,
+      guardrailEngines,
       ingest,
     };
     if (deployment.pipeline !== undefined) service.pipeline = deployment.pipeline;
+    if (managed?.bedrock !== undefined) {
+      service.managedGuardrail = {
+        id: managed.id,
+        action: managed.action,
+        message: managed.onFail.message,
+        policy: managed.bedrock,
+      };
+    }
     return service;
   });
 
