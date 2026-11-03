@@ -49,6 +49,10 @@ original surface - and you raise it when you use a later construct:
 | `0.4` | `deployments[].image` - the registry and repository a container image is published to. |
 | `0.5` | `pipelines[].trigger.manual` and `deployments[].pipeline` - the pair that lets a `target: batch` deployment run one pipeline once to completion. |
 | `0.6` | The `google` provider (Vertex AI). |
+| `0.7` | A `guardrails` entry can name a decision (`decision` + `onDecision`). |
+| `0.8` | The `decision` eval metric kind, which scores a prediction with a `score` decision. |
+| `0.9` | The `route` pipeline step, which runs the arm a `choice` decision's answer names. |
+| `0.10` | The `gemini` provider, which calls the Gemini API with an API key. |
 
 A section or construct that needs a later version is reported as `spec/not-supported` with
 the version it needs, so you get told rather than silently ignored. Raise the value yourself;

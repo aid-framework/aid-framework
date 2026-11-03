@@ -81,6 +81,14 @@ export function emitGatewayModels(ir: IR): EmittedFile {
         // server; there is no spec-named API key to read.
         return `    ${propertyKey(model.provider)}: new VertexProvider({ name: ${name} }),`;
       }
+      if (adapter === 'GeminiProvider') {
+        if (model.apiKeyEnv === undefined) {
+          return `    ${propertyKey(model.provider)}: new GeminiProvider({ name: ${name} }),`;
+        }
+        return `    ${propertyKey(model.provider)}: keyedGeminiProvider(${name}, ${stringLiteral(
+          model.apiKeyEnv,
+        )}),`;
+      }
       if (adapter === 'AnthropicProvider') {
         if (model.apiKeyEnv === undefined) {
           return `    ${propertyKey(model.provider)}: new AnthropicProvider({ name: ${name} }),`;
@@ -102,6 +110,7 @@ export function emitGatewayModels(ir: IR): EmittedFile {
   const imports: ImportName[] = [{ name: 'CostProfile', type: false }];
   if (adapters.has('AnthropicProvider')) imports.push({ name: 'AnthropicProvider', type: false });
   if (adapters.has('BedrockProvider')) imports.push({ name: 'BedrockProvider', type: false });
+  if (adapters.has('GeminiProvider')) imports.push({ name: 'GeminiProvider', type: false });
   if (adapters.has('VertexProvider')) imports.push({ name: 'VertexProvider', type: false });
   imports.push(
     { name: 'FakeProvider', type: false },
@@ -113,6 +122,7 @@ export function emitGatewayModels(ir: IR): EmittedFile {
 
   const needsKeyed = providers.some((line) => line.includes('keyedProvider('));
   const needsKeyedAnthropic = providers.some((line) => line.includes('keyedAnthropicProvider('));
+  const needsKeyedGemini = providers.some((line) => line.includes('keyedGeminiProvider('));
   const body = [
     ...(needsKeyed
       ? [
@@ -134,6 +144,16 @@ export function emitGatewayModels(ir: IR): EmittedFile {
           'function keyedAnthropicProvider(name: string, apiKeyEnv: string): AnthropicProvider {',
           '  const apiKey = process.env[apiKeyEnv];',
           '  return new AnthropicProvider(apiKey === undefined ? { name } : { name, apiKey });',
+          '}',
+          '',
+        ]
+      : []),
+    ...(needsKeyedGemini
+      ? [
+          '/** The same rule as `keyedProvider`, for the Gemini API adapter. */',
+          'function keyedGeminiProvider(name: string, apiKeyEnv: string): GeminiProvider {',
+          '  const apiKey = process.env[apiKeyEnv];',
+          '  return new GeminiProvider(apiKey === undefined ? { name } : { name, apiKey });',
           '}',
           '',
         ]

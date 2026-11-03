@@ -93,6 +93,7 @@ export const PROVIDERS = [
   'azure',
   'bedrock',
   'google',
+  'gemini',
   'ollama',
   'vllm',
   'fake',
@@ -869,6 +870,7 @@ export const NON_COLLECTION_SECTIONS = ['specVersion', 'project'] as const;
 export const SERVED_PROVIDERS = [
   'anthropic',
   'bedrock',
+  'gemini',
   'google',
   'openai',
   'openai-compatible',

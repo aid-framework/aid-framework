@@ -7,6 +7,7 @@ import {
   DIAGNOSTIC_CODES,
   type Diagnostic,
   formatPath,
+  GEMINI_PROVIDER_MIN_VERSION,
   GOOGLE_PROVIDER_MIN_VERSION,
   MODEL_CACHE_MIN_VERSION,
   type PathSegment,
@@ -553,6 +554,43 @@ describe('rule-level unit tests', () => {
       models: { gemini: { provider: 'google', modelId: 'gemini-2.5-flash' } },
     });
     expect(diagnostics).toEqual([]);
+  });
+
+  it('refuses the gemini provider below spec 0.10 and names the version it needs', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.9',
+      project: { name: 'p' },
+      models: {
+        flash: { provider: 'gemini', modelId: 'gemini-2.5-flash', apiKeyEnv: 'GEMINI_API_KEY' },
+      },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['models.flash.provider']);
+    expect(diagnostics[0]?.message).toContain(
+      "'models.flash.provider: gemini' requires specVersion 0.10",
+    );
+    expect(diagnostics[0]?.hint).toContain(`set specVersion: "${GEMINI_PROVIDER_MIN_VERSION}"`);
+  });
+
+  it('accepts the gemini provider from spec 0.10', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.10',
+      project: { name: 'p' },
+      models: {
+        flash: { provider: 'gemini', modelId: 'gemini-2.5-flash', apiKeyEnv: 'GEMINI_API_KEY' },
+      },
+    });
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('requires an api key variable for gemini, which has no ambient credential', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.10',
+      project: { name: 'p' },
+      models: { flash: { provider: 'gemini', modelId: 'gemini-2.5-flash' } },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['models.flash.apiKeyEnv']);
   });
 
   it('refuses a model cache below spec 0.3 and names the version it needs', () => {

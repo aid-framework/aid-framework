@@ -32,9 +32,9 @@ function files(source = anthropicSpecText()): Map<string, string> {
 }
 
 describe('provider selection', () => {
-  it('serves anthropic, bedrock and google alongside openai and the deterministic fake', () => {
+  it('serves anthropic, bedrock, gemini and google alongside openai and the deterministic fake', () => {
     expect([...SERVED_PROVIDERS].sort()).toEqual(
-      ['anthropic', 'bedrock', 'google', 'fake', 'openai', 'openai-compatible'].sort(),
+      ['anthropic', 'bedrock', 'gemini', 'google', 'fake', 'openai', 'openai-compatible'].sort(),
     );
   });
 
@@ -270,6 +270,69 @@ describe('google provider', () => {
 });
 
 /**
+ * The example repointed at the Gemini API.
+ *
+ * `specVersion` moves to 0.10 because that is the first version whose provider
+ * vocabulary includes `gemini`. Unlike Vertex, this provider authenticates with an API
+ * key, so the key variable travels with it.
+ */
+function geminiSpecText(): string {
+  return exampleSpecText()
+    .replace('specVersion: "0.2"', 'specVersion: "0.10"')
+    .replace(
+      '    provider: openai\n    modelId: gpt-4o-mini\n    apiKeyEnv: OPENAI_API_KEY',
+      '    provider: gemini\n    modelId: gemini-2.5-flash\n    apiKeyEnv: GEMINI_API_KEY',
+    )
+    .replace('    costProfile: openai-gpt-4o-mini', '    costProfile: google-gemini-2-5-flash');
+}
+
+describe('gemini provider', () => {
+  it('plans a Gemini model that keeps the api key variable', () => {
+    const spec = geminiSpecText();
+    const fast = lowerForSpecText(spec).models.find((model) => model.id === 'fast');
+
+    expect(fast?.provider).toBe('gemini');
+    expect(fast?.apiKeyEnv).toBe('GEMINI_API_KEY');
+    expect(buildForSpecText(spec).plan.files.length).toBeGreaterThan(0);
+  });
+
+  it('emits the Gemini adapter with the key variable the spec names', () => {
+    const models = files(geminiSpecText()).get('app/generated/gateway/models.py') ?? '';
+
+    expect(models).toContain('"gemini": GeminiProvider(');
+    expect(models).toContain('name="gemini"');
+    expect(models).toContain('api_key=os.environ.get("GEMINI_API_KEY")');
+    expect(models).not.toContain('VertexProvider');
+  });
+
+  it('imports the adapter from the runtime', () => {
+    const models = files(geminiSpecText()).get('app/generated/gateway/models.py') ?? '';
+
+    expect(models).toMatch(/from aid_runtime import \([^)]*GeminiProvider/);
+    expect(models).not.toContain('class GeminiProvider');
+  });
+
+  it('advertises streaming, because the Gemini adapter decodes SSE', () => {
+    const models = files(geminiSpecText()).get('app/generated/gateway/models.py') ?? '';
+    const pinned = aliasBlock(models, 'fast');
+
+    expect(pinned).toContain('Capability.STREAMING');
+    expect(pinned).toContain('Capability.STRUCTURED_OUTPUT');
+    expect(pinned).toContain('Capability.TOOL_CALLING');
+  });
+
+  it('refuses a Gemini model that declares embeddings', () => {
+    const spec = geminiSpecText().replace(
+      '    capabilities: [json-schema, tools, streaming]',
+      '    capabilities: [json-schema, tools, embeddings]',
+    );
+
+    expect(() => buildForSpecText(spec)).toThrow(/unsupported-capability/);
+    expect(() => buildForSpecText(spec)).toThrow(/no embeddings endpoint/);
+  });
+});
+
+/**
  * Swapping the adapter must not change the shape of the app.
  *
  * The provider the spec names reaches exactly one file: the gateway models table that
@@ -291,6 +354,15 @@ describe('provider conformance', () => {
     // Vertex and OpenAI serve the same capability set for this spec, so even the
     // reconciliation is byte-identical.
     expect(differingFiles(openai, vertex)).toEqual(['app/generated/gateway/models.py']);
+  });
+
+  it('moves only the models table and the credential preflight for Gemini', () => {
+    // Gemini is keyed like OpenAI, so the eval workflow's credential probe follows the
+    // spec-named variable. No other file moves: the served capability set is the same.
+    expect(differingFiles(files(exampleSpecText()), files(geminiSpecText()))).toEqual([
+      '.github/workflows/evals.yml',
+      'app/generated/gateway/models.py',
+    ]);
   });
 
   it('records the capability an adapter cannot serve, without touching anything else', () => {

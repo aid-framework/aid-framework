@@ -913,7 +913,7 @@ function featuresPage() {
         ? absent(
             'No pinned model or cost profile is published for this provider, so the spec must give an explicit `modelId` and the call prices as unknown.',
           )
-        : `${catalog.models} models, ${catalog.priced} priced`;
+        : `${catalog.models} model${catalog.models === 1 ? '' : 's'}, ${catalog.priced} priced`;
     lines.push(
       `| \`${provider}\` | ${adapter === '' ? absent('No adapter is generated.') : `\`${adapter}\``} | ${cells.join(' | ')} | ${catalogCell} |`,
     );

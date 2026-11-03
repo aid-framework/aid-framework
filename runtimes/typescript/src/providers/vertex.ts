@@ -6,11 +6,10 @@
  * environment, or the GCE metadata server that Cloud Run and Cloud Functions
  * provide, so `api_key_env` is absent from the spec and an empty one is valid.
  *
- * Three translations are structural:
- *
- * 1. Messages become `contents` of `parts`, with `model` as the assistant role.
- * 2. The system prompt is a top-level `systemInstruction`, not a turn.
- * 3. Tool results become `functionResponse` parts in a `user` turn.
+ * The wire translation -- `contents` of `parts`, the `systemInstruction` join, the
+ * `functionResponse` turns and the response read -- is shared with the Gemini API
+ * adapter in `gemini-wire.ts`. This file owns only what is Vertex-specific: the
+ * endpoint, the project and location, and the OAuth2 bearer token.
  *
  * No `stream`: the TypeScript seam is request/response only, matching every
  * other TS provider, so this adapter does not advertise `streaming`.
@@ -18,17 +17,15 @@
 
 import { ProviderError, ProviderResponseError } from '../errors.js';
 import { stripTrailingSlashes } from '../internal/text.js';
-import {
-  type Capability,
-  type CompletionRequest,
-  CompletionResponse,
-  type FinishReason,
-  type Message,
-  type ModelSpec,
-  TokenUsage,
-  ToolCall,
-} from '../types.js';
+import type { Capability, CompletionRequest, CompletionResponse, ModelSpec } from '../types.js';
 import type { Provider } from './base.js';
+import {
+  buildPayload,
+  DEFAULT_RETRYABLE_STATUSES,
+  isObject,
+  parseCompletion,
+  postJson,
+} from './gemini-wire.js';
 import type { FetchLike } from './http.js';
 
 /** The default location when none is configured. */
@@ -45,22 +42,6 @@ export const VERTEX_TOKEN_ENV = 'GOOGLE_ACCESS_TOKEN';
 export function defaultVertexBaseUrl(location: string): string {
   return `https://${location}-aiplatform.googleapis.com`;
 }
-
-const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([
-  408, 409, 424, 425, 429, 500, 502, 503, 504,
-]);
-
-/** The candidate `finishReason` values mapped to the runtime's vocabulary. */
-const FINISH_REASONS: Readonly<Record<string, FinishReason>> = {
-  STOP: 'stop',
-  MAX_TOKENS: 'length',
-  SAFETY: 'content-filter',
-  RECITATION: 'content-filter',
-  BLOCKLIST: 'content-filter',
-  PROHIBITED_CONTENT: 'content-filter',
-  SPII: 'content-filter',
-  MALFORMED_FUNCTION_CALL: 'error',
-};
 
 /** Refresh a metadata token this long before it expires. */
 const TOKEN_REFRESH_MS = 60 * 1000;
@@ -91,17 +72,6 @@ interface CachedToken {
   readonly token: string;
   /** Epoch milliseconds. */
   readonly expiresAt: number;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function delay(seconds: number): Promise<void> {
-  if (seconds <= 0) return Promise.resolve();
-  return new Promise((resolve) => {
-    setTimeout(resolve, seconds * 1000);
-  });
 }
 
 function env(key: string): string | undefined {
@@ -150,9 +120,9 @@ export class VertexProvider implements Provider {
 
   async complete(request: CompletionRequest, model: ModelSpec): Promise<CompletionResponse> {
     if (this._closed) throw new ProviderError(`${this._name} is closed`);
-    const body = JSON.stringify(this.payload(request, model));
+    const body = JSON.stringify(buildPayload(request, model));
     const text = await this.post(this.endpoint(model), body);
-    return this.parse(text, model);
+    return parseCompletion(text, model, this._name);
   }
 
   async close(): Promise<void> {
@@ -235,180 +205,23 @@ export class VertexProvider implements Provider {
     return { token, expiresAt: this._now() + seconds * 1000 };
   }
 
-  private payload(request: CompletionRequest, model: ModelSpec): Record<string, unknown> {
-    const generationConfig: Record<string, unknown> = {
-      maxOutputTokens: Math.min(
-        request.maxOutputTokens ?? model.maxOutputTokens,
-        model.maxOutputTokens,
-      ),
-    };
-    if (request.temperature !== undefined) generationConfig.temperature = request.temperature;
-    if (request.stop.length > 0) generationConfig.stopSequences = [...request.stop];
-    const payload: Record<string, unknown> = {
-      contents: this.wireContents(request.messages),
-      generationConfig,
-    };
-    const system = this.systemPrompt(request.messages);
-    if (system.length > 0) payload.systemInstruction = { parts: [{ text: system }] };
-    if (request.tools.length > 0) {
-      payload.tools = [
-        {
-          functionDeclarations: request.tools.map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.parameters,
-          })),
-        },
-      ];
-    }
-    return payload;
-  }
-
-  /** Vertex takes one `systemInstruction`, so adjacent system turns are joined. */
-  private systemPrompt(messages: readonly Message[]): string {
-    const parts: string[] = [];
-    for (const message of messages) {
-      if (message.role !== 'system') continue;
-      if (message.content.length === 0) continue;
-      parts.push(message.content);
-    }
-    return parts.join('\n\n');
-  }
-
-  /** Translate the portable message list into `contents` of `parts`. */
-  private wireContents(messages: readonly Message[]): Record<string, unknown>[] {
-    const contents: Record<string, unknown>[] = [];
-    for (const message of messages) {
-      if (message.role === 'system') continue;
-      if (message.role === 'tool') {
-        contents.push({
-          role: 'user',
-          parts: [
-            {
-              functionResponse: {
-                name: message.name ?? 'tool',
-                response: { content: message.content },
-              },
-            },
-          ],
-        });
-        continue;
-      }
-      const parts: Record<string, unknown>[] = [];
-      if (message.content.length > 0) parts.push({ text: message.content });
-      for (const call of message.toolCalls) {
-        parts.push({ functionCall: { name: call.name, args: call.args } });
-      }
-      if (parts.length === 0) parts.push({ text: '' });
-      contents.push({ role: message.role === 'assistant' ? 'model' : 'user', parts });
-    }
-    return contents;
-  }
-
   private async post(url: string, body: string): Promise<string> {
-    const headers: Record<string, string> = {
-      authorization: `Bearer ${await this.token()}`,
-      'content-type': 'application/json',
-      ...this._extraHeaders,
-    };
-    let last = 'no attempt was made';
-    for (let attempt = 1; attempt <= this._maxAttempts; attempt += 1) {
-      try {
-        const response = await this._fetch(url, {
-          method: 'POST',
-          headers,
-          body,
-          signal: AbortSignal.timeout(this._timeoutSeconds * 1000),
-        });
-        const text = await response.text();
-        if (!response.ok) {
-          last = `${this._name} returned ${response.status}: ${text}`;
-          if (RETRYABLE_STATUSES.has(response.status) && attempt < this._maxAttempts) {
-            await delay(this._backoffSeconds * 2 ** (attempt - 1));
-            continue;
-          }
-          throw new ProviderError(last);
-        }
-        return text;
-      } catch (error) {
-        if (error instanceof ProviderResponseError || error instanceof ProviderError) throw error;
-        last = `${this._name} request failed: ${error instanceof Error ? error.message : String(error)}`;
-        if (attempt < this._maxAttempts) {
-          await delay(this._backoffSeconds * 2 ** (attempt - 1));
-          continue;
-        }
-        throw new ProviderError(last);
-      }
-    }
-    throw new ProviderError(`${this._name} failed after ${this._maxAttempts} attempt(s): ${last}`);
-  }
-
-  private parse(text: string, model: ModelSpec): CompletionResponse {
-    let body: unknown;
-    try {
-      body = JSON.parse(text) as unknown;
-    } catch {
-      throw new ProviderResponseError(`${this._name} returned a body that is not JSON`);
-    }
-    if (!isObject(body)) {
-      throw new ProviderResponseError(`${this._name} returned a JSON body that is not an object`);
-    }
-    const candidates = body.candidates;
-    const candidate = Array.isArray(candidates) ? candidates[0] : undefined;
-    if (!isObject(candidate)) {
-      throw new ProviderResponseError(`${this._name} returned no candidates`);
-    }
-    const content = candidate.content;
-    const parts = isObject(content) ? content.parts : undefined;
-    if (!Array.isArray(parts)) {
-      throw new ProviderResponseError(`${this._name} returned no content parts`);
-    }
-
-    const textParts: string[] = [];
-    const calls: ToolCall[] = [];
-    parts.forEach((part, index) => {
-      if (!isObject(part)) return;
-      if (typeof part.text === 'string') {
-        textParts.push(part.text);
-        return;
-      }
-      const call = part.functionCall;
-      if (!isObject(call)) return;
-      const name = call.name;
-      if (typeof name !== 'string' || name.length === 0) return;
-      calls.push(
-        new ToolCall({
-          id: `${model.name}-call-${index}`,
-          name,
-          arguments: isObject(call.args) ? call.args : {},
-        }),
-      );
-    });
-
-    return new CompletionResponse({
-      text: textParts.join(''),
-      model: model.name,
-      provider: this._name,
-      usage: this.usage(body),
-      toolCalls: calls,
-      finishReason: this.finishReason(candidate.finishReason, calls.length > 0),
-    });
-  }
-
-  private usage(body: Record<string, unknown>): TokenUsage {
-    const raw = isObject(body.usageMetadata) ? body.usageMetadata : {};
-    const input = raw.promptTokenCount;
-    const output = raw.candidatesTokenCount;
-    return new TokenUsage({
-      inputTokens: typeof input === 'number' ? Math.trunc(input) : 0,
-      outputTokens: typeof output === 'number' ? Math.trunc(output) : 0,
-    });
-  }
-
-  private finishReason(raw: unknown, sawToolCall: boolean): FinishReason {
-    if (typeof raw !== 'string') return sawToolCall ? 'tool-calls' : 'stop';
-    const mapped = FINISH_REASONS[raw] ?? 'stop';
-    if (sawToolCall && mapped === 'stop') return 'tool-calls';
-    return mapped;
+    return postJson(
+      url,
+      body,
+      {
+        authorization: `Bearer ${await this.token()}`,
+        'content-type': 'application/json',
+        ...this._extraHeaders,
+      },
+      {
+        name: this._name,
+        timeoutSeconds: this._timeoutSeconds,
+        maxAttempts: this._maxAttempts,
+        backoffSeconds: this._backoffSeconds,
+        fetchImpl: this._fetch,
+      },
+      DEFAULT_RETRYABLE_STATUSES,
+    );
   }
 }

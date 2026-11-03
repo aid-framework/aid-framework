@@ -20,6 +20,7 @@ import asyncio
 import hashlib
 import json
 import math
+import os
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
 
@@ -27,6 +28,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from aid_runtime.errors import ConfigurationError, ProviderError, ProviderResponseError
+from aid_runtime.providers.gemini import DEFAULT_GEMINI_BASE_URL, GEMINI_API_KEY_ENV
 from aid_runtime.providers.http import DEFAULT_BASE_URL
 from aid_runtime.retrieval.types import PinnedEmbedding
 from aid_runtime.types import TokenUsage
@@ -35,6 +37,7 @@ __all__ = [
     "Embedder",
     "EmbeddingBatch",
     "FakeDeterministicEmbedder",
+    "GeminiEmbedder",
     "OpenAICompatibleEmbedder",
     "embedder_for",
     "estimate_tokens",
@@ -49,6 +52,12 @@ _RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 #: ``cost.estimate_prompt_cost_usd`` (4 characters per token, rounded up), so an
 #: offline estimate and an offline charge cannot disagree about what a text costs.
 _CHARS_PER_TOKEN = 4
+
+#: ``batchEmbedContents`` accepts at most 100 inputs per call.
+_GEMINI_BATCH_LIMIT = 100
+
+#: Only these embedding models take ``outputDimensionality``; older ones reject it.
+_GEMINI_DIMENSIONED_MODELS = frozenset({"gemini-embedding-001"})
 
 
 class EmbeddingBatch(BaseModel):
@@ -196,32 +205,15 @@ class OpenAICompatibleEmbedder:
         return headers
 
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        url = f"{self._base_url}{path}"
-        last_error: Exception | None = None
-        for attempt in range(1, self._max_attempts + 1):
-            try:
-                response = await self._client.post(url, json=payload, headers=self._headers())
-            except httpx.TransportError as error:
-                last_error = error
-            else:
-                if response.status_code < 400:
-                    return _as_object(response, self._name)
-                failure = ProviderError(
-                    f"{self._name} returned HTTP {response.status_code}: {response.text[:200]}"
-                )
-                # A status outside the retryable set is a decision, not a hiccup:
-                # retrying a 400 only wastes the caller's time.
-                if response.status_code not in _RETRYABLE_STATUS:
-                    raise failure
-                last_error = failure
-            if attempt < self._max_attempts:
-                await asyncio.sleep(self._backoff * 2 ** (attempt - 1))
-        # Chained rather than formatted away: the transport error carries the reason
-        # (DNS, TLS, refused connection), and a caller catching the ProviderError
-        # should still be able to see it, as the chat provider's callers can.
-        raise ProviderError(
-            f"{self._name} failed after {self._max_attempts} attempt(s): {last_error}"
-        ) from last_error
+        return await _post_json(
+            self._client,
+            f"{self._base_url}{path}",
+            payload,
+            self._headers(),
+            name=self._name,
+            max_attempts=self._max_attempts,
+            backoff=self._backoff,
+        )
 
     def _parse(self, body: dict[str, Any], model: PinnedEmbedding) -> EmbeddingBatch:
         entries = body.get("data")
@@ -264,6 +256,160 @@ class OpenAICompatibleEmbedder:
         )
 
 
+class GeminiEmbedder:
+    """``batchEmbedContents`` on the Gemini API.
+
+    Not an OpenAI-compatible endpoint with a different base URL: the body nests the
+    text in ``content.parts[].text``, the response is ``embeddings[].values`` rather
+    than ``data[].embedding``, and the key travels in ``x-goog-api-key``. The batch
+    limit is 100 inputs per call, so a larger batch is split and reassembled in order.
+
+    The response carries no token counts, so usage is the same offline estimate the
+    fake adapter uses; it is a budget signal, not a bill.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str = DEFAULT_GEMINI_BASE_URL,
+        api_key: str | None = None,
+        name: str = "gemini-embedder",
+        timeout_seconds: float = 60.0,
+        max_attempts: int = 3,
+        backoff_seconds: float = 0.5,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        if not base_url.startswith(("http://", "https://")):
+            raise ConfigurationError(f"base_url must be an absolute http(s) URL, got {base_url!r}")
+        if max_attempts < 1:
+            raise ConfigurationError("max_attempts must be at least 1")
+        self._base_url = base_url.rstrip("/")
+        self._api_key = api_key
+        self._name = name
+        self._max_attempts = max_attempts
+        self._backoff = backoff_seconds
+        self._owns_client = client is None
+        self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
+        self._closed = False
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def embed(self, texts: Sequence[str], *, model: PinnedEmbedding) -> EmbeddingBatch:
+        vectors: list[tuple[float, ...]] = []
+        for start in range(0, len(texts), _GEMINI_BATCH_LIMIT):
+            batch = list(texts[start : start + _GEMINI_BATCH_LIMIT])
+            body = await self._post(model, batch)
+            vectors.extend(self._parse(body, model, len(batch)))
+        return EmbeddingBatch(
+            vectors=tuple(vectors),
+            usage=TokenUsage(
+                input_tokens=sum(estimate_tokens(text) for text in texts),
+                output_tokens=0,
+            ),
+        )
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._owns_client:
+            await self._client.aclose()
+
+    def _headers(self) -> dict[str, str]:
+        api_key = self._api_key or os.environ.get(GEMINI_API_KEY_ENV)
+        if not api_key:
+            raise ProviderError(
+                f"{self._name} has no API key: set embedding provider 'apiKeyEnv' or "
+                f"{GEMINI_API_KEY_ENV}"
+            )
+        return {"x-goog-api-key": api_key, "content-type": "application/json"}
+
+    async def _post(self, model: PinnedEmbedding, texts: list[str]) -> dict[str, Any]:
+        requests: list[dict[str, Any]] = [
+            {"model": f"models/{model.model_id}", "content": {"parts": [{"text": text}]}}
+            for text in texts
+        ]
+        if model.model_id in _GEMINI_DIMENSIONED_MODELS:
+            for entry in requests:
+                entry["outputDimensionality"] = model.dimensions
+        return await _post_json(
+            self._client,
+            f"{self._base_url}/v1beta/models/{model.model_id}:batchEmbedContents",
+            {"requests": requests},
+            self._headers(),
+            name=self._name,
+            max_attempts=self._max_attempts,
+            backoff=self._backoff,
+        )
+
+    def _parse(
+        self, body: dict[str, Any], model: PinnedEmbedding, expected: int
+    ) -> list[tuple[float, ...]]:
+        entries = body.get("embeddings")
+        if not isinstance(entries, list) or len(entries) != expected:
+            raise ProviderResponseError(
+                f"{self._name} returned {len(entries) if isinstance(entries, list) else 0} "
+                f"embeddings for {expected} input(s)"
+            )
+        vectors: list[tuple[float, ...]] = []
+        for entry in entries:
+            values = entry.get("values") if isinstance(entry, dict) else None
+            if not isinstance(values, list):
+                raise ProviderResponseError(f"{self._name} returned a non-list embedding")
+            try:
+                vector = tuple(float(value) for value in values)
+            except (TypeError, ValueError) as error:
+                raise ProviderResponseError(
+                    f"{self._name} returned a non-numeric embedding"
+                ) from error
+            if len(vector) != model.dimensions:
+                raise ProviderResponseError(
+                    f"{self._name} returned {len(vector)} dimensions for {model.model_id!r} but "
+                    f"{model.dimensions} are pinned; the pin and the response must agree"
+                )
+            vectors.append(vector)
+        return vectors
+
+
+async def _post_json(
+    client: httpx.AsyncClient,
+    url: str,
+    payload: dict[str, Any],
+    headers: Mapping[str, str],
+    *,
+    name: str,
+    max_attempts: int,
+    backoff: float,
+) -> dict[str, Any]:
+    last_error: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = await client.post(url, json=payload, headers=dict(headers))
+        except httpx.TransportError as error:
+            last_error = error
+        else:
+            if response.status_code < 400:
+                return _as_object(response, name)
+            failure = ProviderError(
+                f"{name} returned HTTP {response.status_code}: {response.text[:200]}"
+            )
+            # A status outside the retryable set is a decision, not a hiccup: retrying
+            # a 400 only wastes the caller's time.
+            if response.status_code not in _RETRYABLE_STATUS:
+                raise failure
+            last_error = failure
+        if attempt < max_attempts:
+            await asyncio.sleep(backoff * 2 ** (attempt - 1))
+    # Chained rather than formatted away: the transport error carries the reason (DNS,
+    # TLS, refused connection), and a caller catching the ProviderError should still be
+    # able to see it, as the chat provider's callers can.
+    raise ProviderError(
+        f"{name} failed after {max_attempts} attempt(s): {last_error}"
+    ) from last_error
+
+
 def _as_object(response: httpx.Response, name: str) -> dict[str, Any]:
     try:
         body = response.json()
@@ -278,7 +424,7 @@ def embedder_for(
     model: PinnedEmbedding,
     *,
     api_key: str | None = None,
-    base_url: str = DEFAULT_BASE_URL,
+    base_url: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> Embedder:
     """Pick the adapter for a pinned embedding model.
@@ -286,8 +432,15 @@ def embedder_for(
     This selects a *provider*, never a model: the model id and its width arrive
     already pinned, and are passed straight through to whichever adapter is chosen.
     ``fake`` is chosen for the same reason the spec can declare it -- so a gate runs
-    keyless and offline.
+    keyless and offline. Each hosted adapter keeps its own default host, so ``base_url``
+    is only passed through when the caller supplied one.
     """
     if model.provider == "fake":
         return FakeDeterministicEmbedder()
-    return OpenAICompatibleEmbedder(base_url=base_url, api_key=api_key, client=client)
+    if model.provider == "gemini":
+        return GeminiEmbedder(
+            base_url=base_url or DEFAULT_GEMINI_BASE_URL, api_key=api_key, client=client
+        )
+    return OpenAICompatibleEmbedder(
+        base_url=base_url or DEFAULT_BASE_URL, api_key=api_key, client=client
+    )

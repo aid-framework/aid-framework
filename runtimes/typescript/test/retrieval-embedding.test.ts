@@ -1,11 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   ConfigurationError,
+  DEFAULT_GEMINI_BASE_URL,
   EmbeddingBatch,
   embedderFor,
   estimateTokens,
   FakeDeterministicEmbedder,
+  GEMINI_API_KEY_ENV,
+  GeminiEmbedder,
   OpenAICompatibleEmbedder,
   PinnedEmbedding,
   ProviderError,
@@ -506,5 +509,147 @@ describe('embedderFor', () => {
     });
 
     expect(embedderFor(remote)).toBeInstanceOf(OpenAICompatibleEmbedder);
+  });
+
+  it('picks the Gemini adapter for the gemini provider', () => {
+    expect(embedderFor(geminiPin())).toBeInstanceOf(GeminiEmbedder);
+  });
+});
+
+afterEach(() => {
+  delete process.env[GEMINI_API_KEY_ENV];
+});
+
+function geminiPin(modelId = 'gemini-embedding-001'): PinnedEmbedding {
+  return new PinnedEmbedding({
+    alias: 'gemini',
+    provider: 'gemini',
+    modelId,
+    dimensions: EMBED_DIMENSIONS,
+    cost: MODEL.cost,
+  });
+}
+
+function gemini(fetchImpl: FetchLike, options: Record<string, unknown> = {}): GeminiEmbedder {
+  return new GeminiEmbedder({
+    apiKey: 'key-123',
+    fetchImpl,
+    backoffSeconds: 0,
+    ...options,
+  });
+}
+
+function geminiReply(count: number): string {
+  return JSON.stringify({
+    embeddings: Array.from({ length: count }, () => ({
+      values: Array.from({ length: EMBED_DIMENSIONS }, () => 0.5),
+    })),
+  });
+}
+
+describe('GeminiEmbedder', () => {
+  it('posts batchEmbedContents with the key header and Google-shaped requests', async () => {
+    const { fetchImpl, calls } = stubFetch([geminiReply(1)]);
+
+    const batch = await gemini(fetchImpl).embed(['alpha'], { model: geminiPin() });
+
+    const call = at(calls, 0);
+    expect(call.url).toBe(
+      `${DEFAULT_GEMINI_BASE_URL}/v1beta/models/gemini-embedding-001:batchEmbedContents`,
+    );
+    expect(call.headers['x-goog-api-key']).toBe('key-123');
+    expect(call.headers.authorization).toBeUndefined();
+    expect(JSON.parse(call.body)).toEqual({
+      requests: [
+        {
+          model: 'models/gemini-embedding-001',
+          content: { parts: [{ text: 'alpha' }] },
+          outputDimensionality: EMBED_DIMENSIONS,
+        },
+      ],
+    });
+    expect(batch.vectors).toHaveLength(1);
+  });
+
+  it('only sends outputDimensionality for models that accept it', async () => {
+    const { fetchImpl, calls } = stubFetch([geminiReply(1)]);
+
+    await gemini(fetchImpl).embed(['alpha'], { model: geminiPin('text-embedding-004') });
+
+    const body = JSON.parse(at(calls, 0).body) as { requests: Record<string, unknown>[] };
+    expect(body.requests[0]).not.toHaveProperty('outputDimensionality');
+  });
+
+  it('splits batches of more than one hundred and reassembles them in order', async () => {
+    const { fetchImpl, calls } = stubFetch([geminiReply(100), geminiReply(1)]);
+
+    const batch = await gemini(fetchImpl).embed(
+      Array.from({ length: 101 }, (_, index) => `text-${index}`),
+      { model: geminiPin() },
+    );
+
+    expect(calls).toHaveLength(2);
+    const first = JSON.parse(at(calls, 0).body) as { requests: unknown[] };
+    const second = JSON.parse(at(calls, 1).body) as { requests: unknown[] };
+    expect(first.requests).toHaveLength(100);
+    expect(second.requests).toHaveLength(1);
+    expect(batch.vectors).toHaveLength(101);
+  });
+
+  it('reports an offline token estimate, since the reply carries none', async () => {
+    const { fetchImpl } = stubFetch([geminiReply(2)]);
+
+    const batch = await gemini(fetchImpl).embed(['abcd', 'abcdefgh'], { model: geminiPin() });
+
+    expect(batch.usage.inputTokens).toBe(estimateTokens('abcd') + estimateTokens('abcdefgh'));
+    expect(batch.usage.outputTokens).toBe(0);
+  });
+
+  it('reads the key from the environment', async () => {
+    process.env[GEMINI_API_KEY_ENV] = 'from-env';
+    const { fetchImpl, calls } = stubFetch([geminiReply(1)]);
+
+    await gemini(fetchImpl, { apiKey: undefined }).embed(['alpha'], { model: geminiPin() });
+
+    expect(at(calls, 0).headers['x-goog-api-key']).toBe('from-env');
+  });
+
+  it('requires a key', async () => {
+    const { fetchImpl, calls } = stubFetch([geminiReply(1)]);
+
+    await expect(
+      gemini(fetchImpl, { apiKey: undefined }).embed(['alpha'], { model: geminiPin() }),
+    ).rejects.toThrow(GEMINI_API_KEY_ENV);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('does not retry a bad key', async () => {
+    const { fetchImpl, calls } = stubFetch([
+      { status: 400, body: JSON.stringify({ error: { status: 'FAILED_PRECONDITION' } }) },
+      geminiReply(1),
+    ]);
+
+    await expect(gemini(fetchImpl).embed(['alpha'], { model: geminiPin() })).rejects.toThrow('400');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('refuses a reply with the wrong number of embeddings', async () => {
+    const { fetchImpl } = stubFetch([geminiReply(1)]);
+
+    await expect(
+      gemini(fetchImpl).embed(['alpha', 'beta'], { model: geminiPin() }),
+    ).rejects.toThrow('1 embeddings for 2 input');
+  });
+
+  it('refuses a width that disagrees with the pin', async () => {
+    const { fetchImpl } = stubFetch([JSON.stringify({ embeddings: [{ values: [0.5, 0.5] }] })]);
+
+    await expect(gemini(fetchImpl).embed(['alpha'], { model: geminiPin() })).rejects.toThrow(
+      'dimensions',
+    );
+  });
+
+  it('refuses a base URL that is not http', () => {
+    expect(() => new GeminiEmbedder({ baseUrl: 'ftp://nope' })).toThrow(ConfigurationError);
   });
 });

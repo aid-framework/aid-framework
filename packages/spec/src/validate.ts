@@ -55,6 +55,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.7',
   '0.8',
   '0.9',
+  '0.10',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -144,6 +145,21 @@ export const BATCH_SURFACE_MIN_VERSION: SpecVersion = '0.5';
  * version offers it.
  */
 export const GOOGLE_PROVIDER_MIN_VERSION: SpecVersion = '0.6';
+
+/**
+ * The first spec version that accepts `provider: gemini`, the Gemini API rather than
+ * Vertex AI. It is a separate id because the provider id names the wire *and* the auth:
+ * Vertex needs a project, a location and an OAuth2 token, while the Gemini API needs one
+ * key and a different version segment. Under one id the generator would have to infer the
+ * auth story from `baseUrl`, which the adapter mapping deliberately never does.
+ */
+export const GEMINI_PROVIDER_MIN_VERSION: SpecVersion = '0.10';
+
+/** The version gate for every provider id that arrived after the spec that introduced it. */
+const PROVIDER_MIN_VERSIONS: Readonly<Record<string, SpecVersion>> = {
+  google: GOOGLE_PROVIDER_MIN_VERSION,
+  gemini: GEMINI_PROVIDER_MIN_VERSION,
+};
 
 /** Pipeline step kinds implemented in spec v0.1. */
 export const SUPPORTED_STEP_KINDS = [
@@ -445,7 +461,7 @@ function scopeDiagnostics(
   }
 
   modelCacheDiagnostics(spec, diagnostics, reported);
-  googleProviderDiagnostics(spec, diagnostics, reported);
+  providerVersionDiagnostics(spec, diagnostics, reported);
   guardrailDecisionDiagnostics(spec, diagnostics, reported);
   deploymentImageDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
@@ -454,11 +470,13 @@ function scopeDiagnostics(
 }
 
 /**
- * Version gating for the `google` provider. The vendor is a 0.6 addition, so a
- * document that declares an earlier version and names it is told which version it
- * needs; the schema's enum error at the same path is suppressed by `reported`.
+ * Version gating for the provider ids that arrived after the spec that first offered
+ * their wire dialect. `google` (Vertex AI) is a 0.6 addition and `gemini` (the Gemini
+ * API) a 0.10 one, so a document that declares an earlier version and names one is told
+ * which version it needs; the schema's enum error at the same path is suppressed by
+ * `reported`.
  */
-function googleProviderDiagnostics(
+function providerVersionDiagnostics(
   spec: Record<string, unknown>,
   diagnostics: Diagnostic[],
   reported: Set<string>,
@@ -466,22 +484,21 @@ function googleProviderDiagnostics(
   const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
   const known =
     declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
-  if (
-    declared === undefined ||
-    !known ||
-    specVersionAtLeast(declared, GOOGLE_PROVIDER_MIN_VERSION)
-  ) {
+  if (declared === undefined || !known) {
     return;
   }
 
   for (const [name, model] of Object.entries(asRecord(spec.models))) {
-    if (asRecord(model).provider !== 'google') continue;
+    const provider = asRecord(model).provider;
+    if (typeof provider !== 'string') continue;
+    const required = PROVIDER_MIN_VERSIONS[provider];
+    if (required === undefined || specVersionAtLeast(declared, required)) continue;
     diagnostics.push(
       errorDiagnostic({
         code: DIAGNOSTIC_CODES.notSupported,
-        message: `'models.${name}.provider: google' requires specVersion ${GOOGLE_PROVIDER_MIN_VERSION}, but this specification declares version ${declared}`,
+        message: `'models.${name}.provider: ${provider}' requires specVersion ${required}, but this specification declares version ${declared}`,
         path: ['models', name, 'provider'],
-        hint: `set specVersion: "${GOOGLE_PROVIDER_MIN_VERSION}"; documents that do not use Vertex AI are unchanged`,
+        hint: `set specVersion: "${required}"; documents that do not use provider '${provider}' are unchanged`,
       }),
     );
     reported.add(JSON.stringify(['models', name, 'provider']));

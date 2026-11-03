@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud matrices are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each row. The spec language is at `0.9`.
+The provider and cloud matrices are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each row. The spec language is at `0.10`.
 
 ## Deployment targets
 
@@ -27,6 +27,7 @@ Every provider in `SERVED_PROVIDERS` is a row. A check means the generated adapt
 | --- | --- | --- | --- | --- | --- | --- |
 | `anthropic` | `AnthropicProvider` | yes | yes | yes | <span title="AnthropicProvider does not advertise EMBEDDINGS.">—</span> | 2 models, 2 priced |
 | `bedrock` | `BedrockProvider` | yes | yes | <span title="BedrockProvider does not advertise STREAMING.">—</span> | <span title="BedrockProvider does not advertise EMBEDDINGS.">—</span> | 2 models, 2 priced |
+| `gemini` | `GeminiProvider` | yes | yes | yes | <span title="GeminiProvider does not advertise EMBEDDINGS.">—</span> | 1 model, 1 priced |
 | `google` | `VertexProvider` | yes | yes | yes | <span title="VertexProvider does not advertise EMBEDDINGS.">—</span> | 2 models, 2 priced |
 | `openai` | `OpenAICompatibleProvider` | yes | yes | yes | yes | 5 models, 5 priced |
 | `openai-compatible` | `OpenAICompatibleProvider` | yes | yes | yes | yes | <span title="No pinned model or cost profile is published for this provider, so the spec must give an explicit modelId and the call prices as unknown.">—</span> |
