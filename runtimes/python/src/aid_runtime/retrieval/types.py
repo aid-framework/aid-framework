@@ -175,10 +175,16 @@ class RefreshSpec(BaseModel):
 
 
 class RetrieverSpec(BaseModel):
-    """One entry of the IR's ``retrievers`` map."""
+    """One entry of the IR's ``retrievers`` map that reads a local corpus.
+
+    ``kind`` is the union's discriminator. It defaults to ``local`` because every
+    retriever was local before managed knowledge bases existed, so an IR written by
+    an older generator still validates.
+    """
 
     model_config = _IR_RECORD
 
+    kind: Literal["local"] = "local"
     id: str = Field(min_length=1)
     source: SourceSpec
     chunking: ChunkingSpec
@@ -380,6 +386,7 @@ class ManagedRetrieverSpec(BaseModel):
 
     model_config = _IR_RECORD
 
+    kind: Literal["managed"] = "managed"
     id: str = Field(min_length=1)
     knowledge_base: str = Field(alias="knowledgeBase")
     top_k: int = Field(gt=0, alias="topK")

@@ -21,6 +21,7 @@ from aid_runtime.retrieval import (
     ManagedRetrieverBinding,
     ManagedRetrieverSpec,
     Retriever,
+    RetrieverSpec,
     binding_from_managed_spec,
     knowledge_base_env_id,
 )
@@ -49,6 +50,30 @@ def retriever_spec(**overrides: object) -> ManagedRetrieverSpec:
     }
     payload.update(overrides)
     return ManagedRetrieverSpec.model_validate(payload)
+
+
+def test_the_ir_discriminator_validates_on_both_retriever_shapes() -> None:
+    """Generated bindings validate the IR fragment as written, which carries ``kind``."""
+
+    local = RetrieverSpec.model_validate(
+        {
+            "kind": "local",
+            "id": "handbook",
+            "source": {"kind": "file", "uri": "./docs", "glob": "**/*.md"},
+            "chunking": {"strategy": "fixed", "size": 120, "overlap": 0, "keepMetadata": []},
+            "embedModel": "embed",
+            "store": "vectors",
+            "index": {"metric": "cosine", "hybrid": False},
+            "topK": 3,
+            "rerank": None,
+            "filters": None,
+            "refresh": {"mode": "full"},
+            "traits": ["retrieval"],
+        }
+    )
+
+    assert local.kind == "local"
+    assert retriever_spec(kind="managed").kind == "managed"
 
 
 def fixture_client(*, ready: bool = True, cost: float | None = None) -> FixtureKnowledgeBaseClient:

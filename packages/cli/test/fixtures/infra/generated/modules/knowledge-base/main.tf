@@ -233,17 +233,29 @@ resource "aws_bedrockagent_data_source" "this" {
     chunking_configuration {
       chunking_strategy = each.value.chunking.strategy == "fixed" ? "FIXED_SIZE" : "HIERARCHICAL"
 
+      # The spec states the fixed-size overlap in tokens; Bedrock states it as a
+      # percentage of the chunk, so the emitted value is derived rather than forwarded.
+      # Rounding up keeps a small non-zero overlap from collapsing to zero.
       dynamic "fixed_size_chunking_configuration" {
         for_each = each.value.chunking.strategy == "fixed" ? [1] : []
         content {
           max_tokens         = each.value.chunking.size
-          overlap_tokens     = each.value.chunking.overlap
+          overlap_percentage = min(100, ceil(each.value.chunking.overlap / each.value.chunking.size * 100))
         }
       }
 
+      # Hierarchical chunking describes exactly two layers, so the spec's single size
+      # becomes the leaf and the parent is emitted above it. The engine repeats
+      # `overlap` tokens across chunks in each layer.
       dynamic "hierarchical_chunking_configuration" {
         for_each = each.value.chunking.strategy == "fixed" ? [] : [1]
         content {
+          overlap_tokens = each.value.chunking.overlap
+
+          level_configuration {
+            max_tokens = each.value.chunking.size * 2
+          }
+
           level_configuration {
             max_tokens = each.value.chunking.size
           }
