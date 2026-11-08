@@ -426,6 +426,16 @@ jobs:
             echo "::endgroup::"
           done
 
+      # One module path holds one cloud's bytes, so the GCP runtime fixture keeps its own
+      # tree beside its root. Validating it through the AWS root above would check the AWS
+      # module a second time and never the reasoning-engine resources at all.
+      - name: Validate the GCP runtime fixture
+        working-directory: packages/cli/test/fixtures/infra/gcp-runtime/envs/dev
+        run: |
+          set -euo pipefail
+          tofu init -backend=false -input=false -no-color
+          tofu validate -no-color
+
   # The CDK construct is a constant too, and `infra-modules.test.ts` asserts the committed
   # fixture is byte-for-byte what the emitter produces. That proves the file has not
   # drifted; it cannot prove `cdk synth` still accepts it. CDK validates a construct at

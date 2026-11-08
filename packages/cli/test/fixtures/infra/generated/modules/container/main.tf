@@ -12,7 +12,7 @@ data "aws_caller_identity" "current" {}
 locals {
   container = {
     for id, service in var.services : id => service
-    if service.target == "container"
+    if service.target == "container" && service.runtime == null
   }
 
   # A service that names Bedrock calls it with the task role, so the grant below is the

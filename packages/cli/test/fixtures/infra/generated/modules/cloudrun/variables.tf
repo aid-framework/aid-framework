@@ -19,6 +19,9 @@ variable "services" {
     # Set only by a `batch` service; the other targets ignore it and the entrypoint does
     # not read it, but the shared variable type must admit it.
     pipeline = optional(string)
+    # Set when the service runs on a managed agent runtime. `any` because the runtime
+    # module owns that shape; this one only needs to know the service is not its own.
+    runtime = optional(any)
     routes = list(object({
       pipeline = string
       method   = string

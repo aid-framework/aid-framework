@@ -889,6 +889,36 @@ export interface DeploymentImageShape {
   name: string;
 }
 
+/**
+ * The managed agent runtimes a container service may be deployed onto, from spec 0.13.
+ *
+ * Both run the image `target: container` already builds, which is why this is a
+ * destination rather than a second generation path: the platform schedules, isolates and
+ * addresses the process the app already is.
+ */
+export const AGENT_RUNTIME_PLATFORMS = ['aws-agentcore', 'gcp-agent-platform'] as const;
+
+export type AgentRuntimePlatform = (typeof AGENT_RUNTIME_PLATFORMS)[number];
+
+/**
+ * The cloud each platform runs on. The platform's credentials are the deploy's
+ * credentials, so a platform and `--cloud` that disagree are refused instead of deployed
+ * unreachable; keeping the mapping here means the refusal and the plan cannot disagree.
+ */
+export const RUNTIME_CLOUDS: Readonly<Record<AgentRuntimePlatform, 'aws' | 'gcp'>> = {
+  'aws-agentcore': 'aws',
+  'gcp-agent-platform': 'gcp',
+};
+
+/** A managed agent runtime, with the defaults the runtime enforces already applied. */
+export interface DeploymentRuntimeShape {
+  platform: AgentRuntimePlatform;
+  /** AgentCore Memory. `false` on every platform that cannot create one. */
+  memory: { shortTerm: boolean };
+  /** Session lifetime in minutes; 480 when the spec names none. */
+  session: { ttlMinutes: number };
+}
+
 export interface DeploymentShape {
   id: string;
   target: DeploymentTarget;
@@ -903,6 +933,12 @@ export interface DeploymentShape {
    * release workflow can push with a token the repository already has.
    */
   image?: DeploymentImageShape;
+  /**
+   * The managed agent runtime this container service runs on, from spec 0.13. Present
+   * only on `target: container`: the platform runs the image that target builds, so the
+   * compute module is replaced rather than paired with it.
+   */
+  runtime?: DeploymentRuntimeShape;
   /**
    * The pipeline a `target: batch` job runs, by id, from spec 0.5. A batch deployment
    * runs exactly one pipeline once to completion, and that pipeline declares

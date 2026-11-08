@@ -131,6 +131,18 @@ export interface DeployTfvars {
         readonly ingest: readonly string[];
         /** Engines the service's guardrails use; `bedrock` needs the managed grant. */
         readonly guardrail_engines: readonly string[];
+        /**
+         * The managed agent runtime that runs this service. Present only when the
+         * deployment declared one, and then the compute modules skip the service: the
+         * runtime module provisions it instead. Flat rather than the spec's nesting
+         * because the module reads three scalars, not a document.
+         */
+        readonly runtime?: {
+          readonly platform: string;
+          readonly cloud: string;
+          readonly memory_short_term: boolean;
+          readonly ttl_minutes: number;
+        };
       }
     >
   >;
@@ -219,6 +231,13 @@ export interface DeployContext {
         readonly providers: readonly string[];
         readonly ingest: readonly string[];
         readonly guardrailEngines: readonly string[];
+        /** The same runtime as `DeployTfvars`, in the keys a TS project reads. */
+        readonly runtime?: {
+          readonly platform: string;
+          readonly cloud: string;
+          readonly memoryShortTerm: boolean;
+          readonly ttlMinutes: number;
+        };
       }
     >
   >;
@@ -298,6 +317,16 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
       ingest: [...service.ingest],
       guardrail_engines: [...(service.guardrailEngines ?? [])],
       ...(service.pipeline === undefined ? {} : { pipeline: service.pipeline }),
+      ...(service.runtime === undefined
+        ? {}
+        : {
+            runtime: {
+              platform: service.runtime.platform,
+              cloud: service.runtime.cloud,
+              memory_short_term: service.runtime.memory.shortTerm,
+              ttl_minutes: service.runtime.session.ttlMinutes,
+            },
+          }),
     };
   }
 
@@ -390,6 +419,16 @@ export function cdkContext(plan: DeployPlan): DeployContext {
       ingest: [...service.ingest],
       guardrailEngines: [...service.guardrail_engines],
       ...(service.pipeline === undefined ? {} : { pipeline: service.pipeline }),
+      ...(service.runtime === undefined
+        ? {}
+        : {
+            runtime: {
+              platform: service.runtime.platform,
+              cloud: service.runtime.cloud,
+              memoryShortTerm: service.runtime.memory_short_term,
+              ttlMinutes: service.runtime.ttl_minutes,
+            },
+          }),
     };
   }
 
@@ -455,7 +494,12 @@ export function cdkContext(plan: DeployPlan): DeployContext {
 function readme(plan: DeployPlan, cloud: Cloud): string {
   const routes = plan.services.reduce((total, service) => total + service.endpoints.length, 0);
   const modules = modulesOf(plan, cloud);
-  const active = modules.serverless || modules.container || modules.batch || modules.edge;
+  const active =
+    modules.serverless ||
+    modules.container ||
+    modules.batch ||
+    modules.edge ||
+    modules.agentRuntime;
   const root = envRoot(modules, cloud);
   const envDir = cloud === 'gcp' ? 'infra/envs/gcp-dev' : 'infra/envs/dev';
   return [
@@ -497,6 +541,13 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
     ...(modules.edge
       ? [
           '| `modules/edge/` | The Lambda@Edge + CloudFront module an `edge` deployment deploys into. |',
+        ]
+      : []),
+    ...(modules.agentRuntime
+      ? [
+          cloud === 'gcp'
+            ? '| `modules/agent-runtime/` | The Vertex AI reasoning engine + service account a `gcp-agent-platform` deployment runs on. |'
+            : '| `modules/agent-runtime/` | The Bedrock AgentCore runtime, memory bank and IAM role an `aws-agentcore` deployment runs on. |',
         ]
       : []),
     ...(modules.knowledgeBase
@@ -669,6 +720,46 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
                   '',
                 ]
             : []),
+          ...(modules.agentRuntime
+            ? cloud === 'gcp'
+              ? [
+                  'A deployment with `runtime.platform: gcp-agent-platform` runs on a Vertex AI',
+                  'reasoning engine instead of Cloud Run: the runtime module creates the engine,',
+                  'its service account and the Artifact Registry and Secret Manager grants the',
+                  'container needs, and the compute modules skip the service. The engine calls the',
+                  'image itself on port 8080, so the Dockerfile starts',
+                  '`app.generated.runtime_app`, which adds `/ping` and `/invocations` and replays',
+                  'an invocation through `app.main:app` -- the same route, meter and trace an HTTP',
+                  "caller gets. The adapter collects the app's response before returning it, so a",
+                  'streaming route answers in one piece through the platform: streams stay',
+                  'incremental only when the app is called directly over HTTP.',
+                  'Each declared secret gets one `secretAccessor` grant on its',
+                  'Secret Manager id; `memory` is refused at plan time, because the provider has',
+                  'no resource for a memory bank and a memory the plan does not create would be a',
+                  'promise the first apply breaks. The engine name and service account are',
+                  'exported as `reasoning_engines` and `service_accounts`.',
+                  '',
+                ]
+              : [
+                  'A deployment with `runtime.platform: aws-agentcore` runs on AgentCore instead of',
+                  'ECS: the runtime module creates the agent runtime, its IAM role and, when',
+                  '`memory.shortTerm` is set, a memory bank, and the compute modules skip the',
+                  'service. The platform calls the image itself, so the Dockerfile starts',
+                  '`app.generated.runtime_app`, which adds `/ping` and `/invocations` and replays',
+                  'an invocation through `app.main:app` -- the same route, meter and trace an HTTP',
+                  "caller gets. The adapter collects the app's response before returning it, so a",
+                  'streaming route answers in one piece through the platform: streams stay',
+                  'incremental only when the app is called directly over HTTP.',
+                  'Sessions stop at `session.ttlMinutes`, which the spec caps at 480,',
+                  'and the memory bank forgets an event after 30 days.',
+                  '',
+                  'AgentCore takes environment variables only, with no reference to a secret, so',
+                  'the module refuses a deployment that declares `secrets:`; put the value in the',
+                  'environment some other way, or move the key to a deployment that runs on',
+                  'compute. The runtime ARNs are exported as `agent_runtimes`.',
+                  '',
+                ]
+            : []),
         ]
       : [
           cloud === 'gcp'
@@ -714,14 +805,31 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
                 '',
               ]
             : []),
+          ...(modules.agentRuntime
+            ? [
+                'A plan that declares a managed runtime emits no CDK construct, and `--iac cdk`',
+                'is refused for it: this backend cannot express an AgentCore runtime, and an',
+                'empty app would be worse than the refusal. Use `--iac tofu` until the construct',
+                'exists.',
+                '',
+              ]
+            : []),
           '```sh',
           'aid infra plan  --iac cdk --env dev',
           'aid infra apply --iac cdk --env dev',
           '```',
           '',
-          '`aid infra` defaults to `--iac tofu`; the generated bytes are identical either way,',
-          'because both backends consume this one plan.',
-          '',
+          ...(modules.agentRuntime
+            ? [
+                'For the same reason, `--iac tofu` is the only backend that can deploy this',
+                'plan.',
+                '',
+              ]
+            : [
+                '`aid infra` defaults to `--iac tofu`; the generated bytes are identical either way,',
+                'because both backends consume this one plan.',
+                '',
+              ]),
         ]
       : [
           'CDK is not emitted for GCP: no constructs exist for these resources yet, and',

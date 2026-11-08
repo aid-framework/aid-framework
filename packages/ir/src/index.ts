@@ -64,6 +64,7 @@ export type {
   DeployEnvVar,
   DeployManagedGuardrail,
   DeployPlan,
+  DeployRuntime,
   DeployService,
   DeployStore,
   DeployTask,
@@ -192,6 +193,7 @@ export type {
   DecisionQuestionType,
   DecisionShape,
   DeploymentImageShape,
+  DeploymentRuntimeShape,
   DeploymentShape,
   DeploymentTarget,
   EmbeddingShape,
@@ -254,6 +256,8 @@ export type {
 export {
   AGENT_ENGINES,
   AGENT_ON_BUDGET_EXHAUSTED,
+  AGENT_RUNTIME_PLATFORMS,
+  type AgentRuntimePlatform,
   BEDROCK_CONTENT_FILTERS,
   BEDROCK_CONTENT_STRENGTHS,
   BEDROCK_PII_ENTITIES,
@@ -288,6 +292,7 @@ export {
   PROVIDERS,
   pipelineIdentity,
   promptIdentity,
+  RUNTIME_CLOUDS,
   SERVED_PROVIDERS,
   toolIdentity,
 } from './shapes.js';

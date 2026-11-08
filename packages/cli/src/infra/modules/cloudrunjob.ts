@@ -87,6 +87,7 @@ const VARIABLES_TF = hcl([
   '      from   = string',
   '      value  = optional(string)',
   '    }))',
+  '    runtime = optional(any)',
   '  }))',
   '}',
   '',

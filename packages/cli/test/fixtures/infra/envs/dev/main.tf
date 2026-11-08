@@ -37,6 +37,18 @@ module "container" {
   tags               = var.tags
 }
 
+module "agent-runtime" {
+  source = "../../generated/modules/agent-runtime"
+
+  project         = var.project
+  services        = var.services
+  guardrails      = var.guardrails
+  image_uris      = var.image_uris
+  bedrock_region  = var.bedrock_region
+  knowledge_bases = var.knowledge_bases
+  tags            = var.tags
+}
+
 module "batch" {
   source = "../../generated/modules/batch"
 
@@ -75,6 +87,10 @@ output "serverless_endpoint" {
 
 output "container_endpoint" {
   value = module.container.api_endpoint
+}
+
+output "agent_runtimes" {
+  value = module.agent-runtime.agent_runtimes
 }
 
 output "batch_job_queue" {

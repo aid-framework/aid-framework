@@ -108,6 +108,59 @@ describe('buildDeployPlan', () => {
     expect(plan.project).toEqual({ name: 'planner', namespace: 'acme' });
   });
 
+  it('projects a managed runtime onto the service, defaulting the session', () => {
+    const { plan, ir, diagnostics } = planOf({
+      specVersion: '0.13',
+      deployments: {
+        api: {
+          target: 'container',
+          secrets: [],
+          runtime: { platform: 'aws-agentcore', memory: { shortTerm: true } },
+        },
+      },
+    });
+    expect(diagnostics).toEqual([]);
+    // The IR keeps the platform; the plan adds the cloud the module set belongs to.
+    expect(ir.deployments[0]?.runtime).toEqual({
+      platform: 'aws-agentcore',
+      memory: { shortTerm: true },
+      session: { ttlMinutes: 480 },
+    });
+    expect(plan.services[0]?.runtime).toEqual({
+      platform: 'aws-agentcore',
+      cloud: 'aws',
+      memory: { shortTerm: true },
+      session: { ttlMinutes: 480 },
+    });
+  });
+
+  it('projects memory off where the platform cannot create a bank', () => {
+    const { plan } = planOf({
+      specVersion: '0.13',
+      deployments: {
+        api: {
+          target: 'container',
+          secrets: [],
+          runtime: { platform: 'gcp-agent-platform' },
+        },
+      },
+    });
+    expect(plan.services[0]?.runtime).toEqual({
+      platform: 'gcp-agent-platform',
+      cloud: 'gcp',
+      memory: { shortTerm: false },
+      session: { ttlMinutes: 480 },
+    });
+  });
+
+  it('omits the runtime key entirely when no deployment declares one', () => {
+    // The tfvars are byte-identical to 0.12's for such a plan, so the key cannot appear
+    // as `null`: a runtime module reading it would see a service it does not own.
+    const { plan } = planOf();
+    expect(Object.keys(plan.services[0] ?? {})).not.toContain('runtime');
+    expect(JSON.stringify(plan)).not.toContain('"runtime"');
+  });
+
   it('derives routes from HTTP pipelines only', () => {
     const { plan } = planOf({
       pipelines: {

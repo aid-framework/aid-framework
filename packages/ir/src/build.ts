@@ -20,8 +20,10 @@ import { parsePredicateExpr } from './predicate/index.js';
 import {
   AGENT_ENGINES,
   AGENT_ON_BUDGET_EXHAUSTED,
+  AGENT_RUNTIME_PLATFORMS,
   type AgentEngine,
   type AgentOnBudgetExhausted,
+  type AgentRuntimePlatform,
   type AgentShape,
   BEDROCK_CONTENT_FILTERS,
   BEDROCK_CONTENT_STRENGTHS,
@@ -41,6 +43,7 @@ import {
   type DecisionQuestionType,
   type DecisionShape,
   type DeploymentImageShape,
+  type DeploymentRuntimeShape,
   type DeploymentShape,
   decisionIdentity,
   type EmbeddingShape,
@@ -1256,6 +1259,8 @@ function buildDeployments(raw: unknown, context: BuildContext): DeploymentShape[
     }
     const image: DeploymentImageShape | undefined = buildDeploymentImage(entry.image, id, context);
     if (image !== undefined) deployment.image = image;
+    const runtime = buildDeploymentRuntime(entry.runtime, id, context);
+    if (runtime !== undefined) deployment.runtime = runtime;
     const pipeline = asString(entry.pipeline);
     if (pipeline !== undefined) deployment.pipeline = pipeline;
     return deployment;
@@ -1294,6 +1299,43 @@ function buildDeploymentImage(
     return undefined;
   }
   return { registry: registry as DeploymentImageShape['registry'], name };
+}
+
+function buildDeploymentRuntime(
+  raw: unknown,
+  id: string,
+  context: BuildContext,
+): DeploymentRuntimeShape | undefined {
+  const runtime = asRecord(raw);
+  if (runtime === undefined) return undefined;
+  const platform = asString(runtime.platform);
+  const known =
+    platform !== undefined && (AGENT_RUNTIME_PLATFORMS as readonly string[]).includes(platform);
+  if (!known) {
+    // The spec schema and its version gate both reject this, so reaching it means the
+    // document bypassed validation. Dropping the block would deploy to a compute module
+    // the document asked not to have, so the builder reports instead.
+    context.diagnostics.push(
+      errorDiagnostic({
+        code: IR_DIAGNOSTIC_CODES.deployRuntimeIncomplete,
+        message: `deployment "${id}" declares a runtime with platform "${platform ?? ''}", which is not one of ${AGENT_RUNTIME_PLATFORMS.join(', ')}`,
+        path: ['deployments', id, 'runtime', 'platform'],
+        hint: `name one of ${AGENT_RUNTIME_PLATFORMS.join(', ')}; the builder will not choose a platform on your behalf`,
+      }),
+    );
+    return undefined;
+  }
+  const typed = platform as AgentRuntimePlatform;
+  const memory = asRecord(runtime.memory);
+  const session = asRecord(runtime.session);
+  const ttl = asNumber(session?.ttlMinutes);
+  return {
+    platform: typed,
+    // AgentCore Memory is the only managed memory this module creates; a platform that
+    // cannot create one projects `false` rather than a memory the plan would silently drop.
+    memory: { shortTerm: typed === 'aws-agentcore' && (asBoolean(memory?.shortTerm) ?? false) },
+    session: { ttlMinutes: ttl ?? 480 },
+  };
 }
 
 function buildDeploymentEnv(raw: unknown): DeploymentShape['env'] {

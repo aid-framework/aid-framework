@@ -20,9 +20,12 @@
  * above `app/`; the header carries the exact command.
  *
  * `app/main.py` belongs to the application, not to this generator, so the server
- * entrypoint is `app.main:app` -- the same ASGI app the developer runs locally. Nothing
- * in the spec becomes a build argument: a declared secret is read from the environment
- * when a model is called, so no layer can carry one.
+ * entrypoint is `app.main:app` -- the same ASGI app the developer runs locally. A managed
+ * runtime is the exception, because the platform calls `/ping` and its own invocation
+ * route, which only `app.generated.runtime_app` serves; that adapter mounts the application
+ * unchanged and replays an invocation through it, so the platform path is the HTTP path.
+ * Nothing in the spec becomes a build argument: a declared secret is read from the
+ * environment when a model is called, so no layer can carry one.
  */
 
 import type { IR } from '@aid-framework/ir';
@@ -129,6 +132,10 @@ export function emitDockerfile(ir: IR): EmittedFile {
         .join(', ')}.`;
   const serves = ids.some((entry) => entry.target === 'container');
   const jobs = ids.some((entry) => entry.target === 'batch');
+  // A managed runtime hands the container to the platform, which calls `/ping` and its own
+  // invocation route. Both exist only on the generated adapter, and only the adapter.
+  const managed = ir.deployments.some((deployment) => deployment.runtime !== undefined);
+  const serverModule = managed ? 'app.generated.runtime_app:app' : 'app.main:app';
   const run = serves
     ? `#   docker run --rm -p ${DEFAULT_PORT}:${DEFAULT_PORT} ` +
       `${exposed}${exposed === '' ? '' : ' '}${ir.project.name}`
@@ -140,8 +147,16 @@ export function emitDockerfile(ir: IR): EmittedFile {
   // it with `app.generated.batch` and hands it the request on stdin.
   const entrypoint = serves
     ? [
-        "# `app/main.py` is the application's own file, which is why the image runs",
-        '# `app.main:app` instead of an entrypoint the generator invented.',
+        ...(managed
+          ? [
+              '# A managed runtime calls the container itself, so the image runs the adapter the',
+              '# generator wrote: `app.generated.runtime_app` adds the `/ping` and invocation',
+              '# routes the platform expects and replays an invocation through `app.main:app`.',
+            ]
+          : [
+              "# `app/main.py` is the application's own file, which is why the image runs",
+              '# `app.main:app` instead of an entrypoint the generator invented.',
+            ]),
         ...(jobs
           ? [
               '#',
@@ -164,7 +179,7 @@ export function emitDockerfile(ir: IR): EmittedFile {
         '',
         "# `exec` replaces the shell with uvicorn, so the platform's SIGTERM reaches the process",
         '# that has to drain in-flight requests rather than stopping at an unresponsive shell.',
-        `CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port \\"\${PORT}\\""]`,
+        `CMD ["sh", "-c", "exec uvicorn ${serverModule} --host 0.0.0.0 --port \\"\${PORT}\\""]`,
       ]
     : [
         // Exec form, so the platform's own command appends arguments -- which is how a

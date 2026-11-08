@@ -620,6 +620,22 @@ describe('deployments', () => {
     expect(ir.deployments[0]?.image).toBeUndefined();
   });
 
+  it('reports a runtime whose platform would otherwise be invented', () => {
+    // Validation rejects this platform, so reaching the builder means the document
+    // bypassed it; dropping the block would deploy to compute the document excluded.
+    const { ir, diagnostics } = buildIR({
+      specVersion: '0.13',
+      project: { name: 'p' },
+      deployments: {
+        api: { target: 'container', secrets: [], runtime: { platform: 'azure-agents' } },
+      },
+    });
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      IR_DIAGNOSTIC_CODES.deployRuntimeIncomplete,
+    );
+    expect(ir.deployments[0]?.runtime).toBeUndefined();
+  });
+
   it('keeps the accepted targets identical to the spec schema enum', () => {
     // The coercion this pins down is silent by construction: a target present in the
     // schema but absent here would be projected as `serverless` with no diagnostic.
