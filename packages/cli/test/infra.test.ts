@@ -540,6 +540,9 @@ describe('infra gen', () => {
     // The manifest endpoint requires an OpenSearch Serverless data-access policy, which
     // is what the emitter writes; a base without it plans and then cannot index.
     expect(base).toContain('aws_opensearchserverless_access_policy');
+    // Both the collection and the base refuse to be destroyed: re-ingesting a corpus
+    // costs API calls and money, so a rename must not be a teardown.
+    expect(base.match(/prevent_destroy = true/gu)).toHaveLength(2);
 
     // The env root wires the module to the compute, but `infra gen` does not write it:
     // it is the user's file. That wiring is held byte-for-byte by
