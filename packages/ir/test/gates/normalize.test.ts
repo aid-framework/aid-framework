@@ -4,6 +4,7 @@ import {
   DEFAULT_OBSERVABILITY,
   DEFAULT_RUNTIME,
   IR_DIAGNOSTIC_CODES,
+  isLocalRetriever,
   isNormalized,
   normalize,
   runGates,
@@ -165,7 +166,9 @@ describe('normalize gate', () => {
 
   it('rejects an index metric outside the vocabulary', () => {
     const ir = mutateIR('retrieval.yaml');
-    (first(ir.retrievers).index as { metric: string }).metric = 'jaccard';
+    const retriever = first(ir.retrievers);
+    if (!isLocalRetriever(retriever)) throw new Error('expected a local retriever');
+    (retriever.index as { metric: string }).metric = 'jaccard';
 
     const unknown = onlyDiagnosticWith(
       runGates(ir).byGate.normalize.diagnostics,

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type IR,
   IR_DIAGNOSTIC_CODES,
+  isLocalRetriever,
   type PolicyNode,
   parsePolicyExpr,
   policyAuthenticates,
@@ -239,7 +240,9 @@ describe('policyAuthenticates', () => {
 
   it('rejects a source uri that carries an inline credential', () => {
     const ir = mutateIR('retrieval.yaml');
-    first(ir.retrievers).source.uri = 'https://aid:hunter2@docs.internal/handbook';
+    const retriever = first(ir.retrievers);
+    if (!isLocalRetriever(retriever)) throw new Error('expected a local retriever');
+    retriever.source.uri = 'https://aid:hunter2@docs.internal/handbook';
 
     const secret = onlyDiagnosticWith(
       runGates(ir).byGate.security.diagnostics,
