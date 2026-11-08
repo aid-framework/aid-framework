@@ -1,7 +1,7 @@
 locals {
   app = {
     for id, service in var.services : id => service
-    if service.target == "container" || service.target == "serverless"
+    if(service.target == "container" || service.target == "serverless") && service.runtime == null
   }
 
   # Cloud Run names allow lowercase letters, digits and hyphens only, are at most 63

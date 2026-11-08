@@ -82,6 +82,20 @@ export {
   RETRIEVAL_INIT_PATH,
 } from './emit/retrieval.js';
 export { RETRIEVAL_INGEST_INIT_PATH, retrievalIngestModulePath } from './emit/retrievalIngest.js';
+/**
+ * The managed-runtime adapter, and the gate the Dockerfile asks before it points
+ * `uvicorn` at it.
+ *
+ * `hasManagedRuntime` is exported so the adapter and the image ask the same question about
+ * the same IR: a Dockerfile that pointed at `app.generated.runtime_app` without the file
+ * being generated would fail at boot, which is the worst place to learn it.
+ */
+export {
+  emitRuntimeApp,
+  hasManagedRuntime,
+  RUNTIME_APP_PATH,
+  runtimePaths,
+} from './emit/runtime.js';
 export { SCHEMAS_PATH } from './emit/schemas.js';
 export { TOOLS_INIT_PATH, toolAdapterPath } from './emit/tools.js';
 export { PyFastApiPlanError } from './errors.js';

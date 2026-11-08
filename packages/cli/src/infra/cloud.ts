@@ -68,3 +68,28 @@ export function unsupportedKnowledgeBases(
 ): { id: string; engine: string }[] {
   return plan.knowledgeBases.filter((base) => KNOWLEDGE_BASE_CLOUDS[base.engine] !== cloud);
 }
+
+/**
+ * The services whose managed agent runtime does not run on this cloud.
+ *
+ * A platform is a vendor product, like a knowledge-base engine: the AgentCore runtime is
+ * an AWS resource and the Agent Platform reasoning engine is a GCP one. The platform's
+ * credentials are the deploy's credentials, so naming the other cloud's platform is
+ * unreachable rather than slow -- and emitting nothing for the service would look like a
+ * successful deploy until its first invocation.
+ */
+export function unsupportedRuntimes(
+  plan: { services: readonly { id: string; runtime?: { platform: string; cloud: string } }[] },
+  cloud: Cloud,
+): { id: string; platform: string; cloud: string }[] {
+  return plan.services
+    .filter(
+      (service): service is { id: string; runtime: { platform: string; cloud: string } } =>
+        service.runtime !== undefined && service.runtime.cloud !== cloud,
+    )
+    .map((service) => ({
+      id: service.id,
+      platform: service.runtime.platform,
+      cloud: service.runtime.cloud,
+    }));
+}

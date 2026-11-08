@@ -17,6 +17,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { emitInfra } from '../src/infra/emit.js';
 import {
+  AGENT_RUNTIME_MODULE_DIR,
   BATCH_MODULE_DIR,
   CDK_CONTAINER_MODULE,
   CDK_DIR,
@@ -26,6 +27,7 @@ import {
   CLOUDRUNJOB_MODULE_DIR,
   CONTAINER_MODULE_DIR,
   EDGE_MODULE_DIR,
+  emitAgentRuntimeModule,
   emitBatchModule,
   emitCdkModules,
   emitCloudRunJobModule,
@@ -59,7 +61,13 @@ function scratch(spec?: string) {
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'infra');
 
 /** The env root the fixture commits: one that has to satisfy every AWS module. */
-const BOTH = envRoot({ serverless: true, container: true, batch: true, edge: true });
+const BOTH = envRoot({
+  serverless: true,
+  container: true,
+  batch: true,
+  edge: true,
+  agentRuntime: true,
+});
 
 /** The GCP env root the fixture commits: Cloud Run and a Cloud Run job. */
 const GCP = envRoot({ serverless: false, container: true, batch: true }, 'gcp');
@@ -108,6 +116,51 @@ const AWS_KB_ROOT = envRoot({
 });
 const GCP_KB_ROOT = envRoot(
   { serverless: false, container: true, batch: true, knowledgeBase: true },
+  'gcp',
+);
+
+/**
+ * One service handed to a managed runtime. Container-only, as the spec layer enforces,
+ * with short-term memory on so the platform resource and its env var are exercised.
+ */
+function runtimePlan(cloud: 'aws' | 'gcp'): DeployPlan {
+  return {
+    project: { name: 'agent', namespace: 'aid.test' },
+    services: [
+      {
+        id: 'api',
+        target: 'container',
+        streaming: true,
+        endpoints: [{ pipeline: 'answer', method: 'POST', path: '/answer' }],
+        env: [{ name: 'LOG_LEVEL', secret: false, from: 'spec', value: 'info' }],
+        secrets: [],
+        providers: ['bedrock'],
+        ingest: [],
+        guardrailEngines: [],
+        runtime: {
+          platform: cloud === 'gcp' ? 'gcp-agent-platform' : 'aws-agentcore',
+          cloud,
+          memory: { shortTerm: true },
+          session: { ttlMinutes: 60 },
+        },
+      },
+    ],
+    stores: [],
+    tasks: [],
+    alarms: [],
+    knowledgeBases: [],
+  } as unknown as DeployPlan;
+}
+
+const AWS_RUNTIME = runtimePlan('aws');
+const GCP_RUNTIME = runtimePlan('gcp');
+
+/**
+ * A root with nothing but the runtime: the compute modules are mutually exclusive with it,
+ * so this is the only shape in which tofu validates the platform resources alone.
+ */
+const GCP_RUNTIME_ROOT = envRoot(
+  { serverless: false, container: false, batch: false, agentRuntime: true },
   'gcp',
 );
 
@@ -747,7 +800,9 @@ describe('envRoot', () => {
   });
 
   it('is pure: the same module set yields the same bytes', () => {
-    expect(envRoot({ serverless: true, container: true, batch: true, edge: true })).toEqual(BOTH);
+    expect(
+      envRoot({ serverless: true, container: true, batch: true, edge: true, agentRuntime: true }),
+    ).toEqual(BOTH);
   });
 
   it('configures the GCP provider once, and names no network inputs', () => {
@@ -976,6 +1031,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       container: false,
       batch: false,
       edge: false,
+      agentRuntime: false,
       knowledgeBase: false,
     });
     expect(modulesOf(planOf('serverless', 'container'))).toEqual({
@@ -983,6 +1039,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       container: true,
       batch: false,
       edge: false,
+      agentRuntime: false,
       knowledgeBase: false,
     });
     expect(modulesOf(planOf('batch'))).toEqual({
@@ -990,6 +1047,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       container: false,
       batch: true,
       edge: false,
+      agentRuntime: false,
       knowledgeBase: false,
     });
     expect(modulesOf(planOf('edge'))).toEqual({
@@ -997,6 +1055,17 @@ describe('modulesOf, the seam emit.ts reads', () => {
       container: false,
       batch: false,
       edge: true,
+      agentRuntime: false,
+      knowledgeBase: false,
+    });
+    // A runtime service belongs to the runtime module, not the compute module: the flag
+    // is exclusive so the two never both claim the same service.
+    expect(modulesOf(AWS_RUNTIME)).toEqual({
+      serverless: false,
+      container: false,
+      batch: false,
+      edge: false,
+      agentRuntime: true,
       knowledgeBase: false,
     });
   });
@@ -1011,6 +1080,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       container: true,
       batch: false,
       edge: false,
+      agentRuntime: false,
       knowledgeBase: false,
     });
     expect(modulesOf(planOf('serverless'), 'gcp')).toEqual({
@@ -1018,6 +1088,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       container: true,
       batch: false,
       edge: false,
+      agentRuntime: false,
       knowledgeBase: false,
     });
     expect(modulesOf(planOf('batch'), 'gcp')).toEqual({
@@ -1025,6 +1096,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       container: false,
       batch: true,
       edge: false,
+      agentRuntime: false,
       knowledgeBase: false,
     });
     expect(modulesOf(planOf('edge'), 'gcp')).toEqual({
@@ -1032,13 +1104,19 @@ describe('modulesOf, the seam emit.ts reads', () => {
       container: false,
       batch: false,
       edge: false,
+      agentRuntime: false,
       knowledgeBase: false,
     });
+    // The runtime's cloud decides, not the target it happens to share with Cloud Run.
+    expect(modulesOf(GCP_RUNTIME, 'gcp').agentRuntime).toBe(true);
+    expect(modulesOf(GCP_RUNTIME, 'gcp').container).toBe(false);
+    expect(modulesOf(AWS_RUNTIME, 'gcp').agentRuntime).toBe(false);
     expect(modulesOf(planOf('container'))).toEqual({
       serverless: false,
       container: true,
       batch: false,
       edge: false,
+      agentRuntime: false,
       knowledgeBase: false,
     });
   });
@@ -1184,7 +1262,12 @@ function cdkModule(
 describe('the validate fixture', () => {
   /** CI runs `tofu validate` here, so the fixture must be exactly what is emitted. */
   it('matches each emitted module byte for byte', () => {
-    const cases = [
+    const cases: {
+      dir: string;
+      files: readonly { path: string; contents: string }[];
+      root?: string;
+      platform?: string;
+    }[] = [
       { dir: SERVERLESS_MODULE_DIR, files: emitServerlessModule(planOf('serverless')) },
       { dir: CONTAINER_MODULE_DIR, files: emitContainerModule(planOf('container')) },
       { dir: CLOUDRUN_MODULE_DIR, files: emitCloudRunModule(planOf('container')) },
@@ -1193,14 +1276,27 @@ describe('the validate fixture', () => {
       { dir: EDGE_MODULE_DIR, files: emitEdgeModule(planOf('edge')) },
       { dir: KNOWLEDGE_BASE_MODULE_DIR, files: emitKnowledgeBaseModule(AWS_KB) },
       { dir: VERTEX_RAG_MODULE_DIR, files: emitVertexRagModule(GCP_KB) },
+      { dir: AGENT_RUNTIME_MODULE_DIR, files: emitAgentRuntimeModule(AWS_RUNTIME, 'aws') },
+      {
+        dir: AGENT_RUNTIME_MODULE_DIR,
+        files: emitAgentRuntimeModule(GCP_RUNTIME, 'gcp'),
+        // Both platforms share one module path, so GCP keeps its own tree beside its root;
+        // one directory cannot hold two clouds' bytes and validate either one.
+        root: 'gcp-runtime',
+        platform: 'agent-runtime',
+      },
     ];
-    for (const { dir, files } of cases) {
+    for (const { dir, files, root, platform: named } of cases) {
       expect(files).toHaveLength(4);
-      const platform = dir.slice(dir.lastIndexOf('/') + 1);
+      const platform = named ?? dir.slice(dir.lastIndexOf('/') + 1);
+      const modules =
+        root === undefined
+          ? join(FIXTURE, 'generated', 'modules')
+          : join(FIXTURE, root, 'generated', 'modules');
       for (const file of files) {
         const name = file.path.slice(dir.length + 1);
-        const fixture = readFileSync(join(FIXTURE, 'generated', 'modules', platform, name), 'utf8');
-        expect(fixture, `${platform}/${name}`).toBe(file.contents);
+        const fixture = readFileSync(join(modules, platform, name), 'utf8');
+        expect(fixture, `${root ?? ''}${platform}/${name}`).toBe(file.contents);
       }
     }
   });
@@ -1227,11 +1323,29 @@ describe('the validate fixture', () => {
     expect(main).toBe(GCP.main);
   });
 
+  it('matches the GCP runtime root byte for byte', () => {
+    const { variables, main } = GCP_RUNTIME_ROOT;
+    const base = join(FIXTURE, 'gcp-runtime', 'envs', 'dev');
+    expect(readFileSync(join(base, 'variables.tf'), 'utf8')).toBe(variables);
+    expect(readFileSync(join(base, 'main.tf'), 'utf8')).toBe(main);
+  });
+
   it('is wired to the modules the emitter writes', () => {
     // A fixture that pointed anywhere else would validate a module nobody gets.
     const main = readFileSync(join(FIXTURE, 'envs', 'dev', 'main.tf'), 'utf8');
     expect(main).toContain('source = "../../generated/modules/serverless"');
     expect(main).toContain('source = "../../generated/modules/container"');
+    expect(main).toContain('source = "../../generated/modules/agent-runtime"');
+    expect(main).toContain('output "agent_runtimes"');
+  });
+
+  it('wires the GCP runtime root to the module beside it', () => {
+    // This tree is separate because an agent-runtime module holds one cloud's bytes, so
+    // the GCP root must resolve its own copy rather than the AWS one under `infra/`.
+    const main = readFileSync(join(FIXTURE, 'gcp-runtime', 'envs', 'dev', 'main.tf'), 'utf8');
+    expect(main).toContain('source = "../../generated/modules/agent-runtime"');
+    expect(main).toContain('output "reasoning_engines"');
+    expect(main).toContain('provider "google"');
   });
 
   it('wires the GCP root to the modules it ships beside', () => {

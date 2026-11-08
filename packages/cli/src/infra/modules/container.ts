@@ -32,7 +32,7 @@ import type { DeployPlan } from '@aid-framework/ir';
 
 import { INFRA_GENERATED_DIR } from '../paths.js';
 import { GUARDRAIL_VARIABLES, guardrailLocals, guardrailResources } from './guardrails.js';
-import { hcl, type ModuleFile, moduleFiles, targets } from './hcl.js';
+import { hcl, type ModuleFile, moduleFiles } from './hcl.js';
 import {
   KNOWLEDGE_BASE_VARIABLES,
   knowledgeBaseGrant,
@@ -50,7 +50,7 @@ const VERSIONS_TF = hcl([
   '  required_providers {',
   '    aws = {',
   '      source  = "hashicorp/aws"',
-  '      version = "~> 5.0"',
+  '      version = "~> 6.18"',
   '    }',
   '  }',
   '}',
@@ -77,6 +77,9 @@ const VARIABLES_TF = hcl([
   '    # Set only by a `batch` service; the other targets ignore it and the entrypoint does',
   '    # not read it, but the shared variable type must admit it.',
   '    pipeline = optional(string)',
+  '    # Set when the service runs on a managed agent runtime. `any` because the runtime',
+  '    # module owns that shape; this one only needs to know the service is not its own.',
+  '    runtime = optional(any)',
   '    routes = list(object({',
   '      pipeline = string',
   '      method   = string',
@@ -183,7 +186,7 @@ const MAIN_TF = hcl([
   'locals {',
   '  container = {',
   '    for id, service in var.services : id => service',
-  '    if service.target == "container"',
+  '    if service.target == "container" && service.runtime == null',
   '  }',
   '',
   '  # A service that names Bedrock calls it with the task role, so the grant below is the',
@@ -194,7 +197,7 @@ const MAIN_TF = hcl([
   '    if contains(service.providers, "bedrock")',
   '  }',
   '',
-  '  bedrock_region = var.bedrock_region != "" ? var.bedrock_region : data.aws_region.current.name',
+  '  bedrock_region = var.bedrock_region != "" ? var.bedrock_region : data.aws_region.current.region',
   '',
   '  routed = {',
   '    for id, service in local.container : id => service',
@@ -546,7 +549,7 @@ const MAIN_TF = hcl([
   '      logDriver = "awslogs"',
   '      options = {',
   '        awslogs-group         = aws_cloudwatch_log_group.service[each.key].name',
-  '        awslogs-region        = data.aws_region.current.name',
+  '        awslogs-region        = data.aws_region.current.region',
   '        awslogs-stream-prefix = "ecs"',
   '      }',
   '    }',
@@ -717,10 +720,17 @@ const OUTPUTS_TF = hcl([
 
 /**
  * The module, or nothing: a project whose deployments never target `container` gains no
- * directory and no manifest entry.
+ * directory and no manifest entry. A service handed to a managed agent runtime targets
+ * `container` but is provisioned by that module instead, so it does not count here.
  */
 export function emitContainerModule(plan: DeployPlan): ModuleFile[] {
-  if (!targets(plan, 'container')) return [];
+  if (
+    !plan.services.some(
+      (service) => service.target === 'container' && service.runtime === undefined,
+    )
+  ) {
+    return [];
+  }
 
   return moduleFiles(CONTAINER_MODULE_DIR, {
     versions: VERSIONS_TF,

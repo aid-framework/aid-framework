@@ -43,6 +43,7 @@ import {
   isCloud,
   KNOWLEDGE_BASE_CLOUDS,
   unsupportedKnowledgeBases,
+  unsupportedRuntimes,
   unsupportedTargets,
 } from '../infra/cloud.js';
 import type { InfraFile } from '../infra/emit.js';
@@ -275,6 +276,50 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
           code: CLI_DIAGNOSTIC_CODES.infraKnowledgeBaseUnsupported,
           message: `Knowledge base ${bases} needs ${wanted.join(' and ')}, which --cloud ${cloud} does not create.`,
           hint: `Generate this environment with --cloud ${wanted[0]}, or move the base to an engine this cloud runs (${cloud === 'gcp' ? 'vertex-rag' : 'aws-bedrock'}).`,
+        }),
+      ],
+    });
+  }
+
+  // A managed agent runtime is a vendor product too: the AgentCore runtime lives in AWS
+  // and the Agent Platform reasoning engine in GCP. The platform's credentials are the
+  // deploy's credentials, so the other cloud's platform cannot be reached, and a plan that
+  // silently kept its compute module would be deploying a service the spec did not name.
+  const misplacedRuntimes = unsupportedRuntimes(deployPlan, cloud);
+  if (misplacedRuntimes.length > 0) {
+    const services = misplacedRuntimes
+      .map((runtime) => `"${runtime.id}" (${runtime.platform})`)
+      .join(', ');
+    const wanted = [...new Set(misplacedRuntimes.map((runtime) => runtime.cloud))];
+    return outcome({
+      command,
+      exitCode: EXIT_FAILURE,
+      fields,
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.infraRuntimeUnsupported,
+          message: `Service ${services} names a runtime that runs on ${wanted.join(' and ')}, which --cloud ${cloud} does not create.`,
+          hint: `Generate this environment with --cloud ${wanted[0]}, or choose the platform this cloud runs (${cloud === 'gcp' ? 'gcp-agent-platform' : 'aws-agentcore'}).`,
+        }),
+      ],
+    });
+  }
+
+  // A CDK construct for a managed runtime does not exist, so a CDK app for this plan would
+  // synth cleanly and deploy a service with no compute behind it. Refuse for the same
+  // reason a GCP CDK app is refused: an empty app is worse than a refusal.
+  const managed = deployPlan.services.filter((service) => service.runtime !== undefined);
+  if (options.iac === 'cdk' && managed.length > 0) {
+    const services = managed.map((service) => `"${service.id}"`).join(', ');
+    return outcome({
+      command,
+      exitCode: EXIT_USAGE,
+      fields,
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.infraCloudBackendUnsupported,
+          message: `Service ${services} runs on a managed agent runtime, which the CDK backend does not emit.`,
+          hint: 'Use --iac tofu, which emits the managed runtime module.',
         }),
       ],
     });

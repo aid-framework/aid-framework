@@ -59,6 +59,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.10',
   '0.11',
   '0.12',
+  '0.13',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -180,6 +181,14 @@ export const BEDROCK_GUARDRAIL_MIN_VERSION: SpecVersion = '0.11';
  * to an unrelated schema error. So the nested binding has its own gate here.
  */
 export const KNOWLEDGE_BASE_MIN_VERSION: SpecVersion = '0.12';
+
+/**
+ * The first spec version that accepts `deployments[].runtime`, the managed agent
+ * runtime block. Nested for the same reason as the gates above: `deployments` has
+ * existed since 0.2, so a 0.12 document that names a platform has to be told which
+ * version it needs instead of being deployed to a compute module it did not ask for.
+ */
+export const RUNTIME_MIN_VERSION: SpecVersion = '0.13';
 
 /** The version gate for every provider id that arrived after the spec that introduced it. */
 const PROVIDER_MIN_VERSIONS: Readonly<Record<string, SpecVersion>> = {
@@ -494,6 +503,7 @@ function scopeDiagnostics(
   stepDiagnostics(spec, diagnostics, reported);
   routeDiagnostics(spec, diagnostics, reported);
   knowledgeBaseDiagnostics(spec, diagnostics, reported);
+  runtimeDiagnostics(spec, diagnostics, reported);
 }
 
 /**
@@ -1026,7 +1036,150 @@ function knowledgeBaseDiagnostics(
   }
 }
 
-/** Compares the two-part versions this DSL uses; unknown input is never "at least". */
+/**
+ * Managed agent runtimes: `deployments[].runtime`.
+ *
+ * The schema states the shape; these are the rules it cannot state. A runtime is a
+ * destination for a container, so the target, the platform and the session ceiling have
+ * to be checked together: each one alone is a valid document that would deploy to a
+ * process the platform cannot reach. The invocation-route rule is the one that keeps the
+ * adapter honest -- one request shape in, one route out -- and the `PORT` rule exists
+ * because the generated Dockerfile listens on 8080 and the platform health check calls
+ * it; an app told to listen elsewhere would fail the check at deploy time, not at build.
+ */
+function runtimeDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) return;
+  const needsVersion = !specVersionAtLeast(declared, RUNTIME_MIN_VERSION);
+  const deployments = asRecord(spec.deployments);
+  const httpRoutes = Object.entries(asRecord(spec.pipelines))
+    .filter(([, raw]) => asRecord(asRecord(raw).trigger).http !== undefined)
+    .map(([id]) => id);
+
+  let platform: string | undefined;
+  let platformOwner: string | undefined;
+
+  for (const [id, raw] of Object.entries(deployments)) {
+    const deployment = asRecord(raw);
+    if (deployment.runtime === undefined) continue;
+    const runtime = asRecord(deployment.runtime);
+    const path: DiagnosticPath = ['deployments', id, 'runtime'];
+
+    if (needsVersion) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'deployments.${id}.runtime' requires specVersion ${RUNTIME_MIN_VERSION}, but this specification declares version ${declared}`,
+          path,
+          hint: `set specVersion: "${RUNTIME_MIN_VERSION}"; a specification that deploys to a compute module is unchanged`,
+        }),
+      );
+      reported.add(JSON.stringify(path));
+      continue;
+    }
+
+    if (deployment.target !== 'container') {
+      const target = typeof deployment.target === 'string' ? deployment.target : 'unknown';
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.runtimeWithoutContainer,
+          message: `deployment '${id}' declares a runtime but targets '${target}', which the platform cannot address`,
+          path,
+          hint: 'set `target: container`; a managed runtime runs the image that target builds, so the other targets have no artifact to hand the platform',
+        }),
+      );
+      reported.add(JSON.stringify(path));
+      continue;
+    }
+
+    const named = typeof runtime.platform === 'string' ? runtime.platform : undefined;
+    if (named !== undefined) {
+      if (platform === undefined) {
+        platform = named;
+        platformOwner = id;
+      } else if (named !== platform) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.runtimePlatformConflict,
+            message: `deployment '${id}' names platform '${named}' but deployment '${String(platformOwner)}' names '${platform}'; one environment root runs on one cloud`,
+            path: [...path, 'platform'],
+            hint: `use '${platform}' on both, or split them into two environments; the root has one provider set`,
+          }),
+        );
+        reported.add(JSON.stringify([...path, 'platform']));
+      }
+    }
+
+    if (named === 'aws-agentcore') {
+      const session = asRecord(runtime.session);
+      const ttl = session.ttlMinutes;
+      if (typeof ttl === 'number' && ttl > 480) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.runtimeSessionTtl,
+            message: `deployment '${id}' asks for a ${ttl}-minute session, but AgentCore microVMs stop at 480`,
+            path: [...path, 'session', 'ttlMinutes'],
+            hint: 'use `ttlMinutes: 480` or less; a longer session needs the Instances tier, which this module does not create',
+          }),
+        );
+        reported.add(JSON.stringify([...path, 'session', 'ttlMinutes']));
+      }
+    }
+
+    const memory = asRecord(runtime.memory);
+    if (named === 'gcp-agent-platform' && memory.shortTerm !== undefined) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.runtimeMemoryOnPlatform,
+          message: `deployment '${id}' asks for managed memory on 'gcp-agent-platform', which has no Terraform resource for a memory bank in v1`,
+          path: [...path, 'memory'],
+          hint: 'drop `memory`; AgentCore Memory is the only managed memory this module creates, and a memory the plan cannot create would be a promise the deploy breaks',
+        }),
+      );
+      reported.add(JSON.stringify([...path, 'memory']));
+    }
+
+    const port = (Array.isArray(deployment.env) ? deployment.env : [])
+      .map(asRecord)
+      .find((entry) => entry.name === 'PORT');
+    if (port !== undefined && port.value !== undefined && String(port.value) !== '8080') {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.runtimePort,
+          message: `deployment '${id}' sets PORT=${String(port.value)}, but the runtime contract calls the app on 8080`,
+          path: [...path],
+          hint: 'drop the PORT variable or set it to 8080; the generated Dockerfile listens on 8080 and the platform health check calls that port',
+        }),
+      );
+      reported.add(JSON.stringify([...path]));
+    }
+  }
+
+  const runtimeIds = Object.entries(deployments)
+    .filter(([, raw]) => asRecord(raw).runtime !== undefined)
+    .map(([id]) => id);
+  if (runtimeIds.length > 0 && httpRoutes.length !== 1) {
+    const first = runtimeIds[0] as string;
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.runtimeInvocationRoutes,
+        message: `deployment '${first}' declares a runtime, but this specification declares ${httpRoutes.length} HTTP-triggered pipelines; the platform invocation route carries exactly one request shape`,
+        path: ['deployments', first, 'runtime'],
+        hint:
+          httpRoutes.length === 0
+            ? 'declare one pipeline with `trigger.http`'
+            : `keep one pipeline with \`trigger.http\`; currently ${httpRoutes.join(', ')}. A second route needs its own service`,
+      }),
+    );
+  }
+}
+
 export function specVersionAtLeast(declared: string | undefined, required: SpecVersion): boolean {
   if (declared === undefined) return false;
   const parse = (value: string): number[] | undefined => {

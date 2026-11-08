@@ -33,7 +33,7 @@
 import type { DeployPlan } from '@aid-framework/ir';
 
 import { INFRA_GENERATED_DIR } from '../paths.js';
-import { hcl, type ModuleFile, moduleFiles, targets } from './hcl.js';
+import { hcl, type ModuleFile, moduleFiles } from './hcl.js';
 import { VERTEX_KNOWLEDGE_BASE_VARIABLES, vertexKnowledgeBaseLocals } from './vertex-rag.js';
 
 export const CLOUDRUN_MODULE_DIR = `${INFRA_GENERATED_DIR}/modules/cloudrun`;
@@ -79,6 +79,9 @@ const VARIABLES_TF = hcl([
   '    # Set only by a `batch` service; the other targets ignore it and the entrypoint does',
   '    # not read it, but the shared variable type must admit it.',
   '    pipeline = optional(string)',
+  '    # Set when the service runs on a managed agent runtime. `any` because the runtime',
+  '    # module owns that shape; this one only needs to know the service is not its own.',
+  '    runtime = optional(any)',
   '    routes = list(object({',
   '      pipeline = string',
   '      method   = string',
@@ -149,7 +152,7 @@ const MAIN_TF = hcl([
   'locals {',
   '  app = {',
   '    for id, service in var.services : id => service',
-  '    if service.target == "container" || service.target == "serverless"',
+  '    if(service.target == "container" || service.target == "serverless") && service.runtime == null',
   '  }',
   '',
   '  # Cloud Run names allow lowercase letters, digits and hyphens only, are at most 63',
@@ -428,9 +431,16 @@ const OUTPUTS_TF = hcl([
  * Nothing is emitted when no deployment targets `container` or `serverless`, so a plan
  * with no service to run gains no directory and no manifest entry -- the same rule every
  * other module follows. Both targets share this module on GCP because both run the image.
+ * A service handed to a managed agent runtime targets `container` but is provisioned by
+ * that module instead, so it does not count here.
  */
 export function emitCloudRunModule(plan: DeployPlan): ModuleFile[] {
-  if (!targets(plan, 'container') && !targets(plan, 'serverless')) return [];
+  const runs = plan.services.some(
+    (service) =>
+      (service.target === 'container' || service.target === 'serverless') &&
+      service.runtime === undefined,
+  );
+  if (!runs) return [];
 
   return moduleFiles(CLOUDRUN_MODULE_DIR, {
     versions: VERSIONS_TF,

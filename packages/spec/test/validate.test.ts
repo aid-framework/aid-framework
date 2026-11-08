@@ -13,6 +13,7 @@ import {
   MODEL_CACHE_MIN_VERSION,
   type PathSegment,
   RETIRED_STEP_KINDS,
+  RUNTIME_MIN_VERSION,
   SECTION_MIN_VERSION,
   SPEC_VERSION,
   SPEC_VERSION_LATEST,
@@ -1400,3 +1401,167 @@ describe('the decisions section', () => {
 function formatDiagnosticLine(diagnostic: Diagnostic): string {
   return `${formatPath(diagnostic.path)}:${diagnostic.code}: ${diagnostic.message}`;
 }
+
+describe('managed agent runtimes', () => {
+  const ANSWER_PIPELINE = {
+    trigger: { http: { method: 'post', path: '/answer' } },
+    steps: [{ generate: { prompt: 'answer', as: 'reply' } }],
+  };
+
+  function runtimeDoc(
+    runtime: Record<string, unknown> = { platform: 'aws-agentcore' },
+    version = '0.13',
+    deployment: Record<string, unknown> = {},
+    extra: {
+      deployments?: Record<string, Record<string, unknown>>;
+      pipelines?: Record<string, unknown>;
+    } = {},
+  ) {
+    return {
+      specVersion: version,
+      project: { name: 'p' },
+      models: {
+        small: { provider: 'openai', modelId: 'gpt-4o-mini', apiKeyEnv: 'OPENAI_API_KEY' },
+      },
+      prompts: {
+        answer: {
+          version: 1,
+          model: 'small',
+          template: 'Answer the request.',
+          output: { kind: 'text' },
+        },
+      },
+      deployments: {
+        api: { target: 'container', secrets: [], runtime, ...deployment },
+        ...extra.deployments,
+      },
+      pipelines: extra.pipelines ?? { answer: ANSWER_PIPELINE },
+    };
+  }
+
+  it('accepts a container deployment on a managed runtime at 0.13', () => {
+    expect(validateSpec(runtimeDoc())).toEqual([]);
+  });
+
+  it('refuses the destination below spec 0.13 and names the version it needs', () => {
+    const diagnostics = validateSpec(runtimeDoc(undefined, '0.12'));
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['deployments.api.runtime']);
+    expect(diagnostics[0]?.message).toContain("'deployments.api.runtime' requires specVersion");
+    expect(diagnostics[0]?.hint).toContain(`set specVersion: "${RUNTIME_MIN_VERSION}"`);
+  });
+
+  it('refuses a runtime on a target the platform cannot address', () => {
+    for (const target of ['serverless', 'edge']) {
+      const diagnostics = validateSpec(runtimeDoc(undefined, '0.13', { target }));
+      expect(codes(diagnostics), target).toEqual([DIAGNOSTIC_CODES.runtimeWithoutContainer]);
+      expect(paths(diagnostics)).toEqual(['deployments.api.runtime']);
+      expect(diagnostics[0]?.message).toContain(`targets '${target}'`);
+    }
+  });
+
+  it('refuses two platforms in one root, because the root has one provider set', () => {
+    const diagnostics = validateSpec(
+      runtimeDoc(
+        undefined,
+        '0.13',
+        {},
+        {
+          deployments: {
+            worker: {
+              target: 'container',
+              secrets: [],
+              runtime: { platform: 'gcp-agent-platform' },
+            },
+          },
+        },
+      ),
+    );
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.runtimePlatformConflict]);
+    expect(paths(diagnostics)).toEqual(['deployments.worker.runtime.platform']);
+    expect(diagnostics[0]?.hint).toContain("use 'aws-agentcore' on both");
+  });
+
+  it('accepts the longest session AgentCore runs, and refuses one minute more', () => {
+    const at = (ttlMinutes: number) =>
+      validateSpec(runtimeDoc({ platform: 'aws-agentcore', session: { ttlMinutes } }));
+    expect(at(480)).toEqual([]);
+    const diagnostics = at(481);
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.runtimeSessionTtl]);
+    expect(paths(diagnostics)).toEqual(['deployments.api.runtime.session.ttlMinutes']);
+    expect(diagnostics[0]?.message).toContain('481-minute session');
+  });
+
+  it('refuses managed memory on GCP, which has no resource to create it', () => {
+    const diagnostics = validateSpec(
+      runtimeDoc({ platform: 'gcp-agent-platform', memory: { shortTerm: true } }),
+    );
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.runtimeMemoryOnPlatform]);
+    expect(paths(diagnostics)).toEqual(['deployments.api.runtime.memory']);
+    expect(diagnostics[0]?.hint).toContain('drop `memory`');
+  });
+
+  it('allows memory on AgentCore, where the module creates the bank', () => {
+    expect(
+      validateSpec(runtimeDoc({ platform: 'aws-agentcore', memory: { shortTerm: true } })),
+    ).toEqual([]);
+  });
+
+  it('refuses a PORT the Dockerfile does not listen on', () => {
+    const diagnostics = validateSpec(
+      runtimeDoc(undefined, '0.13', {
+        env: [{ name: 'PORT', secret: false, value: '9000' }],
+      }),
+    );
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.runtimePort]);
+    expect(paths(diagnostics)).toEqual(['deployments.api.runtime']);
+    expect(diagnostics[0]?.message).toContain('PORT=9000');
+  });
+
+  it('accepts PORT=8080, because that is the port the contract calls', () => {
+    const spec = runtimeDoc(undefined, '0.13', {
+      env: [{ name: 'PORT', secret: false, value: '8080' }],
+    });
+    expect(validateSpec(spec)).toEqual([]);
+  });
+
+  it('needs exactly one HTTP-triggered pipeline for the invocation route', () => {
+    const zero = validateSpec(
+      runtimeDoc(
+        undefined,
+        '0.13',
+        {},
+        {
+          pipelines: {
+            answer: {
+              trigger: { manual: true },
+              steps: [{ generate: { prompt: 'answer', as: 'reply' } }],
+            },
+          },
+        },
+      ),
+    );
+    expect(codes(zero)).toEqual([DIAGNOSTIC_CODES.runtimeInvocationRoutes]);
+    expect(zero[0]?.message).toContain('declares 0 HTTP-triggered pipelines');
+
+    const many = validateSpec(
+      runtimeDoc(
+        undefined,
+        '0.13',
+        {},
+        {
+          pipelines: {
+            answer: ANSWER_PIPELINE,
+            other: {
+              trigger: { http: { method: 'get', path: '/other' } },
+              steps: [{ generate: { prompt: 'answer', as: 'reply' } }],
+            },
+          },
+        },
+      ),
+    );
+    expect(codes(many)).toEqual([DIAGNOSTIC_CODES.runtimeInvocationRoutes]);
+    expect(many[0]?.message).toContain('declares 2 HTTP-triggered pipelines');
+    expect(many[0]?.hint).toContain('answer, other');
+  });
+});

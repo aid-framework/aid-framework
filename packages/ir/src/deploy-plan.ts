@@ -10,6 +10,7 @@
  */
 
 import type {
+  AgentRuntimePlatform,
   BedrockGuardrailPolicy,
   DeploymentTarget,
   GuardrailEngine,
@@ -19,7 +20,7 @@ import type {
   Provider,
   VectorStoreKind,
 } from './shapes.js';
-import { isManagedRetriever } from './shapes.js';
+import { isManagedRetriever, RUNTIME_CLOUDS } from './shapes.js';
 
 /**
  * Bumped when the plan's shape changes incompatibly. Independent of `irVersion`:
@@ -94,6 +95,15 @@ export interface DeployEndpoint {
   path: string;
 }
 
+/** The managed agent runtime a service is deployed onto, from spec 0.13. */
+export interface DeployRuntime {
+  platform: AgentRuntimePlatform;
+  /** The cloud the platform runs on; a `--cloud` that disagrees is refused. */
+  cloud: 'aws' | 'gcp';
+  memory: { shortTerm: boolean };
+  session: { ttlMinutes: number };
+}
+
 export interface DeployService {
   /** Deployment id. */
   id: string;
@@ -121,6 +131,8 @@ export interface DeployService {
    * names through environment variables instead of provisioning.
    */
   managedGuardrail?: DeployManagedGuardrail;
+  /** The managed agent runtime that runs this container service, when it declares one. */
+  runtime?: DeployRuntime;
   /** Retriever ids whose corpus must exist before this service serves traffic. */
   ingest: string[];
 }
@@ -234,6 +246,12 @@ export function buildDeployPlan(ir: IR): DeployPlan {
       ingest,
     };
     if (deployment.pipeline !== undefined) service.pipeline = deployment.pipeline;
+    if (deployment.runtime !== undefined) {
+      service.runtime = {
+        ...deployment.runtime,
+        cloud: RUNTIME_CLOUDS[deployment.runtime.platform],
+      };
+    }
     if (managed?.bedrock !== undefined) {
       service.managedGuardrail = {
         id: managed.id,

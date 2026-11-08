@@ -41,6 +41,7 @@ import { emitBusinessInit, emitGeneratedInit } from './emit/package.js';
 import { emitPipelines } from './emit/pipelines.js';
 import { emitBusinessPromptsInit, emitPromptModule, emitPromptsInit } from './emit/prompts.js';
 import { emitRetrieval } from './emit/retrieval.js';
+import { emitRuntimeApp, hasManagedRuntime } from './emit/runtime.js';
 import { emitSchemas } from './emit/schemas.js';
 import { emitSse } from './emit/sse.js';
 import { emitBusinessToolsInit, emitToolAdapter, emitToolsInit } from './emit/tools.js';
@@ -95,6 +96,7 @@ export function filesFor(ir: IR): GeneratedFile[] {
     ...orderedEvals(ir).map((evaluation) => emitEval(ir, evaluation)),
     ...emitRetrieval(ir),
     ...(hasBatchDeployment(ir) ? [emitBatch(ir)] : []),
+    ...(hasManagedRuntime(ir) ? [emitRuntimeApp(ir)] : []),
     ...(hasEdgeDeployment(ir) ? [emitEdge(ir)] : []),
     ...(hasImageDeployment(ir) ? [emitDockerfile(ir)] : []),
     emitBusinessInit(ir),

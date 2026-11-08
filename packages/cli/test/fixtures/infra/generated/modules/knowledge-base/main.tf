@@ -167,12 +167,12 @@ resource "aws_iam_role_policy" "knowledge_base" {
       {
         Effect   = "Allow"
         Action   = ["bedrock:InvokeModel"]
-        Resource = ["arn:aws:bedrock:${data.aws_region.current.name}::foundation-model/${each.value.embed_model_id}"]
+        Resource = ["arn:aws:bedrock:${data.aws_region.current.region}::foundation-model/${each.value.embed_model_id}"]
       },
       {
         Effect   = "Allow"
         Action   = ["aoss:APIAccessAll"]
-        Resource = ["arn:aws:aoss:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:collection/*"]
+        Resource = ["arn:aws:aoss:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:collection/*"]
       },
     ]
   })
@@ -189,7 +189,7 @@ resource "aws_bedrockagent_knowledge_base" "this" {
     type = "VECTOR"
 
     vector_knowledge_base_configuration {
-      embedding_model_arn = "arn:aws:bedrock:${data.aws_region.current.name}::foundation-model/${each.value.embed_model_id}"
+      embedding_model_arn = "arn:aws:bedrock:${data.aws_region.current.region}::foundation-model/${each.value.embed_model_id}"
     }
   }
 

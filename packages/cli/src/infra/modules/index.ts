@@ -11,6 +11,7 @@ import type { DeployPlan } from '@aid-framework/ir';
 import { type Cloud, DEFAULT_CLOUD } from '../cloud.js';
 import type { ModuleFile } from './hcl.js';
 
+export { AGENT_RUNTIME_MODULE_DIR, emitAgentRuntimeModule } from './agent-runtime.js';
 export { BATCH_MODULE_DIR, emitBatchModule } from './batch.js';
 export {
   CDK_CONTAINER_MODULE,
@@ -30,6 +31,7 @@ export { emitKnowledgeBaseModule, KNOWLEDGE_BASE_MODULE_DIR } from './knowledge-
 export { emitServerlessModule, SERVERLESS_MODULE_DIR } from './serverless.js';
 export { emitVertexRagModule, VERTEX_RAG_MODULE_DIR } from './vertex-rag.js';
 
+import { emitAgentRuntimeModule } from './agent-runtime.js';
 import { emitBatchModule } from './batch.js';
 import { emitCdkModules } from './cdk.js';
 import { emitCloudRunModule } from './cloudrun.js';
@@ -61,31 +63,48 @@ export function modulesOf(
   batch: boolean;
   edge: boolean;
   knowledgeBase: boolean;
+  agentRuntime: boolean;
 } {
+  const managed = (service: DeployPlan['services'][number]) =>
+    service.runtime !== undefined && service.runtime !== null;
   return {
-    serverless: cloud === 'aws' && plan.services.some((service) => service.target === 'serverless'),
+    serverless:
+      cloud === 'aws' &&
+      plan.services.some((service) => service.target === 'serverless' && !managed(service)),
     container: plan.services.some(
       (service) =>
-        service.target === 'container' || (cloud === 'gcp' && service.target === 'serverless'),
+        !managed(service) &&
+        (service.target === 'container' || (cloud === 'gcp' && service.target === 'serverless')),
     ),
-    batch: plan.services.some((service) => service.target === 'batch'),
+    batch: plan.services.some((service) => service.target === 'batch' && !managed(service)),
     edge: cloud === 'aws' && plan.services.some((service) => service.target === 'edge'),
     knowledgeBase:
       (cloud === 'aws' && plan.knowledgeBases.some((base) => base.engine === 'aws-bedrock')) ||
       (cloud === 'gcp' && plan.knowledgeBases.some((base) => base.engine === 'vertex-rag')),
+    // A runtime service is emitted by the agent-runtime module instead of the compute
+    // module above, so the two call sites are mutually exclusive by construction.
+    agentRuntime: plan.services.some(
+      (service) => service.runtime !== undefined && service.runtime.cloud === cloud,
+    ),
   };
 }
 
 /** Every provider module the plan needs on this cloud, or none. */
 export function emitProviderModules(plan: DeployPlan, cloud: Cloud = DEFAULT_CLOUD): ModuleFile[] {
   return cloud === 'gcp'
-    ? [...emitCloudRunModule(plan), ...emitCloudRunJobModule(plan), ...emitVertexRagModule(plan)]
+    ? [
+        ...emitCloudRunModule(plan),
+        ...emitCloudRunJobModule(plan),
+        ...emitVertexRagModule(plan),
+        ...emitAgentRuntimeModule(plan, cloud),
+      ]
     : [
         ...emitServerlessModule(plan),
         ...emitContainerModule(plan),
         ...emitBatchModule(plan),
         ...emitEdgeModule(plan),
         ...emitKnowledgeBaseModule(plan),
+        ...emitAgentRuntimeModule(plan, cloud),
         ...emitCdkModules(plan, cloud),
       ];
 }

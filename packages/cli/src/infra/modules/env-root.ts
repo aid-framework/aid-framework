@@ -23,6 +23,8 @@ export interface EnvRootModules {
   readonly edge?: boolean;
   /** Optional for the same reason: "no managed base" unless a caller says otherwise. */
   readonly knowledgeBase?: boolean;
+  /** Optional for the same reason: "no managed agent runtime" unless a caller says so. */
+  readonly agentRuntime?: boolean;
 }
 
 /** The plan-shaped variables every env root declares, so the generated tfvars binds. */
@@ -335,16 +337,22 @@ export function envRoot(
 
 function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string } {
   const edge = modules.edge === true;
+  const runtime = modules.agentRuntime === true;
   // An edge function is a zip, not an image, and its configuration is the secret the
   // module creates -- so an edge-only root needs none of the image or ARN inputs.
-  const images = modules.serverless || modules.container || modules.batch === true;
+  const images = modules.serverless || modules.container || modules.batch === true || runtime;
+  // Only the compute modules read `secret_arns`: AgentCore has no secret reference, so
+  // the runtime module declares none and a runtime-only root does not ask for the map.
+  const secrets = modules.serverless || modules.container || modules.batch === true;
+  // A runtime may call Bedrock too, so the regional override is not tied to compute.
+  const bedrock = secrets || runtime;
   const any = images || edge || modules.knowledgeBase === true;
 
   const variables = [
     ...PLAN_VARIABLES,
     ...(images ? IMAGE_URIS : []),
-    ...(images ? SECRET_ARNS : []),
-    ...(images ? BEDROCK_INPUTS : []),
+    ...(secrets ? SECRET_ARNS : []),
+    ...(bedrock ? BEDROCK_INPUTS : []),
     ...(modules.serverless ? SERVERLESS_SIZING : []),
     ...(modules.container ? CONTAINER_INPUTS : []),
     ...(modules.batch === true ? BATCH_INPUTS : []),
@@ -423,6 +431,28 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
     outputs.push(['output "container_endpoint" {', '  value = module.container.api_endpoint', '}']);
   }
 
+  // A runtime replaces the compute module for the services it owns, so this call sits
+  // beside them rather than inside one: the same generated tree may run some services on
+  // ECS and hand others to AgentCore.
+  if (runtime) {
+    calls.push(
+      moduleCall('agent-runtime', [
+        'project         = var.project',
+        'services        = var.services',
+        'guardrails      = var.guardrails',
+        'image_uris      = var.image_uris',
+        'bedrock_region  = var.bedrock_region',
+        `knowledge_bases = ${knowledgeBases}`,
+        'tags            = var.tags',
+      ]),
+    );
+    outputs.push([
+      'output "agent_runtimes" {',
+      '  value = module.agent-runtime.agent_runtimes',
+      '}',
+    ]);
+  }
+
   if (modules.batch === true) {
     calls.push(
       moduleCall('batch', [
@@ -476,9 +506,9 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         ...blocks(outputs),
       ]
     : [
-        '# This plan targets none of `serverless`, `container`, `batch` or `edge`, so no provider',
-        '# module was generated. Point a module call at `../../generated/modules/<platform>` once',
-        '# one exists for the targets you deploy.',
+        '# This plan targets none of `serverless`, `container`, `batch`, `edge` or a managed',
+        '# `runtime`, so no provider module was generated. Point a module call at',
+        '# `../../generated/modules/<platform>` once one exists for the targets you deploy.',
       ];
 
   return { variables: hcl(variables), main: hcl(main) };
@@ -496,9 +526,10 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   const run = modules.container || modules.serverless;
   const job = modules.batch === true;
   const corpus = modules.knowledgeBase === true;
+  const runtime = modules.agentRuntime === true;
   // A corpus-only root still needs the project, region, tags and provider, but no image
   // or secret inputs: nothing runs. `compute` keeps those tied to a module that reads them.
-  const compute = run || job;
+  const compute = run || job || runtime;
   const any = compute || corpus;
 
   const variables = [
@@ -509,7 +540,7 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
     ...(any ? GCP_REGION : []),
     ...(run ? GCP_CLOUDRUN_INPUTS : []),
     ...(job ? GCP_JOB_INPUTS : []),
-    ...(compute ? GCP_DELETION_PROTECTION : []),
+    ...(run || job ? GCP_DELETION_PROTECTION : []),
     ...(any ? TAGS : []),
   ];
 
@@ -571,6 +602,27 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
     outputs.push(['output "batch_jobs" {', '  value = module.cloudrunjob.job_ids', '}']);
   }
 
+  // A reasoning engine replaces Cloud Run for the services it owns, so it is a sibling
+  // module rather than another target inside `cloudrun`.
+  if (runtime) {
+    calls.push(
+      moduleCall('agent-runtime', [
+        'project         = var.project',
+        'services        = var.services',
+        'image_uris      = var.image_uris',
+        'project_id      = var.gcp_project',
+        'region          = var.region',
+        'secret_ids      = var.secret_ids',
+        'tags            = var.tags',
+      ]),
+    );
+    outputs.push([
+      'output "reasoning_engines" {',
+      '  value = module.agent-runtime.reasoning_engines',
+      '}',
+    ]);
+  }
+
   const main = any
     ? [
         '# The project a resource lands in is an account fact the spec cannot know, so the',
@@ -589,8 +641,8 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
       ]
     : [
         '# This plan targets no service a module exists for. On GCP `container` and',
-        '# `serverless` both deploy to Cloud Run, and `batch` to a Cloud Run job; `edge` has',
-        '# no GCP counterpart.',
+        '# `serverless` both deploy to Cloud Run, `batch` to a Cloud Run job, and a managed',
+        '# `runtime` to a reasoning engine; `edge` has no GCP counterpart.',
       ];
 
   return { variables: hcl(variables), main: hcl(main) };

@@ -27,6 +27,7 @@ variable "services" {
       from   = string
       value  = optional(string)
     }))
+    runtime = optional(any)
   }))
 }
 
