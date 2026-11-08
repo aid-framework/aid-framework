@@ -102,10 +102,14 @@ async def test_native_remains_the_default_engine() -> None:
 
 
 async def test_the_installed_release_is_the_pinned_one() -> None:
-    """The pin is a measurement, not a guess: it has to match the environment.
+    """The environment has to agree with the extra, not with a copied constant.
 
-    This is the test that fails when the extra is bumped without moving the pin,
-    which is the failure mode the single authoritative constant exists to prevent.
+    ``DEEPAGENTS_PIN`` is read back from the ``deepagents`` extra declared in
+    ``pyproject.toml``. This assertion therefore fails only when the installed
+    harness is *not* the declared one -- an out-of-sync environment -- which is
+    the drift that matters. It used to compare the installed wheel to a literal
+    copied into ``engine.py``, so every dependency bump failed it while the pin
+    silently drifted from the extra that actually shipped.
     """
     assert installed_deepagents_version() == PIN
 

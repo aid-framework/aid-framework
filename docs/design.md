@@ -918,13 +918,14 @@ therefore stays native-only, and a `deepagents` agent that declares `handoffs` f
 
 #### The pin
 
-`engineVersion` must name the release the runtime was built against. `DEEPAGENTS_PIN` in
-`agents/engine.py` is the single authoritative value; the exact-pinned extra (`deepagents==0.7.32`)
-repeats it for the installer and nothing else does. The comparison runs at run time in both directions
-— a declared version this runtime was not built for, and an agent that names none — and each fails
-closed. That comparison is the reason the IR gate refuses `engine: deepagents` without a pinned
-`engineVersion` in the first place: an unpinned engine is a backend whose behaviour can change under a
-stored eval baseline.
+`engineVersion` must name the release the runtime was built against. The exact-pinned extra is
+the single authoritative declaration — `deepagents==0.7.32` in `pyproject.toml` for Python and
+`peerDependencies.deepagents` for TypeScript — and `DEEPAGENTS_PIN` reads it back rather than
+repeating the number, because a copy goes stale the moment a dependency bump moves the manifest.
+The comparison runs at run time in both directions — a declared version this runtime was not
+built for, and an agent that names none — and each fails closed. That comparison is the reason
+the IR gate refuses `engine: deepagents` without a pinned `engineVersion` in the first place: an
+unpinned engine is a backend whose behaviour can change under a stored eval baseline.
 
 #### Not in this layer
 

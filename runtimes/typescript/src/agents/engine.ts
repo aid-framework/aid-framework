@@ -13,13 +13,13 @@
  * against whatever package happens to be importable.
  *
  * **Per-runtime pins.** The npm harness and the Python harness do not share version
- * numbers: this runtime pins `deepagents@1.16.0`, the Python runtime pins
- * `deepagents==0.7.32`. One `engineVersion` therefore cannot satisfy both, and it is not
- * asked to. Each runtime compares the declaration against its own pin, so a spec versioned
- * for Python is refused here with {@link DeepAgentsVersionMismatchError} -- honestly, at
- * the seam that would have to run it -- rather than being waved through on a major-version
- * match. Accepting any installed release would recreate exactly the silent-drift hole the
- * pin exists to close.
+ * numbers: this runtime's `peerDependencies.deepagents` and the Python runtime's
+ * `deepagents` extra name different releases, so one `engineVersion` cannot satisfy both,
+ * and it is not asked to. Each runtime compares the declaration against its own pin, so a
+ * spec versioned for Python is refused here with {@link DeepAgentsVersionMismatchError} --
+ * honestly, at the seam that would have to run it -- rather than being waved through on a
+ * major-version match. Accepting any installed release would recreate exactly the
+ * silent-drift hole the pin exists to close.
  *
  * **Fail closed, in one place.** Every reason a `deepagents` agent cannot run -- unknown
  * engine, transfer declared, mismatched pin, missing package -- is raised from
@@ -55,33 +55,81 @@ export const DEEPAGENTS = 'deepagents';
 /** The closed set of engines the IR may name. */
 export const ENGINES: ReadonlySet<string> = new Set([NATIVE, DEEPAGENTS]);
 
+/** The distribution the peers install. */
+export const DEEPAGENTS_DISTRIBUTION = 'deepagents';
+
+const requireFromHere = createRequire(import.meta.url);
+
 /**
- * The one authoritative pin. Measured from the npm registry and mirrored in this
- * package's `peerDependenciesMeta`; compared against the IR's `engineVersion` at run time.
+ * This package's own manifest, named as a self-reference so it resolves through
+ * `node_modules` exactly like {@link readInstalledVersion} does.
  */
-export const DEEPAGENTS_PIN = '1.16.0';
+const OWN_MANIFEST = '@aid-framework/runtime/package.json';
+
+/**
+ * The peers this package declares, or `undefined` when the manifest cannot be read.
+ *
+ * The manifest is the *single* declaration of every pin. Before this was derived, the
+ * constants below were hand-copied from `package.json` and went stale on every Dependabot
+ * bump: the manifest moved to `deepagents@1.16.2`, the constant stayed at `1.16.0`, and
+ * the suite failed on an assertion that duplicated the number instead of testing anything.
+ * Deriving makes a bump move the runtime and the test together.
+ */
+function declaredPeerDependencies(): Readonly<Record<string, unknown>> | undefined {
+  let manifest: unknown;
+  try {
+    manifest = requireFromHere(OWN_MANIFEST);
+  } catch {
+    return undefined;
+  }
+  if (typeof manifest !== 'object' || manifest === null) return undefined;
+  const peers = (manifest as { peerDependencies?: unknown }).peerDependencies;
+  return typeof peers === 'object' && peers !== null
+    ? (peers as Record<string, unknown>)
+    : undefined;
+}
+
+/** The declared `deepagents` peer, when the manifest is readable and exact. */
+function declaredPin(): string | undefined {
+  const declared = declaredPeerDependencies()?.[DEEPAGENTS_DISTRIBUTION];
+  return typeof declared === 'string' ? declared : undefined;
+}
+
+/** The optional peer set that installs the harness, as exact `name@version` specs. */
+function declaredPeers(): readonly string[] {
+  const peers = declaredPeerDependencies();
+  if (peers === undefined) return [];
+  return Object.entries(peers).flatMap(([name, range]) =>
+    typeof range === 'string' ? [`${name}@${range}`] : [],
+  );
+}
+
+/**
+ * The one authoritative pin. Declared once, in this package's `peerDependencies`; compared
+ * against the IR's `engineVersion` at run time.
+ *
+ * The fallbacks only matter when the manifest cannot be read (a bundler that does not carry
+ * an installed package's own `package.json`): the installed harness is the release the app
+ * will actually run, so it is right in every case where the backend can run at all. The
+ * final literal is unreachable for a runnable backend, because {@link checkEngine} raises
+ * {@link DeepAgentsUnavailableError} when the harness is absent.
+ */
+export const DEEPAGENTS_PIN = declaredPin() ?? readInstalledVersion() ?? '1.16.0';
 
 /**
  * The harness and every required peer, at the exact releases this runtime was measured
- * against. `deepagents@1.16.0` declares each of these as a peer, so an application that
+ * against. `deepagents` declares each of these as a peer, so an application that
  * opts into the backend has to satisfy all of them; spelling them out means the install
- * instruction in the error message is the one that was actually tested.
+ * instruction in the error message is the one that was actually tested. Derived from the
+ * same manifest as {@link DEEPAGENTS_PIN}, so the two cannot disagree.
  */
-export const DEEPAGENTS_PEERS: readonly string[] = [
-  'deepagents@1.16.0',
-  'langchain@1.5.10',
-  '@langchain/core@1.2.14',
-  '@langchain/langgraph@1.5.3',
-  '@langchain/langgraph-sdk@1.12.8',
-  '@langchain/langgraph-checkpoint@1.2.1',
-  'langsmith@0.9.0',
-];
+export const DEEPAGENTS_PEERS: readonly string[] = (() => {
+  const declared = declaredPeers();
+  return declared.length > 0 ? declared : [`${DEEPAGENTS_DISTRIBUTION}@${DEEPAGENTS_PIN}`];
+})();
 
 /** The optional peer set that installs the harness, as one `npm install` argument list. */
 export const DEEPAGENTS_EXTRA = DEEPAGENTS_PEERS.join(' ');
-
-/** The distribution the peers install. */
-export const DEEPAGENTS_DISTRIBUTION = 'deepagents';
 
 /**
  * How {@link installedDeepagentsVersion} finds the harness.
@@ -93,8 +141,6 @@ export const DEEPAGENTS_DISTRIBUTION = 'deepagents';
  */
 export type VersionDetector = () => string | undefined;
 
-const requireFromHere = createRequire(import.meta.url);
-
 /**
  * Read the installed harness version from its own manifest.
  *
@@ -105,7 +151,7 @@ const requireFromHere = createRequire(import.meta.url);
 function readInstalledVersion(): string | undefined {
   let manifest: unknown;
   try {
-    manifest = requireFromHere('deepagents/package.json');
+    manifest = requireFromHere(`${DEEPAGENTS_DISTRIBUTION}/package.json`);
   } catch {
     return undefined;
   }
