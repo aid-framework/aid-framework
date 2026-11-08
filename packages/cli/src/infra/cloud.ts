@@ -46,3 +46,25 @@ export function unsupportedTargets(
     (target) => !known.includes(target),
   );
 }
+
+/**
+ * The cloud each managed knowledge-base engine's resources exist on.
+ *
+ * An engine is a provider product, not a project preference: a Bedrock knowledge base is
+ * an AWS resource and a Vertex RAG corpus is a GCP one, and neither has a counterpart on
+ * the other cloud. Without this map a plan declaring a base for the other cloud emits no
+ * resource for it and looks successful -- the service would then start and fail on its
+ * first retrieval, which is the least debuggable outcome available.
+ */
+export const KNOWLEDGE_BASE_CLOUDS: Readonly<Record<string, Cloud>> = {
+  'aws-bedrock': 'aws',
+  'vertex-rag': 'gcp',
+};
+
+/** The managed bases in the plan this cloud has no resource for, in plan order. */
+export function unsupportedKnowledgeBases(
+  plan: { knowledgeBases: readonly { id: string; engine: string }[] },
+  cloud: Cloud,
+): { id: string; engine: string }[] {
+  return plan.knowledgeBases.filter((base) => KNOWLEDGE_BASE_CLOUDS[base.engine] !== cloud);
+}

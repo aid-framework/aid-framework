@@ -28,6 +28,11 @@ import type { DeployPlan } from '@aid-framework/ir';
 import { INFRA_GENERATED_DIR } from '../paths.js';
 import { GUARDRAIL_VARIABLES, guardrailLocals, guardrailResources } from './guardrails.js';
 import { hcl, type ModuleFile, moduleFiles, targets } from './hcl.js';
+import {
+  KNOWLEDGE_BASE_VARIABLES,
+  knowledgeBaseGrant,
+  knowledgeBaseLocals,
+} from './knowledge-base.js';
 
 export const BATCH_MODULE_DIR = `${INFRA_GENERATED_DIR}/modules/batch`;
 
@@ -135,6 +140,7 @@ const VARIABLES_TF = hcl([
   '  default     = ""',
   '}',
   ...GUARDRAIL_VARIABLES,
+  ...KNOWLEDGE_BASE_VARIABLES,
   '',
   'variable "tags" {',
   '  type    = map(string)',
@@ -198,6 +204,7 @@ const MAIN_TF = hcl([
   '        name  = "BEDROCK_GUARDRAIL_VERSION"',
   '        value = aws_bedrock_guardrail_version.managed[id].version',
   '      }] : [],',
+  '      [for name, value in local.knowledge_base_env[id] : { name = name, value = value }],',
   '    )',
   '  }',
   '',
@@ -219,6 +226,7 @@ const MAIN_TF = hcl([
   '    id => ["python", "-m", "app.generated.batch", coalesce(service.pipeline, "")]',
   '  }',
   ...guardrailLocals('batch'),
+  ...knowledgeBaseLocals('batch'),
   '}',
   '',
   '# Batch itself needs a role to manage the compute environment, and ECS needs a second',
@@ -371,6 +379,7 @@ const MAIN_TF = hcl([
   '  tags              = var.tags',
   '}',
   ...guardrailResources('aws_iam_role.task[0].id'),
+  ...knowledgeBaseGrant('aws_iam_role.task[0].id'),
   '',
   'resource "aws_batch_job_definition" "job" {',
   '  for_each = local.batch',

@@ -36,7 +36,15 @@ import type { CliDiagnostic, CliDiagnosticCode } from '../diagnostics.js';
 import { CLI_DIAGNOSTIC_CODES, cliError } from '../diagnostics.js';
 import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE } from '../exit.js';
 import { cdkRoot, classifyCdk, runCdk } from '../infra/cdk.js';
-import { CLOUDS, type Cloud, DEFAULT_CLOUD, isCloud, unsupportedTargets } from '../infra/cloud.js';
+import {
+  CLOUDS,
+  type Cloud,
+  DEFAULT_CLOUD,
+  isCloud,
+  KNOWLEDGE_BASE_CLOUDS,
+  unsupportedKnowledgeBases,
+  unsupportedTargets,
+} from '../infra/cloud.js';
 import type { InfraFile } from '../infra/emit.js';
 import {
   emitInfra,
@@ -236,6 +244,28 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
             cloud === 'gcp'
               ? 'Remove `engine: bedrock` from the guardrail, or deploy this environment with --cloud aws.'
               : 'Serve the service from `serverless` or `container`, or evaluate the guardrail in the edge handler itself.',
+        }),
+      ],
+    });
+  }
+
+  // A managed base is a provider product: Bedrock's lives in AWS, a Vertex RAG corpus in
+  // GCP, and neither has a counterpart on the other cloud. A plan that declares one for
+  // the other cloud would emit no resource and still succeed, so the service would start
+  // and fail on its first retrieval instead of at plan time.
+  const misplacedBases = unsupportedKnowledgeBases(deployPlan, cloud);
+  if (misplacedBases.length > 0) {
+    const bases = misplacedBases.map((base) => `"${base.id}" (${base.engine})`).join(', ');
+    const wanted = [...new Set(misplacedBases.map((base) => KNOWLEDGE_BASE_CLOUDS[base.engine]))];
+    return outcome({
+      command,
+      exitCode: EXIT_FAILURE,
+      fields,
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.infraKnowledgeBaseUnsupported,
+          message: `Knowledge base ${bases} needs ${wanted.join(' and ')}, which --cloud ${cloud} does not create.`,
+          hint: `Generate this environment with --cloud ${wanted[0]}, or move the base to an engine this cloud runs (${cloud === 'gcp' ? 'vertex-rag' : 'aws-bedrock'}).`,
         }),
       ],
     });

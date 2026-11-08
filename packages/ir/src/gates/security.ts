@@ -15,6 +15,7 @@ import { sensitiveNames } from '../build.js';
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
 import type { PolicyNode } from '../policy/index.js';
 import type { IR, ObservabilityShape, PipelineShape, ToolShape } from '../shapes.js';
+import { isManagedRetriever } from '../shapes.js';
 import { type GateOptions, type GateResult, reporter, type SuppressedCheck } from './contract.js';
 
 /** Builtins whose presence means the policy actually authenticates the caller. */
@@ -164,6 +165,7 @@ function checkStoreSecrets(ir: IR, diagnostics: IrDiagnostic[], report: Reporter
   }
 
   for (const retriever of ir.retrievers) {
+    if (isManagedRetriever(retriever)) continue;
     if (!URI_USERINFO.test(retriever.source.uri)) continue;
     diagnostics.push(
       report.error({
@@ -171,6 +173,18 @@ function checkStoreSecrets(ir: IR, diagnostics: IrDiagnostic[], report: Reporter
         message: `the security gate rejected this source: "${retriever.id}" declares a uri with an inline credential in its authority, which the IR would then carry everywhere it is written`,
         path: ['retrievers', retriever.id, 'source', 'uri'],
         hint: 'drop the credentials from the uri and supply them through the environment',
+      }),
+    );
+  }
+
+  for (const base of ir.knowledgeBases) {
+    if (!URI_USERINFO.test(base.dataSource.uri)) continue;
+    diagnostics.push(
+      report.error({
+        code: IR_DIAGNOSTIC_CODES.securityStoreSecret,
+        message: `the security gate rejected this knowledge base: "${base.id}" declares a data source uri with an inline credential in its authority, which the IR would then carry everywhere it is written`,
+        path: ['knowledgeBases', base.id, 'dataSource', 'uri'],
+        hint: 'drop the credentials from the uri; the engine reads its bucket with the deployment role, not a literal secret',
       }),
     );
   }

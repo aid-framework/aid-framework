@@ -16,7 +16,8 @@
  * to run it under a bare install with no extras, without side effects.
  */
 
-import type { IR, RetrieverShape } from '@aid-framework/ir';
+import type { IR, LocalRetrieverShape } from '@aid-framework/ir';
+import { isLocalRetriever } from '@aid-framework/ir';
 
 import { moduleName } from '../names.js';
 import { INDENT, pythonStatement, pythonString } from '../python.js';
@@ -35,7 +36,10 @@ export function retrievalIngestModulePath(retrieverId: string): string {
 
 /** One ingest entry point per declared retriever, in declared-identity order. */
 export function retrievalIngestFiles(ir: IR): EmittedFile[] {
-  const retrievers = orderedRetrievers(ir);
+  // A managed knowledge base ingests inside the engine, driven by its data source's own
+  // sync. An entry point here would embed the corpus a second time into a store nothing
+  // searches, so those retrievers get no ingest module at all.
+  const retrievers = orderedRetrievers(ir).filter(isLocalRetriever);
   if (retrievers.length === 0) return [];
   return [emitIngestInit(), ...retrievers.map((retriever) => emitIngest(retriever))];
 }
@@ -65,7 +69,7 @@ function dottedModule(retrieverId: string): string {
     .join('.');
 }
 
-function parserBlock(retriever: RetrieverShape): string {
+function parserBlock(retriever: LocalRetrieverShape): string {
   return [
     'def _parser() -> argparse.ArgumentParser:',
     pythonDoc('The command line this module is run with.', INDENT),
@@ -102,6 +106,10 @@ function planBlock(): string {
       INDENT,
     ),
     `${INDENT}binding = build_binding(retriever_id)`,
+    `${INDENT}if not isinstance(binding, RetrieverBinding):`,
+    `${INDENT}${INDENT}raise ConfigurationError(`,
+    `${INDENT}${INDENT}${INDENT}f"retriever {retriever_id!r} ingests inside its knowledge base, not here"`,
+    `${INDENT}${INDENT})`,
     `${INDENT}connector = open_connector(binding.source, base_dir=APP_ROOT)`,
     `${INDENT}try:`,
     `${INDENT}${INDENT}documents = await connector.documents()`,
@@ -154,7 +162,7 @@ function mainBlock(): string {
   ].join('\n');
 }
 
-function emitIngest(retriever: RetrieverShape): EmittedFile {
+function emitIngest(retriever: LocalRetrieverShape): EmittedFile {
   return generated(
     retrievalIngestModulePath(retriever.id),
     assemble([
@@ -175,6 +183,7 @@ function emitIngest(retriever: RetrieverShape): EmittedFile {
             'CostLedger',
             'FeatureDeferredError',
             'IngestReport',
+            'RetrieverBinding',
             'chunker_for',
             'open_connector',
           ]),

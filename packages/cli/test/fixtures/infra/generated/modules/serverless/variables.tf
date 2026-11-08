@@ -75,3 +75,17 @@ variable "guardrails" {
   }))
   default = {}
 }
+
+variable "knowledge_bases" {
+  description = "Managed bases this module may read, with the id and ARN the env root resolved."
+  type = map(object({
+    # Empty until the base exists. The grant and the environment skip it while it is.
+    id  = optional(string, "")
+    arn = optional(string, "")
+    # The name the runtime reads the id from. Computed by the CLI, not here: HCL has no
+    # regex-lower-case-UPPER pipeline that would match the Python spelling exactly.
+    env_name   = string
+    retrievers = list(string)
+  }))
+  default = {}
+}

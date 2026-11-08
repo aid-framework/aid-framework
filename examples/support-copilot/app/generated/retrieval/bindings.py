@@ -16,12 +16,16 @@ from aid_runtime import (
     CostLedger,
     Embedder,
     EmbeddingSpec,
+    KnowledgeBaseSpec,
+    ManagedRetrieverBinding,
+    ManagedRetrieverSpec,
     Reranker,
     Retriever,
     RetrieverBinding,
     RetrieverSpec,
     VectorStore,
     VectorStoreSpec,
+    binding_from_managed_spec,
     binding_from_spec,
 )
 
@@ -48,6 +52,7 @@ HANDBOOK_RETRIEVER: dict[str, Any] = {
     "embedModel": "embed",
     "id": "handbook",
     "index": {"hybrid": True, "metric": "cosine"},
+    "kind": "local",
     "refresh": {"mode": "full"},
     "rerank": {"model": "lexical", "topN": 3},
     "source": {"glob": "**/*.md", "kind": "file", "uri": "./docs"},
@@ -59,6 +64,7 @@ HANDBOOK_DIMENSIONS: int = 1536
 
 _SPECS: dict[str, dict[str, Any]] = {
     "handbook": {
+        "kind": "local",
         "dimensions": HANDBOOK_DIMENSIONS,
         "embedding": HANDBOOK_EMBEDDING,
         "retriever": HANDBOOK_RETRIEVER,
@@ -67,15 +73,21 @@ _SPECS: dict[str, dict[str, Any]] = {
 }
 
 
-def build_binding(retriever_id: str) -> RetrieverBinding:
+def build_binding(retriever_id: str) -> RetrieverBinding | ManagedRetrieverBinding:
     """One declared retriever in the form the runtime searches with: every alias resolved and the
     vector width recorded. Nothing is connected here, so this is safe to call where a store must not
-    be opened.
+    be opened. A managed retriever resolves to a knowledge base binding instead, which carries no
+    embedder or store because the engine owns both.
     """
 
     declared = _SPECS.get(retriever_id)
     if declared is None:
         raise ConfigurationError(f"retriever {retriever_id!r} is not declared in the spec")
+    if declared["kind"] == "managed":
+        return binding_from_managed_spec(
+            ManagedRetrieverSpec.model_validate(declared["retriever"]),
+            knowledge_base=KnowledgeBaseSpec.model_validate(declared["knowledgeBase"]),
+        )
     return binding_from_spec(
         RetrieverSpec.model_validate(declared["retriever"]),
         embedding=EmbeddingSpec.model_validate(declared["embedding"]),

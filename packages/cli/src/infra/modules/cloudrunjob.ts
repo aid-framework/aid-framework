@@ -33,6 +33,7 @@ import type { DeployPlan } from '@aid-framework/ir';
 
 import { INFRA_GENERATED_DIR } from '../paths.js';
 import { hcl, type ModuleFile, moduleFiles, targets } from './hcl.js';
+import { VERTEX_KNOWLEDGE_BASE_VARIABLES, vertexKnowledgeBaseLocals } from './vertex-rag.js';
 
 export const CLOUDRUNJOB_MODULE_DIR = `${INFRA_GENERATED_DIR}/modules/cloudrunjob`;
 
@@ -45,7 +46,11 @@ const VERSIONS_TF = hcl([
   '  required_providers {',
   '    google = {',
   '      source  = "hashicorp/google"',
-  '      version = "~> 6.0"',
+  '      # 8.4 is where `google_vertex_ai_rag_corpus` arrives, and an env root gets one',
+  '      # version per provider for the whole configuration -- so the knowledge-base',
+  '      # module sets the floor and every GCP module rides it. The 7 and 8 upgrade guides',
+  '      # list no change to a resource emitted here.',
+  '      version = "~> 8.4"',
   '    }',
   '  }',
   '}',
@@ -127,6 +132,7 @@ const VARIABLES_TF = hcl([
   '  type    = map(string)',
   '  default = {}',
   '}',
+  ...VERTEX_KNOWLEDGE_BASE_VARIABLES,
 ]);
 
 const MAIN_TF = hcl([
@@ -181,11 +187,13 @@ const MAIN_TF = hcl([
   '',
   '  # A job whose models name Vertex calls it with its own service account, so the project',
   "  # role below is the only credential it needs -- the same shape as the AWS modules'",
-  '  # Bedrock grant, and derived from `providers` rather than from a flag.',
+  '  # Bedrock grant, and derived from `providers` rather than from a flag. A job that binds',
+  '  # a managed corpus joins the set too: `:retrieveContexts` needs the same role.',
   '  vertex = {',
   '    for id, service in local.batch : id => service',
-  '    if contains(service.providers, "google")',
+  '    if contains(service.providers, "google") || contains(keys(local.knowledge_base_services), id)',
   '  }',
+  ...vertexKnowledgeBaseLocals('batch'),
   '',
   '  # The Vertex adapter reads its project and location from the environment, and Cloud Run',
   '  # sets neither. Both facts are already inputs here, so they are supplied rather than',
@@ -312,6 +320,16 @@ const MAIN_TF = hcl([
   '        # job that names `google` gets both without the spec restating them.',
   '        dynamic "env" {',
   '          for_each = lookup(local.vertex_env, each.key, {})',
+  '          content {',
+  '            name  = env.key',
+  '            value = env.value',
+  '          }',
+  '        }',
+  '',
+  '        # The corpus name the runtime reads its retriever from. Exported only to a job',
+  '        # that binds the base, and only once the corpus exists.',
+  '        dynamic "env" {',
+  '          for_each = lookup(local.knowledge_base_env, each.key, {})',
   '          content {',
   '            name  = env.key',
   '            value = env.value',

@@ -19,7 +19,8 @@
  * passages should rank -- belongs to `app/business`, and the generator never writes it.
  */
 
-import type { IR, RetrieverShape, Trait } from '@aid-framework/ir';
+import type { IR, ManagedRetrieverShape, RetrieverShape, Trait } from '@aid-framework/ir';
+import { catalogKnowledgeBaseCost, isManagedRetriever } from '@aid-framework/ir';
 
 import { moduleName } from '../names.js';
 import { INDENT, pythonNumber, pythonStatement, pythonString } from '../python.js';
@@ -87,7 +88,8 @@ function emitRetrievalInit(): EmittedFile {
       HEADER,
       pythonDoc(
         'The retrievers the spec declares, each bound to the embedding and store it ' +
-          'names, and the ingest entry point that fills its index.',
+          'names -- or, when it reads a managed knowledge base, to that base -- and the ' +
+          'ingest entry point that fills a local index.',
       ),
       importFrom('.', ['bindings', 'ingest']),
       pythonStatement('__all__ = ', ['bindings', 'ingest']),
@@ -124,7 +126,35 @@ function specNames<T extends { traits: readonly Trait[] }>(
   return { ...rest, traits: traits.map((trait) => trait.name) };
 }
 
+/**
+ * The constants one managed retriever and its knowledge base are bound from.
+ *
+ * A base is emitted once per retriever that reads it rather than once per base: the
+ * binding table is keyed by retriever id, and a shared constant would make one entry's
+ * bytes depend on another's presence, which the drift check reads as a diff.
+ */
+function managedConstants(ir: IR, retriever: ManagedRetrieverShape): string {
+  const name = constantName(retriever.id);
+  const base = require(ir.knowledgeBases.find(
+    (entry) => entry.id === retriever.knowledgeBase,
+  ), `the '${retriever.knowledgeBase}' knowledge base the '${retriever.id}' retriever reads`);
+  // The retrieve rate is inlined here for the same reason an embedding's cost profile
+  // is: `aid cost` aggregates what the runtime charged, and a rate looked up at run
+  // time would let a deployment bill a price its spec never pinned. A null rate is
+  // emitted as null -- unknown, not free -- so the ledger records no charge instead of
+  // charging zero.
+  const cost = catalogKnowledgeBaseCost(base.engine);
+  return [
+    pythonStatement(`${name}_KNOWLEDGE_BASE: dict[str, Any] = `, {
+      ...base,
+      retrieveCostPerQueryUsd: cost?.retrievePerQueryUsd ?? null,
+    }),
+    pythonStatement(`${name}_RETRIEVER: dict[str, Any] = `, specNames(retriever)),
+  ].join('\n');
+}
+
 function bindingConstants(ir: IR, retriever: RetrieverShape): string {
+  if (isManagedRetriever(retriever)) return managedConstants(ir, retriever);
   const name = constantName(retriever.id);
   const embedding = require(ir.embeddings.find(
     (entry) => entry.id === retriever.embedModel,
@@ -145,8 +175,21 @@ function bindingConstants(ir: IR, retriever: RetrieverShape): string {
 function specTable(ir: IR): string {
   const entries = orderedRetrievers(ir).map((retriever) => {
     const name = constantName(retriever.id);
+    // `kind` is what the generated `build_binding` dispatches on. It is emitted rather
+    // than inferred so a reader of the generated file can tell the two apart without
+    // knowing which keys a managed entry omits.
+    if (isManagedRetriever(retriever)) {
+      return [
+        `${INDENT}${pythonString(retriever.id)}: {`,
+        `${INDENT}${INDENT}"kind": "managed",`,
+        `${INDENT}${INDENT}"knowledgeBase": ${name}_KNOWLEDGE_BASE,`,
+        `${INDENT}${INDENT}"retriever": ${name}_RETRIEVER,`,
+        `${INDENT}},`,
+      ].join('\n');
+    }
     return [
       `${INDENT}${pythonString(retriever.id)}: {`,
+      `${INDENT}${INDENT}"kind": "local",`,
       `${INDENT}${INDENT}"dimensions": ${name}_DIMENSIONS,`,
       `${INDENT}${INDENT}"embedding": ${name}_EMBEDDING,`,
       `${INDENT}${INDENT}"retriever": ${name}_RETRIEVER,`,
@@ -159,17 +202,25 @@ function specTable(ir: IR): string {
 
 function buildBinding(): string {
   return [
-    'def build_binding(retriever_id: str) -> RetrieverBinding:',
+    'def build_binding(retriever_id: str) -> RetrieverBinding | ManagedRetrieverBinding:',
     pythonDoc(
       'One declared retriever in the form the runtime searches with: every alias ' +
         'resolved and the vector width recorded. Nothing is connected here, so this is ' +
-        'safe to call where a store must not be opened.',
+        'safe to call where a store must not be opened. A managed retriever resolves to ' +
+        'a knowledge base binding instead, which carries no embedder or store because ' +
+        'the engine owns both.',
       INDENT,
     ),
     `${INDENT}declared = _SPECS.get(retriever_id)`,
     `${INDENT}if declared is None:`,
     `${INDENT}${INDENT}` +
       'raise ConfigurationError(f"retriever {retriever_id!r} is not declared in the spec")',
+    `${INDENT}if declared["kind"] == "managed":`,
+    `${INDENT}${INDENT}return binding_from_managed_spec(`,
+    `${INDENT}${INDENT}${INDENT}ManagedRetrieverSpec.model_validate(declared["retriever"]),`,
+    `${INDENT}${INDENT}${INDENT}` +
+      'knowledge_base=KnowledgeBaseSpec.model_validate(declared["knowledgeBase"]),',
+    `${INDENT}${INDENT})`,
     `${INDENT}return binding_from_spec(`,
     `${INDENT}${INDENT}RetrieverSpec.model_validate(declared["retriever"]),`,
     `${INDENT}${INDENT}embedding=EmbeddingSpec.model_validate(declared["embedding"]),`,
@@ -250,12 +301,16 @@ function emitRetrievalBindings(ir: IR): EmittedFile {
             'CostLedger',
             'Embedder',
             'EmbeddingSpec',
+            'KnowledgeBaseSpec',
+            'ManagedRetrieverBinding',
+            'ManagedRetrieverSpec',
             'Reranker',
             'Retriever',
             'RetrieverBinding',
             'RetrieverSpec',
             'VectorStore',
             'VectorStoreSpec',
+            'binding_from_managed_spec',
             'binding_from_spec',
           ]),
         ],

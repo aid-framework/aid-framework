@@ -47,6 +47,7 @@
   ],
   "guardrails": [],
   "irVersion": "0.1.0",
+  "knowledgeBases": [],
   "memory": [],
   "models": [
     {

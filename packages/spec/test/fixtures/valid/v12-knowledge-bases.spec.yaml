@@ -1,0 +1,23 @@
+specVersion: "0.12"
+
+project:
+  name: handbook-answers
+  namespace: aid.examples.handbook
+  description: Retrieves handbook excerpts from a managed knowledge base instead of a local index.
+  targets:
+    - py-fastapi
+
+knowledgeBases:
+  handbook:
+    engine: aws-bedrock
+    dataSource:
+      kind: s3
+      uri: s3://acme-handbook/corpus
+    chunking:
+      strategy: recursive
+      size: 800
+      overlap: 100
+    embedModel: embed
+    filterable: [tenant, department]
+    vectorStore:
+      kind: provisioned

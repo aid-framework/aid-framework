@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildDeployPlan, buildIR, DEPLOY_PLAN_VERSION } from '../src/index.js';
+import {
+  buildDeployPlan,
+  buildIR,
+  DEPLOY_PLAN_VERSION,
+  knowledgeBaseEnvName,
+} from '../src/index.js';
 
 /**
  * A spec the IR admits, carrying one of each thing the plan has to derive. Tests vary
@@ -269,6 +274,7 @@ describe('buildDeployPlan', () => {
       services: [],
       stores: [],
       tasks: [],
+      knowledgeBases: [],
       alarms: [],
     });
   });
@@ -295,5 +301,25 @@ describe('buildDeployPlan', () => {
   it('is deterministic', () => {
     const { ir } = buildIR(spec());
     expect(JSON.stringify(buildDeployPlan(ir))).toBe(JSON.stringify(buildDeployPlan(ir)));
+  });
+});
+
+describe('knowledgeBaseEnvName', () => {
+  it('carries the engine in the prefix', () => {
+    expect(knowledgeBaseEnvName('handbook', 'aws-bedrock')).toBe('BEDROCK_KNOWLEDGE_BASE_HANDBOOK');
+    expect(knowledgeBaseEnvName('handbook', 'vertex-rag')).toBe('VERTEX_RAG_CORPUS_HANDBOOK');
+  });
+
+  it('spells an id the way the runtime does', () => {
+    // Non-alphanumerics become one underscore each, and case is folded upward.
+    expect(knowledgeBaseEnvName('Product.Docs_v2', 'aws-bedrock')).toBe(
+      'BEDROCK_KNOWLEDGE_BASE_PRODUCT_DOCS_V2',
+    );
+  });
+
+  it('collapses a run of separators and drops them at either end', () => {
+    expect(knowledgeBaseEnvName('__a--b  c__', 'aws-bedrock')).toBe('BEDROCK_KNOWLEDGE_BASE_A_B_C');
+    expect(knowledgeBaseEnvName('   ', 'aws-bedrock')).toBe('BEDROCK_KNOWLEDGE_BASE_');
+    expect(knowledgeBaseEnvName('', 'aws-bedrock')).toBe('BEDROCK_KNOWLEDGE_BASE_');
   });
 });

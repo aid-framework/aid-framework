@@ -33,6 +33,11 @@ import type { DeployPlan } from '@aid-framework/ir';
 import { INFRA_GENERATED_DIR } from '../paths.js';
 import { GUARDRAIL_VARIABLES, guardrailLocals, guardrailResources } from './guardrails.js';
 import { hcl, type ModuleFile, moduleFiles, targets } from './hcl.js';
+import {
+  KNOWLEDGE_BASE_VARIABLES,
+  knowledgeBaseGrant,
+  knowledgeBaseLocals,
+} from './knowledge-base.js';
 
 export const CONTAINER_MODULE_DIR = `${INFRA_GENERATED_DIR}/modules/container`;
 
@@ -160,6 +165,7 @@ const VARIABLES_TF = hcl([
   '  default     = ""',
   '}',
   ...GUARDRAIL_VARIABLES,
+  ...KNOWLEDGE_BASE_VARIABLES,
 ]);
 
 const MAIN_TF = hcl([
@@ -244,6 +250,7 @@ const MAIN_TF = hcl([
   '        BEDROCK_GUARDRAIL_ID      = aws_bedrock_guardrail.managed[id].guardrail_id',
   '        BEDROCK_GUARDRAIL_VERSION = aws_bedrock_guardrail_version.managed[id].version',
   '      } : {},',
+  '      local.knowledge_base_env[id],',
   '    )',
   '  }',
   '',
@@ -257,6 +264,7 @@ const MAIN_TF = hcl([
   '    }',
   '  }',
   ...guardrailLocals('container'),
+  ...knowledgeBaseLocals('container'),
   '}',
   '',
   '# --------------------------------------------------------------------------- network',
@@ -501,6 +509,7 @@ const MAIN_TF = hcl([
   '  tags  = var.tags',
   '}',
   ...guardrailResources('aws_iam_role.task[each.key].id'),
+  ...knowledgeBaseGrant('aws_iam_role.task[each.key].id', 'container'),
   '',
   'resource "aws_ecs_task_definition" "service" {',
   '  for_each = local.container',

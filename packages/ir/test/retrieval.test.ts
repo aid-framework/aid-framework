@@ -8,7 +8,7 @@
 import { checkSpecText } from '@aid-framework/spec';
 import { describe, expect, it } from 'vitest';
 
-import { runGates } from '../src/index.js';
+import { isLocalRetriever, runGates } from '../src/index.js';
 import { buildFixture, byId, first, fixtureText } from './helpers.js';
 
 const SPEC = 'retrieval.yaml';
@@ -57,6 +57,7 @@ describe('retrieval surface, spec to IR to gates', () => {
 
   it('resolves a retriever to its store, embedder, chunking and index plan', () => {
     const retriever = first(buildFixture(SPEC).ir.retrievers);
+    if (!isLocalRetriever(retriever)) throw new Error('expected a local retriever');
 
     expect(retriever.id).toBe('handbook');
     expect(retriever.source).toEqual({ kind: 'file', uri: './docs', glob: '**/*.md' });

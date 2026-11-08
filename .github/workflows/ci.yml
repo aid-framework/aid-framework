@@ -412,7 +412,7 @@ jobs:
         working-directory: packages/cli/test/fixtures/infra/envs
         run: |
           set -euo pipefail
-          for env in dev gcp-dev; do
+          for env in dev aws-kb gcp-dev gcp-kb; do
             ( cd "$env" && tofu init -backend=false -input=false -no-color )
           done
 
@@ -420,7 +420,7 @@ jobs:
         working-directory: packages/cli/test/fixtures/infra/envs
         run: |
           set -euo pipefail
-          for env in dev gcp-dev; do
+          for env in dev aws-kb gcp-dev gcp-kb; do
             echo "::group::$env"
             ( cd "$env" && tofu validate -no-color )
             echo "::endgroup::"

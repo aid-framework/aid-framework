@@ -44,11 +44,16 @@ export {
   SPEC_MODEL_CAPABILITY_MAP,
   TARGET_CAPABILITY_ALIASES,
 } from './capabilities.js';
-export type { CatalogModel, TargetCapabilityDeclarations } from './catalog/index.js';
+export type {
+  CatalogKnowledgeBaseCost,
+  CatalogModel,
+  TargetCapabilityDeclarations,
+} from './catalog/index.js';
 export {
   CATALOG_VERSION,
   catalogCostProfile,
   catalogCostProfiles,
+  catalogKnowledgeBaseCost,
   catalogModel,
   PHASE_0_TARGET_CAPABILITIES,
   phase0TargetCapabilities,
@@ -63,7 +68,7 @@ export type {
   DeployStore,
   DeployTask,
 } from './deploy-plan.js';
-export { buildDeployPlan, DEPLOY_PLAN_VERSION } from './deploy-plan.js';
+export { buildDeployPlan, DEPLOY_PLAN_VERSION, knowledgeBaseEnvName } from './deploy-plan.js';
 export type { IrDiagnostic, IrDiagnosticCode } from './diagnostics.js';
 export {
   IR_DIAGNOSTIC_CODES,
@@ -88,6 +93,7 @@ export type {
   GateReporter,
   GateResult,
   GateRunResult,
+  KnowledgeBaseCostEstimate,
   ModelCostEstimate,
   SuppressedCheck,
 } from './gates/index.js';
@@ -99,6 +105,7 @@ export {
   evalCoverageGate,
   GATES,
   isNormalized,
+  knowledgeBaseGate,
   normalize,
   normalizeGate,
   policyAuthenticates,
@@ -205,6 +212,10 @@ export type {
   IndexMetric,
   IR,
   IrCollection,
+  KnowledgeBaseEngine,
+  KnowledgeBaseShape,
+  LocalRetrieverShape,
+  ManagedRetrieverShape,
   MapStep,
   MemoryShape,
   MetricShape,
@@ -264,7 +275,11 @@ export {
   IR_VERSION,
   isCompositeStep,
   isIndexMetric,
+  isKnowledgeBaseEngine,
+  isLocalRetriever,
+  isManagedRetriever,
   isProvider,
+  KNOWLEDGE_BASE_ENGINES,
   MAX_STEP_DEPTH,
   modelIdentity,
   NON_COLLECTION_SECTIONS,

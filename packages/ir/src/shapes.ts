@@ -508,10 +508,45 @@ export interface RuntimeShape {
 }
 
 /**
+ * The managed engines a knowledge base can use. Each reads its own cloud's bucket and
+ * answers only from its own cloud, because the credentials are the cloud's.
+ */
+export const KNOWLEDGE_BASE_ENGINES = ['aws-bedrock', 'vertex-rag'] as const;
+
+export type KnowledgeBaseEngine = (typeof KNOWLEDGE_BASE_ENGINES)[number];
+
+export function isKnowledgeBaseEngine(value: string): value is KnowledgeBaseEngine {
+  return (KNOWLEDGE_BASE_ENGINES as readonly string[]).includes(value);
+}
+
+/**
+ * A managed knowledge base: the cloud owns ingestion, chunking, embedding, the vector
+ * store and the index. The runtime only asks it for chunks, so this shape carries no
+ * `source`/`store`/`index` of its own — those would be a second, unchecked pipeline.
+ */
+export interface KnowledgeBaseShape {
+  id: string;
+  engine: KnowledgeBaseEngine;
+  dataSource: { kind: 's3' | 'gcs'; uri: string };
+  chunking: { strategy: 'fixed' | 'recursive' | 'code'; size: number; overlap: number };
+  /** A model alias that must declare `embeddings` on the engine's own cloud. */
+  embedModel: string;
+  /** Metadata keys the filter contract may use; drives the sidecar convention. */
+  filterable: string[];
+  /**
+   * `provisioned` has the emitted module create a store; `existing` points at one the
+   * operator already pays for and carries the `arn`. A managed base is never a local
+   * `VectorStoreShape`, because the engine owns it.
+   */
+  vectorStore: { kind: 'provisioned' | 'existing'; arn?: string };
+}
+
+/**
  * Shaped per design §7.2 and populated from the `retrievers` spec section. This is the
  * declaration only; the generated runtime owns chunking, embedding, and search.
  */
-export interface RetrieverShape {
+export interface LocalRetrieverShape {
+  kind: 'local';
   id: string;
   source: { kind: 'file' | 's3' | 'http' | 'db' | 'mcp'; uri: string; glob?: string };
   chunking: {
@@ -530,6 +565,38 @@ export interface RetrieverShape {
   filters?: string[];
   refresh: { mode: 'full' | 'incremental'; schedule?: string };
   traits: Trait[];
+}
+
+/**
+ * A retriever bound to a managed knowledge base. It has no `source`, `chunking`,
+ * `embedModel`, `store`, `index` or `refresh`: those describe a pipeline the local
+ * runtime performs, and the cloud performs this one. What survives is the query shape
+ * — `topK`, the optional reranker and filters — because those still run here.
+ */
+export interface ManagedRetrieverShape {
+  kind: 'managed';
+  id: string;
+  /** Id of a `KnowledgeBaseShape`. Resolved by the `retrievers/knowledge-bases` gate. */
+  knowledgeBase: string;
+  topK: number;
+  rerank?: { model: string; topN: number };
+  filters?: string[];
+  traits: Trait[];
+}
+
+export type RetrieverShape = LocalRetrieverShape | ManagedRetrieverShape;
+
+export function isManagedRetriever(retriever: RetrieverShape): retriever is ManagedRetrieverShape {
+  return retriever.kind === 'managed';
+}
+
+/**
+ * The local half of the union, as a predicate so a `.filter()` narrows the element type.
+ * Every emitter that spells a source, chunking, store or index needs the narrowing;
+ * without it each one would restate a cast.
+ */
+export function isLocalRetriever(retriever: RetrieverShape): retriever is LocalRetrieverShape {
+  return retriever.kind === 'local';
 }
 
 /**
@@ -856,6 +923,7 @@ export interface IR {
   prompts: PromptShape[];
   tools: ToolShape[];
   retrievers: RetrieverShape[];
+  knowledgeBases: KnowledgeBaseShape[];
   embeddings: EmbeddingShape[];
   stores: VectorStoreShape[];
   memory: MemoryShape[];
@@ -878,6 +946,7 @@ export const IR_COLLECTIONS = [
   'prompts',
   'tools',
   'retrievers',
+  'knowledgeBases',
   'embeddings',
   'stores',
   'memory',
@@ -899,6 +968,7 @@ export const POPULATED_COLLECTION_BY_SECTION = {
   tools: 'tools',
   stores: 'stores',
   retrievers: 'retrievers',
+  knowledgeBases: 'knowledgeBases',
   memory: 'memory',
   agents: 'agents',
   guardrails: 'guardrails',

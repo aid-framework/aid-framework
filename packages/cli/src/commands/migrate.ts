@@ -36,7 +36,8 @@
 import { resolve, sep } from 'node:path';
 
 import { createNodeSink } from '@aid-framework/generator-sdk';
-import type { IndexMetric, IR, VectorStoreShape } from '@aid-framework/ir';
+import type { IndexMetric, IR, KnowledgeBaseShape, VectorStoreShape } from '@aid-framework/ir';
+import { isManagedRetriever } from '@aid-framework/ir';
 import { hasErrors } from '@aid-framework/spec';
 
 import type { CliContext } from '../context.js';
@@ -109,6 +110,7 @@ interface SkippedStore {
 interface Plan {
   readonly pgvector: readonly VectorStoreShape[];
   readonly skipped: readonly SkippedStore[];
+  readonly knowledgeBases: readonly KnowledgeBaseShape[];
   readonly dimension: number | undefined;
   readonly indexes: readonly IndexChoice[];
   readonly sql: string | undefined;
@@ -172,6 +174,7 @@ function indexesFor(ir: IR): readonly IndexChoice[] {
   );
   const metrics = new Set<IndexMetric>();
   for (const retriever of ir.retrievers) {
+    if (isManagedRetriever(retriever)) continue;
     if (pgvectorIds.has(retriever.store)) metrics.add(retriever.index.metric);
   }
   return METRIC_ORDER.filter((metric) => metrics.has(metric)).map((metric) => ({
@@ -218,6 +221,7 @@ function plan(ir: IR, specPath: string): Plan {
   return {
     pgvector,
     skipped,
+    knowledgeBases: ir.knowledgeBases,
     dimension: dimension.value,
     indexes,
     sql: pgvector.length === 0 ? undefined : renderSql(dimension.value, indexes),
@@ -246,6 +250,14 @@ function describe(plan: Plan): string[] {
   for (const store of plan.pgvector) text.push(`  ${store.id} (pgvector)`);
   for (const store of plan.skipped) {
     text.push(`  ${store.id} (${store.kind}) -- ${store.reason}`);
+  }
+  // A managed knowledge base is not a store: the engine owns its schema, so this command
+  // has nothing to emit for it. Listing it says so, rather than leaving a spec that
+  // declares retrieval and a report that mentions no index at all.
+  for (const base of plan.knowledgeBases) {
+    text.push(
+      `  ${base.id} (${base.engine} knowledge base) -- not applicable: the engine owns its schema`,
+    );
   }
   if (plan.sql === undefined) {
     text.push('no pgvector store is declared, so there is no SQL to emit');

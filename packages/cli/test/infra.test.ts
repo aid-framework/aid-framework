@@ -251,6 +251,101 @@ deployments:
     secrets: []
 `;
 
+/** A managed knowledge base and the retriever that reads it. */
+const KNOWLEDGE_BASE_SPEC = `specVersion: "0.12"
+project:
+  name: handbook
+  namespace: aid.test.handbook
+  targets: [py-fastapi]
+models:
+  answer:
+    provider: fake
+    modelId: fake-deterministic-1
+    capabilities: [json-schema]
+  embed:
+    provider: bedrock
+    modelId: amazon.titan-embed-text-v2:0
+    capabilities: [embeddings]
+knowledgeBases:
+  handbook:
+    engine: aws-bedrock
+    dataSource:
+      kind: s3
+      uri: s3://acme-handbook/corpus
+    chunking:
+      strategy: fixed
+      size: 1000
+      overlap: 200
+    embedModel: embed
+    filterable: [tenant]
+retrievers:
+  docs:
+    knowledgeBase: handbook
+    topK: 8
+prompts:
+  reply:
+    version: 1
+    model: answer
+    template: "Answer from the excerpts: {{ context }}"
+    variables:
+      context:
+        type: string
+        required: true
+    output:
+      kind: text
+pipelines:
+  answer:
+    trigger:
+      manual: true
+    steps:
+      - retrieve:
+          retriever: docs
+          query: "{{ event.question }}"
+          as: context
+      - generate:
+          prompt: reply
+          input:
+            context: "{{ context }}"
+          as: reply
+evals:
+  retrieval_quality:
+    description: Chunk quality for the managed retriever.
+    target: pipeline:answer
+    dataset:
+      source: file
+      uri: datasets/handbook.jsonl
+    metrics:
+      - kind: retrieval
+        expectDocs: [intro.md]
+        k: 3
+    gate:
+      ci: true
+      maxRegression: 0.05
+      samples: 3
+deployments:
+  api:
+    target: serverless
+    secrets: []
+`;
+
+/**
+ * The same plan on GCP. Derived by substitution so the two bases cannot drift: every
+ * field the corpus cares about is shared, and only the engine, the bucket and the
+ * embedding model differ.
+ */
+const GCP_KNOWLEDGE_BASE_SPEC = KNOWLEDGE_BASE_SPEC.replace(
+  'engine: aws-bedrock',
+  'engine: vertex-rag',
+)
+  .replace('kind: s3', 'kind: gcs')
+  .replace('uri: s3://acme-handbook/corpus', 'uri: gs://acme-handbook/corpus')
+  .replace(
+    `    provider: bedrock
+    modelId: amazon.titan-embed-text-v2:0`,
+    `    provider: google
+    modelId: text-embedding-005`,
+  );
+
 /** Everything a derived file must never contain, because the spec does not say it. */
 function assertDerivedOnly(files: Record<string, string>): void {
   for (const [path, text] of Object.entries(files)) {
@@ -394,6 +489,124 @@ describe('infra gen', () => {
     const main = made.read(`${GENERATED}/modules/serverless/main.tf`);
     expect(main).toContain('for_each = local.managed_guardrails');
     expect(main).toContain('contains(local.serverless[id].guardrail_engines, "bedrock")');
+  });
+
+  it('spells a managed knowledge base with the provider identifier, not the alias', () => {
+    const made = scratchSpec(KNOWLEDGE_BASE_SPEC);
+    const run = aid(made, ['infra', 'gen', '--json']);
+    expect(run.code).toBe(0);
+
+    const tfvars = JSON.parse(made.read(TFVARS));
+    expect(tfvars.knowledge_bases.handbook).toEqual({
+      // Filled by the module after apply: the plan cannot know an id it has not created.
+      id: '',
+      arn: '',
+      engine: 'aws-bedrock',
+      data_source: { kind: 's3', uri: 's3://acme-handbook/corpus' },
+      chunking: { strategy: 'fixed', size: 1000, overlap: 200 },
+      embed_model: 'embed',
+      // The provider's identifier, resolved through the alias. Ingestion accepts this
+      // string, not the author's alias.
+      embed_model_id: 'amazon.titan-embed-text-v2:0',
+      env_name: 'BEDROCK_KNOWLEDGE_BASE_HANDBOOK',
+      filterable: ['tenant'],
+      vector_store: { kind: 'provisioned' },
+      retrievers: ['docs'],
+    });
+
+    const context = JSON.parse(made.read(CDK_CONTEXT));
+    expect(context.knowledgeBases.handbook.embedModel).toBe('embed');
+    expect(context.knowledgeBases.handbook.envName).toBe('BEDROCK_KNOWLEDGE_BASE_HANDBOOK');
+    // The plan variable list is Terraform's vocabulary; the CDK app must read camelCase.
+    expect(made.read(CDK_CONTEXT)).not.toContain('knowledge_bases');
+  });
+
+  it('provisions the base beside the compute and grants only the retrieve call', () => {
+    const made = scratchSpec(KNOWLEDGE_BASE_SPEC);
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+
+    // The module that owns the collection, the base and the data source is emitted once.
+    expect(made.walk()).toContain(`${GENERATED}/modules/knowledge-base/main.tf`);
+    const base = made.read(`${GENERATED}/modules/knowledge-base/main.tf`);
+    expect(base).toContain('resource "aws_opensearchserverless_collection"');
+    expect(base).toContain('resource "aws_bedrockagent_knowledge_base"');
+    expect(base).toContain('resource "aws_bedrockagent_data_source"');
+    // The manifest endpoint requires an OpenSearch Serverless data-access policy, which
+    // is what the emitter writes; a base without it plans and then cannot index.
+    expect(base).toContain('aws_opensearchserverless_access_policy');
+
+    // The env root wires the module to the compute, but `infra gen` does not write it:
+    // it is the user's file. That wiring is held byte-for-byte by
+    // `infra-modules.test.ts`, which emits the root with `knowledgeBase: true`.
+    const compute = made.read(`${GENERATED}/modules/serverless/main.tf`);
+    expect(compute).toContain('resource "aws_iam_role_policy" "knowledge_base"');
+    // Retrieval only: generation stays in this project, where the model gate and cost
+    // ledger see it.
+    expect(compute).toContain('"bedrock:Retrieve"');
+    expect(compute).not.toContain('bedrock:StartIngestionJob');
+    expect(compute).not.toContain('bedrock:DeleteKnowledgeBase');
+    expect(compute).toContain('local.knowledge_base_env[id]');
+  });
+
+  it('provisions nothing for a base whose cloud is not the one being generated', () => {
+    // A `--cloud gcp` run cannot render an AWS base, and silently dropping it would
+    // deploy a service that points at a corpus that does not exist.
+    const made = scratchSpec(KNOWLEDGE_BASE_SPEC);
+    const run = aid(made, ['infra', 'gen', '--cloud', 'gcp', '--json']);
+    expect(run.code).not.toBe(0);
+    expect(diagnosticsOf(run).map((d) => d.code)).toContain('cli/infra-knowledge-base-unsupported');
+    expect(
+      diagnosticsOf(run)
+        .map((d) => d.message)
+        .join(' '),
+    ).toContain('aws-bedrock');
+    // Refused before anything is written, so no half-tree is left to `tofu apply`.
+    expect(made.walk()).not.toContain(`${GENERATED}/modules/knowledge-base/main.tf`);
+    expect(made.walk()).not.toContain(`${GENERATED}/modules/vertex-rag/main.tf`);
+  });
+
+  it('refuses a Vertex corpus on AWS, which has nothing to create it', () => {
+    const made = scratchSpec(GCP_KNOWLEDGE_BASE_SPEC);
+    const run = aid(made, ['infra', 'gen', '--json']);
+    expect(run.code).not.toBe(0);
+    expect(diagnosticsOf(run).map((d) => d.code)).toContain('cli/infra-knowledge-base-unsupported');
+    expect(
+      diagnosticsOf(run)
+        .map((d) => d.message)
+        .join(' '),
+    ).toContain('vertex-rag');
+  });
+
+  it('provisions a Vertex corpus and imports the prefix on GCP', () => {
+    const made = scratchSpec(GCP_KNOWLEDGE_BASE_SPEC);
+    expect(aid(made, ['infra', 'gen', '--cloud', 'gcp']).code).toBe(0);
+
+    const corpus = made.read(`${GENERATED}/modules/vertex-rag/main.tf`);
+    expect(corpus).toContain('resource "google_vertex_ai_rag_corpus"');
+    expect(corpus).toContain('resource "google_vertex_ai_rag_file"');
+    // The API-level guard, not only `prevent_destroy`: a plan that removed the resource
+    // would still be refused by the provider.
+    expect(corpus).toContain('deletion_policy = "PREVENT"');
+    expect(corpus).toContain('prevent_destroy');
+    // Vertex takes one object per file, so the module lists the prefix and imports each.
+    expect(corpus).toContain('data "google_storage_bucket_objects" "source"');
+    expect(corpus).toContain('for_each = local.files');
+    // The spec's chunking reaches the API rather than being approximated. The numbers
+    // come from the plan, not the module bytes, because a module must not vary with a
+    // plan -- so this asserts the wiring, and the plan carries the size itself.
+    expect(corpus).toContain('fixed_length_chunking');
+    expect(corpus).toContain('chunk_size    = local.bases[each.value.base].chunking.size');
+    expect(corpus).toContain('chunk_overlap = local.bases[each.value.base].chunking.overlap');
+
+    // One module per engine: the Bedrock module is not emitted for a Vertex base.
+    expect(made.walk()).not.toContain(`${GENERATED}/modules/knowledge-base/main.tf`);
+
+    // The compute module receives the base, so retrieval reads the corpus it was given.
+    const compute = made.read(`${GENERATED}/modules/cloudrun/main.tf`);
+    expect(compute).toContain('knowledge_bases');
+
+    // The runtime reads this name, so the plan must spell it the way the client does.
+    expect(made.read(TFVARS)).toContain('VERTEX_RAG_CORPUS_HANDBOOK');
   });
 
   it('emits derived shape only', () => {

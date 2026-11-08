@@ -82,3 +82,17 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "knowledge_bases" {
+  description = "Managed corpora this module may read, with the corpus name the env root resolved."
+  type = map(object({
+    # Empty until the corpus exists. The environment skips it while it is.
+    id  = optional(string, "")
+    arn = optional(string, "")
+    # The name the runtime reads the corpus from. Computed by the CLI, not here: HCL has
+    # no regex-lower-case-UPPER pipeline that would match the Python spelling exactly.
+    env_name   = string
+    retrievers = list(string)
+  }))
+  default = {}
+}

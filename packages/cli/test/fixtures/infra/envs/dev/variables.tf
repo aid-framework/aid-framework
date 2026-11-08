@@ -5,6 +5,7 @@ variable "guardrails" {}
 variable "data_stores" {}
 variable "tasks" {}
 variable "alarms" {}
+variable "knowledge_bases" {}
 
 # Business inputs. None of these is derivable from the spec, by design.
 variable "image_uris" {

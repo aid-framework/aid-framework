@@ -27,6 +27,7 @@ export const SUPPORTED_SECTIONS = [
   'tools',
   'stores',
   'retrievers',
+  'knowledgeBases',
   'agents',
   'guardrails',
   'decisions',
@@ -57,6 +58,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.9',
   '0.10',
   '0.11',
+  '0.12',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -74,6 +76,7 @@ export const SECTION_MIN_VERSION: Partial<
   memory: '0.2',
   deployments: '0.2',
   decisions: '0.6',
+  knowledgeBases: '0.12',
 };
 
 /**
@@ -167,6 +170,16 @@ export const GEMINI_PROVIDER_MIN_VERSION: SpecVersion = '0.10';
  * which version it needs rather than having the key dropped.
  */
 export const BEDROCK_GUARDRAIL_MIN_VERSION: SpecVersion = '0.11';
+
+/**
+ * The first spec version that lets a retriever bind to a managed knowledge base.
+ *
+ * `knowledgeBases` is a top-level section, so `SECTION_MIN_VERSION` gates it. The
+ * binding itself lives on `retrievers[].knowledgeBase`, which that map cannot see, and
+ * a 0.11 document that names one would otherwise lose its `source`/`store` requirements
+ * to an unrelated schema error. So the nested binding has its own gate here.
+ */
+export const KNOWLEDGE_BASE_MIN_VERSION: SpecVersion = '0.12';
 
 /** The version gate for every provider id that arrived after the spec that introduced it. */
 const PROVIDER_MIN_VERSIONS: Readonly<Record<string, SpecVersion>> = {
@@ -480,6 +493,7 @@ function scopeDiagnostics(
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
   routeDiagnostics(spec, diagnostics, reported);
+  knowledgeBaseDiagnostics(spec, diagnostics, reported);
 }
 
 /**
@@ -903,6 +917,112 @@ function batchSurfaceDiagnostics(
       }),
     );
     reported.add(JSON.stringify(['deployments', id, 'pipeline']));
+  }
+}
+
+/**
+ * Managed knowledge bases: the version gate for the retriever binding, the two
+ * combinations the schema cannot refuse, and the cross-field check whose schema error
+ * would read as "must be equal to constant".
+ *
+ * A managed knowledge base owns a retriever's `source`, `chunking`, `embedModel`,
+ * `store` and `index`. Declaring one of those beside `knowledgeBase` is refused rather
+ * than silently preferred: a spec that says both has two answers to one question, and
+ * only one of them can be checked against the cloud.
+ */
+function knowledgeBaseDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  const bases = asRecord(spec.knowledgeBases);
+  const baseNames = Object.keys(bases).sort();
+  const needsVersion =
+    declared !== undefined && known && !specVersionAtLeast(declared, KNOWLEDGE_BASE_MIN_VERSION);
+
+  for (const [id, raw] of Object.entries(bases)) {
+    const base = asRecord(raw);
+    const engine = base.engine;
+    const kind = asRecord(base.dataSource).kind;
+    const expected = engine === 'aws-bedrock' ? 's3' : engine === 'vertex-rag' ? 'gcs' : undefined;
+    if (expected === undefined || kind === undefined || kind === expected) continue;
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.knowledgeBaseSource,
+        message: `knowledge base '${id}' uses engine '${String(engine)}' but reads its documents from a '${String(kind)}' data source`,
+        path: ['knowledgeBases', id, 'dataSource', 'kind'],
+        hint: `a '${String(engine)}' knowledge base reads '${expected}' only; the other cloud's bucket is not reachable with this engine's credentials`,
+      }),
+    );
+    reported.add(JSON.stringify(['knowledgeBases', id, 'dataSource']));
+  }
+
+  const owned = ['source', 'chunking', 'embedModel', 'store', 'index'] as const;
+
+  for (const [id, raw] of Object.entries(asRecord(spec.retrievers))) {
+    const retriever = asRecord(raw);
+    const bound = retriever.knowledgeBase;
+    if (bound === undefined) continue;
+
+    if (needsVersion) {
+      // The section gate already told the reader once. Repeating it at the binding, with
+      // a different path, would make a two-line fix look like two problems.
+      if (!alreadyReported(['knowledgeBases'], reported)) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.notSupported,
+            message: `'retrievers.${id}.knowledgeBase' requires specVersion ${KNOWLEDGE_BASE_MIN_VERSION}, but this specification declares version ${String(declared)}`,
+            path: ['retrievers', id, 'knowledgeBase'],
+            hint: `set specVersion: "${KNOWLEDGE_BASE_MIN_VERSION}"; a specification that indexes locally is unchanged by the bump`,
+          }),
+        );
+      }
+      reported.add(JSON.stringify(['retrievers', id]));
+      continue;
+    }
+
+    const named = typeof bound === 'string' ? bound : undefined;
+    if (named === undefined || !Object.hasOwn(bases, named)) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.knowledgeBaseUnknown,
+          message: `retriever '${id}' binds knowledge base '${String(bound)}', which this specification does not declare`,
+          path: ['retrievers', id, 'knowledgeBase'],
+          hint:
+            baseNames.length === 0
+              ? `declare a \`knowledgeBases\` entry named '${String(bound)}'`
+              : `declare \`knowledgeBases.${String(bound)}\`, or bind one of ${baseNames.join(', ')}`,
+        }),
+      );
+      reported.add(JSON.stringify(['retrievers', id]));
+      continue;
+    }
+
+    const redundant = owned.filter((key) => retriever[key] !== undefined);
+    if (redundant.length > 0) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.knowledgeBaseAmbiguous,
+          message: `retriever '${id}' binds knowledge base '${named}' and also declares ${redundant.map((key) => `'${key}'`).join(', ')}; the knowledge base already owns those`,
+          path: ['retrievers', id],
+          hint: `keep \`knowledgeBase: ${named}\` and \`topK\`; move source, chunking and embedModel into \`knowledgeBases.${named}\`. Declaring both would mean indexing the same corpus twice`,
+        }),
+      );
+    }
+
+    if (retriever.refresh !== undefined) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.knowledgeBaseRefresh,
+          message: `retriever '${id}' binds knowledge base '${named}' but declares 'refresh'; the managed engine owns ingestion`,
+          path: ['retrievers', id, 'refresh'],
+          hint: `drop \`refresh\`; the emitted README names the ingestion command for this engine, and \`aid doctor\` reports whether a completed job exists`,
+        }),
+      );
+    }
   }
 }
 
@@ -1842,6 +1962,12 @@ function retrievalDiagnostics(spec: Record<string, unknown>, diagnostics: Diagno
   for (const [name, retrieverNode] of Object.entries(retrievers)) {
     const retriever = asRecord(retrieverNode);
     const at = (...rest: PathSegment[]): DiagnosticPath => ['retrievers', name, ...rest];
+
+    // A managed knowledge base owns its own loader, chunker and ingestion schedule, so
+    // none of the local-pipeline reservations below apply. `filters` stays legal here
+    // for the same reason it is legal on a local retriever's schema: the shape is
+    // allowed, and the IR gate is what refuses a binding this version cannot honour.
+    if (retriever.knowledgeBase !== undefined) continue;
 
     const source = asRecord(retriever.source);
     if (typeof source.kind === 'string' && source.kind !== 'file') {

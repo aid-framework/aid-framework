@@ -5,6 +5,7 @@ variable "guardrails" {}
 variable "data_stores" {}
 variable "tasks" {}
 variable "alarms" {}
+variable "knowledge_bases" {}
 
 variable "gcp_project" {
   description = "The GCP project id resources are created in. Not the aid project name."

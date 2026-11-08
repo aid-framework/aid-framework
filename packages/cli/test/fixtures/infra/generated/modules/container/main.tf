@@ -79,6 +79,7 @@ locals {
         BEDROCK_GUARDRAIL_ID      = aws_bedrock_guardrail.managed[id].guardrail_id
         BEDROCK_GUARDRAIL_VERSION = aws_bedrock_guardrail_version.managed[id].version
       } : {},
+      local.knowledge_base_env[id],
     )
   }
 
@@ -96,6 +97,21 @@ locals {
   managed_guardrails = {
     for id, guardrail in var.guardrails : id => guardrail
     if contains(keys(local.container), id) && contains(local.container[id].guardrail_engines, "bedrock")
+  }
+
+  # Only the bases that exist. `tofu plan` before the first apply sees none, and
+  # emitting a policy with an empty resource would fail the plan rather than skip it.
+  knowledge_base_arns = [for base in values(var.knowledge_bases) : base.arn if base.arn != ""]
+
+  # Exported only to a service that binds one of the base's retrievers, and only once
+  # the base exists: the runtime raises a named error for a missing id, while an empty
+  # string would read as a created base with an empty corpus.
+  knowledge_base_env = {
+    for id, service in local.container : id => {
+      for base_id, base in var.knowledge_bases :
+      base.env_name => base.id
+      if base.id != "" && length(setintersection(toset(base.retrievers), toset(service.ingest))) > 0
+    }
   }
 }
 
@@ -432,6 +448,23 @@ resource "aws_iam_role_policy" "guardrail" {
       Effect   = "Allow"
       Action   = ["bedrock:ApplyGuardrail"]
       Resource = [aws_bedrock_guardrail.managed[each.key].guardrail_arn]
+    }]
+  })
+}
+
+# Retrieve is the only call the app makes: generation stays in this project, where the
+# model gate, the guardrail stage and the cost ledger can see it.
+resource "aws_iam_role_policy" "knowledge_base" {
+  for_each = length(local.knowledge_base_arns) > 0 ? local.container : {}
+  role     = aws_iam_role.task[each.key].id
+  name = "${substr(replace("${var.project.namespace}-${var.project.name}", "/[^A-Za-z0-9-_]/", "-"), 0, 40)}-kb-retrieve"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["bedrock:Retrieve"]
+      Resource = local.knowledge_base_arns
     }]
   })
 }

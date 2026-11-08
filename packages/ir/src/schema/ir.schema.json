@@ -14,6 +14,7 @@
     "prompts",
     "tools",
     "retrievers",
+    "knowledgeBases",
     "embeddings",
     "stores",
     "memory",
@@ -46,6 +47,7 @@
     "pipelines": { "type": "array", "items": { "$ref": "#/$defs/pipeline" } },
     "evals": { "type": "array", "items": { "$ref": "#/$defs/eval" } },
     "retrievers": { "type": "array", "items": { "$ref": "#/$defs/retriever" } },
+    "knowledgeBases": { "type": "array", "items": { "$ref": "#/$defs/knowledgeBase" } },
     "embeddings": { "type": "array", "items": { "$ref": "#/$defs/embedding" } },
     "stores": { "type": "array", "items": { "$ref": "#/$defs/vectorStore" } },
     "memory": { "type": "array", "items": { "$ref": "#/$defs/memory" } },
@@ -935,9 +937,13 @@
       }
     },
     "retriever": {
+      "oneOf": [{ "$ref": "#/$defs/localRetriever" }, { "$ref": "#/$defs/managedRetriever" }]
+    },
+    "localRetriever": {
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "kind",
         "id",
         "source",
         "chunking",
@@ -949,6 +955,7 @@
         "traits"
       ],
       "properties": {
+        "kind": { "const": "local" },
         "id": { "$ref": "#/$defs/identifier" },
         "source": {
           "type": "object",
@@ -1004,6 +1011,75 @@
           }
         },
         "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    },
+    "managedRetriever": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "knowledgeBase", "topK", "traits"],
+      "properties": {
+        "kind": { "const": "managed" },
+        "id": { "$ref": "#/$defs/identifier" },
+        "knowledgeBase": { "$ref": "#/$defs/identifier" },
+        "topK": { "type": "integer", "minimum": 1 },
+        "rerank": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model", "topN"],
+          "properties": {
+            "model": { "type": "string" },
+            "topN": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "filters": { "type": "array", "items": { "type": "string" } },
+        "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
+      }
+    },
+    "knowledgeBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "engine",
+        "dataSource",
+        "chunking",
+        "embedModel",
+        "filterable",
+        "vectorStore"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "engine": { "enum": ["aws-bedrock", "vertex-rag"] },
+        "dataSource": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "uri"],
+          "properties": {
+            "kind": { "enum": ["s3", "gcs"] },
+            "uri": { "type": "string" }
+          }
+        },
+        "chunking": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy", "size", "overlap"],
+          "properties": {
+            "strategy": { "enum": ["fixed", "recursive", "code"] },
+            "size": { "type": "integer", "minimum": 1 },
+            "overlap": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "embedModel": { "type": "string" },
+        "filterable": { "type": "array", "items": { "type": "string" } },
+        "vectorStore": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["provisioned", "existing"] },
+            "arn": { "type": "string" }
+          }
+        }
       }
     },
     "embedding": {

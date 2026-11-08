@@ -42,6 +42,10 @@ export const DIAGNOSTIC_CODES = {
   batchDeploymentWithoutPipeline: 'spec/batch-deployment-without-pipeline',
   batchPipelineUnknown: 'spec/batch-pipeline-unknown',
   batchPipelineNotManual: 'spec/batch-pipeline-not-manual',
+  knowledgeBaseSource: 'spec/knowledge-base-source',
+  knowledgeBaseUnknown: 'spec/knowledge-base-unknown',
+  knowledgeBaseAmbiguous: 'spec/knowledge-base-ambiguous',
+  knowledgeBaseRefresh: 'spec/knowledge-base-refresh',
 } as const;
 
 /** Codes are namespaced `<layer>/<slug>`. This layer's own codes are `spec/*`. */

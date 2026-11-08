@@ -6,7 +6,11 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = "~> 6.0"
+      # 8.4 is where `google_vertex_ai_rag_corpus` arrives, and an env root gets one
+      # version per provider for the whole configuration -- so the knowledge-base
+      # module sets the floor and every GCP module rides it. The 7 and 8 upgrade guides
+      # list no change to a resource emitted here.
+      version = "~> 8.4"
     }
   }
 }

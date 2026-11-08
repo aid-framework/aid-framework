@@ -21,6 +21,7 @@ export const CATALOG_VERSION: string = modelsCatalog.version;
 
 const COST_PROFILES: Record<string, CostProfile> = modelsCatalog.costProfiles;
 const MODELS: Record<string, CatalogModel> = modelsCatalog.models;
+const KNOWLEDGE_BASES: Record<string, CatalogKnowledgeBaseCost> = modelsCatalog.knowledgeBases;
 
 export function catalogCostProfiles(): Record<string, CostProfile> {
   return COST_PROFILES;
@@ -28,6 +29,16 @@ export function catalogCostProfiles(): Record<string, CostProfile> {
 
 export function catalogModel(modelId: string): CatalogModel | undefined {
   return MODELS[modelId];
+}
+
+/** A managed knowledge base's per-query price. A null rate means unverified, not free. */
+export interface CatalogKnowledgeBaseCost {
+  retrievePerQueryUsd: number | null;
+  note?: string;
+}
+
+export function catalogKnowledgeBaseCost(engine: string): CatalogKnowledgeBaseCost | undefined {
+  return KNOWLEDGE_BASES[engine];
 }
 
 /**

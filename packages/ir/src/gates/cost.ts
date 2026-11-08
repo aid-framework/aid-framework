@@ -9,12 +9,23 @@
  *
  * A retrieval path is not free by omission: the candidate chunks a retriever materialises
  * are charged to the model that embeds them, so a retriever with a wide `topK` over large
- * chunks shows up in the estimate and can exceed a declared budget on its own.
+ * chunks shows up in the estimate and can exceed a declared budget on its own. A managed
+ * retriever has no embedder of its own to charge, so its retrieve steps are priced per
+ * query unit from the catalog's `knowledgeBases` table instead of being skipped.
  */
 
-import { catalogCostProfile } from '../catalog/index.js';
+import { catalogCostProfile, catalogKnowledgeBaseCost } from '../catalog/index.js';
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
-import type { CostProfile, EvalShape, IR, ModelShape, PromptShape, StepShape } from '../shapes.js';
+import type {
+  CostProfile,
+  EvalShape,
+  IR,
+  KnowledgeBaseEngine,
+  ModelShape,
+  PromptShape,
+  StepShape,
+} from '../shapes.js';
+import { isManagedRetriever } from '../shapes.js';
 import { type GateOptions, type GateResult, reporter, type SuppressedCheck } from './contract.js';
 
 const SUPPRESSED: SuppressedCheck[] = [];
@@ -34,12 +45,24 @@ export interface ModelCostEstimate {
   cost?: number;
 }
 
+/** One managed knowledge base's contribution to a target's estimated per-run cost. */
+export interface KnowledgeBaseCostEstimate {
+  knowledgeBase: string;
+  engine: KnowledgeBaseEngine;
+  /** Retrieve calls a run makes: one per retrieve step bound to this base. */
+  queries: number;
+  /** Absent when the catalog has no verified rate for the engine. */
+  unitCost?: number;
+}
+
 export interface EvalCostEstimate {
   inputTokens: number;
   outputTokens: number;
-  /** Absent when any model on the target's path is unpriced. */
+  /** Absent when any model or knowledge base on the target's path is unpriced. */
   cost?: number;
   models: ModelCostEstimate[];
+  /** Managed retrieves, priced per query unit rather than per token. */
+  retrieves: KnowledgeBaseCostEstimate[];
   /** The declared budget the estimate is compared against, when there is one. */
   budget?: number;
 }
@@ -50,18 +73,22 @@ export function costGate(ir: IR, options: GateOptions): GateResult {
 
   for (const evalShape of ir.evals) {
     const estimate = estimateEvalCost(ir, evalShape);
-    if (estimate.models.length === 0) continue;
+    if (estimate.models.length === 0 && estimate.retrieves.length === 0) continue;
 
     if (estimate.cost === undefined) {
-      const unpriced = estimate.models.filter((model) => model.cost === undefined);
-      const named = unpriced.map((model) => model.model).join(', ');
+      const named = [
+        ...estimate.models.filter((model) => model.cost === undefined).map((model) => model.model),
+        ...estimate.retrieves
+          .filter((retrieve) => retrieve.unitCost === undefined)
+          .map((retrieve) => `knowledge base "${retrieve.knowledgeBase}" (${retrieve.engine})`),
+      ].join(', ');
       if (estimate.budget !== undefined) {
         diagnostics.push(
           report.error({
             code: IR_DIAGNOSTIC_CODES.costProfileUnknown,
             message: `the cost gate rejected this eval: "${evalShape.id}" declares a budget of ${estimate.budget}, but the costProfile of ${named} is unknown, so the budget cannot be enforced`,
             path: ['evals', evalShape.id, 'metrics'],
-            hint: 'add the model to src/catalog/models.json, set models.<alias>.costProfile, or drop the budget',
+            hint: 'add the model to src/catalog/models.json, set models.<alias>.costProfile, price the knowledge base under knowledgeBases in the same catalog, or drop the budget',
           }),
         );
       } else {
@@ -70,7 +97,7 @@ export function costGate(ir: IR, options: GateOptions): GateResult {
             code: IR_DIAGNOSTIC_CODES.costProfileUnknown,
             message: `the cost gate could not price this eval: the costProfile of ${named} is unknown, so "${evalShape.id}" has no cost estimate`,
             path: ['evals', evalShape.id, 'target'],
-            hint: 'add the model to src/catalog/models.json, or set models.<alias>.costProfile',
+            hint: 'add the model to src/catalog/models.json, set models.<alias>.costProfile, or price the knowledge base under knowledgeBases in the same catalog',
           }),
         );
       }
@@ -118,15 +145,24 @@ export function estimateEvalCost(ir: IR, evalShape: EvalShape): EvalCostEstimate
     addEstimate(estimates, part.model, part.inputTokens, 0);
   }
 
+  const retrieves = retrieveCosts(ir, evalShape);
+
   const parts = [...estimates.values()].sort((left, right) =>
     left.model < right.model ? -1 : left.model > right.model ? 1 : 0,
   );
   const inputTokens = parts.reduce((total, part) => total + part.inputTokens, 0);
   const outputTokens = parts.reduce((total, part) => total + part.outputTokens, 0);
-  const priced = parts.every((part) => part.cost !== undefined);
-  const result: EvalCostEstimate = { inputTokens, outputTokens, models: parts };
+  const priced =
+    parts.every((part) => part.cost !== undefined) &&
+    retrieves.every((retrieve) => retrieve.unitCost !== undefined);
+  const result: EvalCostEstimate = { inputTokens, outputTokens, models: parts, retrieves };
   if (priced) {
-    result.cost = parts.reduce((total, part) => total + (part.cost ?? 0), 0);
+    const modelCost = parts.reduce((total, part) => total + (part.cost ?? 0), 0);
+    const retrieveCost = retrieves.reduce(
+      (total, retrieve) => total + retrieve.queries * (retrieve.unitCost ?? 0),
+      0,
+    );
+    result.cost = modelCost + retrieveCost;
   }
   if (budget !== undefined) result.budget = budget;
   return result;
@@ -197,7 +233,7 @@ function retrievalParts(
   for (const step of stepsForTarget(ir, evalShape)) {
     if (step.kind !== 'retrieve') continue;
     const retriever = ir.retrievers.find((entry) => entry.id === step.retriever);
-    if (retriever === undefined) continue;
+    if (retriever === undefined || isManagedRetriever(retriever)) continue;
     const inputTokens = retriever.topK * Math.ceil(retriever.chunking.size / CHARS_PER_TOKEN);
     const embedModel = models.get(retriever.embedModel);
     if (embedModel !== undefined) parts.push({ model: embedModel, inputTokens });
@@ -208,6 +244,45 @@ function retrievalParts(
     }
   }
   return parts;
+}
+
+/**
+ * The managed retrieves a target performs. Each retrieve step bound to a managed
+ * retriever is one Retrieve call, billed per query unit rather than per token, so it
+ * cannot join `retrievalParts`: a query unit is the call, not `topK` chunks of text.
+ *
+ * When the catalog has no verified rate for the engine the estimate carries no
+ * `unitCost`, which is how the gate tells "free" from "unknown" and refuses to let a
+ * declared budget call it zero.
+ */
+function retrieveCosts(ir: IR, evalShape: EvalShape): KnowledgeBaseCostEstimate[] {
+  const byBase = new Map<string, KnowledgeBaseCostEstimate>();
+  for (const step of stepsForTarget(ir, evalShape)) {
+    if (step.kind !== 'retrieve') continue;
+    const retriever = ir.retrievers.find((entry) => entry.id === step.retriever);
+    if (retriever === undefined || !isManagedRetriever(retriever)) continue;
+    const base = ir.knowledgeBases.find((entry) => entry.id === retriever.knowledgeBase);
+    if (base === undefined) continue;
+    const existing = byBase.get(base.id);
+    if (existing !== undefined) {
+      existing.queries += 1;
+      continue;
+    }
+    const rate = catalogKnowledgeBaseCost(base.engine)?.retrievePerQueryUsd;
+    byBase.set(base.id, {
+      knowledgeBase: base.id,
+      engine: base.engine,
+      queries: 1,
+      ...(rate === null || rate === undefined ? {} : { unitCost: rate }),
+    });
+  }
+  return [...byBase.values()].sort((left, right) =>
+    left.knowledgeBase < right.knowledgeBase
+      ? -1
+      : left.knowledgeBase > right.knowledgeBase
+        ? 1
+        : 0,
+  );
 }
 
 /** The steps of the pipeline an eval target names, or none for a prompt target. */

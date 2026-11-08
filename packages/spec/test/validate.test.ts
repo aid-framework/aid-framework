@@ -9,6 +9,7 @@ import {
   formatPath,
   GEMINI_PROVIDER_MIN_VERSION,
   GOOGLE_PROVIDER_MIN_VERSION,
+  KNOWLEDGE_BASE_MIN_VERSION,
   MODEL_CACHE_MIN_VERSION,
   type PathSegment,
   RETIRED_STEP_KINDS,
@@ -48,13 +49,14 @@ describe('spec version', () => {
     expect(SPEC_VERSION_LATEST).toBe(SUPPORTED_SPEC_VERSIONS[SUPPORTED_SPEC_VERSIONS.length - 1]);
   });
 
-  it('lists the fifteen supported sections, five of which need a later version', () => {
+  it('lists the sixteen supported sections, six of which need a later version', () => {
     expect([...SUPPORTED_SECTIONS].sort()).toEqual([
       'agents',
       'decisions',
       'deployments',
       'evals',
       'guardrails',
+      'knowledgeBases',
       'memory',
       'models',
       'pipelines',
@@ -66,17 +68,18 @@ describe('spec version', () => {
       'tools',
       'types',
     ]);
-    // The version boundary, named explicitly: four sections are supported from 0.2 and
-    // `decisions` from 0.6. A section that gains a minimum version without appearing
-    // here would be enforced by the schema and quietly refused by the scope rule.
-    expect(Object.keys(SECTION_MIN_VERSION).sort()).toEqual([
-      'agents',
-      'decisions',
-      'deployments',
-      'guardrails',
-      'memory',
-    ]);
-    expect(Object.values(SECTION_MIN_VERSION)).toEqual(['0.2', '0.2', '0.2', '0.2', '0.6']);
+    // The version boundary, named explicitly: four sections are supported from 0.2,
+    // `decisions` from 0.6 and `knowledgeBases` from 0.12. A section that gains a
+    // minimum version without appearing here would be enforced by the schema and
+    // quietly refused by the scope rule.
+    expect(SECTION_MIN_VERSION).toEqual({
+      agents: '0.2',
+      decisions: '0.6',
+      deployments: '0.2',
+      guardrails: '0.2',
+      knowledgeBases: '0.12',
+      memory: '0.2',
+    });
   });
 
   it('keeps the supported, deferred and retired step kinds pairwise disjoint', () => {
@@ -122,18 +125,20 @@ describe('valid fixtures', () => {
 
   it('accepts every section declared as supported', () => {
     // No single fixture carries every section: four require spec 0.2, `decisions` needs
-    // 0.6, and the v0.1 fixture is the byte-identical baseline this layer must leave
-    // alone. The union is the assertion, so a supported section that no valid fixture
-    // carries fails here.
+    // 0.6, `knowledgeBases` needs 0.12, and the v0.1 fixture is the byte-identical
+    // baseline this layer must leave alone. The union is the assertion, so a supported
+    // section that no valid fixture carries fails here.
     const fixtureNames = [
       'valid/full.spec.yaml',
       'valid/v02-sections.spec.yaml',
       'valid/v06-decisions.spec.yaml',
+      'valid/v12-knowledge-bases.spec.yaml',
     ] as const;
     const documents = fixtureNames.map(
       (name) => checkSpecText(readFixture(name)).value as Record<string, unknown>,
     );
-    const [v01, v02, v06] = documents as [
+    const [v01, v02, v06, v12] = documents as [
+      Record<string, unknown>,
       Record<string, unknown>,
       Record<string, unknown>,
       Record<string, unknown>,
@@ -147,9 +152,12 @@ describe('valid fixtures', () => {
       [...SUPPORTED_SECTIONS].filter((section) => !(section in SECTION_MIN_VERSION)).sort(),
     );
     expect(Object.keys(v02).sort()).toEqual(
-      [...SUPPORTED_SECTIONS].filter((section) => section !== 'decisions').sort(),
+      [...SUPPORTED_SECTIONS]
+        .filter((section) => section !== 'decisions' && section !== 'knowledgeBases')
+        .sort(),
     );
     expect(Object.keys(v06).sort()).toEqual(['decisions', 'project', 'specVersion']);
+    expect(Object.keys(v12).sort()).toEqual(['knowledgeBases', 'project', 'specVersion']);
   });
 });
 
@@ -877,6 +885,165 @@ describe('rule-level unit tests', () => {
 
     const bare = validateSpec({ specVersion: '0.1', project: { name: 'p' }, modles: {} });
     expect(bare[0]?.line).toBeUndefined();
+  });
+});
+
+describe('managed knowledge bases', () => {
+  const base = {
+    engine: 'aws-bedrock',
+    dataSource: { kind: 's3', uri: 's3://docs-bucket/corpus' },
+    chunking: { strategy: 'fixed', size: 512, overlap: 64 },
+    embedModel: 'embed',
+  } as const;
+
+  function managed(overrides: Record<string, unknown> = {}, version = '0.12') {
+    return {
+      specVersion: version,
+      project: { name: 'p' },
+      knowledgeBases: { docs: base },
+      retrievers: { docs: { knowledgeBase: 'docs', topK: 4 } },
+      ...overrides,
+    };
+  }
+
+  it('accepts a retriever bound to a managed knowledge base', () => {
+    expect(validateSpec(managed())).toEqual([]);
+  });
+
+  it('refuses the section below spec 0.12 and names the version it needs', () => {
+    const diagnostics = validateSpec(managed({}, '0.11'));
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['knowledgeBases']);
+    expect(diagnostics[0]?.message).toContain("'knowledgeBases' requires specVersion 0.12");
+    expect(diagnostics[0]?.hint).toContain(`set specVersion: "${KNOWLEDGE_BASE_MIN_VERSION}"`);
+  });
+
+  it('gates the retriever binding even when no section is declared', () => {
+    // The section gate cannot see `retrievers[].knowledgeBase`, and a 0.11 document that
+    // names one has no `source`, so without this rule it would validate and then index
+    // nothing at build time.
+    const diagnostics = validateSpec({
+      specVersion: '0.11',
+      project: { name: 'p' },
+      retrievers: { docs: { knowledgeBase: 'docs', topK: 4 } },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['retrievers.docs.knowledgeBase']);
+    expect(diagnostics[0]?.message).toContain(
+      "'retrievers.docs.knowledgeBase' requires specVersion 0.12",
+    );
+  });
+
+  it('refuses a retriever that declares a local pipeline beside a knowledge base', () => {
+    for (const owned of ['source', 'chunking', 'embedModel', 'store', 'index']) {
+      const value =
+        owned === 'source'
+          ? { kind: 'file', uri: './corpus' }
+          : owned === 'chunking'
+            ? { strategy: 'recursive', size: 512, overlap: 64 }
+            : owned === 'embedModel'
+              ? 'embed'
+              : owned === 'store'
+                ? 'vectors'
+                : { metric: 'cosine' };
+      const diagnostics = validateSpec({
+        ...managed(),
+        retrievers: { docs: { knowledgeBase: 'docs', topK: 4, [owned]: value } },
+      });
+      expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.knowledgeBaseAmbiguous]);
+      expect(paths(diagnostics)).toEqual(['retrievers.docs']);
+      expect(diagnostics[0]?.message).toContain(`also declares '${owned}'`);
+    }
+  });
+
+  it('refuses refresh on a managed retriever, because ingestion is the engine’s', () => {
+    const diagnostics = validateSpec({
+      ...managed(),
+      retrievers: { docs: { knowledgeBase: 'docs', topK: 4, refresh: { mode: 'full' } } },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.knowledgeBaseRefresh]);
+    expect(paths(diagnostics)).toEqual(['retrievers.docs.refresh']);
+    expect(diagnostics[0]?.hint).toContain('aid doctor');
+  });
+
+  it('allows filters on a managed retriever, which both engines evaluate natively', () => {
+    const diagnostics = validateSpec({
+      ...managed(),
+      retrievers: {
+        docs: {
+          knowledgeBase: 'docs',
+          topK: 4,
+          filters: ['tenant = "acme"'],
+        },
+      },
+    });
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('refuses a binding that names a knowledge base the spec does not declare', () => {
+    const diagnostics = validateSpec({
+      ...managed(),
+      retrievers: { docs: { knowledgeBase: 'missing', topK: 4 } },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.knowledgeBaseUnknown]);
+    expect(paths(diagnostics)).toEqual(['retrievers.docs.knowledgeBase']);
+    expect(diagnostics[0]?.hint).toContain('knowledgeBases.missing');
+  });
+
+  it('refuses a data source from the other cloud, naming the engine', () => {
+    const diagnostics = validateSpec({
+      ...managed(),
+      knowledgeBases: { docs: { ...base, dataSource: { kind: 'gcs', uri: 'gs://b/c' } } },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.knowledgeBaseSource]);
+    expect(paths(diagnostics)).toEqual(['knowledgeBases.docs.dataSource.kind']);
+    expect(diagnostics[0]?.message).toContain("engine 'aws-bedrock'");
+    expect(diagnostics[0]?.hint).toContain("reads 's3' only");
+  });
+
+  it('binds the vertex engine to a gcs source the same way', () => {
+    expect(
+      validateSpec({
+        ...managed(),
+        knowledgeBases: { docs: { ...base, engine: 'vertex-rag' } },
+      }),
+    ).toHaveLength(1);
+
+    expect(
+      validateSpec({
+        ...managed(),
+        knowledgeBases: {
+          docs: { ...base, engine: 'vertex-rag', dataSource: { kind: 'gcs', uri: 'gs://b/c' } },
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it('requires an arn when the vector store already exists', () => {
+    const without = validateSpec({
+      ...managed(),
+      knowledgeBases: { docs: { ...base, vectorStore: { kind: 'existing' } } },
+    });
+    expect(codes(without)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(without)[0]).toContain('knowledgeBases.docs.vectorStore');
+
+    const withArn = validateSpec({
+      ...managed(),
+      knowledgeBases: {
+        docs: { ...base, vectorStore: { kind: 'existing', arn: 'arn:aws:opensearch:...' } },
+      },
+    });
+    expect(withArn).toEqual([]);
+  });
+
+  it('still requires a source from a local retriever at 0.12', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.12',
+      project: { name: 'p' },
+      retrievers: { docs: { topK: 4 } },
+    });
+    expect(codes(diagnostics)).toContain(DIAGNOSTIC_CODES.schemaViolation);
+    expect(paths(diagnostics)).toContain('retrievers.docs.source');
   });
 });
 

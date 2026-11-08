@@ -198,7 +198,15 @@ from aid_runtime.retrieval import (
     IndexSpec,
     IngestReport,
     InMemoryVectorStore,
+    KnowledgeBaseEngine,
+    KnowledgeBaseSpec,
+    KnowledgeChunkingSpec,
+    KnowledgeDataSourceKind,
+    KnowledgeDataSourceSpec,
+    KnowledgeVectorStoreSpec,
     LexicalReranker,
+    ManagedRetrieverBinding,
+    ManagedRetrieverSpec,
     MeanReciprocalRank,
     OpenAICompatibleEmbedder,
     PgVectorStore,
@@ -229,6 +237,7 @@ from aid_runtime.retrieval import (
     VectorStore,
     VectorStoreSpec,
     assemble_context,
+    binding_from_managed_spec,
     binding_from_spec,
     bm25_scores,
     chunk_document,
@@ -301,7 +310,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.98"
+__version__ = "0.1.99"
 
 __all__ = [
     "ANTHROPIC_VERSION",
@@ -405,9 +414,17 @@ __all__ = [
     "IngestReport",
     "JsonSchemaValid",
     "JudgeVerdict",
+    "KnowledgeBaseEngine",
+    "KnowledgeBaseSpec",
+    "KnowledgeChunkingSpec",
+    "KnowledgeDataSourceKind",
+    "KnowledgeDataSourceSpec",
+    "KnowledgeVectorStoreSpec",
     "LedgerEntry",
     "LexicalReranker",
     "LlmJudge",
+    "ManagedRetrieverBinding",
+    "ManagedRetrieverSpec",
     "MeanReciprocalRank",
     "MemoryDefinition",
     "MemoryStore",
@@ -500,6 +517,7 @@ __all__ = [
     "agent_span",
     "aid_attributes",
     "assemble_context",
+    "binding_from_managed_spec",
     "binding_from_spec",
     "bm25_scores",
     "branch",

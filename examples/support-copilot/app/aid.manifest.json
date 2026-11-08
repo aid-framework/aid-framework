@@ -215,14 +215,14 @@
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/retrieval/__init__.py",
-      "sha256": "2a614dd2ad164ac59954033c15f424ca55290f38af30e688e844420cd05e400c"
+      "sha256": "25d06a2388a44a9fee98c479ae124671d8c6b5be900815b53d6a4c8428be6cc1"
     },
     {
       "generator": "@aid-framework/generator-py-fastapi",
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/retrieval/bindings.py",
-      "sha256": "4d566bb9ab9d82fc45e47ef2fc4785b7aaa14738b8df268295cfc43b473bfb48"
+      "sha256": "51daf633c8383b081faf92f7d07c993bcbaa0969fa1d34524d9d73a70725edd3"
     },
     {
       "generator": "@aid-framework/generator-py-fastapi",
@@ -236,7 +236,7 @@
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/retrieval/ingest/handbook.py",
-      "sha256": "3f1e75fcd31d76e871bfd0a2c22fd0efe74c816a238220f5df0ee90e4556bd68"
+      "sha256": "b55c2d677cd23421156991fbbdca73378d0097ffdf2e0cf1543aad74984f4af2"
     },
     {
       "generator": "@aid-framework/generator-py-fastapi",
