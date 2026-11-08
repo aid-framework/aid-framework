@@ -19,6 +19,7 @@ import { emitInfra } from '../src/infra/emit.js';
 import {
   BATCH_MODULE_DIR,
   CDK_DIR,
+  CDK_KNOWLEDGE_BASE_MODULE,
   CDK_SERVERLESS_MODULE,
   CLOUDRUN_MODULE_DIR,
   CLOUDRUNJOB_MODULE_DIR,
@@ -1246,9 +1247,20 @@ describe('the validate fixture', () => {
     expect(fixture).toBe(construct.contents);
   });
 
+  it('matches the emitted knowledge base construct byte for byte', () => {
+    const files = emitCdkModules(AWS_KB, 'aws');
+    const base = files.find((file) => file.path === CDK_KNOWLEDGE_BASE_MODULE);
+    if (base === undefined) {
+      throw new Error('the knowledge base construct was not emitted');
+    }
+    const fixture = readFileSync(join(FIXTURE, 'generated', 'cdk', 'knowledge-base.cjs'), 'utf8');
+    expect(fixture).toBe(base.contents);
+  });
+
   it('wires the CDK app to the construct it synthesises', () => {
     const app = readFileSync(join(FIXTURE, 'cdk', 'bin', 'app.js'), 'utf8');
     expect(app).toContain("require('../../generated/cdk/serverless.cjs')");
+    expect(app).toContain("require('../../generated/cdk/knowledge-base.cjs')");
     expect(app).toContain("path.join(here, 'context.json')");
   });
 
@@ -1310,6 +1322,22 @@ describe('the CDK construct', () => {
   it('is not emitted for GCP or for a plan with no serverless service', () => {
     expect(emitCdkModules(planOf('serverless'), 'gcp')).toEqual([]);
     expect(emitCdkModules(planOf('container', 'batch'), 'aws')).toEqual([]);
+  });
+
+  it('adds the knowledge base construct beside the serverless one', () => {
+    const paths = emitCdkModules(AWS_KB, 'aws').map((file) => file.path);
+    expect(paths).toEqual([CDK_SERVERLESS_MODULE, CDK_KNOWLEDGE_BASE_MODULE]);
+  });
+
+  it('emits the knowledge base construct on its own for a base without serverless', () => {
+    const container = { ...AWS_KB, services: [{ id: 'api', target: 'container' }] } as DeployPlan;
+    expect(emitCdkModules(container, 'aws').map((file) => file.path)).toEqual([
+      CDK_KNOWLEDGE_BASE_MODULE,
+    ]);
+  });
+
+  it('emits nothing for a Vertex base on AWS, which it cannot provision', () => {
+    expect(emitCdkModules({ ...GCP_KB, services: [] } as DeployPlan, 'aws')).toEqual([]);
   });
 
   it('refuses what the HCL module refuses, in the same words', () => {

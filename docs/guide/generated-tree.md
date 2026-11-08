@@ -254,6 +254,7 @@ infra/
       main.tf
       outputs.tf
     cdk/serverless.cjs                  generated, when a deployment targets serverless on AWS
+    cdk/knowledge-base.cjs              generated, when an `aws-bedrock` base is declared
   envs/dev/                             yours
     main.tf
     variables.tf
@@ -272,15 +273,20 @@ the generated tfvars
 instead of naming services, which is what lets it be validated once and be correct for every
 project.
 
-Beside the modules sits one CDK file: `generated/cdk/serverless.cjs`. It is the AWS CDK
+Beside the modules sit the CDK files. `generated/cdk/serverless.cjs` is the AWS CDK
 counterpart of `modules/serverless` - the construct an app adds to a stack with
-`addServerless(scope, context, inputs)` - and it reads `deploy.cdk-context.json`, the same
-document the HCL module reads, so the two backends cannot disagree about what a service is.
-It is emitted only on AWS and only when a deployment targets `serverless`; OpenTofu/Terraform
-stays the default and CDK is the alternative. The extension is `.cjs` rather than `.js`
-because a generated project may be an ES module, and a `.js` construct there would be parsed
-as ESM before `require` could run. Its bytes are constant for the same reason the modules'
-are: `cdk synth` validates it once in CI instead of once per project.
+`addServerless(scope, context, inputs)`. `generated/cdk/knowledge-base.cjs` is the
+counterpart of `modules/knowledge-base`, exporting `addKnowledgeBase(scope, context, inputs)`
+and returning each base's id and ARN, which a stack passes to `addServerless` as the
+`knowledgeBases` input so a bound service learns the base id and its role may call
+`Retrieve`. Both read `deploy.cdk-context.json`, the same document the HCL modules read, so
+the two backends cannot disagree about what a service is or which base exists.
+Each is emitted only on AWS, and only when the plan declares what it provisions
+(`serverless`, or an `aws-bedrock` base); OpenTofu/Terraform stays the default and CDK is
+the alternative. The extension is `.cjs` rather than `.js` because a generated project may
+be an ES module, and a `.js` construct there would be parsed as ESM before `require` could
+run. Its bytes are constant for the same reason the modules' are: `cdk synth` validates it
+once in CI instead of once per project.
 
 The env root is yours and is never written by `aid infra gen`. `infra/envs/<env>/main.tf`
 (AWS) or `infra/envs/gcp-<env>/main.tf` (GCP) calls one module per platform the plan targets -
