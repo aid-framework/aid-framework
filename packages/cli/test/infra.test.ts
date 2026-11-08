@@ -1209,6 +1209,92 @@ pipelines:
 });
 
 describe('infra with cdk', () => {
+  /** `batch` and `edge` have tofu modules but no construct; this is the shape that names them. */
+  const EDGE_SPEC = `specVersion: "0.5"
+project:
+  name: ping
+  namespace: aid.test.ping
+  targets: [py-fastapi]
+models:
+  small:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  answer:
+    version: 1
+    model: small
+    template: "Answer the request."
+    output:
+      kind: text
+guardrails:
+  inbound:
+    stages: [input]
+    policies: [prompt-injection]
+    action: block
+    onFail:
+      message: rejected.
+      log: true
+deployments:
+  ping:
+    target: edge
+    secrets: [OPENAI_API_KEY]
+pipelines:
+  ping:
+    trigger:
+      http:
+        method: get
+        path: /ping
+    steps:
+      - generate:
+          prompt: answer
+          as: reply
+`;
+
+  const RUNTIME_SPEC = `specVersion: "0.13"
+project:
+  name: runtime
+  namespace: aid.test.runtime
+  targets: [py-fastapi]
+models:
+  fast:
+    provider: fake
+    modelId: fake-deterministic-1
+    capabilities: [json-schema]
+prompts:
+  draft:
+    version: 1
+    model: fast
+    template: "Hello."
+    output:
+      kind: text
+guardrails:
+  inbound:
+    stages: [input]
+    policies: [prompt-injection]
+    action: block
+    onFail:
+      message: rejected.
+      log: true
+pipelines:
+  chat:
+    trigger:
+      http:
+        method: post
+        path: /chat
+    steps:
+      - generate:
+          prompt: draft
+          as: reply
+deployments:
+  api:
+    target: container
+    runtime:
+      platform: aws-agentcore
+    secrets: []
+`;
+
   function cdkGenerated(): ReturnType<typeof project> {
     const made = scratch();
     expect(aid(made, ['infra', 'gen']).code).toBe(0);
@@ -1318,6 +1404,49 @@ describe('infra with cdk', () => {
 
     expect(run.code).toBe(2);
     expect(diagnosticsOf(run).map((d) => d.code)).toEqual(['cli/infra-unknown-iac']);
+    expect(spawn.calls).toHaveLength(0);
+  });
+
+  // A construct exists for serverless, container and managed knowledge bases only. The
+  // alternative to these refusals is an app that synths cleanly and deploys part of the
+  // project, which is the one outcome a deploy tool must never produce.
+  it.each([
+    ['batch', BATCH_SPEC, 'nightly', 'batch'],
+    ['edge', EDGE_SPEC, 'ping', 'edge'],
+  ])('refuses a %s deployment instead of emitting a partial app', (_label, spec, id, target) => {
+    const made = scratchSpec(spec);
+    const run = aid(made, ['infra', 'gen', '--iac', 'cdk', '--json']);
+
+    expect(run.code).toBe(2);
+    const [diagnostic] = diagnosticsOf(run);
+    expect(diagnostic?.code).toBe('cli/infra-cloud-backend-unsupported');
+    expect(diagnostic?.message).toContain(`"${id}"`);
+    expect(diagnostic?.message).toContain(`\`${target}\``);
+    expect(made.walk()).not.toContain(TFVARS);
+  });
+
+  it('refuses a managed agent runtime, which has no construct either', () => {
+    const made = scratchSpec(RUNTIME_SPEC);
+    const run = aid(made, ['infra', 'gen', '--iac', 'cdk', '--json']);
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run)[0]?.code).toBe('cli/infra-cloud-backend-unsupported');
+    expect(diagnosticsOf(run)[0]?.message).toContain('managed agent runtime');
+    expect(made.walk()).not.toContain(TFVARS);
+  });
+
+  // `plan` and `apply` read the emitted plan, not the spec, so a `gen` run without
+  // `--iac cdk` would otherwise let a partial app be driven.
+  it('refuses a saved batch plan before spawning cdk', () => {
+    const made = scratchSpec(BATCH_SPEC);
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+    made.write('infra/cdk/dev/.keep', '');
+    const spawn = recordingSpawn({ status: 0 });
+    const run = aid(made, ['infra', 'plan', '--iac', 'cdk', '--json'], spawn);
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run).map((d) => d.code)).toEqual(['cli/infra-cloud-backend-unsupported']);
+    expect(diagnosticsOf(run)[0]?.message).toContain('"nightly"');
     expect(spawn.calls).toHaveLength(0);
   });
 });
