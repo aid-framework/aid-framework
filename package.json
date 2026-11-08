@@ -37,8 +37,8 @@
     "prepare": "lefthook install"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.3",
-    "@types/node": "^26.6.5",
+    "@biomejs/biome": "^2.6.4",
+    "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "^5.0.5",
     "ajv": "^8.20.0",
     "lefthook": "^2.2.2",
