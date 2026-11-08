@@ -15,7 +15,7 @@
  * installed.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AidManifest, AidManifestProvenance, Plan } from '@aid-framework/generator-sdk';
 import {
@@ -52,6 +52,7 @@ import {
   INFRA_CDK_CONTEXT_PATH,
   INFRA_GENERATED_DIR,
   INFRA_MANIFEST_PATH,
+  INFRA_PLAN_PATH,
 } from '../infra/emit.js';
 import type { InfraAction } from '../infra/tofu.js';
 import {
@@ -222,7 +223,7 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
           cliError({
             code: CLI_DIAGNOSTIC_CODES.infraCloudTargetUnsupported,
             message: `The plan targets ${missing.join(', ')}, which GCP has no module for: ${services}.`,
-            hint: 'On GCP only `container` (Cloud Run) has a module. Retarget the service, or deploy this environment with --cloud aws.',
+            hint: 'On GCP `serverless`, `container` and `batch` all have modules; only `edge` does not. Retarget the service, or deploy this environment with --cloud aws.',
           }),
         ],
       });
@@ -305,23 +306,19 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
     });
   }
 
-  // A CDK construct for a managed runtime does not exist, so a CDK app for this plan would
-  // synth cleanly and deploy a service with no compute behind it. Refuse for the same
-  // reason a GCP CDK app is refused: an empty app is worse than a refusal.
-  const managed = deployPlan.services.filter((service) => service.runtime !== undefined);
-  if (options.iac === 'cdk' && managed.length > 0) {
-    const services = managed.map((service) => `"${service.id}"`).join(', ');
+  // CDK constructs exist for `serverless`, `container` and managed knowledge bases only.
+  // A plan naming anything else would synth a clean app that deploys part of the project,
+  // so it is refused for the same reason a GCP CDK app is: an empty app is worse than a
+  // refusal. `action()` repeats this check against the emitted plan, because `plan` and
+  // `apply` read that file rather than the spec and would otherwise accept a plan written
+  // by a `gen` that had no `--iac cdk` to warn it.
+  const obstacles = cdkObstacles(deployPlan.services);
+  if (options.iac === 'cdk' && obstacles.length > 0) {
     return outcome({
       command,
       exitCode: EXIT_USAGE,
       fields,
-      diagnostics: [
-        cliError({
-          code: CLI_DIAGNOSTIC_CODES.infraCloudBackendUnsupported,
-          message: `Service ${services} runs on a managed agent runtime, which the CDK backend does not emit.`,
-          hint: 'Use --iac tofu, which emits the managed runtime module.',
-        }),
-      ],
+      diagnostics: [cdkObstacleDiagnostic(obstacles)],
     });
   }
 
@@ -502,6 +499,96 @@ function destroyingKnowledgeBases(context: CliContext, env: string, cloud: Cloud
   return destroyedKnowledgeBases(shown.stdout);
 }
 
+/** A service the CDK backend cannot represent, and why. */
+interface CdkObstacle {
+  /** `runtime`: a managed agent runtime; `target`: a target with no construct. */
+  readonly reason: 'runtime' | 'target';
+  readonly id: string;
+  /** The target name, when that is the obstacle. */
+  readonly detail?: string;
+}
+
+/** The part of a saved plan this check needs, so a hand-edited file cannot lie about more. */
+interface SavedPlanService {
+  readonly id: string;
+  readonly target: string;
+  readonly runtime?: unknown;
+}
+
+/**
+ * The services a CDK app would silently drop.
+ *
+ * `target` rather than a fixed `batch`/`edge` list so a target added later fails closed
+ * instead of deploying a partial project.
+ */
+function cdkObstacles(services: readonly SavedPlanService[]): CdkObstacle[] {
+  const obstacles: CdkObstacle[] = [];
+  for (const service of services) {
+    if (service.runtime !== undefined) {
+      obstacles.push({ reason: 'runtime', id: service.id });
+    } else if (service.target !== 'serverless' && service.target !== 'container') {
+      obstacles.push({ reason: 'target', id: service.id, detail: service.target });
+    }
+  }
+  return obstacles;
+}
+
+function cdkObstacleDiagnostic(obstacles: readonly CdkObstacle[]): CliDiagnostic {
+  const quote = (list: readonly CdkObstacle[]): string =>
+    list.map((obstacle) => `"${obstacle.id}"`).join(', ');
+  const managed = obstacles.filter((obstacle) => obstacle.reason === 'runtime');
+  const targets = obstacles.filter((obstacle) => obstacle.reason === 'target');
+
+  const sentences: string[] = [];
+  if (managed.length > 0) {
+    sentences.push(
+      `Service ${quote(managed)} runs on a managed agent runtime, which the CDK backend does not emit.`,
+    );
+  }
+  if (targets.length > 0) {
+    const named = [...new Set(targets.map((obstacle) => obstacle.detail ?? ''))]
+      .map((target) => `\`${target}\``)
+      .join(', ');
+    sentences.push(
+      `Service ${quote(targets)} targets ${named}, which the CDK backend does not emit a construct for.`,
+    );
+  }
+
+  return cliError({
+    code: CLI_DIAGNOSTIC_CODES.infraCloudBackendUnsupported,
+    message: sentences.join(' '),
+    hint: 'Use --iac tofu, which emits a module for every target and the managed runtime, or retarget the service to `serverless` or `container`.',
+  });
+}
+
+/**
+ * The same obstacles, read from the plan `gen` wrote.
+ *
+ * A file that is missing or unreadable yields no obstacles on purpose: the caller has
+ * already refused a missing context, and inventing a second diagnostic here would hide
+ * the real one.
+ */
+function savedPlanObstacles(context: CliContext): CdkObstacle[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(join(context.cwd, ...INFRA_PLAN_PATH.split('/')), 'utf8'));
+  } catch {
+    return [];
+  }
+  if (typeof parsed !== 'object' || parsed === null) return [];
+  const services = (parsed as { services?: unknown }).services;
+  if (!Array.isArray(services)) return [];
+
+  const known = services.filter(
+    (service): service is SavedPlanService =>
+      typeof service === 'object' &&
+      service !== null &&
+      typeof (service as { id?: unknown }).id === 'string' &&
+      typeof (service as { target?: unknown }).target === 'string',
+  );
+  return cdkObstacles(known);
+}
+
 function action(
   context: CliContext,
   options: InfraOptions,
@@ -557,6 +644,20 @@ function action(
         }),
       ],
     });
+  }
+
+  // `plan`, `apply` and `drift` never read the spec, so the plan they are about to use is
+  // the only thing that can refuse a partial CDK app here.
+  if (iac === 'cdk') {
+    const obstacles = savedPlanObstacles(context);
+    if (obstacles.length > 0) {
+      return outcome({
+        command,
+        exitCode: EXIT_USAGE,
+        fields,
+        diagnostics: [cdkObstacleDiagnostic(obstacles)],
+      });
+    }
   }
 
   const result = backend.run(options.json ? 'pipe' : 'inherit');
