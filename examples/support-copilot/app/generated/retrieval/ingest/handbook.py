@@ -19,6 +19,7 @@ from aid_runtime import (
     CostLedger,
     FeatureDeferredError,
     IngestReport,
+    RetrieverBinding,
     chunker_for,
     open_connector,
 )
@@ -50,6 +51,10 @@ async def _plan(retriever_id: str) -> tuple[int, int]:
     """
 
     binding = build_binding(retriever_id)
+    if not isinstance(binding, RetrieverBinding):
+        raise ConfigurationError(
+            f"retriever {retriever_id!r} ingests inside its knowledge base, not here"
+        )
     connector = open_connector(binding.source, base_dir=APP_ROOT)
     try:
         documents = await connector.documents()

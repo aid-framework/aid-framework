@@ -677,9 +677,15 @@ describe('the pre-P7b example', () => {
    * declaration-only move: a managed knowledge base makes the retriever a discriminated union,
    * so every emitted retriever spec gained `"kind": "local"` and `build_binding` gained a
    * managed branch. That is a payload-shape change reaching every spec, not one this fixture
-   * could opt out of, so the new bytes are pinned rather than excluded. Only these two files
-   * moved: `ingest/` is unchanged, because a spec with no managed retriever still ingests
-   * locally. Leaving them out of `moved` below is the point -- a third file moving still fails.
+   * could opt out of, so the new bytes are pinned rather than excluded. `retrieval/ingest/` is
+   * unchanged by that change: a spec with no managed retriever still ingests locally.
+   *
+   * `retrieval/ingest/<id>.py` is then re-recorded once more, for the union the two files above
+   * introduced: `build_binding` now returns `RetrieverBinding | ManagedRetrieverBinding`, so the
+   * dry-run plan refuses a managed binding by name before reading `.source`. The typed check is
+   * a no-op for the specs this emitter runs on -- it only emits ingest modules for local
+   * retrievers -- but it is what keeps the module type-checking against the wider return type.
+   * Leaving the pin behind is the point -- a further file moving still fails.
    */
   const DECLARATION_ONLY = 'app/generated/observability.py';
 

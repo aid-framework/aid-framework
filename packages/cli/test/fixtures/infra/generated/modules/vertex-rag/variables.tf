@@ -52,7 +52,7 @@ variable "knowledge_bases" {
 }
 
 variable "tags" {
-  description = "Labels applied to the corpus. Vertex accepts the same key/value shape as every other resource."
+  description = "The environment tag set. Accepted so every module shares one call signature, but the Vertex RAG resources expose no labels argument, so it is not applied."
   type        = map(string)
   default     = {}
 }

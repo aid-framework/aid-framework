@@ -164,9 +164,11 @@ class KnowledgeBaseClient(Protocol):
         *,
         top_k: int,
         filters: Sequence[str] = (),
-    ) -> KnowledgeResult: ...
+    ) -> KnowledgeResult:
+        """One retrieve against the base, with the filters the caller asked for."""
 
-    async def aclose(self) -> None: ...
+    async def aclose(self) -> None:
+        """Release whatever the client holds open."""
 
 
 class _HttpKnowledgeBaseClient:

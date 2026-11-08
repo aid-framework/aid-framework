@@ -236,7 +236,7 @@
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/retrieval/ingest/handbook.py",
-      "sha256": "3f1e75fcd31d76e871bfd0a2c22fd0efe74c816a238220f5df0ee90e4556bd68"
+      "sha256": "b55c2d677cd23421156991fbbdca73378d0097ffdf2e0cf1543aad74984f4af2"
     },
     {
       "generator": "@aid-framework/generator-py-fastapi",

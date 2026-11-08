@@ -43,7 +43,8 @@ export const DEPLOY_PLAN_VERSION = '1';
 export function knowledgeBaseEnvName(id: string, engine: KnowledgeBaseEngine): string {
   const slug = id
     .replace(/[^A-Za-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
+    .replace(/^_+/, '')
+    .replace(/_+$/, '')
     .toUpperCase();
   const prefix = engine === 'aws-bedrock' ? 'BEDROCK_KNOWLEDGE_BASE' : 'VERTEX_RAG_CORPUS';
   return `${prefix}_${slug}`;

@@ -98,7 +98,8 @@ resource "google_vertex_ai_rag_corpus" "this" {
   display_name = local.name[each.key]
   description  = "The ${each.value.data_source.kind} corpus ${each.key} indexes for ${var.project.namespace}."
   region       = var.region
-  labels       = var.tags
+  # No `labels` here: `google_vertex_ai_rag_corpus` does not expose one. Tag the
+  # bucket or the project instead of expecting a label on the corpus.
   # Delete protection at the API level. `prevent_destroy` below stops a plan from even
   # proposing a destroy; this stops an out-of-band one too.
   deletion_policy = "PREVENT"

@@ -20,7 +20,7 @@
   "app/generated/retrieval/__init__.py": "25d06a2388a44a9fee98c479ae124671d8c6b5be900815b53d6a4c8428be6cc1",
   "app/generated/retrieval/bindings.py": "ab62903f65d6c9adde4b6f3c4037b985764ae1ea3010452820736feae4c218b0",
   "app/generated/retrieval/ingest/__init__.py": "1cde86b02998f4b5082cfb69de09693ea311624eafb29f48402b02200eaa197f",
-  "app/generated/retrieval/ingest/handbook.py": "3f1e75fcd31d76e871bfd0a2c22fd0efe74c816a238220f5df0ee90e4556bd68",
+  "app/generated/retrieval/ingest/handbook.py": "b55c2d677cd23421156991fbbdca73378d0097ffdf2e0cf1543aad74984f4af2",
   "app/generated/routes/__init__.py": "8d2abbce657fb24137bd9381c09c0ebfcf8c8a830aad9757af1fd1f0879a5e04",
   "app/generated/routes/answer_ticket.py": "4e8b7bd50126528ac5974c0e50b2d10b939e6635edb63b0ac310942785a7b1bd",
   "app/generated/schemas.py": "ebf73a31247486b8cadc627ca81af2a22faaeecabd576c62a31ee1f60be0c4dc",

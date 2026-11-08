@@ -9,6 +9,7 @@ rather than "the corpus is empty". Both are asserted as raised, not as logged.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -239,7 +240,9 @@ def test_the_service_id_environment_name_is_per_base_and_per_engine() -> None:
     assert knowledge_base_env_id(other) == "BEDROCK_KNOWLEDGE_BASE_SUPPORT_DOCS"
 
 
-def test_the_factory_prefers_a_fixture_over_the_engine(tmp_path, monkeypatch) -> None:
+def test_the_factory_prefers_a_fixture_over_the_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "kb.json"
     path.write_text(json.dumps({"bases": {}}), encoding="utf-8")
     monkeypatch.setenv("AID_KNOWLEDGE_BASE_FIXTURE", str(path))
@@ -249,7 +252,7 @@ def test_the_factory_prefers_a_fixture_over_the_engine(tmp_path, monkeypatch) ->
     assert isinstance(knowledge_base_client_for(base_spec()), FixtureKnowledgeBaseClient)
 
 
-def test_a_missing_fixture_file_is_reported_rather_than_guessed(tmp_path) -> None:
+def test_a_missing_fixture_file_is_reported_rather_than_guessed(tmp_path: Path) -> None:
     from aid_runtime.retrieval import knowledge_base_client_for
 
     missing = tmp_path / "nope.json"
