@@ -138,7 +138,7 @@ const MAIN_TF = hcl([
   '    if contains(service.providers, "bedrock")',
   '  }',
   '',
-  '  bedrock_region = var.bedrock_region != "" ? var.bedrock_region : data.aws_region.current.name',
+  '  bedrock_region = var.bedrock_region != "" ? var.bedrock_region : data.aws_region.current.region',
   '',
   '  # Only a service with a route can be reached through the API, and a plan with no',
   '  # route needs no API at all -- so the gateway is keyed off this, not off services.',

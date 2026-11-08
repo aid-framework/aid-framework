@@ -23,7 +23,7 @@ locals {
     if contains(service.providers, "bedrock")
   }
 
-  bedrock_region = var.bedrock_region != "" ? var.bedrock_region : data.aws_region.current.name
+  bedrock_region = var.bedrock_region != "" ? var.bedrock_region : data.aws_region.current.region
 
   routed = {
     for id, service in local.container : id => service
@@ -504,7 +504,7 @@ resource "aws_ecs_task_definition" "service" {
       logDriver = "awslogs"
       options = {
         awslogs-group         = aws_cloudwatch_log_group.service[each.key].name
-        awslogs-region        = data.aws_region.current.name
+        awslogs-region        = data.aws_region.current.region
         awslogs-stream-prefix = "ecs"
       }
     }

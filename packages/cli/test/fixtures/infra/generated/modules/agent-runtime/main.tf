@@ -29,7 +29,7 @@ locals {
     if contains(service.providers, "bedrock")
   }
 
-  bedrock_region = var.bedrock_region != "" ? var.bedrock_region : data.aws_region.current.name
+  bedrock_region = var.bedrock_region != "" ? var.bedrock_region : data.aws_region.current.region
 
   # Memory is a resource the platform bills for, so it exists only when the spec asked
   # for it; a runtime without memory keeps its session on the microVM alone.
@@ -118,7 +118,7 @@ resource "aws_iam_role_policy" "image" {
           "ecr:BatchGetImage",
           "ecr:GetDownloadUrlForLayer",
         ]
-        Resource = ["arn:${data.aws_partition.current.partition}:ecr:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:repository/*"]
+        Resource = ["arn:${data.aws_partition.current.partition}:ecr:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:repository/*"]
       },
     ]
   })
@@ -140,7 +140,7 @@ resource "aws_iam_role_policy" "logs" {
         "logs:CreateLogStream",
         "logs:PutLogEvents",
       ]
-      Resource = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/bedrock-agentcore/runtimes/*"]
+      Resource = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/bedrock-agentcore/runtimes/*"]
     }]
   })
 }
