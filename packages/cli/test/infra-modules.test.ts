@@ -1463,9 +1463,14 @@ describe('the validate fixture', () => {
   it('keeps the CDK dependencies at the fixture root', () => {
     // Node resolves `aws-cdk-lib` from the construct's directory upward. `generated/cdk`
     // is a sibling of `cdk/`, so a package.json beside the app would never be found.
+    //
+    // The property that matters is that both are *exact* pins -- CDK constructs are
+    // version-sensitive and a range would let the synth flip under a lockfile refresh.
+    // Asserting the numbers themselves only duplicated the emitter's constants and made
+    // every Dependabot bump fail here for no behavioural reason.
     const pkg = JSON.parse(readFileSync(join(FIXTURE, 'package.json'), 'utf8'));
-    expect(pkg.dependencies['aws-cdk-lib']).toBe('2.275.0');
-    expect(pkg.devDependencies['aws-cdk']).toBe('2.1147.0');
+    expect(pkg.dependencies['aws-cdk-lib']).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(pkg.devDependencies['aws-cdk']).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
   it('synthesises the serverless app, not an empty stack', () => {

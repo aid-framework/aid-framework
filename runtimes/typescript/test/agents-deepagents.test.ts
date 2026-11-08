@@ -15,6 +15,8 @@
  * provider below records exactly what `getTracer()` was asked to start.
  */
 
+import { readFileSync } from 'node:fs';
+
 import { type TracerProvider, trace } from '@opentelemetry/api';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import {
@@ -26,6 +28,7 @@ import {
   checkEngine,
   DEEPAGENTS,
   DEEPAGENTS_EXTRA,
+  DEEPAGENTS_PEERS,
   DEEPAGENTS_PIN,
   DeepAgentsUnavailableError,
   DeepAgentsVersionMismatchError,
@@ -149,6 +152,23 @@ describe('the engine seam', () => {
     expect(installedDeepagentsVersion()).toBe(DEEPAGENTS_PIN);
   });
 
+  it('derives every pin from the manifest instead of copying it', () => {
+    // The assertion this replaces compared the installed release to a hand-written literal,
+    // so every Dependabot bump failed it with `expected '1.16.2' to be '1.16.0'` (PR #124)
+    // and the constant silently drifted from the peer the package actually declares. The
+    // manifest is the only declaration; the runtime and this test both read it, so a bump
+    // moves them together and a *real* disagreement -- an installed harness that is not the
+    // declared peer -- still fails.
+    const manifest = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    ) as { peerDependencies: Record<string, string> };
+    const declared = Object.entries(manifest.peerDependencies)
+      .map(([name, range]) => `${name}@${range}`)
+      .sort();
+    expect(DEEPAGENTS_PIN).toBe(manifest.peerDependencies.deepagents);
+    expect([...DEEPAGENTS_PEERS].sort()).toEqual(declared);
+  });
+
   it('refuses an unknown engine by name', () => {
     const agent = agentDefinition({ engine: 'crewai' });
     expect(() => checkEngine(agent)).toThrow(/'crewai'/);
@@ -180,13 +200,15 @@ describe('the engine seam', () => {
     expect(result.answer).toBe('done');
   });
 
-  // Approval condition 2. Python pins 0.7.32 and this runtime pins 1.16.0, so the same
-  // `engineVersion` cannot satisfy both. This is the accepted cost of per-runtime pins:
-  // a spec written for Python is refused here, honestly, rather than run on a release
-  // this adapter was not built against.
-  it.each(['0.7.31', '0.7.33', '', '0.7', '0.7.32'])(
+  // Approval condition 2. Python and TypeScript pin different releases of the harness, so
+  // the same `engineVersion` cannot satisfy both. This is the accepted cost of per-runtime
+  // pins: a spec written for Python is refused here, honestly, rather than run on a release
+  // this adapter was not built against. The values are inputs, not expectations -- none may
+  // equal the pin, and a third that is derived from it cannot.
+  it.each(['0.7.32', '', `${DEEPAGENTS_PIN}-next`, `v${DEEPAGENTS_PIN}`])(
     'fails closed on a declared pin of %j',
     (declared) => {
+      expect(declared).not.toBe(DEEPAGENTS_PIN);
       const agent = agentDefinition({ engine: DEEPAGENTS, engineVersion: declared });
       expect(() => checkEngine(agent)).toThrow(DeepAgentsVersionMismatchError);
     },
@@ -417,7 +439,7 @@ describe('delegation', () => {
         agentDef('front', {
           prompt: 'front',
           engine: 'deepagents',
-          engineVersion: '1.16.0',
+          engineVersion: DEEPAGENTS_PIN,
           delegates: ['worker'],
           tools: [],
           guardrails: ['caller'],
@@ -425,7 +447,7 @@ describe('delegation', () => {
         agentDef('worker', {
           prompt: 'worker',
           engine: 'deepagents',
-          engineVersion: '1.16.0',
+          engineVersion: DEEPAGENTS_PIN,
           tools: ['search'],
           guardrails: ['delegate'],
         }),
@@ -475,14 +497,14 @@ describe('delegation', () => {
           agentDef('front', {
             prompt: 'front',
             engine: 'deepagents',
-            engineVersion: '1.16.0',
+            engineVersion: DEEPAGENTS_PIN,
             delegates: ['worker'],
             tools: [],
           }),
           agentDef('worker', {
             prompt: 'worker',
             engine: 'deepagents',
-            engineVersion: '1.16.0',
+            engineVersion: DEEPAGENTS_PIN,
             tools: ['search'],
           }),
         ],
@@ -529,7 +551,7 @@ describe('delegation', () => {
           agentDef('front', {
             prompt: 'front',
             engine: 'deepagents',
-            engineVersion: '1.16.0',
+            engineVersion: DEEPAGENTS_PIN,
             delegates: ['worker'],
             tools: [],
             guardrails: ['caller'],
@@ -537,7 +559,7 @@ describe('delegation', () => {
           agentDef('worker', {
             prompt: 'worker',
             engine: 'deepagents',
-            engineVersion: '1.16.0',
+            engineVersion: DEEPAGENTS_PIN,
             tools: ['search'],
           }),
         ],
