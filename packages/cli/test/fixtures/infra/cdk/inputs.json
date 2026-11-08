@@ -1,13 +1,17 @@
 {
   "images": {
-    "api": "111111111111.dkr.ecr.us-east-1.amazonaws.com/aid-ping:latest"
+    "api": "111111111111.dkr.ecr.us-east-1.amazonaws.com/aid-ping:latest",
+    "worker": "111111111111.dkr.ecr.us-east-1.amazonaws.com/aid-ping:worker"
   },
   "secretArns": {
     "OPENAI_API_KEY": "arn:aws:secretsmanager:us-east-1:111111111111:secret:openai"
   },
   "sizing": {
-    "api": { "memoryMb": 512, "timeoutSeconds": 15 }
+    "api": { "memoryMb": 512, "timeoutSeconds": 15 },
+    "worker": { "cpu": 1024, "memoryMb": 2048, "desiredCount": 2 }
   },
+  "vpcCidr": "10.42.0.0/16",
+  "logRetentionDays": 14,
   "tags": {
     "project": "aid-ping"
   }

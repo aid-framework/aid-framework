@@ -13,6 +13,7 @@ import type { ModuleFile } from './hcl.js';
 
 export { BATCH_MODULE_DIR, emitBatchModule } from './batch.js';
 export {
+  CDK_CONTAINER_MODULE,
   CDK_DIR,
   CDK_KNOWLEDGE_BASE_MODULE,
   CDK_SERVERLESS_MODULE,

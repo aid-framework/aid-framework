@@ -22,6 +22,9 @@ const bedrock = require('aws-cdk-lib/aws-bedrock');
 const lambda = require('aws-cdk-lib/aws-lambda');
 const aoss = require('aws-cdk-lib/aws-opensearchserverless');
 
+const ecs = require('aws-cdk-lib/aws-ecs');
+const elbv2 = require('aws-cdk-lib/aws-elasticloadbalancingv2');
+const { addContainer } = require('../../generated/cdk/container.cjs');
 const { addKnowledgeBase } = require('../../generated/cdk/knowledge-base.cjs');
 const { addServerless } = require('../../generated/cdk/serverless.cjs');
 
@@ -34,8 +37,14 @@ const stack = new cdk.Stack(app, 'AidFixture', {
   env: { account: '111111111111', region: 'us-east-1' },
 });
 
+// The context is written before anything is applied, so it carries an empty id and ARN
+// for every base; the construct's return value is the only place they exist at synth time.
 const bases = addKnowledgeBase(stack, context, inputs);
-addServerless(stack, context, Object.assign({}, inputs, { knowledgeBases: bases }));
+const business = Object.assign({}, inputs, { knowledgeBases: bases });
+addServerless(stack, context, business);
+const edge = addContainer(stack, context, business);
+assert.ok(edge.endpoint.startsWith('http://'), 'expected the load balancer endpoint');
+assert.ok(edge.services.worker, 'expected the container service to be created');
 
 const nodes = stack.node.findAll();
 const functions = nodes.filter((node) => node instanceof lambda.CfnFunction);
@@ -97,3 +106,50 @@ assert.deepStrictEqual(
   'expected the spec key prefix without its trailing slash',
 );
 assert.strictEqual(collections[0].type, 'VECTORSEARCH', 'expected a vector collection');
+
+// The container construct renders one task definition and one service per `container`
+// deployment, one target group each, and one listener rule per declared path -- sorted,
+// so the same context always assigns the same priorities.
+const taskDefinitions = nodes.filter((node) => node instanceof ecs.CfnTaskDefinition);
+const services = nodes.filter((node) => node instanceof ecs.CfnService);
+const listenerRules = nodes.filter((node) => node instanceof elbv2.CfnListenerRule);
+
+assert.strictEqual(taskDefinitions.length, 1, 'expected one task definition');
+assert.strictEqual(services.length, 1, 'expected one ECS service');
+assert.strictEqual(services[0].desiredCount, 2, 'expected the spec desired count');
+
+const container = taskDefinitions[0].containerDefinitions[0];
+assert.strictEqual(container.image, inputs.images.worker, 'expected the released image');
+assert.strictEqual(
+  taskDefinitions[0].cpu,
+  '1024',
+  'expected the spec CPU on the task definition',
+);
+assert.strictEqual(container.environment !== undefined, true, 'expected environment entries');
+
+const containerEnv = {};
+for (const pair of container.environment) containerEnv[pair.name] = pair.value;
+assert.strictEqual(
+  containerEnv.BEDROCK_KNOWLEDGE_BASE_HANDBOOK !== undefined,
+  true,
+  'expected the knowledge base id in the container environment',
+);
+assert.strictEqual(
+  container.secrets[0].valueFrom,
+  inputs.secretArns.OPENAI_API_KEY,
+  'expected the secret resolved from its ARN',
+);
+
+assert.strictEqual(listenerRules.length, 2, 'expected one rule per declared path');
+assert.deepStrictEqual(
+  listenerRules.map((rule) => rule.priority).sort((a, b) => a - b),
+  [1, 2],
+  'expected sorted priorities',
+);
+assert.deepStrictEqual(
+  listenerRules.map(
+    (rule) => rule.conditions[0].pathPatternConfig.values[0],
+  ).sort(),
+  ['/chat', '/chat/*'],
+  'expected the declared paths',
+);

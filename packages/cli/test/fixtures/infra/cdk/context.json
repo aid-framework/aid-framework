@@ -13,6 +13,22 @@
       "providers": ["bedrock"],
       "ingest": ["docs"],
       "guardrailEngines": ["bedrock"]
+    },
+    "worker": {
+      "target": "container",
+      "streaming": true,
+      "routes": [
+        { "pipeline": "chat", "method": "POST", "path": "/chat/*" },
+        { "pipeline": "chat", "method": "POST", "path": "/chat" }
+      ],
+      "env": [
+        { "name": "LOG_LEVEL", "secret": false, "from": "spec", "value": "debug" },
+        { "name": "OPENAI_API_KEY", "secret": true, "from": "deployment" }
+      ],
+      "secrets": ["OPENAI_API_KEY"],
+      "providers": ["bedrock"],
+      "ingest": ["docs"],
+      "guardrailEngines": []
     }
   },
   "guardrails": {
