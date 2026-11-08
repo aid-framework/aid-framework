@@ -963,7 +963,7 @@ describe('managed knowledge bases', () => {
     });
     expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.knowledgeBaseRefresh]);
     expect(paths(diagnostics)).toEqual(['retrievers.docs.refresh']);
-    expect(diagnostics[0]?.hint).toContain('aid doctor');
+    expect(diagnostics[0]?.hint).toContain('README names the ingestion command');
   });
 
   it('allows filters on a managed retriever, which both engines evaluate natively', () => {

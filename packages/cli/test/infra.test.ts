@@ -12,7 +12,13 @@
  *    apply are diagnostics with a non-zero exit, and in both the tool is never invoked.
  */
 
+import { existsSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+
 import { afterAll, describe, expect, it } from 'vitest';
+
+import type { Spawn } from '../src/context.js';
+import { destroyedKnowledgeBases, tofuPlanPath } from '../src/infra/tofu.js';
 
 import { aid, diagnosticsOf, project, recordingSpawn, SPEC_PATH } from './helpers.js';
 
@@ -760,12 +766,81 @@ describe('infra plan, apply and drift', () => {
     expect(call?.command).toBe('tofu');
     expect(call?.args).toEqual([
       'plan',
+      `-out=${tofuPlanPath('dev')}`,
       '-var-file=../../generated/deploy.auto.tfvars.json',
       '-input=false',
       '-no-color',
     ]);
     // The var file is relative to the env root, so that is where the tool must run.
     expect(call?.cwd?.split(/[\\/]/).slice(-3).join('/')).toBe('infra/envs/dev');
+  });
+
+  it('warns when the plan would destroy a managed knowledge base', () => {
+    const made = generated();
+    const planFile = tofuPlanPath('dev');
+    const spawn: Spawn = (_command, args) => {
+      if (args[0] === 'plan') {
+        writeFileSync(planFile, 'saved plan');
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      if (args[0] === 'show') {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            resource_changes: [
+              {
+                address: 'module.knowledge_base.aws_bedrockagent_knowledge_base.this["handbook"]',
+                type: 'aws_bedrockagent_knowledge_base',
+                change: { actions: ['delete'] },
+              },
+              {
+                address:
+                  'module.knowledge_base.aws_opensearchserverless_collection.vectors["handbook"]',
+                type: 'aws_opensearchserverless_collection',
+                change: { actions: ['delete'] },
+              },
+              {
+                address: 'module.knowledge_base.aws_bedrockagent_knowledge_base.this["guide"]',
+                type: 'aws_bedrockagent_knowledge_base',
+                change: { actions: ['delete', 'create'] },
+              },
+            ],
+          }),
+          stderr: '',
+        };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    };
+
+    const run = aid(made, ['infra', 'plan', '--json'], spawn);
+
+    // A warning does not change the outcome: a teardown is still allowed.
+    expect(run.code).toBe(0);
+    expect(diagnosticsOf(run).map((d) => d.code)).toEqual(['cli/infra-knowledge-base-destroy']);
+    expect(diagnosticsOf(run)[0]?.severity).toBe('warning');
+    // A replacement rebuilds the corpus, so it is not reported as a destroy.
+    expect(diagnosticsOf(run)[0]?.message).toContain('handbook');
+    expect(diagnosticsOf(run)[0]?.message).not.toContain('guide');
+    expect(run.json<{ destroyingKnowledgeBases?: string[] }>().destroyingKnowledgeBases).toEqual([
+      'module.knowledge_base.aws_bedrockagent_knowledge_base.this["handbook"]',
+    ]);
+    // The plan is one command's artifact, so the warning path removes it.
+    expect(existsSync(planFile)).toBe(false);
+  });
+
+  it('keeps the plan file inside its own directory whatever the env is spelled', () => {
+    const planFile = tofuPlanPath('../../etc');
+    expect(dirname(planFile)).toBe(dirname(tofuPlanPath('dev')));
+    expect(planFile.split(/[\\/]/).pop()).toBe('aws-.._.._etc.tfplan');
+  });
+
+  it('reads no destroy out of a plan it cannot parse', () => {
+    expect(destroyedKnowledgeBases('not json')).toEqual([]);
+    expect(destroyedKnowledgeBases('{}')).toEqual([]);
+    expect(destroyedKnowledgeBases(JSON.stringify({ resource_changes: 'nope' }))).toEqual([]);
+    expect(destroyedKnowledgeBases(JSON.stringify({ resource_changes: [null, 1, {}] }))).toEqual(
+      [],
+    );
   });
 
   it('reports a missing binary as a usage error rather than a passing plan', () => {
