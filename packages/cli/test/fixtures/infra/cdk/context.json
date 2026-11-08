@@ -11,7 +11,7 @@
       ],
       "secrets": ["OPENAI_API_KEY"],
       "providers": ["bedrock"],
-      "ingest": [],
+      "ingest": ["docs"],
       "guardrailEngines": ["bedrock"]
     }
   },
@@ -23,6 +23,21 @@
       "topics": [{ "name": "medical-advice", "definition": "Advice about a medical condition." }],
       "words": ["forbidden-term"],
       "pii": [{ "type": "EMAIL", "action": "BLOCK" }]
+    }
+  },
+  "knowledgeBases": {
+    "handbook": {
+      "id": "",
+      "arn": "",
+      "engine": "aws-bedrock",
+      "dataSource": { "kind": "s3", "uri": "s3://aid-corpus/handbook/" },
+      "chunking": { "strategy": "fixed", "size": 300, "overlap": 30 },
+      "embedModel": "titan-embed-v2",
+      "embedModelId": "amazon.titan-embed-text-v2:0",
+      "envName": "BEDROCK_KNOWLEDGE_BASE_HANDBOOK",
+      "filterable": [],
+      "vectorStore": { "kind": "provisioned" },
+      "retrievers": ["docs"]
     }
   },
   "stores": {},

@@ -20,7 +20,9 @@ const cdk = require('aws-cdk-lib');
 const apigwv2 = require('aws-cdk-lib/aws-apigatewayv2');
 const bedrock = require('aws-cdk-lib/aws-bedrock');
 const lambda = require('aws-cdk-lib/aws-lambda');
+const aoss = require('aws-cdk-lib/aws-opensearchserverless');
 
+const { addKnowledgeBase } = require('../../generated/cdk/knowledge-base.cjs');
 const { addServerless } = require('../../generated/cdk/serverless.cjs');
 
 const here = path.join(__dirname, '..');
@@ -32,7 +34,8 @@ const stack = new cdk.Stack(app, 'AidFixture', {
   env: { account: '111111111111', region: 'us-east-1' },
 });
 
-addServerless(stack, context, inputs);
+const bases = addKnowledgeBase(stack, context, inputs);
+addServerless(stack, context, Object.assign({}, inputs, { knowledgeBases: bases }));
 
 const nodes = stack.node.findAll();
 const functions = nodes.filter((node) => node instanceof lambda.CfnFunction);
@@ -62,3 +65,35 @@ assert.ok(
   functions[0].environment.variables.BEDROCK_GUARDRAIL_VERSION,
   'expected the guardrail version in the function environment',
 );
+
+// The spec binds the `docs` retriever to the one Bedrock base, so the app learns that
+// base's id under the name the runtime computes, and its role may call `Retrieve`.
+const baseVars = functions[0].environment.variables;
+assert.ok(
+  baseVars.BEDROCK_KNOWLEDGE_BASE_HANDBOOK,
+  'expected the knowledge base id in the function environment',
+);
+
+const collections = nodes.filter((node) => node instanceof aoss.CfnCollection);
+const knowledgeBases = nodes.filter((node) => node instanceof bedrock.CfnKnowledgeBase);
+const dataSources = nodes.filter((node) => node instanceof bedrock.CfnDataSource);
+
+assert.strictEqual(collections.length, 1, 'expected one provisioned collection');
+assert.strictEqual(knowledgeBases.length, 1, 'expected one knowledge base');
+assert.strictEqual(dataSources.length, 1, 'expected one data source');
+assert.strictEqual(
+  dataSources[0].dataSourceConfiguration.type,
+  'S3',
+  'expected an S3 data source',
+);
+assert.strictEqual(
+  dataSources[0].vectorIngestionConfiguration.chunkingConfiguration.chunkingStrategy,
+  'FIXED_SIZE',
+  'expected the spec chunking strategy',
+);
+assert.deepStrictEqual(
+  dataSources[0].dataSourceConfiguration.s3Configuration.inclusionPrefixes,
+  ['handbook'],
+  'expected the spec key prefix without its trailing slash',
+);
+assert.strictEqual(collections[0].type, 'VECTORSEARCH', 'expected a vector collection');

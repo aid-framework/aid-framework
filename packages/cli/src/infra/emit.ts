@@ -506,9 +506,18 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
             : '| `modules/knowledge-base/` | The OpenSearch Serverless collection + Bedrock knowledge base a `knowledgeBases:` entry deploys into. |',
         ]
       : []),
-    ...(modules.serverless && cloud === 'aws'
+    ...((modules.serverless || modules.knowledgeBase) && cloud === 'aws'
       ? [
-          '| `cdk/serverless.cjs` | The CDK construct a `serverless` service is added to (AWS only). |',
+          ...(modules.serverless
+            ? [
+                '| `cdk/serverless.cjs` | The CDK construct a `serverless` service is added to (AWS only). |',
+              ]
+            : []),
+          ...(modules.knowledgeBase
+            ? [
+                '| `cdk/knowledge-base.cjs` | The CDK construct an `aws-bedrock` knowledge base is created by (AWS only). |',
+              ]
+            : []),
         ]
       : []),
     '',
@@ -668,6 +677,16 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
           'constructs, account and region itself. `generated/cdk/serverless.cjs` exports',
           '`addServerless(scope, context, inputs)`; call it from the stack:',
           '',
+          ...(modules.knowledgeBase
+            ? [
+                '`generated/cdk/knowledge-base.cjs` exports',
+                "`addKnowledgeBase(scope, context, inputs)`. It returns each base's id and ARN,",
+                'which are the `knowledgeBases` entry `addServerless` reads: pass that return',
+                'value through so a bound service gets the base id in its environment and its',
+                'role gets `bedrock:Retrieve`, the same two things the HCL module grants.',
+                '',
+              ]
+            : []),
           '```sh',
           'aid infra plan  --iac cdk --env dev',
           'aid infra apply --iac cdk --env dev',

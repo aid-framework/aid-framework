@@ -185,6 +185,35 @@ function addServerless(scope, context, inputs) {
       );
     }
 
+    // Retrieve is the only call a managed base is used for: generation stays in this
+    // project, where the model gate, the guardrail and the cost ledger can see it. The
+    // grant goes to every serverless service, as the HCL module gives it, because the
+    // retrievers a service binds are a spec fact and the base is one resource.
+    //
+    // The id and ARN arrive in `inputs` rather than the context: the context is written
+    // before anything is applied, so it can only say which base the spec declared. A base
+    // with no input entry does not exist yet, and a policy with an empty resource is
+    // invalid rather than merely empty -- the same reason the secrets grant is gated.
+    const providedBases = inputs.knowledgeBases || {};
+    const declaredBases = context.knowledgeBases || {};
+    const bases = Object.keys(declaredBases)
+      .filter((baseId) => declaredBases[baseId].engine === 'aws-bedrock' && providedBases[baseId])
+      .map((baseId) =>
+        Object.assign({}, declaredBases[baseId], {
+          id: providedBases[baseId].id,
+          arn: providedBases[baseId].arn,
+        }),
+      );
+    const existingBases = bases.filter((base) => base.id && base.arn);
+    if (existingBases.length > 0) {
+      role.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ['bedrock:Retrieve'],
+          resources: existingBases.map((base) => base.arn),
+        }),
+      );
+    }
+
     const variables = {};
     if (usesBedrock) variables.AWS_REGION = inputs.bedrockRegion || cdk.Aws.REGION;
 
@@ -192,6 +221,16 @@ function addServerless(scope, context, inputs) {
     if (managed) {
       variables.BEDROCK_GUARDRAIL_ID = managed.guardrail.attrGuardrailId;
       variables.BEDROCK_GUARDRAIL_VERSION = managed.version.attrVersion;
+    }
+
+    // Only a service that binds one of the base's retrievers learns the id, and only
+    // once the base exists: the runtime raises a named error for a missing id, while an
+    // empty string would read as a created base with an empty corpus.
+    for (const base of existingBases) {
+      const bound = (base.retrievers || []).some((retriever) =>
+        (service.ingest || []).includes(retriever),
+      );
+      if (bound) variables[base.envName] = base.id;
     }
 
     for (const variable of service.env) {

@@ -1,22 +1,25 @@
 /**
- * Provider code: the AWS CDK construct a `serverless` deployment is added to.
+ * Provider code: the AWS CDK constructs a `serverless` deployment or a managed knowledge
+ * base is added to.
  *
- * The same argument that allows `serverless.ts` to carry HCL applies here: the construct
- * holds no fact the plan does not already state, because it loops over the context
- * document at synth time, so its bytes are a constant. `cdk synth` can therefore run once
- * in CI and be right for every project -- a stack that baked in per-service blocks would
- * be unverified again, one project at a time.
+ * The same argument that allows `serverless.ts` to carry HCL applies here: the constructs
+ * hold no fact the plan does not already state, because they loop over the context
+ * document at synth time, so their bytes are a constant. `cdk synth` can therefore run
+ * once in CI and be right for every project -- a stack that baked in per-service blocks
+ * would be unverified again, one project at a time.
  *
- * It reads `deploy.cdk-context.json`, the same document the HCL module reads, so the two
+ * They read `deploy.cdk-context.json`, the same document the HCL modules read, so the two
  * backends cannot disagree about what a service is. Business inputs stay inputs: the image
- * each service runs, the ARN of each secret, and per-service sizing arrive in the app's
- * `inputs`, never in this file.
+ * each service runs, the ARN of each secret, per-service sizing, and the id and ARN of an
+ * already-created knowledge base arrive in the app's `inputs`, never in these files.
  *
- * What it provisions: one role per service, one container-image Lambda per service, one
+ * What they provision: one role per service, one container-image Lambda per service, one
  * managed Bedrock guardrail per service whose spec names that engine, and one HTTP API
- * with a `$default` stage routing each pipeline's endpoints. What it refuses,
- * with the same sentence the HCL module puts in a `precondition`: a `streaming` service, a
- * service with no image, and a secret with no ARN.
+ * with a `$default` stage routing each pipeline's endpoints; and per `aws-bedrock`
+ * knowledge base, an OpenSearch Serverless collection for a `provisioned` store, the role
+ * Bedrock assumes, the base itself, and its S3 data source. What they refuse, with the
+ * same sentence the HCL module puts in a `precondition`: a `streaming` service, a service
+ * with no image, and a secret with no ARN.
  */
 
 import type { DeployPlan } from '@aid-framework/ir';
@@ -28,6 +31,7 @@ import { type ModuleFile, targets } from './hcl.js';
 export const CDK_DIR = `${INFRA_GENERATED_DIR}/cdk`;
 /** `.cjs`, because a generated project may be `"type": "module"` and CDK constructs are CJS. */
 export const CDK_SERVERLESS_MODULE = `${CDK_DIR}/serverless.cjs`;
+export const CDK_KNOWLEDGE_BASE_MODULE = `${CDK_DIR}/knowledge-base.cjs`;
 
 const SERVERLESS_JS = `'use strict';
 
@@ -216,6 +220,35 @@ function addServerless(scope, context, inputs) {
       );
     }
 
+    // Retrieve is the only call a managed base is used for: generation stays in this
+    // project, where the model gate, the guardrail and the cost ledger can see it. The
+    // grant goes to every serverless service, as the HCL module gives it, because the
+    // retrievers a service binds are a spec fact and the base is one resource.
+    //
+    // The id and ARN arrive in \`inputs\` rather than the context: the context is written
+    // before anything is applied, so it can only say which base the spec declared. A base
+    // with no input entry does not exist yet, and a policy with an empty resource is
+    // invalid rather than merely empty -- the same reason the secrets grant is gated.
+    const providedBases = inputs.knowledgeBases || {};
+    const declaredBases = context.knowledgeBases || {};
+    const bases = Object.keys(declaredBases)
+      .filter((baseId) => declaredBases[baseId].engine === 'aws-bedrock' && providedBases[baseId])
+      .map((baseId) =>
+        Object.assign({}, declaredBases[baseId], {
+          id: providedBases[baseId].id,
+          arn: providedBases[baseId].arn,
+        }),
+      );
+    const existingBases = bases.filter((base) => base.id && base.arn);
+    if (existingBases.length > 0) {
+      role.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ['bedrock:Retrieve'],
+          resources: existingBases.map((base) => base.arn),
+        }),
+      );
+    }
+
     const variables = {};
     if (usesBedrock) variables.AWS_REGION = inputs.bedrockRegion || cdk.Aws.REGION;
 
@@ -223,6 +256,16 @@ function addServerless(scope, context, inputs) {
     if (managed) {
       variables.BEDROCK_GUARDRAIL_ID = managed.guardrail.attrGuardrailId;
       variables.BEDROCK_GUARDRAIL_VERSION = managed.version.attrVersion;
+    }
+
+    // Only a service that binds one of the base's retrievers learns the id, and only
+    // once the base exists: the runtime raises a named error for a missing id, while an
+    // empty string would read as a created base with an empty corpus.
+    for (const base of existingBases) {
+      const bound = (base.retrievers || []).some((retriever) =>
+        (service.ingest || []).includes(retriever),
+      );
+      if (bound) variables[base.envName] = base.id;
     }
 
     for (const variable of service.env) {
@@ -314,17 +357,327 @@ function addServerless(scope, context, inputs) {
 module.exports = { addServerless: addServerless };
 `;
 
+const KNOWLEDGE_BASE_JS = `'use strict';
+
 /**
- * The construct, or nothing.
+ * Generated by \`aid infra gen\`. Do not edit: the next run refuses to overwrite a
+ * hand-edited file, and the construct carries no project-specific fact to keep.
  *
- * Nothing is emitted on GCP, where no construct exists, and nothing for a plan with no
- * `serverless` service -- a container-only project gains no directory it cannot use.
+ * The AWS CDK spelling of \`infra/generated/modules/knowledge-base\`: an OpenSearch
+ * Serverless collection for a \`provisioned\` store, the role Bedrock assumes, one knowledge
+ * base over an S3 prefix, and its data source. It reads the same context document the
+ * module reads, so the two backends cannot drift.
  *
- * The literal above embeds this source file's line endings, so it is normalised here: a
+ * The bucket is not created here, for the same reason the module does not create it: the
+ * spec names the corpus's location, and a bucket is the one part an operator can point at
+ * data they already have.
+ */
+
+const aoss = require('aws-cdk-lib/aws-opensearchserverless');
+const bedrock = require('aws-cdk-lib/aws-bedrock');
+const cdk = require('aws-cdk-lib');
+const iam = require('aws-cdk-lib/aws-iam');
+
+const INDEX = 'bedrock-knowledge-base-default-index';
+const VECTOR_FIELD = 'bedrock-knowledge-base-default-vector';
+const TEXT_FIELD = 'AMAZON_BEDROCK_TEXT_CHUNK';
+const METADATA_FIELD = 'AMAZON_BEDROCK_METADATA';
+
+// A Bedrock name caps at 100 characters and a collection name at 32, both over a smaller
+// alphabet than a spec id: lower-case letters, digits and single separators. Scanning once
+// keeps caller input away from a regular expression, which the module's \`replace\` cannot
+// do and which a SaaS scanner reports as a ReDoS that is not one.
+function slug(value) {
+  const source = String(value);
+  let out = '';
+  let separator = true;
+  for (let index = 0; index < source.length; index += 1) {
+    const code = source.charCodeAt(index);
+    const digit = code >= 48 && code <= 57;
+    const upper = code >= 65 && code <= 90;
+    const lower = code >= 97 && code <= 122;
+    if (digit || upper || lower) {
+      out += source.charAt(index).toLowerCase();
+      separator = false;
+    } else if (!separator) {
+      out += '-';
+      separator = true;
+    }
+  }
+  while (out.endsWith('-')) out = out.slice(0, -1);
+  return out;
+}
+
+// \`s3://bucket/prefix\` splits once here rather than at each of the places the policy and
+// the data source need it. No key means the whole bucket, spelled as no prefix filter.
+function sourceOf(uri) {
+  const withoutScheme = uri.indexOf('s3://') === 0 ? uri.slice(5) : uri;
+  const slash = withoutScheme.indexOf('/');
+  const bucket = slash === -1 ? withoutScheme : withoutScheme.slice(0, slash);
+  let prefix = slash === -1 ? '' : withoutScheme.slice(slash + 1);
+  while (prefix.endsWith('/')) prefix = prefix.slice(0, -1);
+  return { bucket: bucket, prefix: prefix };
+}
+
+// A name that ends on a separator after truncation is still legal, but two bases would
+// then collide on the separator; trimming keeps the suffix adjacent to the name.
+function limited(value, length) {
+  let out = value.slice(0, length);
+  while (out.endsWith('-')) out = out.slice(0, -1);
+  return out;
+}
+
+function applyTags(resource, inputs) {
+  for (const key of Object.keys(inputs.tags || {})) {
+    cdk.Tags.of(resource).add(key, inputs.tags[key]);
+  }
+}
+
+// The spec states a fixed-size overlap in tokens; Bedrock states it as a percentage of the
+// chunk, so the value is derived rather than forwarded. Rounding up keeps a small non-zero
+// overlap from collapsing to zero.
+function chunkingOf(chunking) {
+  if (chunking.strategy === 'fixed') {
+    return {
+      chunkingStrategy: 'FIXED_SIZE',
+      fixedSizeChunkingConfiguration: {
+        maxTokens: chunking.size,
+        overlapPercentage: Math.min(100, Math.ceil((chunking.overlap / chunking.size) * 100)),
+      },
+    };
+  }
+  return {
+    chunkingStrategy: 'HIERARCHICAL',
+    hierarchicalChunkingConfiguration: {
+      overlapTokens: chunking.overlap,
+      levelConfigurations: [{ maxTokens: chunking.size * 2 }, { maxTokens: chunking.size }],
+    },
+  };
+}
+
+/**
+ * Adds one knowledge base per \`aws-bedrock\` entry and returns the ids and ARNs, keyed by
+ * the spec id, so a stack can hand them to \`addServerless\` as business inputs.
+ *
+ * A \`vertex-rag\` entry is skipped: its corpus lives in GCP, and emitting a Bedrock base
+ * for it would create a second corpus the spec never asked for.
+ */
+function addKnowledgeBase(scope, context, inputs) {
+  const created = {};
+  const bases = context.knowledgeBases || {};
+
+  for (const id of Object.keys(bases)) {
+    const base = bases[id];
+    if (base.engine !== 'aws-bedrock') continue;
+
+    const full = slug(context.project.namespace + '-' + context.project.name + '-' + id);
+    // The base name caps at 100 characters; the collection and the three policies cap at
+    // 32, and each appends a suffix. Reserving the longest suffix here is what keeps the
+    // emitted names valid for a long project id -- the module truncates to 32 first and
+    // then appends, which overflows.
+    const name = limited(full, 32);
+    const own = limited(full, 32 - '-encryption'.length);
+    const source = sourceOf(base.dataSource.uri);
+
+    const role = new iam.Role(scope, id + 'Role', {
+      assumedBy: new iam.ServicePrincipal('bedrock.amazonaws.com', {
+        conditions: {
+          StringEquals: { 'aws:SourceAccount': cdk.Aws.ACCOUNT_ID },
+        },
+      }),
+    });
+    applyTags(role, inputs);
+
+    // Three grants, each for one thing the engine does: read the source objects, embed
+    // them with the pinned model, and reach the collection. Nothing here is granted to
+    // the app, which is why the app's own policy needs no \`aoss\` permission.
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['s3:GetObject', 's3:ListBucket'],
+        resources: [
+          'arn:' + cdk.Aws.PARTITION + ':s3:::' + source.bucket,
+          'arn:' + cdk.Aws.PARTITION + ':s3:::' + source.bucket + '/*',
+        ],
+      }),
+    );
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel'],
+        resources: [
+          'arn:' +
+            cdk.Aws.PARTITION +
+            ':bedrock:' +
+            cdk.Aws.REGION +
+            '::foundation-model/' +
+            base.embedModelId,
+        ],
+      }),
+    );
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['aoss:APIAccessAll'],
+        resources: [
+          'arn:' +
+            cdk.Aws.PARTITION +
+            ':aoss:' +
+            cdk.Aws.REGION +
+            ':' +
+            cdk.Aws.ACCOUNT_ID +
+            ':collection/*',
+        ],
+      }),
+    );
+
+    let collectionArn;
+    if (base.vectorStore.kind === 'provisioned') {
+      const collection = new aoss.CfnCollection(scope, id + 'Vectors', {
+        name: own + '-vectors',
+        type: 'VECTORSEARCH',
+      });
+      applyTags(collection, inputs);
+
+      // An encryption policy is required before a collection accepts a document; a
+      // network policy is required before the Bedrock service network can reach it. The
+      // data policy is the authorization boundary: only this base's role is named.
+      const encryption = new aoss.CfnSecurityPolicy(scope, id + 'Encryption', {
+        name: own + '-encryption',
+        type: 'encryption',
+        policy: JSON.stringify({
+          Rules: [{ ResourceType: 'collection', Resource: ['collection/' + own + '-vectors'] }],
+          AWSOwnedKey: true,
+        }),
+      });
+      const network = new aoss.CfnSecurityPolicy(scope, id + 'Network', {
+        name: own + '-network',
+        type: 'network',
+        policy: JSON.stringify([
+          {
+            Rules: [
+              { ResourceType: 'collection', Resource: ['collection/' + own + '-vectors'] },
+              { ResourceType: 'dashboard', Resource: ['collection/' + own + '-vectors'] },
+            ],
+            AllowFromPublic: true,
+          },
+        ]),
+      });
+      new aoss.CfnAccessPolicy(scope, id + 'Access', {
+        name: own + '-access',
+        type: 'data',
+        policy: JSON.stringify([
+          {
+            Rules: [
+              {
+                ResourceType: 'index',
+                Resource: ['index/' + own + '-vectors/*'],
+                Permission: [
+                  'aoss:CreateIndex',
+                  'aoss:DescribeIndex',
+                  'aoss:ReadDocument',
+                  'aoss:WriteDocument',
+                  'aoss:UpdateIndex',
+                  'aoss:DeleteIndex',
+                ],
+              },
+            ],
+            Principal: [role.roleArn],
+          },
+        ]),
+      });
+      collection.node.addDependency(encryption);
+      collection.node.addDependency(network);
+      collectionArn = collection.attrArn;
+    } else {
+      // A base that points at an existing collection must not create a second one.
+      collectionArn = base.vectorStore.arn;
+    }
+
+    const knowledgeBase = new bedrock.CfnKnowledgeBase(scope, id + 'Base', {
+      name: name,
+      roleArn: role.roleArn,
+      knowledgeBaseConfiguration: {
+        type: 'VECTOR',
+        vectorKnowledgeBaseConfiguration: {
+          embeddingModelArn:
+            'arn:' +
+            cdk.Aws.PARTITION +
+            ':bedrock:' +
+            cdk.Aws.REGION +
+            '::foundation-model/' +
+            base.embedModelId,
+        },
+      },
+      storageConfiguration: {
+        type: 'OPENSEARCH_SERVERLESS',
+        opensearchServerlessConfiguration: {
+          collectionArn: collectionArn,
+          vectorIndexName: INDEX,
+          fieldMapping: {
+            vectorField: VECTOR_FIELD,
+            textField: TEXT_FIELD,
+            metadataField: METADATA_FIELD,
+          },
+        },
+      },
+    });
+    applyTags(knowledgeBase, inputs);
+
+    const dataSource = new bedrock.CfnDataSource(scope, id + 'Source', {
+      name: own + '-source',
+      knowledgeBaseId: knowledgeBase.attrKnowledgeBaseId,
+      description: 'The ' + base.dataSource.kind + ' prefix ' + id + ' reads.',
+      dataSourceConfiguration: {
+        type: 'S3',
+        s3Configuration: {
+          bucketArn: 'arn:' + cdk.Aws.PARTITION + ':s3:::' + source.bucket,
+          // An empty list is how the API asks for the whole bucket.
+          inclusionPrefixes: source.prefix === '' ? [] : [source.prefix],
+        },
+      },
+      vectorIngestionConfiguration: { chunkingConfiguration: chunkingOf(base.chunking) },
+    });
+    applyTags(dataSource, inputs);
+
+    new cdk.CfnOutput(scope, id + 'KnowledgeBaseId', {
+      description: 'The id the runtime reads a managed base under.',
+      value: knowledgeBase.attrKnowledgeBaseId,
+    });
+    new cdk.CfnOutput(scope, id + 'KnowledgeBaseArn', {
+      description: 'The base \`Retrieve\` is granted on.',
+      value: knowledgeBase.attrKnowledgeBaseArn,
+    });
+
+    created[id] = { id: knowledgeBase.attrKnowledgeBaseId, arn: knowledgeBase.attrKnowledgeBaseArn };
+  }
+
+  return created;
+}
+
+module.exports = { addKnowledgeBase: addKnowledgeBase };
+`;
+
+/**
+ * The constructs, or nothing.
+ *
+ * Nothing is emitted on GCP, where no construct exists; nothing for a plan with no
+ * `serverless` service and no Bedrock base -- a project gains no directory it cannot use.
+ *
+ * The literals above embed this source file's line endings, so they are normalised here: a
  * checkout on another platform must not change the bytes `aid infra gen` writes.
  */
 export function emitCdkModules(plan: DeployPlan, cloud: Cloud): ModuleFile[] {
   if (cloud !== 'aws') return [];
-  if (!targets(plan, 'serverless')) return [];
-  return [{ path: CDK_SERVERLESS_MODULE, contents: SERVERLESS_JS.replaceAll('\r\n', '\n') }];
+  const files: ModuleFile[] = [];
+  if (targets(plan, 'serverless')) {
+    files.push({
+      path: CDK_SERVERLESS_MODULE,
+      contents: SERVERLESS_JS.replaceAll('\r\n', '\n'),
+    });
+  }
+  if (plan.knowledgeBases.some((base) => base.engine === 'aws-bedrock')) {
+    files.push({
+      path: CDK_KNOWLEDGE_BASE_MODULE,
+      contents: KNOWLEDGE_BASE_JS.replaceAll('\r\n', '\n'),
+    });
+  }
+  return files;
 }

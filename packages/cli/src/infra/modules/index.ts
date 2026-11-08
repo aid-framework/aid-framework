@@ -12,7 +12,12 @@ import { type Cloud, DEFAULT_CLOUD } from '../cloud.js';
 import type { ModuleFile } from './hcl.js';
 
 export { BATCH_MODULE_DIR, emitBatchModule } from './batch.js';
-export { CDK_DIR, CDK_SERVERLESS_MODULE, emitCdkModules } from './cdk.js';
+export {
+  CDK_DIR,
+  CDK_KNOWLEDGE_BASE_MODULE,
+  CDK_SERVERLESS_MODULE,
+  emitCdkModules,
+} from './cdk.js';
 export { CLOUDRUN_MODULE_DIR, emitCloudRunModule } from './cloudrun.js';
 export { CLOUDRUNJOB_MODULE_DIR, emitCloudRunJobModule } from './cloudrunjob.js';
 export { CONTAINER_MODULE_DIR, emitContainerModule } from './container.js';
