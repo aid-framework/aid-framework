@@ -506,11 +506,16 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
             : '| `modules/knowledge-base/` | The OpenSearch Serverless collection + Bedrock knowledge base a `knowledgeBases:` entry deploys into. |',
         ]
       : []),
-    ...((modules.serverless || modules.knowledgeBase) && cloud === 'aws'
+    ...((modules.serverless || modules.container || modules.knowledgeBase) && cloud === 'aws'
       ? [
           ...(modules.serverless
             ? [
                 '| `cdk/serverless.cjs` | The CDK construct a `serverless` service is added to (AWS only). |',
+              ]
+            : []),
+          ...(modules.container
+            ? [
+                '| `cdk/container.cjs` | The CDK construct a `container` service is added to: ECS Fargate behind one load balancer (AWS only). |',
               ]
             : []),
           ...(modules.knowledgeBase
@@ -674,16 +679,38 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
     ...(cloud === 'aws'
       ? [
           'With CDK, an app in `infra/cdk/<env>` reads the context file and supplies the',
-          'constructs, account and region itself. `generated/cdk/serverless.cjs` exports',
-          '`addServerless(scope, context, inputs)`; call it from the stack:',
+          'constructs, account and region itself:',
           '',
+          ...(modules.serverless
+            ? [
+                '- `generated/cdk/serverless.cjs` exports',
+                '  `addServerless(scope, context, inputs)`, which adds every `serverless`',
+                '  service.',
+              ]
+            : []),
+          ...(modules.container
+            ? [
+                '- `generated/cdk/container.cjs` exports',
+                '  `addContainer(scope, context, inputs)`: ECS Fargate services behind one load',
+                '  balancer, plus the VPC when `vpcId` is empty. It returns',
+                '  `{ endpoint, services, cluster }`, and `endpoint` is the URL the plan records.',
+              ]
+            : []),
           ...(modules.knowledgeBase
             ? [
-                '`generated/cdk/knowledge-base.cjs` exports',
-                "`addKnowledgeBase(scope, context, inputs)`. It returns each base's id and ARN,",
-                'which are the `knowledgeBases` entry `addServerless` reads: pass that return',
-                'value through so a bound service gets the base id in its environment and its',
-                'role gets `bedrock:Retrieve`, the same two things the HCL module grants.',
+                '- `generated/cdk/knowledge-base.cjs` exports',
+                "  `addKnowledgeBase(scope, context, inputs)`. It returns each base's id and ARN,",
+                '  which are the `knowledgeBases` entry `addServerless` and `addContainer` read:',
+                '  pass that return value through so a bound service gets the base id in its',
+                '  environment and its role gets `bedrock:Retrieve`, the same two things the HCL',
+                '  module grants.',
+              ]
+            : []),
+          '',
+          ...(!modules.serverless
+            ? [
+                'A plan with no `serverless` service emits no `serverless.cjs`: the constructs',
+                'are emitted per target, so nothing appears that the plan cannot use.',
                 '',
               ]
             : []),

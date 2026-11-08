@@ -18,6 +18,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { emitInfra } from '../src/infra/emit.js';
 import {
   BATCH_MODULE_DIR,
+  CDK_CONTAINER_MODULE,
   CDK_DIR,
   CDK_KNOWLEDGE_BASE_MODULE,
   CDK_SERVERLESS_MODULE,
@@ -1065,17 +1066,18 @@ describe('modulesOf, the seam emit.ts reads', () => {
     const paths = emitProviderModules(planOf('serverless', 'container')).map((file) => file.path);
     expect(paths).toContain(`${SERVERLESS_MODULE_DIR}/main.tf`);
     expect(paths).toContain(`${CONTAINER_MODULE_DIR}/main.tf`);
-    // Two provider modules, plus the CDK construct that mirrors the serverless one.
+    // Two provider modules, plus one construct for each runnable target.
     expect(paths).toContain(CDK_SERVERLESS_MODULE);
-    expect(paths).toHaveLength(9);
+    expect(paths).toContain(CDK_CONTAINER_MODULE);
+    expect(paths).toHaveLength(10);
 
     const all = emitProviderModules(planOf('serverless', 'container', 'batch', 'edge')).map(
       (file) => file.path,
     );
     expect(all).toContain(`${BATCH_MODULE_DIR}/main.tf`);
     expect(all).toContain(`${EDGE_MODULE_DIR}/main.tf`);
-    // Four provider modules (16 files) plus the CDK construct.
-    expect(all).toHaveLength(17);
+    // Four provider modules (16 files) plus the two CDK constructs.
+    expect(all).toHaveLength(18);
   });
 
   it('emits only the Cloud Run module for a GCP plan with no job', () => {
@@ -1164,6 +1166,20 @@ describe('infra gen with a container deployment', () => {
     expect(readme).not.toContain('variable "sizing"');
   });
 });
+
+/** The one file a plan declares, by path; a different count is itself the failure. */
+function cdkModule(
+  plan: DeployPlan = planOf('serverless'),
+  cloud: 'aws' | 'gcp' = 'aws',
+  path: string = CDK_SERVERLESS_MODULE,
+) {
+  const files = emitCdkModules(plan, cloud);
+  const file = files.find((candidate) => candidate.path === path);
+  if (file === undefined) {
+    throw new Error(`expected ${path} for ${cloud}, got ${files.map((f) => f.path).join()}`);
+  }
+  return file;
+}
 
 describe('the validate fixture', () => {
   /** CI runs `tofu validate` here, so the fixture must be exactly what is emitted. */
@@ -1257,9 +1273,75 @@ describe('the validate fixture', () => {
     expect(fixture).toBe(base.contents);
   });
 
+  it('matches the emitted container construct byte for byte', () => {
+    const files = emitCdkModules(planOf('container'), 'aws');
+    const container = files.find((file) => file.path === CDK_CONTAINER_MODULE);
+    if (container === undefined) {
+      throw new Error('the container construct was not emitted');
+    }
+    const fixture = readFileSync(join(FIXTURE, 'generated', 'cdk', 'container.cjs'), 'utf8');
+    expect(fixture).toBe(container.contents);
+  });
+
+  it('refuses what the container module refuses, in the same words', () => {
+    // A long sentence is split across two JS literals for line width, so the source has
+    // `' +` between its halves; joining those back gives the words a caller would read.
+    const construct = cdkModule(planOf('container'), 'aws', CDK_CONTAINER_MODULE).contents.replace(
+      /' \+\r?\n\s*'/g,
+      '',
+    );
+    const module = emitContainerModule(planOf('container'))
+      .map((file) => file.contents)
+      .join('\n');
+
+    for (const sentence of [
+      'Name the released tag this service runs; the spec names a repository, not a tag.',
+      'Add name -> ARN for every secret it declares.',
+      'must name the range it should use.',
+      'Tasks need two private subnets in different availability zones. Supply ',
+      'A load balancer needs at least two subnets in different availability zones. Supply ',
+      'Two container services declare the same path. An ALB routes by path, not by method, ' +
+        'so one path must belong to one service.',
+    ]) {
+      expect(construct, sentence).toContain(sentence);
+      expect(module, sentence).toContain(sentence);
+    }
+
+    // The map names differ because one backend reads HCL variables and the other JSON.
+    expect(construct).toContain('No images entry for');
+    expect(module).toContain('No image_uris entry for');
+    expect(construct).toContain('references a secret with no secretArns entry.');
+    expect(module).toContain('references a secret with no secret_arns entry.');
+    expect(construct).toContain('privateSubnetIds alongside vpcId');
+    expect(module).toContain('private_subnet_ids alongside vpc_id');
+  });
+
+  it('mirrors every container resource the HCL module renders', () => {
+    const contents = cdkModule(planOf('container'), 'aws', CDK_CONTAINER_MODULE).contents;
+    for (const kind of [
+      'CfnVPC', // aws_vpc
+      'CfnSubnet', // aws_subnet, split by an 8-bit step like cidrsubnet
+      'CfnNatGateway', // aws_nat_gateway
+      'CfnCluster', // aws_ecs_cluster
+      'CfnTaskDefinition', // aws_ecs_task_definition
+      'CfnService', // aws_ecs_service
+      'CfnTargetGroup', // aws_lb_target_group
+      'CfnLoadBalancer', // aws_lb
+      'CfnListener', // aws_lb_listener
+      'CfnListenerRule', // aws_lb_listener_rule
+      'CfnLogGroup', // aws_cloudwatch_log_group
+      'CfnSecurityGroup', // aws_security_group
+      'CfnGuardrail', // aws_bedrock_guardrail
+      'PolicyStatement', // aws_iam_role_policy
+    ]) {
+      expect(contents, kind).toContain(kind);
+    }
+  });
+
   it('wires the CDK app to the construct it synthesises', () => {
     const app = readFileSync(join(FIXTURE, 'cdk', 'bin', 'app.js'), 'utf8');
     expect(app).toContain("require('../../generated/cdk/serverless.cjs')");
+    expect(app).toContain("require('../../generated/cdk/container.cjs')");
     expect(app).toContain("require('../../generated/cdk/knowledge-base.cjs')");
     expect(app).toContain("path.join(here, 'context.json')");
   });
@@ -1302,15 +1384,6 @@ describe('the whole derived tree', () => {
 });
 
 describe('the CDK construct', () => {
-  /** The one file `emitCdkModules` writes; a different count is itself the failure. */
-  function cdkModule(plan: DeployPlan = planOf('serverless'), cloud: 'aws' | 'gcp' = 'aws') {
-    const [file, ...rest] = emitCdkModules(plan, cloud);
-    if (file === undefined || rest.length > 0) {
-      throw new Error(`expected one CDK construct for ${cloud}, got ${rest.length + 1}`);
-    }
-    return file;
-  }
-
   it('is a constant, so `cdk synth` can validate it once', () => {
     const file = cdkModule();
     expect(file.path).toBe(CDK_SERVERLESS_MODULE);
@@ -1319,9 +1392,26 @@ describe('the CDK construct', () => {
     expect(cdkModule(planOf('serverless', 'serverless')).contents).toBe(file.contents);
   });
 
-  it('is not emitted for GCP or for a plan with no serverless service', () => {
+  it('is not emitted for GCP or for a plan with no runnable service', () => {
     expect(emitCdkModules(planOf('serverless'), 'gcp')).toEqual([]);
-    expect(emitCdkModules(planOf('container', 'batch'), 'aws')).toEqual([]);
+    expect(emitCdkModules(planOf('batch', 'edge'), 'aws')).toEqual([]);
+  });
+
+  it('adds the container construct beside the serverless one', () => {
+    const paths = emitCdkModules(planOf('serverless', 'container'), 'aws').map((file) => file.path);
+    expect(paths).toEqual([CDK_SERVERLESS_MODULE, CDK_CONTAINER_MODULE]);
+  });
+
+  it('emits the container construct alone for a container-only plan', () => {
+    expect(emitCdkModules(planOf('container'), 'aws').map((file) => file.path)).toEqual([
+      CDK_CONTAINER_MODULE,
+    ]);
+  });
+
+  it('keeps one order however the plan lists its services', () => {
+    const forward = emitCdkModules(planOf('serverless', 'container'), 'aws').map((f) => f.path);
+    const reverse = emitCdkModules(planOf('container', 'serverless'), 'aws').map((f) => f.path);
+    expect(reverse).toEqual(forward);
   });
 
   it('adds the knowledge base construct beside the serverless one', () => {
@@ -1329,9 +1419,9 @@ describe('the CDK construct', () => {
     expect(paths).toEqual([CDK_SERVERLESS_MODULE, CDK_KNOWLEDGE_BASE_MODULE]);
   });
 
-  it('emits the knowledge base construct on its own for a base without serverless', () => {
-    const container = { ...AWS_KB, services: [{ id: 'api', target: 'container' }] } as DeployPlan;
-    expect(emitCdkModules(container, 'aws').map((file) => file.path)).toEqual([
+  it('emits the knowledge base construct on its own for a base without a runnable service', () => {
+    const bare = { ...AWS_KB, services: [] } as DeployPlan;
+    expect(emitCdkModules(bare, 'aws').map((file) => file.path)).toEqual([
       CDK_KNOWLEDGE_BASE_MODULE,
     ]);
   });
