@@ -33,7 +33,7 @@ import { hasErrors, sortDiagnostics } from '@aid-framework/spec';
 
 import type { CliContext, SpawnResult } from '../context.js';
 import type { CliDiagnostic, CliDiagnosticCode } from '../diagnostics.js';
-import { CLI_DIAGNOSTIC_CODES, cliError } from '../diagnostics.js';
+import { CLI_DIAGNOSTIC_CODES, cliError, cliWarning } from '../diagnostics.js';
 import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE } from '../exit.js';
 import { cdkRoot, classifyCdk, runCdk } from '../infra/cdk.js';
 import {
@@ -53,7 +53,16 @@ import {
   INFRA_MANIFEST_PATH,
 } from '../infra/emit.js';
 import type { InfraAction } from '../infra/tofu.js';
-import { classifyTofu, envRoot, runTofu, TFVARS_PATH } from '../infra/tofu.js';
+import {
+  classifyTofu,
+  destroyedKnowledgeBases,
+  envRoot,
+  removeTofuPlan,
+  runTofu,
+  TFVARS_PATH,
+  tofuBinary,
+  tofuPlanPath,
+} from '../infra/tofu.js';
 import type { CommandOutcome } from '../output.js';
 import { outcome } from '../output.js';
 import { lowerSpec, readSpec } from '../pipeline.js';
@@ -422,6 +431,32 @@ function backendFor(
   };
 }
 
+/**
+ * The knowledge bases a saved plan would delete, or nothing when the tool wrote no plan.
+ *
+ * The plan directory belongs to this process, so a missing file means the plan failed
+ * before it produced one — there is nothing to report, and the caller's own failure
+ * diagnostic already says why.
+ */
+function destroyingKnowledgeBases(context: CliContext, env: string, cloud: Cloud): string[] {
+  const planFile = tofuPlanPath(env, cloud);
+  if (!existsSync(planFile)) return [];
+  const shown = context.spawn(tofuBinary(context), ['show', '-json', planFile], {
+    cwd: join(context.cwd, ...envRoot(env, cloud).split('/')),
+    stdio: 'pipe',
+    env: context.env,
+  });
+  // One command's artifact: leaving it behind would make the next run's cleanup the only
+  // thing standing between the operator and a stray binary file.
+  try {
+    removeTofuPlan();
+  } catch {
+    // A file that cannot be removed is not a reason to fail a plan that succeeded.
+  }
+  if (shown.error !== undefined || shown.status !== 0) return [];
+  return destroyedKnowledgeBases(shown.stdout);
+}
+
 function action(
   context: CliContext,
   options: InfraOptions,
@@ -498,6 +533,26 @@ function action(
 
   const verdict = backend.classify(result.status);
 
+  // A managed knowledge base is the one resource whose destroy loses data the deployment
+  // cannot rebuild for free: a corpus is paid for per document and takes minutes to
+  // ingest. This is a warning rather than a refusal because a legitimate teardown must
+  // still be possible, and it is read from the saved plan so it does not depend on the
+  // wording of human output.
+  const doomedBases =
+    iac === 'tofu' && action === 'plan' && verdict === 'ok'
+      ? destroyingKnowledgeBases(context, env, cloud)
+      : [];
+  const destroyWarnings: CliDiagnostic[] =
+    doomedBases.length === 0
+      ? []
+      : [
+          cliWarning({
+            code: CLI_DIAGNOSTIC_CODES.infraKnowledgeBaseDestroy,
+            message: `The "${env}" plan destroys ${doomedBases.join(', ')}, and a corpus costs real money and time to rebuild.`,
+            hint: 'Review the plan before applying. A teardown is still allowed, but the data does not come back on its own.',
+          }),
+        ];
+
   // Drift is a failure: a drift check that exited 0 would be a gate that never closes.
   const diagnostics: CliDiagnostic[] =
     verdict === 'drift'
@@ -509,7 +564,7 @@ function action(
           }),
         ]
       : verdict === 'ok'
-        ? []
+        ? destroyWarnings
         : [
             cliError({
               code: backend.failedCode,
@@ -534,6 +589,7 @@ function action(
     fields: {
       ...fields,
       status: result.status,
+      ...(doomedBases.length === 0 ? {} : { destroyingKnowledgeBases: doomedBases }),
       ...(options.json ? { output: result.stdout } : {}),
     },
   });

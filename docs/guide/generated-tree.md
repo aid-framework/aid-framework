@@ -295,6 +295,24 @@ project may be an ES module, and a `.js` construct there would be parsed as ESM 
 `require` could run. Its bytes are constant for the same reason the modules' are:
 `cdk synth` validates it once in CI instead of once per project.
 
+A managed knowledge base moves ingestion, chunking, embedding and the vector store into the
+cloud, so the two engines create different things for the same declaration:
+
+| | `aws-bedrock` | `vertex-rag` |
+| --- | --- | --- |
+| Store created when `provisioned` | An OpenSearch Serverless collection with the data-access policy the base needs | The RAG-managed index inside the corpus, so there is no endpoint or index resource to size |
+| Ingestion | One data source per prefix, and `StartIngestionJob` is asynchronous | One `RagFile` per source object, because the provider has no prefix import; each import is asynchronous |
+| A fresh `apply` | The base answers nothing until a job completes | The same: the corpus is empty until the imports finish |
+| Destroy protection | `prevent_destroy` on the base and its collection | `deletion_policy = "PREVENT"` at the API and `prevent_destroy` in the plan |
+
+Ingestion is not a deploy step. An `apply` that spends money on a background job is not a
+deploy, so the module creates the base empty and the generated README names the one command
+that starts ingestion for the chosen engine. Until it finishes, a retrieve fails with
+`knowledge base '<name>' has no completed ingestion job` rather than answering with empty
+context. `aid infra plan` reads the saved OpenTofu plan and warns, naming the resource, when
+it would delete a base: a teardown is still allowed, but it cannot be silent, and a
+replacement is not a delete. CDK has no saved plan to read, so the warning is OpenTofu-only.
+
 The env root is yours and is never written by `aid infra gen`. `infra/envs/<env>/main.tf`
 (AWS) or `infra/envs/gcp-<env>/main.tf` (GCP) calls one module per platform the plan targets -
 `../../generated/modules/serverless`, `../../generated/modules/container`,

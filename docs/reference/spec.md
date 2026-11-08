@@ -137,7 +137,7 @@ Where a managed knowledge base reads documents from. The kind is the engine's ow
 
 ## `knowledgeBase`
 
-A managed knowledge base: the cloud owns ingestion, chunking, embedding, the vector store and the index, and the runtime only asks it for chunks. Declarable from spec v0.12. A retriever binds to one with `knowledgeBase`.
+A managed knowledge base: the cloud owns ingestion, chunking, embedding, the vector store and the index, and the runtime only asks it for chunks. Declarable from spec v0.12. A retriever binds to one with `knowledgeBase`. The engine owns ingestion, so a deploy never starts it: a base whose corpus is empty fails the first retrieve with an error naming the missing job, and the emitted README names the command that starts one for this engine. It also owns the schema, so `refresh` is refused beside the binding and `aid migrate --check` reports a managed base as not applicable. The emitted module sets `prevent_destroy` on the base and on any vector store it creates, and `aid infra plan` warns when the saved plan would delete either -- a teardown is allowed, it just cannot be silent; a replacement is not a delete. `aid doctor` reports the engine and the environment name the runtime reads without contacting the cloud, so it cannot say whether ingestion has run: the first retrieve answers that.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |

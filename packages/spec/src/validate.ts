@@ -1019,7 +1019,7 @@ function knowledgeBaseDiagnostics(
           code: DIAGNOSTIC_CODES.knowledgeBaseRefresh,
           message: `retriever '${id}' binds knowledge base '${named}' but declares 'refresh'; the managed engine owns ingestion`,
           path: ['retrievers', id, 'refresh'],
-          hint: `drop \`refresh\`; the emitted README names the ingestion command for this engine, and \`aid doctor\` reports whether a completed job exists`,
+          hint: `drop \`refresh\`; the managed engine owns ingestion, and the emitted README names the ingestion command for this engine`,
         }),
       );
     }
