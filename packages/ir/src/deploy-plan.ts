@@ -41,13 +41,36 @@ export const DEPLOY_PLAN_VERSION = '1';
  * prefix would let a Bedrock id be read as a corpus path.
  */
 export function knowledgeBaseEnvName(id: string, engine: KnowledgeBaseEngine): string {
-  const slug = id
-    .replace(/[^A-Za-z0-9]+/g, '_')
-    .replace(/^_+/, '')
-    .replace(/_+$/, '')
-    .toUpperCase();
   const prefix = engine === 'aws-bedrock' ? 'BEDROCK_KNOWLEDGE_BASE' : 'VERTEX_RAG_CORPUS';
-  return `${prefix}_${slug}`;
+  return `${prefix}_${environmentSlug(id)}`;
+}
+
+/**
+ * Turn a base id into the upper-case fragment of an environment name.
+ *
+ * This is one pass over the id on purpose: a regular expression over a caller-supplied
+ * string invites backtracking alerts, and the runtime computes the same fragment so the
+ * two spellings have to agree. A run of separators collapses to a single `_`, runs at
+ * either end are dropped, and anything not in `[A-Za-z0-9]` is a separator.
+ */
+function environmentSlug(id: string): string {
+  let slug = '';
+  let separatorPending = false;
+  for (let i = 0; i < id.length; i++) {
+    const code = id.charCodeAt(i);
+    const alphanumeric =
+      (code >= 0x30 && code <= 0x39) || // 0-9
+      (code >= 0x41 && code <= 0x5a) || // A-Z
+      (code >= 0x61 && code <= 0x7a); // a-z
+    if (alphanumeric) {
+      if (separatorPending) slug += '_';
+      slug += id[i];
+      separatorPending = false;
+    } else if (slug.length > 0) {
+      separatorPending = true;
+    }
+  }
+  return slug.toUpperCase();
 }
 
 /**
