@@ -111,6 +111,26 @@ export const AI_INFRA = [
     credential: 'the IAM role the module creates for the service',
     since: '0.1.98',
   },
+  {
+    id: 'bedrock-knowledge-base',
+    cloud: 'aws',
+    title: 'Bedrock knowledge bases',
+    declares: 'knowledgeBases[].engine: aws-bedrock',
+    emits:
+      'an `aws_bedrockagent_knowledge_base` over an S3 prefix, its `aws_bedrockagent_data_source`, an OpenSearch Serverless collection with the data-access policy the base needs, and `bedrock:Retrieve` on the service that reads it — the base is created empty, so ingestion is a separate operator step',
+    credential: 'the IAM role the module creates for the service',
+    since: '0.1.99',
+  },
+  {
+    id: 'vertex-rag',
+    cloud: 'gcp',
+    title: 'Vertex AI RAG corpora',
+    declares: 'knowledgeBases[].engine: vertex-rag',
+    emits:
+      'a `google_vertex_ai_rag_corpus` on the RAG-managed store with the spec\u2019s embedding model, one `google_vertex_ai_rag_file` per object under the `gs://` prefix, `roles/storage.objectViewer` for the RAG service agent, and `VERTEX_RAG_CORPUS_<ID>` on the Cloud Run service or job',
+    credential: 'the service account the module creates',
+    since: '0.1.99',
+  },
 ];
 
 /**

@@ -30,11 +30,15 @@ import {
   emitCloudRunModule,
   emitContainerModule,
   emitEdgeModule,
+  emitKnowledgeBaseModule,
   emitProviderModules,
   emitServerlessModule,
+  emitVertexRagModule,
   envRoot,
+  KNOWLEDGE_BASE_MODULE_DIR,
   modulesOf,
   SERVERLESS_MODULE_DIR,
+  VERTEX_RAG_MODULE_DIR,
 } from '../src/infra/modules/index.js';
 import { aid, diagnosticsOf, project } from './helpers.js';
 
@@ -58,10 +62,58 @@ const BOTH = envRoot({ serverless: true, container: true, batch: true, edge: tru
 /** The GCP env root the fixture commits: Cloud Run and a Cloud Run job. */
 const GCP = envRoot({ serverless: false, container: true, batch: true }, 'gcp');
 
+/**
+ * A plan with one managed base, one per engine. The two emitters select by engine, so a
+ * calibration that only ever saw one engine's plan would let the other emit nothing and
+ * still pass.
+ */
+function managedPlan(engine: 'aws-bedrock' | 'vertex-rag'): DeployPlan {
+  const gcp = engine === 'vertex-rag';
+  return {
+    project: { name: 'kb', namespace: 'aid.test' },
+    services: [{ id: 'api', target: gcp ? 'container' : 'serverless' }],
+    knowledgeBases: [
+      {
+        id: 'docs',
+        engine,
+        dataSource: {
+          kind: gcp ? 'gcs' : 's3',
+          uri: gcp ? 'gs://aid-kb/docs' : 's3://aid-kb/docs',
+        },
+        chunking: { strategy: 'fixed', size: 800, overlap: 0 },
+        embedModel: 'embed',
+        embedModelId: gcp ? 'text-embedding-005' : 'amazon.titan-embed-text-v2:0',
+        envName: gcp ? 'VERTEX_RAG_CORPUS_DOCS' : 'BEDROCK_KNOWLEDGE_BASE_DOCS',
+        filterable: [],
+        vectorStore: { kind: 'provisioned' },
+        retrievers: ['docs'],
+        preventDestroy: true,
+      },
+    ],
+  } as unknown as DeployPlan;
+}
+
+const AWS_KB = managedPlan('aws-bedrock');
+const GCP_KB = managedPlan('vertex-rag');
+
+/** The env roots that carry a managed base, so the base modules are validated too. */
+const AWS_KB_ROOT = envRoot({
+  serverless: true,
+  container: true,
+  batch: true,
+  edge: true,
+  knowledgeBase: true,
+});
+const GCP_KB_ROOT = envRoot(
+  { serverless: false, container: true, batch: true, knowledgeBase: true },
+  'gcp',
+);
+
 /** Enough of a `DeployPlan` to choose a target: the modules ignore everything else. */
 function planOf(...targets: string[]): DeployPlan {
   return {
     services: targets.map((target, index) => ({ id: `svc${index}`, target })),
+    knowledgeBases: [],
   } as unknown as DeployPlan;
 }
 
@@ -86,6 +138,7 @@ const SERVING = {
   stores: [],
   tasks: [],
   alarms: [],
+  knowledgeBases: [],
 } as unknown as DeployPlan;
 
 const SERVERLESS = `specVersion: "0.2"
@@ -921,24 +974,28 @@ describe('modulesOf, the seam emit.ts reads', () => {
       container: false,
       batch: false,
       edge: false,
+      knowledgeBase: false,
     });
     expect(modulesOf(planOf('serverless', 'container'))).toEqual({
       serverless: true,
       container: true,
       batch: false,
       edge: false,
+      knowledgeBase: false,
     });
     expect(modulesOf(planOf('batch'))).toEqual({
       serverless: false,
       container: false,
       batch: true,
       edge: false,
+      knowledgeBase: false,
     });
     expect(modulesOf(planOf('edge'))).toEqual({
       serverless: false,
       container: false,
       batch: false,
       edge: true,
+      knowledgeBase: false,
     });
   });
 
@@ -952,31 +1009,55 @@ describe('modulesOf, the seam emit.ts reads', () => {
       container: true,
       batch: false,
       edge: false,
+      knowledgeBase: false,
     });
     expect(modulesOf(planOf('serverless'), 'gcp')).toEqual({
       serverless: false,
       container: true,
       batch: false,
       edge: false,
+      knowledgeBase: false,
     });
     expect(modulesOf(planOf('batch'), 'gcp')).toEqual({
       serverless: false,
       container: false,
       batch: true,
       edge: false,
+      knowledgeBase: false,
     });
     expect(modulesOf(planOf('edge'), 'gcp')).toEqual({
       serverless: false,
       container: false,
       batch: false,
       edge: false,
+      knowledgeBase: false,
     });
     expect(modulesOf(planOf('container'))).toEqual({
       serverless: false,
       container: true,
       batch: false,
       edge: false,
+      knowledgeBase: false,
     });
+  });
+
+  it('reports a managed base only when the cloud can provision it', () => {
+    // The engine names the cloud: a `vertex-rag` base on AWS is not a module that exists,
+    // so the flag follows the cloud and the engine, not "some plan has a base".
+    expect(modulesOf(AWS_KB).knowledgeBase).toBe(true);
+    expect(modulesOf(AWS_KB, 'gcp').knowledgeBase).toBe(false);
+    expect(modulesOf(GCP_KB, 'gcp').knowledgeBase).toBe(true);
+    expect(modulesOf(GCP_KB).knowledgeBase).toBe(false);
+  });
+
+  it('emits the base module the plan names and nothing for the other cloud', () => {
+    const aws = emitProviderModules(AWS_KB).map((file) => file.path);
+    expect(aws).toContain(`${KNOWLEDGE_BASE_MODULE_DIR}/main.tf`);
+    expect(aws).not.toContain(`${VERTEX_RAG_MODULE_DIR}/main.tf`);
+
+    const gcp = emitProviderModules(GCP_KB, 'gcp').map((file) => file.path);
+    expect(gcp).toContain(`${VERTEX_RAG_MODULE_DIR}/main.tf`);
+    expect(gcp).not.toContain(`${KNOWLEDGE_BASE_MODULE_DIR}/main.tf`);
   });
 
   it('emits every module a plan needs in one call', () => {
@@ -1093,6 +1174,8 @@ describe('the validate fixture', () => {
       { dir: CLOUDRUNJOB_MODULE_DIR, files: emitCloudRunJobModule(planOf('batch')) },
       { dir: BATCH_MODULE_DIR, files: emitBatchModule(planOf('batch')) },
       { dir: EDGE_MODULE_DIR, files: emitEdgeModule(planOf('edge')) },
+      { dir: KNOWLEDGE_BASE_MODULE_DIR, files: emitKnowledgeBaseModule(AWS_KB) },
+      { dir: VERTEX_RAG_MODULE_DIR, files: emitVertexRagModule(GCP_KB) },
     ];
     for (const { dir, files } of cases) {
       expect(files).toHaveLength(4);
@@ -1106,10 +1189,16 @@ describe('the validate fixture', () => {
   });
 
   it('matches the documented env root byte for byte', () => {
-    const variables = readFileSync(join(FIXTURE, 'envs', 'dev', 'variables.tf'), 'utf8');
-    const main = readFileSync(join(FIXTURE, 'envs', 'dev', 'main.tf'), 'utf8');
-    expect(variables).toBe(BOTH.variables);
-    expect(main).toBe(BOTH.main);
+    for (const [env, root] of [
+      ['dev', BOTH],
+      ['aws-kb', AWS_KB_ROOT],
+      ['gcp-kb', GCP_KB_ROOT],
+    ] as const) {
+      const variables = readFileSync(join(FIXTURE, 'envs', env, 'variables.tf'), 'utf8');
+      const main = readFileSync(join(FIXTURE, 'envs', env, 'main.tf'), 'utf8');
+      expect(variables, `${env}/variables.tf`).toBe(root.variables);
+      expect(main, `${env}/main.tf`).toBe(root.main);
+    }
   });
 
   it('matches the GCP env root byte for byte', () => {
@@ -1133,6 +1222,18 @@ describe('the validate fixture', () => {
     expect(main).toContain('source = "../../generated/modules/cloudrun"');
     expect(main).toContain('source = "../../generated/modules/cloudrunjob"');
     expect(main).toContain('provider "google"');
+  });
+
+  it('wires each base root to the base module it validates', () => {
+    // The base modules are only reachable through these roots, so a root that named the
+    // wrong source would leave the module in the tree validated by nothing.
+    const aws = readFileSync(join(FIXTURE, 'envs', 'aws-kb', 'main.tf'), 'utf8');
+    expect(aws).toContain('source = "../../generated/modules/knowledge-base"');
+    expect(aws).toContain('knowledge_bases = var.knowledge_bases');
+
+    const gcp = readFileSync(join(FIXTURE, 'envs', 'gcp-kb', 'main.tf'), 'utf8');
+    expect(gcp).toContain('source = "../../generated/modules/vertex-rag"');
+    expect(gcp).toContain('knowledge_bases = var.knowledge_bases');
   });
 
   it('matches the emitted CDK construct byte for byte', () => {

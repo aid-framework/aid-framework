@@ -21,6 +21,8 @@ export interface EnvRootModules {
   readonly batch?: boolean;
   /** Optional for the same reason: "no edge" unless a caller says otherwise. */
   readonly edge?: boolean;
+  /** Optional for the same reason: "no managed base" unless a caller says otherwise. */
+  readonly knowledgeBase?: boolean;
 }
 
 /** The plan-shaped variables every env root declares, so the generated tfvars binds. */
@@ -32,6 +34,7 @@ const PLAN_VARIABLES = [
   'variable "data_stores" {}',
   'variable "tasks" {}',
   'variable "alarms" {}',
+  'variable "knowledge_bases" {}',
 ];
 
 const IMAGE_URIS = [
@@ -335,7 +338,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   // An edge function is a zip, not an image, and its configuration is the secret the
   // module creates -- so an edge-only root needs none of the image or ARN inputs.
   const images = modules.serverless || modules.container || modules.batch === true;
-  const any = images || edge;
+  const any = images || edge || modules.knowledgeBase === true;
 
   const variables = [
     ...PLAN_VARIABLES,
@@ -352,17 +355,41 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   const calls: string[][] = [];
   const outputs: string[][] = [];
 
+  // A managed base is created by its own module, so the compute modules read the ids it
+  // returned. Without one the plan's map passes straight through, which is the case that
+  // keeps a project with no base byte-identical to the tree it generated before.
+  const knowledgeBases =
+    modules.knowledgeBase === true
+      ? 'module.knowledge-base.knowledge_bases'
+      : 'var.knowledge_bases';
+
+  if (modules.knowledgeBase === true) {
+    calls.push(
+      moduleCall('knowledge-base', [
+        'project         = var.project',
+        'knowledge_bases = var.knowledge_bases',
+        'tags            = var.tags',
+      ]),
+    );
+    outputs.push([
+      'output "knowledge_base_ids" {',
+      '  value = module.knowledge-base.knowledge_base_ids',
+      '}',
+    ]);
+  }
+
   if (modules.serverless) {
     calls.push(
       moduleCall('serverless', [
-        'project        = var.project',
-        'services       = var.services',
-        'guardrails     = var.guardrails',
-        'image_uris     = var.image_uris',
-        'secret_arns    = var.secret_arns',
-        'sizing         = var.sizing',
-        'bedrock_region = var.bedrock_region',
-        'tags           = var.tags',
+        'project         = var.project',
+        'services        = var.services',
+        'guardrails      = var.guardrails',
+        'image_uris      = var.image_uris',
+        'secret_arns     = var.secret_arns',
+        'sizing          = var.sizing',
+        'bedrock_region  = var.bedrock_region',
+        `knowledge_bases = ${knowledgeBases}`,
+        'tags            = var.tags',
       ]),
     );
     outputs.push([
@@ -389,6 +416,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         'idle_timeout       = var.idle_timeout',
         'log_retention_days = var.log_retention_days',
         'bedrock_region     = var.bedrock_region',
+        `knowledge_bases    = ${knowledgeBases}`,
         'tags               = var.tags',
       ]),
     );
@@ -410,6 +438,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         'max_vcpus          = var.batch_max_vcpus',
         'log_retention_days = var.batch_log_retention_days',
         'bedrock_region     = var.bedrock_region',
+        `knowledge_bases    = ${knowledgeBases}`,
         'tags               = var.tags',
       ]),
     );
@@ -466,22 +495,44 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   // directly still lands on Cloud Run rather than on a module that does not exist.
   const run = modules.container || modules.serverless;
   const job = modules.batch === true;
-  const any = run || job;
+  const corpus = modules.knowledgeBase === true;
+  // A corpus-only root still needs the project, region, tags and provider, but no image
+  // or secret inputs: nothing runs. `compute` keeps those tied to a module that reads them.
+  const compute = run || job;
+  const any = compute || corpus;
 
   const variables = [
     ...PLAN_VARIABLES,
     ...(any ? GCP_PROJECT : []),
-    ...(any ? IMAGE_URIS : []),
-    ...(any ? GCP_SECRET_IDS : []),
+    ...(compute ? IMAGE_URIS : []),
+    ...(compute ? GCP_SECRET_IDS : []),
     ...(any ? GCP_REGION : []),
     ...(run ? GCP_CLOUDRUN_INPUTS : []),
     ...(job ? GCP_JOB_INPUTS : []),
-    ...(any ? GCP_DELETION_PROTECTION : []),
+    ...(compute ? GCP_DELETION_PROTECTION : []),
     ...(any ? TAGS : []),
   ];
 
   const calls: string[][] = [];
   const outputs: string[][] = [];
+
+  // A managed corpus is created by its own module, so the compute modules read the name it
+  // returned. Without one the plan's map passes straight through, which is the case that
+  // keeps a project with no base byte-identical to the tree it generated before.
+  const knowledgeBases = corpus ? 'module.vertex-rag.knowledge_bases' : 'var.knowledge_bases';
+
+  if (corpus) {
+    calls.push(
+      moduleCall('vertex-rag', [
+        'project         = var.project',
+        'project_id      = var.gcp_project',
+        'region          = var.region',
+        'knowledge_bases = var.knowledge_bases',
+        'tags            = var.tags',
+      ]),
+    );
+    outputs.push(['output "corpus_names" {', '  value = module.vertex-rag.corpus_names', '}']);
+  }
 
   if (run) {
     calls.push(
@@ -495,6 +546,7 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         'region                = var.region',
         'allow_unauthenticated = var.allow_unauthenticated',
         'deletion_protection   = var.deletion_protection',
+        `knowledge_bases       = ${knowledgeBases}`,
         'tags                  = var.tags',
       ]),
     );
@@ -512,6 +564,7 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         'project_id          = var.gcp_project',
         'region              = var.region',
         'deletion_protection = var.deletion_protection',
+        `knowledge_bases     = ${knowledgeBases}`,
         'tags                = var.tags',
       ]),
     );

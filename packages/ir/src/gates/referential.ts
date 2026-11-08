@@ -10,6 +10,7 @@
 import { templatePlaceholders } from '../build.js';
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
 import type { IR, PipelineShape, StepInputValue, StepShape, TypeRef } from '../shapes.js';
+import { isManagedRetriever } from '../shapes.js';
 import { type GateOptions, type GateResult, reporter, type SuppressedCheck } from './contract.js';
 
 /** The id namespaces a reference can name. */
@@ -277,6 +278,9 @@ function checkRetrieval(ir: IR, scope: Scope, diagnostics: IrDiagnostic[], repor
   const models = new Map(ir.models.map((model) => [model.id, model]));
   for (const retriever of ir.retrievers) {
     const base = ['retrievers', retriever.id];
+    // The managed path's own references (its knowledge base, and that base's embedModel)
+    // are resolved by `gates/knowledge-base.ts`, which reports them on the base's path.
+    if (isManagedRetriever(retriever)) continue;
     if (!scope.names.stores.has(retriever.store)) {
       reportRef(retriever.store, 'stores', scope, [...base, 'store'], diagnostics, report);
     }

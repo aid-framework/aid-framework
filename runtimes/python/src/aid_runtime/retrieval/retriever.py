@@ -42,9 +42,16 @@ from aid_runtime.retrieval.citations import RetrievalResult, RetrievedItem, cite
 from aid_runtime.retrieval.connectors import Connector, SourceDocument, open_connector
 from aid_runtime.retrieval.embedding import Embedder, EmbeddingBatch, embedder_for
 from aid_runtime.retrieval.hybrid import fuse, lexical_ranking
+from aid_runtime.retrieval.knowledge_base import KnowledgeBaseClient, knowledge_base_client_for
 from aid_runtime.retrieval.rerank import Reranker, reranker_for
 from aid_runtime.retrieval.stores import SearchHit, StoreRecord, VectorStore, create_store
-from aid_runtime.retrieval.types import RefreshMode, RetrieverBinding, ScoredChunk
+from aid_runtime.retrieval.types import (
+    Chunk,
+    ManagedRetrieverBinding,
+    RefreshMode,
+    RetrieverBinding,
+    ScoredChunk,
+)
 from aid_runtime.types import TokenUsage
 
 __all__ = [
@@ -89,15 +96,17 @@ class IngestReport(BaseModel):
 
 
 class Retriever:
-    """A bound retriever: its source, its chunker, its embedder, its store.
+    """A bound retriever: its source, its chunker, its embedder, its store -- or, for a
+    managed knowledge base, the client that asks the engine.
 
-    Seams are injectable and default from the binding. Tests inject the fake
-    embedder and an in-memory store; generated code passes the real ones.
+    Seams are injectable and default from the binding. Tests inject the fake embedder and
+    an in-memory store; generated code passes the real ones. A managed binding has no
+    embedder or store to inject, and takes a ``knowledge_base_client`` instead.
     """
 
     def __init__(
         self,
-        binding: RetrieverBinding,
+        binding: RetrieverBinding | ManagedRetrieverBinding,
         *,
         embedder: Embedder | None = None,
         store: VectorStore | None = None,
@@ -108,38 +117,65 @@ class Retriever:
         base_dir: str | None = None,
         candidate_factor: int = DEFAULT_CANDIDATE_FACTOR,
         guardrails: Sequence[GuardrailDefinition] = (),
+        knowledge_base_client: KnowledgeBaseClient | None = None,
     ) -> None:
-        if binding.refresh_mode is not RefreshMode.FULL:
-            raise FeatureDeferredError(
-                f"refresh mode {binding.refresh_mode.value!r} is declared but not implemented: "
-                "spec v0.1 reindexes the whole source, and incremental refresh needs change "
-                "detection the runtime does not have"
-            )
         if candidate_factor < 1:
             raise ConfigurationError("candidate_factor must be at least 1")
         self._binding = binding
-        self._embedder = embedder or embedder_for(binding.embedding)
-        self._store = store or create_store(
-            binding.store_kind,
-            uri=binding.store_uri,
-            dimensions=binding.embedding.dimensions,
-        )
         self._reranker = reranker or reranker_for(binding.rerank)
-        self._connector = connector
-        self._base_dir = base_dir
         self._ledger = ledger
         self._budget = budget
         self._candidate_factor = candidate_factor
         self._guardrails = tuple(guardrails)
         self._guardrail_engine = GuardrailEngine()
         self._closed = False
+        if isinstance(binding, ManagedRetrieverBinding):
+            client = knowledge_base_client or knowledge_base_client_for(binding.knowledge_base)
+            if binding.filters and not client.supports_filter_expressions:
+                raise FeatureDeferredError(
+                    f"retriever {binding.retriever_id!r} declares filters and knowledge base "
+                    f"{binding.knowledge_base.id!r} runs on "
+                    f"{binding.knowledge_base.engine.value!r}, whose retrieve API does not take "
+                    "the expression the spec carries; serving the call unfiltered would return "
+                    "the whole corpus"
+                )
+            self._knowledge_base_client: KnowledgeBaseClient | None = client
+            self._embedder = None
+            self._store = None
+            self._connector = None
+            self._base_dir = None
+            return
+        if binding.refresh_mode is not RefreshMode.FULL:
+            raise FeatureDeferredError(
+                f"refresh mode {binding.refresh_mode.value!r} is declared but not implemented: "
+                "spec v0.1 reindexes the whole source, and incremental refresh needs change "
+                "detection the runtime does not have"
+            )
+        self._knowledge_base_client = None
+        self._embedder = embedder or embedder_for(binding.embedding)
+        self._store = store or create_store(
+            binding.store_kind,
+            uri=binding.store_uri,
+            dimensions=binding.embedding.dimensions,
+        )
+        self._connector = connector
+        self._base_dir = base_dir
 
     @property
-    def binding(self) -> RetrieverBinding:
+    def binding(self) -> RetrieverBinding | ManagedRetrieverBinding:
         return self._binding
 
     @property
+    def is_managed(self) -> bool:
+        return self._knowledge_base_client is not None
+
+    @property
     def store(self) -> VectorStore:
+        if self._store is None:
+            raise ConfigurationError(
+                f"retriever {self._binding.retriever_id!r} reads a managed knowledge base, so "
+                "it has no local store: the engine owns the index"
+            )
         return self._store
 
     async def ingest(self, documents: Sequence[SourceDocument] | None = None) -> IngestReport:
@@ -148,9 +184,20 @@ class Retriever:
         Idempotent by construction: chunk ids are content hashes and the store
         upserts on them, so ingesting the same input twice replaces rather than
         duplicates. Re-ingesting is therefore a legitimate way to refresh a corpus.
+
+        Refused for a managed retriever. The engine ingests from its own data source, so
+        a local ingest would write vectors the retriever never reads -- work that costs
+        money and changes nothing, which is the worst kind of silent success.
         """
+        if self._knowledge_base_client is not None:
+            raise ConfigurationError(
+                f"retriever {self._binding.retriever_id!r} reads a managed knowledge base, "
+                "which ingests from its data source inside the engine; there is no local "
+                "index to fill, and writing one would be read by nothing"
+            )
         source_documents = tuple(documents) if documents is not None else await self._read_source()
-        chunker = chunker_for(self._binding.chunking)
+        local = self._local
+        chunker = chunker_for(local.chunking)
         chunks = [chunk for document in source_documents for chunk in chunker.chunk(document)]
 
         records: list[StoreRecord] = []
@@ -166,9 +213,9 @@ class Retriever:
                 for chunk, vector in zip(batch, embedded.vectors, strict=True)
             )
 
-        written = await self._store.upsert(records)
+        written = await self.store.upsert(records)
         return IngestReport(
-            retriever=self._binding.retriever_id,
+            retriever=local.retriever_id,
             documents=len(source_documents),
             chunks=len(chunks),
             written=written,
@@ -178,23 +225,26 @@ class Retriever:
         )
 
     async def retrieve(self, query: str, *, top_k: int | None = None) -> RetrievalResult:
-        """Search the store for ``query`` and return ranked, cited passages."""
+        """Search for ``query`` and return ranked, cited passages."""
         wanted = top_k if top_k is not None else self._binding.top_k
         if wanted < 1:
             raise ConfigurationError("top_k must be at least 1")
+        if self._knowledge_base_client is not None:
+            return await self._retrieve_managed(query, wanted)
 
         batch, _ = await self._embed((query,))
         vector = batch.vectors[0]
         candidates = wanted * self._candidate_factor
-        hits = await self._store.search(vector, top_k=candidates, metric=self._binding.index.metric)
+        local = self._local
+        hits = await self.store.search(vector, top_k=candidates, metric=local.index.metric)
         ranked = await self._rank(query, hits, candidates)
         items = _to_items(ranked)
         if self._reranker is not None:
-            top_n = self._binding.rerank.top_n if self._binding.rerank is not None else wanted
+            top_n = local.rerank.top_n if local.rerank is not None else wanted
             items = await self._reranker.rerank(query, items, top_n=top_n)
         guarded, records = self._guard_retrieval(items[:wanted])
         return RetrievalResult(
-            retriever=self._binding.retriever_id,
+            retriever=local.retriever_id,
             query=query,
             items=guarded,
             guardrails=records,
@@ -245,14 +295,95 @@ class Retriever:
         if self._closed:
             return
         self._closed = True
-        await self._store.aclose()
-        await self._embedder.aclose()
+        if self._knowledge_base_client is not None:
+            await self._knowledge_base_client.aclose()
+            return
+        await self.store.aclose()
+        embedder = self._embedder
+        if embedder is not None:
+            await embedder.aclose()
         if self._connector is not None:
             await self._connector.aclose()
 
+    async def _retrieve_managed(self, query: str, wanted: int) -> RetrievalResult:
+        """Ask the engine, then run the same rerank and guardrail stages as a local search.
+
+        The chunk mapping goes through :class:`ScoredChunk` and :func:`_to_items` rather
+        than straight to ``RetrievedItem`` so citations are derived the one way they are
+        derived everywhere: a managed passage then cites identically to a local one, and
+        a change to how a citation is built cannot reach only one of the two paths.
+        """
+        binding = self._binding
+        if not isinstance(binding, ManagedRetrieverBinding):
+            raise AssertionError("_retrieve_managed called for a local binding")
+        client = self._knowledge_base_client
+        if client is None:
+            raise AssertionError("_retrieve_managed called without a client")
+
+        result = await client.retrieve(
+            binding.knowledge_base,
+            query,
+            top_k=wanted,
+            filters=binding.filters,
+        )
+        if result.cost_usd is not None and self._ledger is not None:
+            self._ledger.charge(
+                self._budget,
+                LedgerEntry(
+                    alias=binding.retriever_id,
+                    model=binding.knowledge_base.engine.value,
+                    provider=binding.knowledge_base.engine.value,
+                    usage=TokenUsage(input_tokens=0, output_tokens=0),
+                    cost_usd=result.cost_usd,
+                ),
+            )
+
+        ranked = tuple(
+            ScoredChunk(
+                chunk=Chunk(
+                    chunk_id=chunk.chunk_id,
+                    doc_id=chunk.source_uri or binding.retriever_id,
+                    uri=chunk.source_uri,
+                    index=chunk.position,
+                    start=0,
+                    end=len(chunk.text),
+                    text=chunk.text,
+                    metadata=dict(chunk.metadata),
+                ),
+                score=chunk.score,
+            )
+            for chunk in result.chunks
+        )
+        items = _to_items(ranked)
+        if self._reranker is not None:
+            top_n = binding.rerank.top_n if binding.rerank is not None else wanted
+            items = await self._reranker.rerank(query, items, top_n=top_n)
+        guarded, records = self._guard_retrieval(items[:wanted])
+        return RetrievalResult(
+            retriever=binding.retriever_id,
+            query=query,
+            items=guarded,
+            guardrails=records,
+        )
+
+    @property
+    def _local(self) -> RetrieverBinding:
+        """The binding, narrowed to the local shape.
+
+        Reached only from the local code paths. Raising rather than asserting keeps a
+        runtime failure explained even under ``python -O``, which strips assertions.
+        """
+        binding = self._binding
+        if not isinstance(binding, RetrieverBinding):
+            raise ConfigurationError(
+                f"retriever {binding.retriever_id!r} reads a managed knowledge base, so it "
+                "has no local source, chunker, embedder, or store"
+            )
+        return binding
+
     async def _read_source(self) -> tuple[SourceDocument, ...]:
         if self._connector is None:
-            self._connector = open_connector(self._binding.source, base_dir=self._base_dir)
+            self._connector = open_connector(self._local.source, base_dir=self._base_dir)
         return await self._connector.documents()
 
     async def _embed(self, texts: Sequence[str]) -> tuple[EmbeddingBatch, float]:
@@ -262,27 +393,31 @@ class Retriever:
         operation spent: the ledger's total is cumulative across every call the
         process made, and reporting that as this ingest's cost would double-count.
         """
-        batch = await self._embedder.embed(texts, model=self._binding.embedding)
+        embedder = self._embedder
+        if embedder is None:
+            raise AssertionError("_embed called without an embedder")
+        local = self._local
+        embedded = await embedder.embed(texts, model=local.embedding)
         usage = TokenUsage(
-            input_tokens=batch.usage.input_tokens,
-            output_tokens=batch.usage.output_tokens,
+            input_tokens=embedded.usage.input_tokens,
+            output_tokens=embedded.usage.output_tokens,
         )
         # Priced through CostProfile rather than a ModelSpec: a ModelSpec requires a
         # context window and an output ceiling, and fabricating those to reuse a
         # pricing helper would put invented numbers in a generated artifact.
-        cost = self._binding.embedding.cost.cost_usd(usage)
+        cost = local.embedding.cost.cost_usd(usage)
         if self._ledger is not None:
             self._ledger.charge(
                 self._budget,
                 LedgerEntry(
-                    alias=self._binding.embed_model,
-                    model=self._binding.embedding.model_id,
-                    provider=self._binding.embedding.provider,
+                    alias=local.embed_model,
+                    model=local.embedding.model_id,
+                    provider=local.embedding.provider,
                     usage=usage,
                     cost_usd=cost,
                 ),
             )
-        return batch, cost
+        return embedded, cost
 
     async def _rank(
         self,
@@ -296,10 +431,10 @@ class Retriever:
         meaning of the flag -- not "use a different metric", but "do not consult the
         lexical ranking at all".
         """
-        if not self._binding.index.hybrid:
+        if not self._local.index.hybrid:
             return tuple(ScoredChunk(chunk=hit.record.chunk, score=hit.score) for hit in hits)
 
-        corpus = await self._store.corpus()
+        corpus = await self.store.corpus()
         by_id: dict[str, StoreRecord] = {record.chunk.chunk_id: record for record in corpus}
         for hit in hits:
             by_id.setdefault(hit.record.chunk.chunk_id, hit.record)

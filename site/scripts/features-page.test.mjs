@@ -207,7 +207,9 @@ describe('the features page data', () => {
         ).toMatch(new RegExp(`^## \`${command}\`$`, 'm'));
         continue;
       }
-      const tokens = [...declaredBy.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)].map((m) => m[0]);
+      // Enum values are hyphenated identifiers (`aws-bedrock`, `vertex-rag`), and the
+      // vocabulary contains them whole, so a token keeps its hyphens.
+      const tokens = [...declaredBy.matchAll(/[A-Za-z_][A-Za-z0-9_-]*/g)].map((m) => m[0]);
       const missing = tokens.filter((token) => !vocabulary.has(token));
       expect(
         missing,

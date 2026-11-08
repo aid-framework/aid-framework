@@ -20,6 +20,7 @@ import {
   INDEX_METRICS,
   type IR,
   isIndexMetric,
+  isManagedRetriever,
   type ModelShape,
   modelIdentity,
   type ObservabilityShape,
@@ -275,6 +276,10 @@ function checkRetriever(
   diagnostics: IrDiagnostic[],
   report: Reporter,
 ): void {
+  // A managed retriever has no local metric, embedder or store to reconcile: the engine
+  // owns all three, and `gates/knowledge-base.ts` checks the parts this IR can see.
+  if (isManagedRetriever(retriever)) return;
+
   if (!isIndexMetric(retriever.index.metric)) {
     diagnostics.push(
       report.error({

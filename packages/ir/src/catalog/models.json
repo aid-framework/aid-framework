@@ -1,5 +1,5 @@
 {
-  "$comment": "Offline model catalog. Lookups are deterministic and never touch the network. `models` maps a provider model id to its limits and, optionally, a `costProfiles` key.",
+  "$comment": "Offline model catalog. Lookups are deterministic and never touch the network. `models` maps a provider model id to its limits and, optionally, a `costProfiles` key. `knowledgeBases` prices a managed knowledge base's Retrieve call per query unit; a null rate means the price has not been verified offline, and the cost gate treats it as unknown rather than free.",
   "version": "0.1.0",
   "costProfiles": {
     "openai-gpt-4o-mini": { "inputPerMTok": 0.15, "outputPerMTok": 0.6 },
@@ -15,6 +15,16 @@
     "google-gemini-2-5-flash": { "inputPerMTok": 0.3, "outputPerMTok": 2.5 },
     "google-gemini-2-5-pro": { "inputPerMTok": 1.25, "outputPerMTok": 10 },
     "gemini-gemini-embedding-001": { "inputPerMTok": 0.15, "outputPerMTok": 0 }
+  },
+  "knowledgeBases": {
+    "aws-bedrock": {
+      "retrievePerQueryUsd": 0.001,
+      "note": "Amazon Bedrock Retrieve API, $1.00 per 1,000 calls. A self-managed knowledge base additionally bills its vector store hourly; that floor is not per-query and is documented in the generated README instead."
+    },
+    "vertex-rag": {
+      "retrievePerQueryUsd": null,
+      "note": "Vertex RAG retrieval has no verified list rate in this catalog, so it is priced as unknown rather than free. Set the rate here once confirmed against the current Vertex AI pricing page."
+    }
   },
   "models": {
     "gpt-4o-mini": {

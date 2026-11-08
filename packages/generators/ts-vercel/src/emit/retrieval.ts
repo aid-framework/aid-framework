@@ -11,12 +11,13 @@
  * by the route handlers and must stay usable in an edge runtime.
  */
 
-import type { IR, RetrieverShape } from '@aid-framework/ir';
+import type { IR, LocalRetrieverShape } from '@aid-framework/ir';
+import { isLocalRetriever } from '@aid-framework/ir';
 import { literal, propertyKey } from '../names.js';
 import { type EmittedFile, generated, paths, retrievalIngestModulePath } from './file.js';
 import { exportStatement, importStatement, moduleText, tsValue } from './text.js';
 
-function sourceExpression(retriever: RetrieverShape): string {
+function sourceExpression(retriever: LocalRetrieverShape): string {
   const fields = [
     `kind: ${literal(retriever.source.kind)}`,
     `uri: ${literal(retriever.source.uri)}`,
@@ -25,7 +26,7 @@ function sourceExpression(retriever: RetrieverShape): string {
   return `new SourceSpec({ ${fields.join(', ')} })`;
 }
 
-function chunkingExpression(retriever: RetrieverShape): string {
+function chunkingExpression(retriever: LocalRetrieverShape): string {
   const keep = retriever.chunking.keepMetadata;
   return [
     'new ChunkingSpec({',
@@ -37,7 +38,7 @@ function chunkingExpression(retriever: RetrieverShape): string {
   ].join('\n');
 }
 
-function indexExpression(retriever: RetrieverShape): string {
+function indexExpression(retriever: LocalRetrieverShape): string {
   return [
     'new IndexSpec({',
     `      metric: ${literal(retriever.index.metric)},`,
@@ -46,7 +47,7 @@ function indexExpression(retriever: RetrieverShape): string {
   ].join('\n');
 }
 
-function retrieverExpression(retriever: RetrieverShape): string {
+function retrieverExpression(retriever: LocalRetrieverShape): string {
   const lines = [
     `  ${propertyKey(retriever.id)}: new RetrieverSpec({`,
     `    id: ${literal(retriever.id)},`,
@@ -118,7 +119,10 @@ export function emitRetrievalBindings(ir: IR): EmittedFile {
     })
     .join('\n');
 
-  const retrievers = ir.retrievers.map(retrieverExpression).join('\n');
+  // `checkRetrievers` refuses a managed retriever before any byte is rendered, so the
+  // filter here only narrows the type: a base has no local source, store or chunking to
+  // spell, and letting one through would emit an unsearchable binding.
+  const retrievers = ir.retrievers.filter(isLocalRetriever).map(retrieverExpression).join('\n');
 
   const body = [
     '/** The embedding models the IR pins, by alias. */',
@@ -203,7 +207,7 @@ export function emitRetrievalIndex(ir: IR): EmittedFile {
   return generated(paths.retrievalIndex, moduleText(header, body));
 }
 
-function ingestModule(retriever: RetrieverShape): string {
+function ingestModule(retriever: LocalRetrieverShape): string {
   const header = [
     importStatement('node:fs', [{ name: 'existsSync', type: false }]),
     importStatement('node:path', [
@@ -255,16 +259,19 @@ function ingestModule(retriever: RetrieverShape): string {
 }
 
 export function emitRetrievalIngestModules(ir: IR): EmittedFile[] {
-  return ir.retrievers.map((retriever) =>
-    generated(retrievalIngestModulePath(retriever.id), moduleText(ingestModule(retriever))),
-  );
+  return ir.retrievers
+    .filter(isLocalRetriever)
+    .map((retriever) =>
+      generated(retrievalIngestModulePath(retriever.id), moduleText(ingestModule(retriever))),
+    );
 }
 
 export function emitRetrievalIngestIndex(ir: IR): EmittedFile {
+  const locals = ir.retrievers.filter(isLocalRetriever);
   const lines =
-    ir.retrievers.length === 0
-      ? ['// This project declares no retrievers, so there is nothing to ingest.']
-      : ir.retrievers.map((retriever) =>
+    locals.length === 0
+      ? ['// This project declares no local retrievers, so there is nothing to ingest.']
+      : locals.map((retriever) =>
           exportStatement(`./${retriever.id}.js`, [
             [
               'ingest',

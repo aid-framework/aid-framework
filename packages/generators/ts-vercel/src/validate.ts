@@ -21,6 +21,7 @@ import {
   type GuardStep,
   type IR,
   isCompositeStep,
+  isManagedRetriever,
   isRequiredCapability,
   type MapStep,
   type MetricShape,
@@ -75,6 +76,7 @@ export type PlanProblemCode =
   | 'reference-unresolved'
   | 'trigger-unsupported'
   | 'retriever-store-unsupported'
+  | 'retriever-knowledge-base-unsupported'
   | 'retriever-source-unsupported'
   | 'retriever-embedding-unresolved'
   | 'retriever-filters-unsupported'
@@ -496,6 +498,20 @@ export function checkRetrievers(ir: IR): PlanProblem[] {
   const models = new Map(ir.models.map((shape) => [shape.id, shape]));
   for (const retriever of ir.retrievers) {
     const at = `retrievers.${retriever.id}`;
+    if (isManagedRetriever(retriever)) {
+      // A managed knowledge base is a server-side retrieve call the runtime reaches
+      // through a cloud SDK. This target has no such client and runs where those
+      // credentials are not available, so it refuses rather than emitting a binding
+      // that cannot search. `target: py-fastapi` is the shipped alternative.
+      problems.push(
+        problem(
+          'retriever-knowledge-base-unsupported',
+          at,
+          `retriever "${retriever.id}" reads managed knowledge base "${retriever.knowledgeBase}", which this target has no runtime client for; use target: py-fastapi`,
+        ),
+      );
+      continue;
+    }
     const store = stores.get(retriever.store);
     if (store === undefined) {
       problems.push(

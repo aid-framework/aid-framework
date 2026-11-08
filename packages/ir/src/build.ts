@@ -58,8 +58,12 @@ import {
   IR_VERSION,
   isGuardrailPolicyKind,
   isIndexMetric,
+  isKnowledgeBaseEngine,
   isProvider,
   isVectorStoreKind,
+  type KnowledgeBaseShape,
+  type LocalRetrieverShape,
+  type ManagedRetrieverShape,
   type MapStep,
   type MemoryShape,
   type MetricShape,
@@ -156,6 +160,7 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
   const tools = buildTools(root.tools, context);
   const stores = buildStores(root.stores);
   const retrievers = buildRetrievers(root.retrievers);
+  const knowledgeBases = buildKnowledgeBases(root.knowledgeBases);
   const memory = buildMemory(root.memory);
   const guardrails = buildGuardrails(root.guardrails);
   const decisions = buildDecisions(root.decisions);
@@ -177,6 +182,7 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
     prompts,
     tools,
     retrievers,
+    knowledgeBases,
     embeddings,
     stores,
     memory,
@@ -506,16 +512,70 @@ function asStoreKind(raw: unknown): VectorStoreShape['kind'] {
   return value !== undefined && isVectorStoreKind(value) ? value : 'memory';
 }
 
+function buildKnowledgeBases(raw: unknown): KnowledgeBaseShape[] {
+  const record = asRecord(raw) ?? {};
+  return sortedKeys(record).map((id) => {
+    const entry = asRecord(record[id]) ?? {};
+    const dataSource = asRecord(entry.dataSource) ?? {};
+    const chunking = asRecord(entry.chunking) ?? {};
+    const vectorStore = asRecord(entry.vectorStore) ?? {};
+    const engine = asKnowledgeBaseEngine(entry.engine);
+    const base: KnowledgeBaseShape = {
+      id,
+      engine,
+      dataSource: {
+        kind: asDataSourceKind(dataSource.kind, engine),
+        uri: asString(dataSource.uri) ?? '',
+      },
+      chunking: {
+        strategy: asManagedChunkStrategy(chunking.strategy),
+        size: asNumber(chunking.size) ?? DEFAULT_CHUNK_SIZE,
+        overlap: asNumber(chunking.overlap) ?? DEFAULT_CHUNK_OVERLAP,
+      },
+      embedModel: asString(entry.embedModel) ?? '',
+      filterable: asStringArray(entry.filterable),
+      vectorStore: { kind: vectorStore.kind === 'existing' ? 'existing' : 'provisioned' },
+    };
+    const arn = asString(vectorStore.arn);
+    if (arn !== undefined) base.vectorStore.arn = arn;
+    return base;
+  });
+}
+
+function asKnowledgeBaseEngine(raw: unknown): KnowledgeBaseShape['engine'] {
+  const value = asString(raw);
+  return value !== undefined && isKnowledgeBaseEngine(value) ? value : 'aws-bedrock';
+}
+
+/** The engine→bucket binding the schema refuses; the IR defaults to the engine's own. */
+function asDataSourceKind(
+  raw: unknown,
+  engine: KnowledgeBaseShape['engine'],
+): KnowledgeBaseShape['dataSource']['kind'] {
+  const value = asString(raw);
+  if (value === 's3' || value === 'gcs') return value;
+  return engine === 'vertex-rag' ? 'gcs' : 's3';
+}
+
+function asManagedChunkStrategy(raw: unknown): KnowledgeBaseShape['chunking']['strategy'] {
+  const value = asString(raw);
+  return value === 'recursive' || value === 'code' ? value : 'fixed';
+}
+
 function buildRetrievers(raw: unknown): RetrieverShape[] {
   const record = asRecord(raw) ?? {};
   return sortedKeys(record).map((id) => {
     const entry = asRecord(record[id]) ?? {};
+    const knowledgeBase = asString(entry.knowledgeBase);
+    if (knowledgeBase !== undefined) return buildManagedRetriever(id, entry, knowledgeBase);
+
     const source = asRecord(entry.source) ?? {};
     const chunking = asRecord(entry.chunking) ?? {};
     const index = asRecord(entry.index) ?? {};
     const refresh = asRecord(entry.refresh) ?? {};
 
-    const retriever: RetrieverShape = {
+    const retriever: LocalRetrieverShape = {
+      kind: 'local',
       id,
       source: buildRetrieverSource(source),
       chunking: {
@@ -550,19 +610,48 @@ function buildRetrievers(raw: unknown): RetrieverShape[] {
   });
 }
 
-function buildRetrieverSource(raw: Record<string, unknown>): RetrieverShape['source'] {
+/**
+ * A managed retriever keeps the query shape and nothing else. The spec layer already
+ * refuses a local pipeline key beside `knowledgeBase`, so the only fields read here are
+ * the ones that still run in this process.
+ */
+function buildManagedRetriever(
+  id: string,
+  entry: Record<string, unknown>,
+  knowledgeBase: string,
+): ManagedRetrieverShape {
+  const retriever: ManagedRetrieverShape = {
+    kind: 'managed',
+    id,
+    knowledgeBase,
+    topK: asNumber(entry.topK) ?? DEFAULT_RETRIEVER_TOP_K,
+    traits: buildRetrievalTraits(entry.traits),
+  };
+  const rerank = asRecord(entry.rerank);
+  if (rerank !== undefined) {
+    retriever.rerank = {
+      model: asString(rerank.model) ?? '',
+      topN: asNumber(rerank.topN) ?? retriever.topK,
+    };
+  }
+  const filters = asStringArray(entry.filters);
+  if (filters.length > 0) retriever.filters = filters;
+  return retriever;
+}
+
+function buildRetrieverSource(raw: Record<string, unknown>): LocalRetrieverShape['source'] {
   const value = asString(raw.kind);
-  const kind: RetrieverShape['source']['kind'] =
+  const kind: LocalRetrieverShape['source']['kind'] =
     value === 's3' || value === 'http' || value === 'db' || value === 'mcp' ? value : 'file';
-  const source: RetrieverShape['source'] = { kind, uri: asString(raw.uri) ?? '' };
+  const source: LocalRetrieverShape['source'] = { kind, uri: asString(raw.uri) ?? '' };
   const glob = asString(raw.glob);
   if (glob !== undefined) source.glob = glob;
   return source;
 }
 
-function buildRefresh(raw: Record<string, unknown>): RetrieverShape['refresh'] {
+function buildRefresh(raw: Record<string, unknown>): LocalRetrieverShape['refresh'] {
   const mode = asString(raw.mode);
-  const refresh: RetrieverShape['refresh'] = {
+  const refresh: LocalRetrieverShape['refresh'] = {
     mode: mode === 'incremental' ? 'incremental' : DEFAULT_REFRESH_MODE,
   };
   const schedule = asString(raw.schedule);
@@ -570,14 +659,14 @@ function buildRefresh(raw: Record<string, unknown>): RetrieverShape['refresh'] {
   return refresh;
 }
 
-function asChunkStrategy(raw: unknown): RetrieverShape['chunking']['strategy'] {
+function asChunkStrategy(raw: unknown): LocalRetrieverShape['chunking']['strategy'] {
   const value = asString(raw);
   return value === 'fixed' || value === 'semantic' || value === 'code'
     ? value
     : DEFAULT_CHUNK_STRATEGY;
 }
 
-function asIndexMetric(raw: unknown): RetrieverShape['index']['metric'] {
+function asIndexMetric(raw: unknown): LocalRetrieverShape['index']['metric'] {
   const value = asString(raw);
   return value !== undefined && isIndexMetric(value) ? value : DEFAULT_INDEX_METRIC;
 }

@@ -39,6 +39,14 @@ __all__ = [
     "EmbeddingCostProfile",
     "EmbeddingSpec",
     "IndexSpec",
+    "KnowledgeBaseEngine",
+    "KnowledgeBaseSpec",
+    "KnowledgeChunkingSpec",
+    "KnowledgeDataSourceKind",
+    "KnowledgeDataSourceSpec",
+    "KnowledgeVectorStoreSpec",
+    "ManagedRetrieverBinding",
+    "ManagedRetrieverSpec",
     "PinnedEmbedding",
     "RefreshMode",
     "RefreshSpec",
@@ -53,6 +61,7 @@ __all__ = [
     "StoreKind",
     "StoreRecord",
     "VectorStoreSpec",
+    "binding_from_managed_spec",
     "binding_from_spec",
     "chunk_id_for",
     "pinned_embedding",
@@ -286,6 +295,118 @@ class RetrieverBinding(BaseModel):
     traits: tuple[str, ...] = ()
 
 
+class KnowledgeDataSourceKind(StrEnum):
+    """``knowledgeBase.dataSource.kind``."""
+
+    S3 = "s3"
+    GCS = "gcs"
+
+
+class KnowledgeBaseEngine(StrEnum):
+    """``knowledgeBase.engine`` -- the managed service that owns the corpus."""
+
+    AWS_BEDROCK = "aws-bedrock"
+    VERTEX_RAG = "vertex-rag"
+
+
+class KnowledgeDataSourceSpec(BaseModel):
+    """``knowledgeBase.dataSource`` -- the bucket the corpus is uploaded to."""
+
+    model_config = _IR_RECORD
+
+    kind: KnowledgeDataSourceKind
+    uri: str = Field(min_length=1)
+
+
+class KnowledgeChunkingSpec(BaseModel):
+    """``knowledgeBase.chunking``.
+
+    Deliberately not :class:`ChunkingSpec`: a managed base has no ``keepMetadata``,
+    because the engine decides which metadata reaches a filter and the spec
+    declares that through ``filterable`` instead.
+    """
+
+    model_config = _IR_RECORD
+
+    strategy: ChunkingStrategy
+    size: int = Field(gt=0)
+    overlap: int = Field(ge=0)
+
+
+class KnowledgeVectorStoreSpec(BaseModel):
+    """``knowledgeBase.vectorStore``.
+
+    ``provisioned`` means the emitted infrastructure creates the store; ``existing``
+    means the operator already pays for one and ``arn`` names it. Neither is a local
+    :class:`VectorStoreSpec`: nothing in this runtime opens it.
+    """
+
+    model_config = _IR_RECORD
+
+    kind: Literal["provisioned", "existing"]
+    arn: str | None = None
+
+
+class KnowledgeBaseSpec(BaseModel):
+    """One entry of the IR's ``knowledgeBases`` map.
+
+    The engine owns chunking, embedding and the index, so this record is what the
+    runtime needs in order to *ask* it a question and to say which deployment the
+    question belongs to -- never what it needs to answer one itself.
+    """
+
+    model_config = _IR_RECORD
+
+    id: str = Field(min_length=1)
+    engine: KnowledgeBaseEngine
+    data_source: KnowledgeDataSourceSpec = Field(alias="dataSource")
+    chunking: KnowledgeChunkingSpec
+    embed_model: str = Field(alias="embedModel")
+    filterable: tuple[str, ...]
+    vector_store: KnowledgeVectorStoreSpec = Field(alias="vectorStore")
+    #: USD per retrieve call, inlined from the cost catalog by the generator. ``None``
+    #: means the catalog has no verified rate -- the cost is then unknown, not zero,
+    #: and the ledger records nothing rather than inventing a number.
+    retrieve_cost_per_query_usd: float | None = Field(default=None, alias="retrieveCostPerQueryUsd")
+
+
+class ManagedRetrieverSpec(BaseModel):
+    """One ``retrievers`` entry that reads a knowledge base.
+
+    The counterpart of :class:`RetrieverSpec`, and disjoint from it: a managed
+    retriever has no source, chunking, embedModel, store or index, because all five
+    belong to the engine.
+    """
+
+    model_config = _IR_RECORD
+
+    id: str = Field(min_length=1)
+    knowledge_base: str = Field(alias="knowledgeBase")
+    top_k: int = Field(gt=0, alias="topK")
+    rerank: RerankSpec | None = None
+    filters: tuple[str, ...] | None = None
+    traits: tuple[str, ...]
+
+
+class ManagedRetrieverBinding(BaseModel):
+    """A managed retriever as generated code binds it.
+
+    Kept apart from :class:`RetrieverBinding` rather than folded into it with
+    optional fields: the two have no field in common beyond ``top_k``, and a merged
+    record would let a local retriever arrive with no store -- the exact state the
+    union exists to make unrepresentable.
+    """
+
+    model_config = _RUNTIME_RECORD
+
+    retriever_id: str = Field(min_length=1)
+    knowledge_base: KnowledgeBaseSpec
+    top_k: int = Field(gt=0)
+    rerank: RerankSpec | None = None
+    filters: tuple[str, ...] = ()
+    traits: tuple[str, ...] = ()
+
+
 class Chunk(BaseModel):
     """One indexed passage.
 
@@ -429,5 +550,49 @@ def binding_from_spec(
         top_k=spec.top_k,
         rerank=spec.rerank,
         refresh_mode=spec.refresh.mode,
+        traits=spec.traits,
+    )
+
+
+def binding_from_managed_spec(
+    spec: ManagedRetrieverSpec,
+    *,
+    knowledge_base: KnowledgeBaseSpec,
+) -> ManagedRetrieverBinding:
+    """Bind one managed retriever entry to the knowledge base it names.
+
+    The same posture as :func:`binding_from_spec`: the reference is checked rather
+    than trusted, because generated code is reachable without the plan validator
+    having run. What is checked here is only what this side can see -- the alias, the
+    reranker the runtime actually has, and the filters it cannot apply. Whether the
+    engine has finished ingesting is a question only the engine can answer, and
+    :class:`~aid_runtime.retrieval.knowledge_base.KnowledgeBaseClient` asks it.
+    """
+    if spec.knowledge_base != knowledge_base.id:
+        raise ConfigurationError(
+            f"retriever {spec.id!r} names knowledge base {spec.knowledge_base!r} but "
+            f"knowledge base {knowledge_base.id!r} was supplied"
+        )
+    if spec.rerank is not None and "lexical" not in spec.rerank.model.casefold():
+        raise FeatureDeferredError(
+            f"retriever {spec.id!r} reranks with {spec.rerank.model!r}, and the runtime's "
+            "only reranker is lexical: it matches the declared name, so a name that does "
+            "not say so would be served by a reranker it never named"
+        )
+    if spec.filters:
+        raise FeatureDeferredError(
+            f"retriever {spec.id!r} declares {len(spec.filters)} filter "
+            f"{'expression' if len(spec.filters) == 1 else 'expressions'} on a managed "
+            "knowledge base, and this runtime does not translate them: Bedrock takes a "
+            "structured filter document and Vertex takes its own expression language, so "
+            "the only alternatives are to drop the filter -- which would retrieve the "
+            "whole corpus -- or to invent one engine's document from another's string"
+        )
+    return ManagedRetrieverBinding(
+        retriever_id=spec.id,
+        knowledge_base=knowledge_base,
+        top_k=spec.top_k,
+        rerank=spec.rerank,
+        filters=spec.filters or (),
         traits=spec.traits,
     )

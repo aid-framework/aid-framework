@@ -269,6 +269,7 @@ describe('buildDeployPlan', () => {
       services: [],
       stores: [],
       tasks: [],
+      knowledgeBases: [],
       alarms: [],
     });
   });

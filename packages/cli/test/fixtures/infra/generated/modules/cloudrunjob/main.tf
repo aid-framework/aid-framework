@@ -49,10 +49,32 @@ locals {
 
   # A job whose models name Vertex calls it with its own service account, so the project
   # role below is the only credential it needs -- the same shape as the AWS modules'
-  # Bedrock grant, and derived from `providers` rather than from a flag.
+  # Bedrock grant, and derived from `providers` rather than from a flag. A job that binds
+  # a managed corpus joins the set too: `:retrieveContexts` needs the same role.
   vertex = {
     for id, service in local.batch : id => service
-    if contains(service.providers, "google")
+    if contains(service.providers, "google") || contains(keys(local.knowledge_base_services), id)
+  }
+
+  # A service that binds a corpus. Keyed separately so `local.vertex` can union it
+  # with the services that name `google` as a model provider.
+  knowledge_base_services = {
+    for id, service in local.batch : id => service
+    if length([
+      for base_id, base in var.knowledge_bases : base
+      if base.id != "" && length(setintersection(toset(base.retrievers), toset(service.ingest))) > 0
+    ]) > 0
+  }
+
+  # Exported only to a service that binds one of the base's retrievers, and only once
+  # the corpus exists: the runtime raises a named error for a missing id, while an empty
+  # string would read as a corpus with no documents.
+  knowledge_base_env = {
+    for id, service in local.batch : id => {
+      for base_id, base in var.knowledge_bases :
+      base.env_name => base.id
+      if base.id != "" && length(setintersection(toset(base.retrievers), toset(service.ingest))) > 0
+    }
   }
 
   # The Vertex adapter reads its project and location from the environment, and Cloud Run
@@ -180,6 +202,16 @@ resource "google_cloud_run_v2_job" "job" {
         # job that names `google` gets both without the spec restating them.
         dynamic "env" {
           for_each = lookup(local.vertex_env, each.key, {})
+          content {
+            name  = env.key
+            value = env.value
+          }
+        }
+
+        # The corpus name the runtime reads its retriever from. Exported only to a job
+        # that binds the base, and only once the corpus exists.
+        dynamic "env" {
+          for_each = lookup(local.knowledge_base_env, each.key, {})
           content {
             name  = env.key
             value = env.value

@@ -33,6 +33,7 @@ import {
   planRegeneration,
   type RegenerationReport,
 } from '@aid-framework/generator-sdk';
+import { knowledgeBaseEnvName } from '@aid-framework/ir';
 import type { Severity } from '@aid-framework/spec';
 import { countBySeverity, hasErrors, sortDiagnostics } from '@aid-framework/spec';
 
@@ -313,6 +314,21 @@ export function doctor(context: CliContext, options: DoctorOptions): CommandOutc
     texts.push('tree: not checked, the manifest could not be read');
   }
 
+  // Ingestion is asynchronous, and the CLI holds no cloud credential: signing a
+  // describe call here would be a second auth path, which is the thing §6 of the plan
+  // refuses. So this reports what the plan knows -- the engine and the name the runtime
+  // reads -- and names the check that actually decides readiness, which is the first
+  // retrieve. That check fails loudly rather than returning empty context.
+  const bases = compiled?.ok === true ? compiled.ir.knowledgeBases : [];
+  if (bases.length > 0) {
+    texts.push(
+      `knowledge bases: ${bases
+        .map((base) => `${base.id} (${base.engine}, ${knowledgeBaseEnvName(base.id, base.engine)})`)
+        .join(', ')}`,
+      '  readiness is not knowable offline: ingestion is asynchronous, and the first retrieve fails, naming the base, until a job completes',
+    );
+  }
+
   return outcome({
     command,
     exitCode: hasErrors(diagnostics) ? EXIT_FAILURE : EXIT_OK,
@@ -326,6 +342,17 @@ export function doctor(context: CliContext, options: DoctorOptions): CommandOutc
       },
       specOk,
       counts: finalCounts,
+      ...(bases.length === 0
+        ? {}
+        : {
+            knowledgeBases: bases.map((base) => ({
+              id: base.id,
+              engine: base.engine,
+              envName: knowledgeBaseEnvName(base.id, base.engine),
+              // A fact the tool cannot observe, stated as such rather than as "ready".
+              ingestion: 'reported by the first retrieve',
+            })),
+          }),
       ...(facts === undefined
         ? {}
         : {

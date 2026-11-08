@@ -50,6 +50,7 @@ export const CLI_DIAGNOSTIC_CODES = {
   infraCloudBackendUnsupported: 'cli/infra-cloud-backend-unsupported',
   infraCloudTargetUnsupported: 'cli/infra-cloud-target-unsupported',
   infraGuardrailUnsupported: 'cli/infra-guardrail-unsupported',
+  infraKnowledgeBaseUnsupported: 'cli/infra-knowledge-base-unsupported',
   infraGeneratedOutdated: 'cli/infra-generated-outdated',
   infraNotGenerated: 'cli/infra-not-generated',
   infraEnvRootMissing: 'cli/infra-env-root-missing',

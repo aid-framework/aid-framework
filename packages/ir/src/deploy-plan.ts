@@ -15,15 +15,39 @@ import type {
   GuardrailEngine,
   GuardrailShape,
   IR,
+  KnowledgeBaseEngine,
   Provider,
   VectorStoreKind,
 } from './shapes.js';
+import { isManagedRetriever } from './shapes.js';
 
 /**
  * Bumped when the plan's shape changes incompatibly. Independent of `irVersion`:
  * the IR can change without changing what a deployment needs, and vice versa.
  */
 export const DEPLOY_PLAN_VERSION = '1';
+
+/**
+ * The environment name a deployment exports a knowledge base's service id under.
+ *
+ * This is a contract with the runtime, not a convenience: `aid_runtime.retrieval`
+ * computes the same name from the base id and reads it at first retrieve. The spelling
+ * is duplicated rather than derived twice, so `knowledge-base-env.test.ts` can pin the
+ * two computations to each other -- a plan that spelled it differently would deploy a
+ * retriever that raises "no service id" while the resource sits created beside it.
+ *
+ * The prefix carries the engine because the two engines publish a different kind of
+ * name: Bedrock hands back a service id, Vertex a corpus resource name. One shared
+ * prefix would let a Bedrock id be read as a corpus path.
+ */
+export function knowledgeBaseEnvName(id: string, engine: KnowledgeBaseEngine): string {
+  const slug = id
+    .replace(/[^A-Za-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase();
+  const prefix = engine === 'aws-bedrock' ? 'BEDROCK_KNOWLEDGE_BASE' : 'VERTEX_RAG_CORPUS';
+  return `${prefix}_${slug}`;
+}
 
 /**
  * One environment variable a service needs. A `secret` entry names a reference the
@@ -97,6 +121,38 @@ export interface DeployStore {
   retrievers: string[];
 }
 
+export interface DeployKnowledgeBase {
+  id: string;
+  engine: KnowledgeBaseEngine;
+  dataSource: { kind: 's3' | 'gcs'; uri: string };
+  chunking: { strategy: 'fixed' | 'recursive' | 'code'; size: number; overlap: number };
+  /** The spec's model alias, which the runtime config also uses. */
+  embedModel: string;
+  /**
+   * The provider's own model id for `embedModel`, resolved from the build's models.
+   * The infra needs it because a knowledge base names an embedding model by the
+   * provider's identifier -- an alias is a spec word, and no cloud has ever heard of
+   * it. Resolved here, once, so a backend cannot invent a second mapping.
+   */
+  embedModelId: string;
+  /**
+   * The environment name the deployment exports this base's service id under. Computed
+   * here so every backend spells it the one way the runtime reads it.
+   */
+  envName: string;
+  filterable: string[];
+  vectorStore: { kind: 'provisioned' | 'existing'; arn?: string };
+  /** Retriever ids that read this base. */
+  retrievers: string[];
+  /**
+   * Delete protection is on by default for both engines. A knowledge base holds the
+   * indexed corpus, and re-ingesting it costs money and API calls; a `destroy` that
+   * removes it should be a deliberate change to the module, not a side effect of an
+   * upstream rename. The emitter renders this as `prevent_destroy`.
+   */
+  preventDestroy: true;
+}
+
 export interface DeployTask {
   id: string;
   kind: 'ingest' | 'eval';
@@ -121,6 +177,7 @@ export interface DeployPlan {
   project: { name: string; namespace: string };
   services: DeployService[];
   stores: DeployStore[];
+  knowledgeBases: DeployKnowledgeBase[];
   tasks: DeployTask[];
   alarms: DeployAlarm[];
 }
@@ -171,6 +228,7 @@ export function buildDeployPlan(ir: IR): DeployPlan {
         kind: store.kind,
         retrievers: uniqueSorted(
           ir.retrievers
+            .filter((retriever) => !isManagedRetriever(retriever))
             .filter((retriever) => retriever.store === store.id)
             .map((retriever) => retriever.id),
         ),
@@ -182,16 +240,54 @@ export function buildDeployPlan(ir: IR): DeployPlan {
     })
     .sort((left, right) => compare(left.id, right.id));
 
-  const tasks: DeployTask[] = [
-    ...ir.retrievers.map((retriever) => {
-      const task: DeployTask = {
-        id: `ingest-${retriever.id}`,
-        kind: 'ingest',
-        source: retriever.id,
+  const modelsByAlias = new Map(ir.models.map((model) => [model.id, model]));
+  const knowledgeBases: DeployKnowledgeBase[] = ir.knowledgeBases
+    .map((base) => {
+      // The knowledge-base gate has already refused an alias nothing resolves, so a
+      // miss here means the plan was built from an ungated IR. Emitting the alias as
+      // the provider's model id would be worse than stopping: every engine would
+      // refuse it at apply time, far from the spec that caused it.
+      const embedding = modelsByAlias.get(base.embedModel);
+      if (embedding === undefined) {
+        throw new Error(
+          `knowledge base "${base.id}" embeds with "${base.embedModel}", which is not a model alias`,
+        );
+      }
+      return {
+        id: base.id,
+        engine: base.engine,
+        dataSource: { ...base.dataSource },
+        chunking: { ...base.chunking },
+        embedModel: base.embedModel,
+        embedModelId: embedding.modelId,
+        envName: knowledgeBaseEnvName(base.id, base.engine),
+        filterable: [...base.filterable],
+        vectorStore: { ...base.vectorStore },
+        retrievers: uniqueSorted(
+          ir.retrievers
+            .filter(isManagedRetriever)
+            .filter((retriever) => retriever.knowledgeBase === base.id)
+            .map((retriever) => retriever.id),
+        ),
+        preventDestroy: true as const,
       };
-      if (retriever.refresh.schedule !== undefined) task.schedule = retriever.refresh.schedule;
-      return task;
-    }),
+    })
+    .sort((left, right) => compare(left.id, right.id));
+
+  const tasks: DeployTask[] = [
+    // A managed base ingests inside the engine, so it schedules nothing here. Left in
+    // this list it would become a local job that embeds the corpus a second time.
+    ...ir.retrievers
+      .filter((retriever) => !isManagedRetriever(retriever))
+      .map((retriever) => {
+        const task: DeployTask = {
+          id: `ingest-${retriever.id}`,
+          kind: 'ingest',
+          source: retriever.id,
+        };
+        if (retriever.refresh.schedule !== undefined) task.schedule = retriever.refresh.schedule;
+        return task;
+      }),
     ...ir.evals.map((evalSuite) => ({
       id: `eval-${evalSuite.id}`,
       kind: 'eval' as const,
@@ -204,6 +300,7 @@ export function buildDeployPlan(ir: IR): DeployPlan {
     project: { name: ir.project.name, namespace: ir.project.namespace },
     services,
     stores,
+    knowledgeBases,
     tasks,
     alarms: alarms(ir),
   };

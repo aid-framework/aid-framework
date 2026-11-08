@@ -52,6 +52,7 @@
   ],
   "guardrails": [],
   "irVersion": "0.1.0",
+  "knowledgeBases": [],
   "memory": [],
   "models": [
     {
@@ -238,6 +239,7 @@
         "hybrid": true,
         "metric": "cosine"
       },
+      "kind": "local",
       "refresh": {
         "mode": "full"
       },

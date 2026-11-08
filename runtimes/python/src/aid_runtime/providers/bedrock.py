@@ -102,14 +102,21 @@ def sigv4_headers(
     credentials: dict[str, Any],
     moment: datetime,
     service: str = BEDROCK_SERVICE,
+    method: str = "POST",
+    query: str = "",
 ) -> dict[str, str]:
-    """The SigV4 headers for one JSON ``POST`` to ``url``.
+    """The SigV4 headers for one request to ``url``.
 
-    Shared by the model adapter and the managed-guardrail adapter because both
-    sign with the ``bedrock`` service name -- Converse is served by
-    ``bedrock-runtime`` but signed as ``bedrock``, and ``ApplyGuardrail`` is served
-    by ``bedrock`` itself. Keeping one signer means a fix to the canonical request
-    cannot land in one caller and miss the other.
+    Shared by the model adapter, the managed-guardrail adapter and the managed
+    knowledge-base adapter because all three sign with the same identity. Converse is
+    served by ``bedrock-runtime`` but signed as ``bedrock``, ``ApplyGuardrail`` is served
+    by ``bedrock`` itself, and ``Retrieve`` is served by ``bedrock-agent-runtime``; the
+    service name is therefore a parameter rather than a constant. Keeping one signer
+    means a fix to the canonical request cannot land in one caller and miss the others.
+
+    ``method`` and ``query`` exist for the knowledge-base adapter, whose readiness check
+    is a ``GET`` with a query string. Both are part of the canonical request, so a caller
+    that changed either without signing it would produce a signature AWS rejects.
     """
     stamp = _amz_date(moment)
     date = stamp[:8]
@@ -126,9 +133,9 @@ def sigv4_headers(
     signed_headers = ";".join(header for header, _ in canonical_headers)
     canonical_request = "\n".join(
         [
-            "POST",
+            method,
             parsed.path,
-            "",
+            query,
             "".join(f"{header}:{value}\n" for header, value in canonical_headers),
             signed_headers,
             _sha256_hex(body),

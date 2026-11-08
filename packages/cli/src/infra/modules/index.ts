@@ -20,7 +20,9 @@ export { EDGE_MODULE_DIR, emitEdgeModule } from './edge.js';
 export { type EnvRootModules, envRoot } from './env-root.js';
 export type { ModuleFile } from './hcl.js';
 export { hcl } from './hcl.js';
+export { emitKnowledgeBaseModule, KNOWLEDGE_BASE_MODULE_DIR } from './knowledge-base.js';
 export { emitServerlessModule, SERVERLESS_MODULE_DIR } from './serverless.js';
+export { emitVertexRagModule, VERTEX_RAG_MODULE_DIR } from './vertex-rag.js';
 
 import { emitBatchModule } from './batch.js';
 import { emitCdkModules } from './cdk.js';
@@ -28,7 +30,9 @@ import { emitCloudRunModule } from './cloudrun.js';
 import { emitCloudRunJobModule } from './cloudrunjob.js';
 import { emitContainerModule } from './container.js';
 import { emitEdgeModule } from './edge.js';
+import { emitKnowledgeBaseModule } from './knowledge-base.js';
 import { emitServerlessModule } from './serverless.js';
+import { emitVertexRagModule } from './vertex-rag.js';
 
 /**
  * Which platform modules a plan needs, in the shape `envRoot` reads.
@@ -50,6 +54,7 @@ export function modulesOf(
   container: boolean;
   batch: boolean;
   edge: boolean;
+  knowledgeBase: boolean;
 } {
   return {
     serverless: cloud === 'aws' && plan.services.some((service) => service.target === 'serverless'),
@@ -59,18 +64,22 @@ export function modulesOf(
     ),
     batch: plan.services.some((service) => service.target === 'batch'),
     edge: cloud === 'aws' && plan.services.some((service) => service.target === 'edge'),
+    knowledgeBase:
+      (cloud === 'aws' && plan.knowledgeBases.some((base) => base.engine === 'aws-bedrock')) ||
+      (cloud === 'gcp' && plan.knowledgeBases.some((base) => base.engine === 'vertex-rag')),
   };
 }
 
 /** Every provider module the plan needs on this cloud, or none. */
 export function emitProviderModules(plan: DeployPlan, cloud: Cloud = DEFAULT_CLOUD): ModuleFile[] {
   return cloud === 'gcp'
-    ? [...emitCloudRunModule(plan), ...emitCloudRunJobModule(plan)]
+    ? [...emitCloudRunModule(plan), ...emitCloudRunJobModule(plan), ...emitVertexRagModule(plan)]
     : [
         ...emitServerlessModule(plan),
         ...emitContainerModule(plan),
         ...emitBatchModule(plan),
         ...emitEdgeModule(plan),
+        ...emitKnowledgeBaseModule(plan),
         ...emitCdkModules(plan, cloud),
       ];
 }

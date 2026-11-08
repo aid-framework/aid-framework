@@ -22,6 +22,11 @@ import {
   type EvalSubjectResult,
   evalSubject,
   type IR,
+  isLocalRetriever,
+  isManagedRetriever,
+  type KnowledgeBaseEngine,
+  type KnowledgeBaseShape,
+  type ManagedRetrieverShape,
   type ModelParams,
   type ModelShape,
   modelsUnderTest,
@@ -288,6 +293,24 @@ function checkParams(params: ModelParams | undefined, path: string, problems: Pl
   }
 }
 
+/**
+ * The embedding aliases that exist only because a managed knowledge base pins them.
+ *
+ * A local retriever's embedder is constructed by this app, so `embedder_for` has to serve
+ * it. A knowledge base embeds its corpus inside the engine: the runtime never embeds
+ * anything with that alias, and the adapter capability check -- which exists to stop an
+ * OpenAI-shaped POST to a vendor with no embeddings route -- does not apply to it. The
+ * alias is still held to resolving, at the base's own declaration.
+ */
+function knowledgeBaseOnlyEmbedders(ir: IR): Set<string> {
+  const local = new Set(
+    ir.retrievers.filter(isLocalRetriever).map((retriever) => retriever.embedModel),
+  );
+  return new Set(
+    ir.knowledgeBases.map((base) => base.embedModel).filter((alias) => !local.has(alias)),
+  );
+}
+
 export function checkModels(ir: IR): PlanProblem[] {
   const models = new Map(ir.models.map((model) => [model.id, model]));
   const problems: PlanProblem[] = [];
@@ -321,7 +344,11 @@ export function checkModels(ir: IR): PlanProblem[] {
     if (
       adapter !== undefined &&
       model.capabilities.includes('embeddings') &&
-      !ADAPTER_CAPABILITIES[adapter].includes('Capability.EMBEDDINGS')
+      !ADAPTER_CAPABILITIES[adapter].includes('Capability.EMBEDDINGS') &&
+      // A knowledge base embeds inside the engine, so this app never hands that alias to
+      // `embedder_for` and the adapter it would POST through does not matter. The alias
+      // still has to resolve to a real model, which the base's own check enforces.
+      !knowledgeBaseOnlyEmbedders(ir).has(model.id)
     ) {
       problems.push(
         problem(
@@ -935,6 +962,150 @@ function checkRetrieveQuery(
 }
 
 /**
+ * The embedder providers each managed engine can use.
+ *
+ * A knowledge base embeds its own corpus, with a model on its own cloud: Bedrock cannot
+ * call a Vertex embedding model, and a Vertex corpus cannot be built with Titan. So the
+ * alias a base pins has to resolve to a model on that cloud. Anything else applies
+ * cleanly and then fails the first ingestion job, in the engine, after the corpus has
+ * been uploaded.
+ */
+const ENGINE_EMBEDDER_PROVIDERS: Readonly<Record<KnowledgeBaseEngine, readonly string[]>> = {
+  'aws-bedrock': ['bedrock'],
+  'vertex-rag': ['google', 'gemini'],
+};
+
+/** The metadata key a filter expression compares on, or `undefined` if it opens with none. */
+function filterKey(expression: string): string | undefined {
+  return /^\s*([A-Za-z_][A-Za-z0-9_]*)/.exec(expression)?.[1];
+}
+
+/** The alias a base embeds with must be declared, and on the engine's own cloud. */
+function checkKnowledgeBaseEmbedder(
+  ir: IR,
+  base: KnowledgeBaseShape,
+  problems: PlanProblem[],
+): void {
+  const embedding = ir.embeddings.find((entry) => entry.id === base.embedModel);
+  if (embedding === undefined) {
+    problems.push(
+      problem(
+        'unresolved-reference',
+        `knowledgeBases.${base.id}.embedModel`,
+        `knowledge base '${base.id}' embeds with '${base.embedModel}', which is not ` +
+          'declared; an embeddings entry exists for each model declaring the capability',
+      ),
+    );
+    return;
+  }
+  const allowed = ENGINE_EMBEDDER_PROVIDERS[base.engine];
+  if (!allowed.includes(embedding.provider)) {
+    problems.push(
+      problem(
+        'unsupported-retriever',
+        `knowledgeBases.${base.id}.embedModel`,
+        `knowledge base '${base.id}' runs on '${base.engine}' but embeds with ` +
+          `'${embedding.id}', whose provider is '${embedding.provider}'; the engine can ` +
+          `only embed with ${allowed.join(' or ')}, and the mismatch would surface as a ` +
+          'failed ingestion job after the corpus was already uploaded',
+      ),
+    );
+  }
+}
+
+/**
+ * Every filter has to compare on a key the base declared `filterable`.
+ *
+ * The expression itself is forwarded to the engine verbatim -- the two engines do not
+ * share a filter language, and inventing a neutral one this compiler then translates
+ * would put a translation no gate covers between the spec and the corpus. What is
+ * checked here is the failure the plan calls out: a filter on a key the engine never
+ * indexed matches nothing, silently, and returns an empty result set rather than the
+ * unfiltered corpus the author meant.
+ */
+function checkManagedFilters(
+  base: KnowledgeBaseShape,
+  retriever: ManagedRetrieverShape,
+  path: string,
+  problems: PlanProblem[],
+): void {
+  const filterable = new Set(base.filterable);
+  for (const [index, expression] of (retriever.filters ?? []).entries()) {
+    const key = filterKey(expression);
+    if (key === undefined) {
+      problems.push(
+        problem(
+          'unsupported-retriever',
+          `${path}.filters[${index}]`,
+          `retriever '${retriever.id}' declares the filter ${JSON.stringify(expression)}, ` +
+            'which does not begin with a metadata key; a managed engine matches a filter ' +
+            'against document metadata, so the expression has to open with the key',
+        ),
+      );
+      continue;
+    }
+    if (!filterable.has(key)) {
+      problems.push(
+        problem(
+          'unsupported-retriever',
+          `${path}.filters[${index}]`,
+          `retriever '${retriever.id}' filters on '${key}', which knowledge base ` +
+            `'${base.id}' does not declare in 'filterable'; a filter on a key the engine ` +
+            'never indexed matches nothing rather than returning the unfiltered corpus',
+        ),
+      );
+    }
+  }
+}
+
+/**
+ * One retriever bound to a managed knowledge base.
+ *
+ * The engine owns chunking, embedding and the index, so none of the local conditions
+ * apply: there is no connector to open, no store adapter to find and no vector width to
+ * reconcile. What is left is everything the *engine* is asked to do on this app's behalf,
+ * because each of those fails server-side, after the corpus is already uploaded, rather
+ * than in the plan.
+ */
+function checkManagedRetrieverDeclaration(
+  ir: IR,
+  retriever: ManagedRetrieverShape,
+  path: string,
+  problems: PlanProblem[],
+): void {
+  const base = ir.knowledgeBases.find((entry) => entry.id === retriever.knowledgeBase);
+  if (base === undefined) {
+    problems.push(
+      problem(
+        'unresolved-reference',
+        `${path}.knowledgeBase`,
+        `retriever '${retriever.id}' reads knowledge base '${retriever.knowledgeBase}', which ` +
+          'is not declared',
+      ),
+    );
+  } else {
+    checkKnowledgeBaseEmbedder(ir, base, problems);
+    checkManagedFilters(base, retriever, path, problems);
+  }
+  if (retriever.rerank !== undefined) {
+    // The reranker runs in this runtime, over the chunks the engine returned, so it is
+    // the same lexical matcher a local retriever gets -- and held to the same rule.
+    const declared = retriever.rerank.model;
+    if (!declared.toLowerCase().includes('lexical')) {
+      problems.push(
+        problem(
+          'unsupported-retriever',
+          path,
+          `retriever '${retriever.id}' reranks with '${declared}', and the runtime's only ` +
+            'reranker is lexical: it matches the name the spec declares, so a name that does ' +
+            'not say so is refused rather than served by a reranker it never named',
+        ),
+      );
+    }
+  }
+}
+
+/**
  * One retriever declaration, refused when the runtime it binds to would refuse it.
  *
  * These conditions are checked on the *declaration* rather than on the `retrieve` step
@@ -954,6 +1125,10 @@ function checkRetrieverDeclaration(
   const refuse = (message: string): void => {
     problems.push(problem('unsupported-retriever', path, message));
   };
+  if (isManagedRetriever(retriever)) {
+    checkManagedRetrieverDeclaration(ir, retriever, path, problems);
+    return;
+  }
   if (retriever.source.kind !== 'file') {
     refuse(
       `retriever '${retriever.id}' indexes a '${retriever.source.kind}' source, which the ` +

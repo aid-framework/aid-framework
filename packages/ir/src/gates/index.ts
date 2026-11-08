@@ -28,6 +28,7 @@ import { deployStreamingGate } from './deploy.js';
 import { evalCoverageGate } from './eval-coverage.js';
 import { guardrailCoverageGate, guardrailPolicyGate } from './guardrails.js';
 import { hitlSideEffectGate } from './hitl.js';
+import { knowledgeBaseGate } from './knowledge-base.js';
 import { memoryRefsGate } from './memory.js';
 import { normalizeGate } from './normalize.js';
 import { orchestrationDeepagentsGate } from './orchestration.js';
@@ -49,6 +50,7 @@ export const GATES = {
   'guardrails/policies': guardrailPolicyGate,
   'hitl/side-effects': hitlSideEffectGate,
   'memory/refs': memoryRefsGate,
+  'retrievers/knowledge-bases': knowledgeBaseGate,
   'deploy/streaming': deployStreamingGate,
   'orchestration/deepagents': orchestrationDeepagentsGate,
 } as const satisfies Record<string, Gate>;
@@ -95,7 +97,7 @@ export function runGates(ir: IR, options: Partial<GateOptions> = {}): GateRunRes
 }
 
 export { reporter } from './contract.js';
-export type { EvalCostEstimate, ModelCostEstimate } from './cost.js';
+export type { EvalCostEstimate, KnowledgeBaseCostEstimate, ModelCostEstimate } from './cost.js';
 export { estimateEvalCost } from './cost.js';
 export { diffPaths, isNormalized, normalize } from './normalize.js';
 export { policyAuthenticates } from './security.js';
@@ -113,6 +115,7 @@ export {
   guardrailCoverageGate,
   guardrailPolicyGate,
   hitlSideEffectGate,
+  knowledgeBaseGate,
   memoryRefsGate,
   normalizeGate,
   orchestrationDeepagentsGate,

@@ -672,6 +672,14 @@ describe('the pre-P7b example', () => {
    * the spec can name `anthropic`; it now says "A network provider". Only that sentence moved
    * -- the emitted table, its imports and its values are byte-identical -- so the pin is
    * re-recorded at this file instead of being widened here.
+   *
+   * `retrieval/__init__.py` and `retrieval/bindings.py` were re-recorded by W11, and not as a
+   * declaration-only move: a managed knowledge base makes the retriever a discriminated union,
+   * so every emitted retriever spec gained `"kind": "local"` and `build_binding` gained a
+   * managed branch. That is a payload-shape change reaching every spec, not one this fixture
+   * could opt out of, so the new bytes are pinned rather than excluded. Only these two files
+   * moved: `ingest/` is unchanged, because a spec with no managed retriever still ingests
+   * locally. Leaving them out of `moved` below is the point -- a third file moving still fails.
    */
   const DECLARATION_ONLY = 'app/generated/observability.py';
 

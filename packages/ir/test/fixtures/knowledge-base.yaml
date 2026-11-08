@@ -1,0 +1,104 @@
+specVersion: "0.12"
+project:
+  name: handbook
+  namespace: acme.handbook
+  description: Answers handbook questions from a managed cloud knowledge base.
+  targets: [py-fastapi]
+types:
+  Answer:
+    kind: struct
+    fields:
+      text:
+        type: string
+        required: true
+      citations:
+        type: string[]
+        required: true
+models:
+  answer:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [json-schema]
+    params:
+      temperature: 0
+      maxTokens: 512
+  titan_embed:
+    provider: bedrock
+    modelId: amazon.titan-embed-text-v2:0
+    capabilities: [embeddings]
+knowledgeBases:
+  handbook:
+    engine: aws-bedrock
+    dataSource:
+      kind: s3
+      uri: s3://acme-docs/handbook
+    chunking:
+      strategy: fixed
+      size: 1000
+      overlap: 200
+    embedModel: titan_embed
+    filterable: [tenant, product]
+retrievers:
+  docs:
+    knowledgeBase: handbook
+    topK: 8
+    rerank:
+      model: lexical
+      topN: 4
+prompts:
+  answer_from_handbook:
+    version: 1
+    model: answer
+    template: |
+      Answer the question from the handbook excerpts.
+
+      Question: {{question}}
+      Excerpts: {{context}}
+    variables:
+      question:
+        type: string
+        required: true
+      context:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: Answer
+pipelines:
+  answer_question:
+    description: Retrieve handbook excerpts from the managed knowledge base, then answer.
+    trigger:
+      http:
+        method: post
+        path: /answer
+    steps:
+      - retrieve:
+          retriever: docs
+          query: "{{event.question}}"
+          as: context
+      - generate:
+          prompt: answer_from_handbook
+          input:
+            question: "{{event.question}}"
+          context: context
+          as: answer
+      - emit:
+          event: Answer
+evals:
+  retrieval_quality:
+    description: Chunk quality and answer accuracy for the managed retriever.
+    target: pipeline:answer_question
+    dataset:
+      source: file
+      uri: datasets/handbook.jsonl
+    metrics:
+      - kind: retrieval
+        expectDocs: [getting-started.md]
+        k: 3
+      - kind: exact
+        field: text
+    gate:
+      ci: true
+      maxRegression: 0.05
+      samples: 3

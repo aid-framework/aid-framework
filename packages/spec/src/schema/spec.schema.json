@@ -9,8 +9,21 @@
   "additionalProperties": false,
   "properties": {
     "specVersion": {
-      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). 0.8 adds the `decision` metric kind, which scores an eval prediction with a `score` decision. 0.9 adds the `route` pipeline step, which runs the arm a `choice` decision's answer names. 0.10 adds the `gemini` provider, which calls the Gemini API with an API key instead of Google Cloud credentials. 0.11 adds `guardrails[].engine` and the `bedrock` policy block, which move a guardrail's policy into a managed AWS Bedrock guardrail. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
-      "enum": ["0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7", "0.8", "0.9", "0.10", "0.11"]
+      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). 0.8 adds the `decision` metric kind, which scores an eval prediction with a `score` decision. 0.9 adds the `route` pipeline step, which runs the arm a `choice` decision's answer names. 0.10 adds the `gemini` provider, which calls the Gemini API with an API key instead of Google Cloud credentials. 0.11 adds `guardrails[].engine` and the `bedrock` policy block, which move a guardrail's policy into a managed AWS Bedrock guardrail. 0.12 adds `knowledgeBases` and `retrievers[].knowledgeBase`, which bind a retriever to a managed knowledge base (Bedrock Knowledge Bases or Vertex AI RAG) instead of a local source, chunker, embedder and store. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
+      "enum": [
+        "0.1",
+        "0.2",
+        "0.3",
+        "0.4",
+        "0.5",
+        "0.6",
+        "0.7",
+        "0.8",
+        "0.9",
+        "0.10",
+        "0.11",
+        "0.12"
+      ]
     },
     "project": { "$ref": "#/$defs/project" },
     "types": {
@@ -52,6 +65,13 @@
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/name" },
       "additionalProperties": { "$ref": "#/$defs/retriever" }
+    },
+    "knowledgeBases": {
+      "description": "Managed knowledge bases: a source, chunker, embedding pass, store and index the cloud owns, referenced by a retriever's `knowledgeBase`. Declarable from spec v0.12. A managed knowledge base is a retriever, not a pipeline: the runtime still retrieves chunks and generates the answer, so the cost gate, the evals and the trace keep covering the generation path.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/knowledgeBase" }
     },
     "agents": {
       "description": "Agents: a model, instructions, the tools and retrievers it may use, and the budget it may spend. Declarable from spec v0.2; a target that emits no agent route is rejected by the capability gate rather than silently generating one.",
@@ -440,11 +460,139 @@
         }
       ]
     },
-    "retriever": {
+    "knowledgeDataSource": {
+      "description": "Where a managed knowledge base reads documents from. The kind is the engine's own source: `s3` for Bedrock Knowledge Bases and `gcs` for Vertex AI RAG, because neither engine can read the other's bucket.",
       "type": "object",
-      "required": ["source", "chunking", "embedModel", "store", "index", "topK", "refresh"],
+      "required": ["kind", "uri"],
       "additionalProperties": false,
       "properties": {
+        "kind": { "enum": ["s3", "gcs"] },
+        "uri": {
+          "description": "The source root, e.g. `s3://acme-docs/handbook` or `gs://acme-docs/handbook`.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "knowledgeBase": {
+      "description": "A managed knowledge base: the cloud owns ingestion, chunking, embedding, the vector store and the index, and the runtime only asks it for chunks. Declarable from spec v0.12. A retriever binds to one with `knowledgeBase`.",
+      "type": "object",
+      "required": ["engine", "dataSource", "chunking", "embedModel"],
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "description": "Which cloud's managed knowledge base this is. `aws-bedrock` is Bedrock Knowledge Bases; `vertex-rag` is the Vertex AI RAG Engine. Both are reachable only from their own cloud, which the infra emitter checks against `--cloud`.",
+          "enum": ["aws-bedrock", "vertex-rag"]
+        },
+        "dataSource": { "$ref": "#/$defs/knowledgeDataSource" },
+        "chunking": {
+          "description": "How the managed engine splits documents. The engine performs the split, so this is configured on the knowledge base rather than performed by the runtime.",
+          "type": "object",
+          "required": ["strategy", "size", "overlap"],
+          "additionalProperties": false,
+          "properties": {
+            "strategy": { "enum": ["fixed", "recursive", "code"] },
+            "size": { "type": "integer", "minimum": 1 },
+            "overlap": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "embedModel": {
+          "description": "Model alias that must declare `embeddings`, and whose provider must belong to the same cloud as `engine`. The knowledge base owns the vector store, so this replaces the store-width gate rather than being exempt from it.",
+          "$ref": "#/$defs/name"
+        },
+        "filterable": {
+          "description": "Metadata keys the filter contract may use. Bedrock sources need metadata sidecar files for a filter to match anything, so this is what makes the emitter write the sidecar convention instead of a filter that silently matches nothing.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" }
+        },
+        "vectorStore": {
+          "description": "Where the engine keeps vectors. `provisioned` (the default) has the module create one; `existing` points at a store the operator already pays for and requires `arn`. The plan's default is not OpenSearch Serverless: its two-OCU floor is the most common way this feature becomes a surprise bill.",
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "enum": ["provisioned", "existing"] },
+            "arn": { "type": "string", "minLength": 1 }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": { "kind": { "const": "existing" } },
+                "required": ["kind"]
+              },
+              "then": {
+                "required": ["arn"],
+                "properties": { "arn": true }
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "engine": { "const": "aws-bedrock" } },
+            "required": ["engine"]
+          },
+          "then": {
+            "properties": {
+              "dataSource": {
+                "type": "object",
+                "properties": { "kind": { "const": "s3" } },
+                "required": ["kind"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "engine": { "const": "vertex-rag" } },
+            "required": ["engine"]
+          },
+          "then": {
+            "properties": {
+              "dataSource": {
+                "type": "object",
+                "properties": { "kind": { "const": "gcs" } },
+                "required": ["kind"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "retriever": {
+      "type": "object",
+      "required": ["topK"],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "knowledgeBase": true },
+            "required": ["knowledgeBase"]
+          },
+          "then": {
+            "properties": { "knowledgeBase": true }
+          },
+          "else": {
+            "required": ["source", "chunking", "embedModel", "store", "index", "refresh"],
+            "properties": {
+              "source": true,
+              "chunking": true,
+              "embedModel": true,
+              "store": true,
+              "index": true,
+              "refresh": true
+            }
+          }
+        }
+      ],
+      "properties": {
+        "knowledgeBase": {
+          "description": "Bind this retriever to a managed knowledge base. It replaces `source`, `chunking`, `embedModel`, `store` and `index` -- declaring one of those beside it is ambiguous and refused rather than silently preferred.",
+          "$ref": "#/$defs/name"
+        },
         "source": {
           "type": "object",
           "required": ["kind", "uri"],

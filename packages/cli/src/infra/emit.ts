@@ -143,6 +143,38 @@ export interface DeployTfvars {
    * spec must not name an enum a different cloud would read differently.
    */
   readonly guardrails: Readonly<Record<string, DeployGuardrail>>;
+  /**
+   * The managed knowledge bases, spelled the way the module reads them.
+   *
+   * `id` and `arn` are empty here on purpose: the module creates the base and returns
+   * both, and the compute modules read that merged map rather than this one. They are
+   * present because the module's `variable` gives every entry one shape, so a plan with
+   * one base and a plan with none still validate against the same contract.
+   */
+  readonly knowledge_bases: Readonly<
+    Record<
+      string,
+      {
+        readonly id: string;
+        readonly arn: string;
+        readonly engine: string;
+        readonly data_source: { readonly kind: string; readonly uri: string };
+        readonly chunking: {
+          readonly strategy: string;
+          readonly size: number;
+          readonly overlap: number;
+        };
+        /** The spec alias, kept so a tfvars diff reads in the author's own words. */
+        readonly embed_model: string;
+        /** The provider's identifier for that alias, which is what the engine accepts. */
+        readonly embed_model_id: string;
+        readonly env_name: string;
+        readonly filterable: readonly string[];
+        readonly vector_store: { readonly kind: string; readonly arn?: string };
+        readonly retrievers: readonly string[];
+      }
+    >
+  >;
   readonly data_stores: Readonly<
     Record<
       string,
@@ -191,6 +223,29 @@ export interface DeployContext {
     >
   >;
   readonly guardrails: Readonly<Record<string, DeployGuardrail>>;
+  /** The same bases as `DeployTfvars['knowledge_bases']`, in the keys a TS project reads. */
+  readonly knowledgeBases: Readonly<
+    Record<
+      string,
+      {
+        readonly id: string;
+        readonly arn: string;
+        readonly engine: string;
+        readonly dataSource: { readonly kind: string; readonly uri: string };
+        readonly chunking: {
+          readonly strategy: string;
+          readonly size: number;
+          readonly overlap: number;
+        };
+        readonly embedModel: string;
+        readonly embedModelId: string;
+        readonly envName: string;
+        readonly filterable: readonly string[];
+        readonly vectorStore: { readonly kind: string; readonly arn?: string };
+        readonly retrievers: readonly string[];
+      }
+    >
+  >;
   readonly stores: Readonly<
     Record<
       string,
@@ -252,6 +307,30 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
     guardrails[service.id] = deployGuardrail(service.managedGuardrail);
   }
 
+  const knowledgeBases: Record<string, DeployTfvars['knowledge_bases'][string]> = {};
+  for (const base of plan.knowledgeBases) {
+    knowledgeBases[base.id] = {
+      id: '',
+      arn: '',
+      engine: base.engine,
+      data_source: { kind: base.dataSource.kind, uri: base.dataSource.uri },
+      chunking: {
+        strategy: base.chunking.strategy,
+        size: base.chunking.size,
+        overlap: base.chunking.overlap,
+      },
+      embed_model: base.embedModel,
+      embed_model_id: base.embedModelId,
+      env_name: base.envName,
+      filterable: [...base.filterable],
+      vector_store: {
+        kind: base.vectorStore.kind,
+        ...(base.vectorStore.arn === undefined ? {} : { arn: base.vectorStore.arn }),
+      },
+      retrievers: [...base.retrievers],
+    };
+  }
+
   const dataStores: Record<string, DeployTfvars['data_stores'][string]> = {};
   for (const store of plan.stores) {
     dataStores[store.id] = {
@@ -268,6 +347,7 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
     project: { name: plan.project.name, namespace: plan.project.namespace },
     services,
     guardrails,
+    knowledge_bases: knowledgeBases,
     data_stores: dataStores,
     tasks: plan.tasks.map((task) => ({
       id: task.id,
@@ -325,6 +405,30 @@ export function cdkContext(plan: DeployPlan): DeployContext {
     };
   }
 
+  const knowledgeBases: Record<string, DeployContext['knowledgeBases'][string]> = {};
+  for (const [id, base] of Object.entries(spelled.knowledge_bases)) {
+    knowledgeBases[id] = {
+      id: base.id,
+      arn: base.arn,
+      engine: base.engine,
+      dataSource: { kind: base.data_source.kind, uri: base.data_source.uri },
+      chunking: {
+        strategy: base.chunking.strategy,
+        size: base.chunking.size,
+        overlap: base.chunking.overlap,
+      },
+      embedModel: base.embed_model,
+      embedModelId: base.embed_model_id,
+      envName: base.env_name,
+      filterable: [...base.filterable],
+      vectorStore: {
+        kind: base.vector_store.kind,
+        ...(base.vector_store.arn === undefined ? {} : { arn: base.vector_store.arn }),
+      },
+      retrievers: [...base.retrievers],
+    };
+  }
+
   const stores: Record<string, DeployContext['stores'][string]> = {};
   for (const [id, store] of Object.entries(spelled.data_stores)) {
     stores[id] = {
@@ -341,6 +445,7 @@ export function cdkContext(plan: DeployPlan): DeployContext {
     project: { name: spelled.project.name, namespace: spelled.project.namespace },
     services,
     guardrails,
+    knowledgeBases,
     stores,
     tasks: spelled.tasks.map((task) => ({ ...task })),
     alarms: spelled.alarms.map((alarm) => ({ ...alarm })),
@@ -392,6 +497,13 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
     ...(modules.edge
       ? [
           '| `modules/edge/` | The Lambda@Edge + CloudFront module an `edge` deployment deploys into. |',
+        ]
+      : []),
+    ...(modules.knowledgeBase
+      ? [
+          cloud === 'gcp'
+            ? '| `modules/vertex-rag/` | The Vertex AI RAG corpus a `knowledgeBases:` entry of engine `vertex-rag` deploys into. |'
+            : '| `modules/knowledge-base/` | The OpenSearch Serverless collection + Bedrock knowledge base a `knowledgeBases:` entry deploys into. |',
         ]
       : []),
     ...(modules.serverless && cloud === 'aws'
@@ -506,6 +618,43 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
                 '',
               ]
             : []),
+          ...(modules.knowledgeBase
+            ? cloud === 'gcp'
+              ? [
+                  '`knowledgeBases:` provisions a Vertex AI RAG corpus over a GCS prefix, on the',
+                  "RAG-managed store, with the embedding endpoint pinned to the spec's",
+                  '`embedModel`. Import is per object: the module lists the prefix and creates one',
+                  '`google_vertex_ai_rag_file` per object, so a large corpus produces a large plan.',
+                  'The imported files are processed asynchronously by the service, so an apply',
+                  'returns before the corpus is queryable. `aid doctor` names the corpus and the',
+                  'environment variable it is exported as; whether it is ready is decided by the',
+                  'first retrieve, which fails naming the base rather than returning no context.',
+                  '',
+                  '`deletion_policy = "PREVENT"` and `prevent_destroy` are both set on the corpus.',
+                  'Re-importing a corpus costs money and API calls, so `aid infra destroy` refuses',
+                  'until that is removed deliberately.',
+                  '',
+                  'Vertex has only fixed-length chunking, so `chunking.strategy: recursive` or',
+                  '`code` is refused at plan time rather than approximated. A `vector_store.kind`',
+                  'of `existing` names an existing corpus instead of creating one.',
+                  '',
+                ]
+              : [
+                  '`knowledgeBases:` provisions a Bedrock knowledge base over an S3 prefix, with its',
+                  'own role, an OpenSearch Serverless collection and a data source. The base is',
+                  'created **empty**: nothing is ingested during `apply`, so a first apply does not',
+                  'charge per document. Start ingestion with',
+                  '`aws bedrock-agent start-ingestion-job --knowledge-base-id <id> --data-source-id <id>`',
+                  'and poll it with `aws bedrock-agent get-ingestion-job`. Until a job succeeds,',
+                  'retrieval returns no chunks rather than an error, which is why the runtime',
+                  'refuses to query a base with no completed job instead of reporting it healthy.',
+                  '',
+                  '`prevent_destroy` is on for the base and the collection. Re-ingesting a corpus',
+                  'costs money and API calls, so `aid infra destroy` refuses until that is removed',
+                  'deliberately.',
+                  '',
+                ]
+            : []),
         ]
       : [
           cloud === 'gcp'
@@ -539,6 +688,7 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
     `- Services: ${plan.services.length}`,
     `- Routes: ${routes}`,
     `- Data stores: ${plan.stores.length}`,
+    `- Knowledge bases: ${plan.knowledgeBases.length}`,
     `- Tasks: ${plan.tasks.length}`,
     `- Alarm hooks: ${plan.alarms.length}`,
     '',

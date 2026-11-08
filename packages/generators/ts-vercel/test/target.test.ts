@@ -255,7 +255,7 @@ describe('the IR contract', () => {
       "src/emit/infrastructure.ts:135: '  const apiKey = process.env[apiKeyEnv];',",
       "src/emit/infrastructure.ts:145: '  const apiKey = process.env[apiKeyEnv];',",
       "src/emit/infrastructure.ts:155: '  const apiKey = process.env[apiKeyEnv];',",
-      "src/emit/retrieval.ts:208: importStatement('node:fs', [{ name: 'existsSync', type: false }]),",
+      "src/emit/retrieval.ts:212: importStatement('node:fs', [{ name: 'existsSync', type: false }]),",
     ]);
 
     expect(sources.map(([path]) => path)).toContain('index.ts');

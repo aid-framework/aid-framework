@@ -20,6 +20,7 @@ module "cloudrun" {
   region                = var.region
   allow_unauthenticated = var.allow_unauthenticated
   deletion_protection   = var.deletion_protection
+  knowledge_bases       = var.knowledge_bases
   tags                  = var.tags
 }
 
@@ -34,6 +35,7 @@ module "cloudrunjob" {
   project_id          = var.gcp_project
   region              = var.region
   deletion_protection = var.deletion_protection
+  knowledge_bases     = var.knowledge_bases
   tags                = var.tags
 }
 
