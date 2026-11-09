@@ -1,6 +1,6 @@
 {
   "name": "@aid-framework/runtime",
-  "version": "0.1.107",
+  "version": "0.1.108",
   "description": "AID runtime for TypeScript: pinned-model gateway, prompt registry, tool dispatch, pipelines, structured output, eval gates and retrieval.",
   "license": "Apache-2.0",
   "repository": {
@@ -44,7 +44,7 @@
     "@langchain/langgraph-sdk": "1.12.9",
     "deepagents": "1.16.2",
     "langchain": "1.6.0",
-    "langsmith": "0.11.6"
+    "langsmith": "0.11.7"
   },
   "peerDependenciesMeta": {
     "@langchain/core": {
@@ -76,6 +76,6 @@
     "@langchain/langgraph-sdk": "1.12.9",
     "deepagents": "1.16.2",
     "langchain": "1.6.0",
-    "langsmith": "0.11.6"
+    "langsmith": "0.11.7"
   }
 }
