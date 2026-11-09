@@ -1,0 +1,154 @@
+# A Dependabot bump changes a package manifest, which is a releasable path, so the PR
+# must declare the version it would release. Dependabot cannot stamp, so every bump
+# arrived with `release-plan` red and needed a human to push `version.mjs stamp` onto the
+# branch (done by hand four times). This job does that step for Dependabot only.
+#
+# `pull_request_target` is required: a Dependabot-triggered `pull_request` run gets a
+# read-only token, so it could compute the stamp but never push it. Running with a write
+# token means the PR's code must never execute. Only `scripts/version.mjs` from the base
+# commit runs; the PR checkout is read and written as data, never imported, installed or
+# built, and its `release.config.json` must be byte-identical to the base one, so the
+# stamp cannot be pointed at other files.
+name: Dependabot stamp
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-stamp-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  stamp:
+    name: stamp
+    # Never a human PR, and never a branch that lives in a fork.
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the base commit for the scripts
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Check out the Dependabot branch as data
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: base/.nvmrc
+
+      - name: Refuse to run on a changed release policy
+        id: policy
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if ! git -C pr diff --quiet "$BASE_SHA" "$HEAD_SHA" -- release.config.json; then
+            echo "release.config.json differs from the base commit; leaving the branch alone"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute the version this bump would release
+        id: plan
+        if: steps.policy.outputs.skip != 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git -C base tag --list > tags.txt
+          git -C pr diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA" > changed-files.txt
+          node base/scripts/version.mjs decide \
+            --config base/release.config.json \
+            --tags-file tags.txt \
+            --changed-files-file changed-files.txt \
+            --github-output plan.out > release-plan.json
+          cat release-plan.json
+          if [ "$(sed -n 's/^release=//p' plan.out)" = "true" ]; then
+            sed -n 's/^version=//p' plan.out | sed 's/^v//' > version.txt
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stamp the branch
+        if: steps.plan.outputs.release == 'true'
+        shell: bash
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(cat version.txt)
+
+          # Base code, PR directory: the script is trusted, the manifests it rewrites are
+          # the ones the Dependabot bump touched.
+          node base/scripts/version.mjs stamp \
+            --version "$version" \
+            --config pr/release.config.json
+
+          git -C pr config user.name "github-actions[bot]"
+          git -C pr config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C pr add -A
+
+          if git -C pr diff --cached --quiet; then
+            echo "already stamped at $version; nothing to push"
+            exit 0
+          fi
+
+          # `stamp` only rewrites declared versions. Anything else in the index means the
+          # policy or the script produced a change this job does not understand.
+          unexpected=$(git -C pr diff --cached --name-only | grep -vE '^(packages/(generators/)?[^/]+/package\.json|runtimes/typescript/package\.json|runtimes/python/pyproject\.toml|runtimes/python/src/aid_runtime/__init__\.py)$' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::stamp touched unexpected paths:"; echo "$unexpected"; exit 1
+          fi
+
+          # The stamp is only correct if it lands on the commit the bump produced.
+          if [ "$(git -C pr rev-parse HEAD)" != "$HEAD_SHA" ]; then
+            echo "::error::PR head moved while stamping; a newer run will handle it"; exit 1
+          fi
+
+          git -C pr commit -m "chore(release): stamp $version"
+          git -C pr push \
+            "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:$HEAD_REF"
+
+      - name: Report the decision
+        if: always() && steps.policy.outcome == 'success'
+        env:
+          RELEASE: ${{ steps.plan.outputs.release }}
+          SKIP: ${{ steps.policy.outputs.skip }}
+        run: |
+          if [ "$SKIP" = "true" ]; then
+            echo "### Stamp skipped"
+            echo "The pull request changes \`release.config.json\`, so a human decides its version."
+          elif [ "$RELEASE" = "true" ]; then
+            echo "### Stamped \`$(cat version.txt 2>/dev/null || echo '?')\`"
+          else
+            echo "### No stamp needed"
+            echo "This change set produces no release."
+          fi
