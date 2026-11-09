@@ -396,7 +396,10 @@ describe('emitServerlessModule', () => {
     expect(main).toContain('contains(keys(var.image_uris), each.key)');
     expect(main).toContain('!each.value.streaming');
     expect(main).toContain('contains(keys(var.secret_arns), variable.name)');
-    expect(main).toContain('ghcr.io');
+    // The image refusal names the tag, not a registry: three now ship, and the private ECR
+    // repository in this account is pullable by the role policy the module attaches.
+    expect(main).toContain('the spec names a repository, not a tag.');
+    expect(main).not.toContain('ghcr.io');
   });
 });
 
@@ -1719,8 +1722,8 @@ describe('the CDK construct', () => {
     for (const sentence of [
       'declares streaming, which an HTTP API cannot deliver on AWS.',
       'Cloud Run streams.',
-      'Name the container image this service runs;',
-      'ghcr.io registry, which Lambda cannot pull from.',
+      'Name the released tag this service runs;',
+      'the spec names a repository, not a tag.',
       'Add name -> ARN for every secret it declares.',
     ]) {
       expect(construct, sentence).toContain(sentence);
@@ -1750,6 +1753,26 @@ describe('the CDK construct', () => {
     ]) {
       expect(contents, kind).toContain(kind);
     }
+  });
+
+  it('lets a container-image function pull from ECR on both backends', () => {
+    const module = emitServerlessModule(planOf('serverless'))
+      .map((file) => file.contents)
+      .join('\n');
+    const construct = cdkModule().contents;
+
+    // The release workflow can push to ECR (spec 0.17) and an ECR repository is private by
+    // default, so a function that runs that image needs the pull grant. A public registry
+    // image does not use it, so the grant is unconditional rather than derived from a fact
+    // the module cannot see.
+    expect(module).toContain('aws_iam_role_policy_attachment" "ecr"');
+    expect(module).toContain('arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly');
+    expect(construct).toContain("'AmazonEC2ContainerRegistryReadOnly'");
+
+    // Neither backend may still claim ghcr.io is the only registry. Three now ship, so a
+    // message that names a retired limitation is worse than no message at all.
+    expect(module).not.toContain('ghcr.io');
+    expect(construct).not.toContain('ghcr.io');
   });
 
   it('provisions the guardrail, and only when the plan names one', () => {
