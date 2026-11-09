@@ -61,6 +61,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.12',
   '0.13',
   '0.14',
+  '0.15',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -183,6 +184,19 @@ export const BEDROCK_GUARDRAIL_MIN_VERSION: SpecVersion = '0.11';
  * version it needs instead of having the key dropped.
  */
 export const MODEL_ARMOR_GUARDRAIL_MIN_VERSION: SpecVersion = '0.14';
+
+/**
+ * The first spec version that lets a `model-armor` guardrail own its template
+ * (`guardrails[].modelArmor`). 0.14 named the engine and left the template to the
+ * operator; a 0.14 document that declares the policy block is told which version it
+ * needs, because provisioning a template it did not ask for would create a resource
+ * the document never named.
+ *
+ * Unlike the Bedrock policy block, this one is only *optionally* owned by the spec:
+ * the block's absence keeps the 0.14 story -- point `MODEL_ARMOR_TEMPLATE` at a
+ * template you already created.
+ */
+export const MODEL_ARMOR_POLICY_MIN_VERSION: SpecVersion = '0.15';
 
 /**
  * The first spec version that lets a retriever bind to a managed knowledge base.
@@ -586,7 +600,7 @@ function guardrailDecisionDiagnostics(
       guardrail.engine === 'bedrock' || guardrail.engine === 'model-armor'
         ? guardrail.engine
         : 'builtin';
-    const managed = guardrail.bedrock !== undefined;
+    const managed = guardrail.bedrock !== undefined || guardrail.modelArmor !== undefined;
     const engineMinVersion =
       engine === 'model-armor' ? MODEL_ARMOR_GUARDRAIL_MIN_VERSION : BEDROCK_GUARDRAIL_MIN_VERSION;
 
@@ -605,6 +619,21 @@ function guardrailDecisionDiagnostics(
           }),
         );
         reported.add(JSON.stringify(['guardrails', name, 'engine']));
+        continue;
+      }
+    }
+
+    if (guardrail.modelArmor !== undefined && declared !== undefined && known) {
+      if (!specVersionAtLeast(declared, MODEL_ARMOR_POLICY_MIN_VERSION)) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.notSupported,
+            message: `'guardrails.${name}.modelArmor' requires specVersion ${MODEL_ARMOR_POLICY_MIN_VERSION}, but this specification declares version ${declared}`,
+            path: ['guardrails', name, 'modelArmor'],
+            hint: `set specVersion: "${MODEL_ARMOR_POLICY_MIN_VERSION}" to let the spec own the template, or drop the block and point MODEL_ARMOR_TEMPLATE at one the operator creates`,
+          }),
+        );
+        reported.add(JSON.stringify(['guardrails', name, 'modelArmor']));
         continue;
       }
     }

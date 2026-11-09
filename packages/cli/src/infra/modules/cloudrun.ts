@@ -34,6 +34,7 @@ import type { DeployPlan } from '@aid-framework/ir';
 
 import { INFRA_GENERATED_DIR } from '../paths.js';
 import { hcl, type ModuleFile, moduleFiles } from './hcl.js';
+import { MODEL_ARMOR_VARIABLES, modelArmorLocals } from './model-armor.js';
 import { VERTEX_KNOWLEDGE_BASE_VARIABLES, vertexKnowledgeBaseLocals } from './vertex-rag.js';
 
 export const CLOUDRUN_MODULE_DIR = `${INFRA_GENERATED_DIR}/modules/cloudrun`;
@@ -73,8 +74,8 @@ const VARIABLES_TF = hcl([
   '    providers    = list(string)',
   '    ingest       = list(string)',
   '    secret_names = list(string)',
-  '    # Declared for shape parity with the AWS modules; `aid infra gen` refuses a managed',
-  '    # guardrail engine on GCP, since nothing there evaluates one.',
+  '    # Engines the declaring guardrail uses. Only `model-armor` reaches this module:',
+  '    # `bedrock` has no GCP counterpart and `aid infra gen` refuses it here.',
   '    guardrail_engines = list(string)',
   '    # Set only by a `batch` service; the other targets ignore it and the entrypoint does',
   '    # not read it, but the shared variable type must admit it.',
@@ -146,6 +147,7 @@ const VARIABLES_TF = hcl([
   '  default = {}',
   '}',
   ...VERTEX_KNOWLEDGE_BASE_VARIABLES,
+  ...MODEL_ARMOR_VARIABLES,
 ]);
 
 const MAIN_TF = hcl([
@@ -216,6 +218,7 @@ const MAIN_TF = hcl([
   '    if contains(service.providers, "google") || contains(keys(local.knowledge_base_services), id)',
   '  }',
   ...vertexKnowledgeBaseLocals('app'),
+  ...modelArmorLocals(),
   '',
   '  # The Vertex adapter reads its project and location from the environment, and Cloud Run',
   '  # sets neither. Both facts are already inputs here, so they are supplied rather than',
@@ -338,6 +341,17 @@ const MAIN_TF = hcl([
   '      # that binds the base, and only once the corpus exists.',
   '      dynamic "env" {',
   '        for_each = lookup(local.knowledge_base_env, each.key, {})',
+  '        content {',
+  '          name  = env.key',
+  '          value = env.value',
+  '        }',
+  '      }',
+  '',
+  '      # The Model Armor template the runtime guards with, exported only when the plan',
+  '      # owns one, so an operator-created template still reaches its service through the',
+  '      # service env the spec declares.',
+  '      dynamic "env" {',
+  '        for_each = lookup(local.model_armor_env, each.key, {})',
   '        content {',
   '          name  = env.key',
   '          value = env.value',

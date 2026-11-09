@@ -9,7 +9,7 @@
   "additionalProperties": false,
   "properties": {
     "specVersion": {
-      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). 0.8 adds the `decision` metric kind, which scores an eval prediction with a `score` decision. 0.9 adds the `route` pipeline step, which runs the arm a `choice` decision's answer names. 0.10 adds the `gemini` provider, which calls the Gemini API with an API key instead of Google Cloud credentials. 0.11 adds `guardrails[].engine` and the `bedrock` policy block, which move a guardrail's policy into a managed AWS Bedrock guardrail. 0.12 adds `knowledgeBases` and `retrievers[].knowledgeBase`, which bind a retriever to a managed knowledge base (Bedrock Knowledge Bases or Vertex AI RAG) instead of a local source, chunker, embedder and store. 0.13 adds `deployments[].runtime`, which moves a `container` service onto a managed agent runtime (Amazon Bedrock AgentCore or the Gemini Enterprise Agent Platform) instead of a compute module AID keeps warm. 0.14 adds `engine: model-armor`, which hands a guardrail's policy to Vertex AI Model Armor, the Google Cloud counterpart to a managed Bedrock guardrail. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
+      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). 0.8 adds the `decision` metric kind, which scores an eval prediction with a `score` decision. 0.9 adds the `route` pipeline step, which runs the arm a `choice` decision's answer names. 0.10 adds the `gemini` provider, which calls the Gemini API with an API key instead of Google Cloud credentials. 0.11 adds `guardrails[].engine` and the `bedrock` policy block, which move a guardrail's policy into a managed AWS Bedrock guardrail. 0.12 adds `knowledgeBases` and `retrievers[].knowledgeBase`, which bind a retriever to a managed knowledge base (Bedrock Knowledge Bases or Vertex AI RAG) instead of a local source, chunker, embedder and store. 0.13 adds `deployments[].runtime`, which moves a `container` service onto a managed agent runtime (Amazon Bedrock AgentCore or the Gemini Enterprise Agent Platform) instead of a compute module AID keeps warm. 0.14 adds `engine: model-armor`, which hands a guardrail's policy to Vertex AI Model Armor, the Google Cloud counterpart to a managed Bedrock guardrail. 0.15 adds the `modelArmor` policy block, which lets the spec own the Model Armor template instead of naming one the operator already created. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
       "enum": [
         "0.1",
         "0.2",
@@ -24,7 +24,8 @@
         "0.11",
         "0.12",
         "0.13",
-        "0.14"
+        "0.14",
+        "0.15"
       ]
     },
     "project": { "$ref": "#/$defs/project" },
@@ -148,6 +149,10 @@
       "description": "A primitive (string, number, integer, boolean) or a declared type name, optionally suffixed with [] for a list.",
       "type": "string",
       "pattern": "^[A-Za-z][A-Za-z0-9]*(\\[\\])?$"
+    },
+    "modelArmorConfidence": {
+      "description": "The lowest confidence at which a Model Armor filter refuses content. The names are the provider's `LOW_AND_ABOVE`, `MEDIUM_AND_ABOVE` and `HIGH`, lowercased into the spec's own vocabulary so a spec never carries a Cloud enum.",
+      "enum": ["low-and-above", "medium-and-above", "high"]
     },
     "project": {
       "type": "object",
@@ -1403,6 +1408,11 @@
           "$comment": "Declaring where a managed guardrail's policy lives is the statement that the guardrail is managed; the reverse direction would read as a comment.",
           "if": { "required": ["bedrock"], "properties": { "bedrock": true } },
           "then": { "required": ["engine"], "properties": { "engine": { "const": "bedrock" } } }
+        },
+        {
+          "$comment": "The Model Armor counterpart of the `bedrock` rule above, from spec 0.15: a `modelArmor` block is the spec owning the template.",
+          "if": { "required": ["modelArmor"], "properties": { "modelArmor": true } },
+          "then": { "required": ["engine"], "properties": { "engine": { "const": "model-armor" } } }
         }
       ],
       "properties": {
@@ -1431,7 +1441,7 @@
         },
         "action": { "enum": ["block", "redact", "flag", "escalate"] },
         "engine": {
-          "description": "Who evaluates the declaration. `builtin` (the default) is the runtime's offline detector layer; `bedrock` is a managed AWS Bedrock guardrail; `model-armor` (spec 0.14) is a Vertex AI Model Armor template in Google Cloud. An engine is a location for the policy, not a policy itself, so a managed guardrail carries no `policies`.",
+          "description": "Who evaluates the declaration. `builtin` (the default) is the runtime's offline detector layer; `bedrock` is a managed AWS Bedrock guardrail; `model-armor` (spec 0.14) is a Vertex AI Model Armor template in Google Cloud, owned by the spec from 0.15 when a `modelArmor` block is present. An engine is a location for the policy, not a policy itself, so a managed guardrail carries no `policies`.",
           "enum": ["builtin", "bedrock", "model-armor"]
         },
         "bedrock": {
@@ -1482,6 +1492,38 @@
                   "aws-secret-key"
                 ]
               }
+            }
+          }
+        },
+        "modelArmor": {
+          "description": "The managed policy a `model-armor`-engine guardrail owns, rendered into the deployment as a `google_model_armor_template`. Omit the block to point the app at a template the operator already created, through `MODEL_ARMOR_TEMPLATE`. DLP inspect/deidentify templates and custom filter rules are references to resources this deployment does not create, so they stay operator inputs.",
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "rai": {
+              "description": "Responsible-AI categories the template filters, category -> the lowest confidence it refuses. A category absent from the map is not filtered.",
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": false,
+              "properties": {
+                "sexual": { "$ref": "#/$defs/modelArmorConfidence" },
+                "hate": { "$ref": "#/$defs/modelArmorConfidence" },
+                "harassment": { "$ref": "#/$defs/modelArmorConfidence" },
+                "dangerous": { "$ref": "#/$defs/modelArmorConfidence" }
+              }
+            },
+            "promptInjection": {
+              "description": "Refuse prompt-injection and jailbreak attempts at this confidence or above. Absent leaves the filter off.",
+              "$ref": "#/$defs/modelArmorConfidence"
+            },
+            "maliciousUri": {
+              "description": "Refuse text that carries a malicious or phishing URL. `false` writes an explicit `DISABLED`, which differs from omission only in intent.",
+              "type": "boolean"
+            },
+            "sensitiveData": {
+              "description": "Inspect text for sensitive data with the basic configuration. `false` writes an explicit `DISABLED`. A DLP inspect or deidentify template is an operator input, not a spec input.",
+              "type": "boolean"
             }
           }
         },

@@ -36,10 +36,22 @@ locals {
   }
 
   literal_env = {
-    for id, service in local.managed : id => {
-      for variable in service.env : variable.name => variable.value
-      if variable.secret == false && variable.value != null
+    for id, service in local.managed : id => merge(
+      {
+        for variable in service.env : variable.name => variable.value
+        if variable.secret == false && variable.value != null
+      },
+      lookup(local.model_armor_env, id, {}),
+    )
+  }
+
+
+  # The template name the runtime reads. Exported only once the resource exists.
+  model_armor_env = {
+    for id, name in var.model_armor_templates : id => {
+      MODEL_ARMOR_TEMPLATE = name
     }
+    if name != ""
   }
 
   # Only a secret the operator mapped to a secret id is resolvable; the module refuses

@@ -38,6 +38,7 @@ import {
   knowledgeBaseGrant,
   knowledgeBaseLocals,
 } from './knowledge-base.js';
+import { MODEL_ARMOR_VARIABLES, modelArmorLocals } from './model-armor.js';
 
 export const AGENT_RUNTIME_MODULE_DIR = `${INFRA_GENERATED_DIR}/modules/agent-runtime`;
 
@@ -431,6 +432,7 @@ const GCP_VARIABLES_TF = hcl([
   '  type    = map(string)',
   '  default = {}',
   '}',
+  ...MODEL_ARMOR_VARIABLES,
 ]);
 
 const GCP_MAIN_TF = hcl([
@@ -472,11 +474,16 @@ const GCP_MAIN_TF = hcl([
   '  }',
   '',
   '  literal_env = {',
-  '    for id, service in local.managed : id => {',
-  '      for variable in service.env : variable.name => variable.value',
-  '      if variable.secret == false && variable.value != null',
-  '    }',
+  '    for id, service in local.managed : id => merge(',
+  '      {',
+  '        for variable in service.env : variable.name => variable.value',
+  '        if variable.secret == false && variable.value != null',
+  '      },',
+  '      lookup(local.model_armor_env, id, {}),',
+  '    )',
   '  }',
+  '',
+  ...modelArmorLocals(),
   '',
   '  # Only a secret the operator mapped to a secret id is resolvable; the module refuses',
   '  # the rest below rather than letting the platform start a container with no value.',

@@ -226,6 +226,72 @@ describe('buildDeployPlan', () => {
     expect(plan.services[0]?.secrets).toContain('TYPESAFE_API_KEY');
   });
 
+  it('carries a Bedrock policy into the plan, where the module reads it', () => {
+    const { plan, diagnostics } = planOf({
+      specVersion: '0.11',
+      guardrails: {
+        inbound: {
+          engine: 'bedrock',
+          stages: ['input'],
+          action: 'block',
+          bedrock: { content: { hate: 'medium' } },
+          onFail: { message: 'No.' },
+        },
+      },
+    });
+    expect(diagnostics).toEqual([]);
+    expect(plan.services[0]?.managedGuardrail).toEqual({
+      engine: 'bedrock',
+      id: 'inbound',
+      action: 'block',
+      message: 'No.',
+      policy: { content: { hate: 'medium' } },
+    });
+  });
+
+  it('carries a Model Armor policy into the plan, where the template module reads it', () => {
+    // The policy travels with the service rather than the plan because the module
+    // creates one template per service, matching how a Bedrock guardrail is scoped.
+    const { plan, diagnostics } = planOf({
+      specVersion: '0.15',
+      guardrails: {
+        inbound: {
+          engine: 'model-armor',
+          stages: ['input'],
+          action: 'block',
+          modelArmor: { rai: { hate: 'high' }, promptInjection: 'medium-and-above' },
+          onFail: { message: 'No.' },
+        },
+      },
+    });
+    expect(diagnostics).toEqual([]);
+    expect(plan.services[0]?.managedGuardrail).toEqual({
+      engine: 'model-armor',
+      id: 'inbound',
+      action: 'block',
+      message: 'No.',
+      policy: { rai: { hate: 'high' }, promptInjection: 'medium-and-above' },
+    });
+  });
+
+  it('leaves the managed key off when the operator owns the template', () => {
+    // 0.14's story: the engine names an existing template through MODEL_ARMOR_TEMPLATE,
+    // so the plan must not claim a resource it will not create.
+    const { plan } = planOf({
+      specVersion: '0.14',
+      guardrails: {
+        inbound: {
+          engine: 'model-armor',
+          stages: ['input'],
+          action: 'block',
+          onFail: { message: 'No.' },
+        },
+      },
+    });
+    expect(plan.services[0]).not.toHaveProperty('managedGuardrail');
+    expect(JSON.stringify(plan)).not.toContain('"managedGuardrail"');
+  });
+
   it('lets a deployment declaration win over a derived name', () => {
     const { plan } = planOf({
       deployments: {

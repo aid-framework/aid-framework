@@ -11,13 +11,14 @@ provider "google" {
 module "agent-runtime" {
   source = "../../generated/modules/agent-runtime"
 
-  project         = var.project
-  services        = var.services
-  image_uris      = var.image_uris
-  project_id      = var.gcp_project
-  region          = var.region
-  secret_ids      = var.secret_ids
-  tags            = var.tags
+  project               = var.project
+  services              = var.services
+  image_uris            = var.image_uris
+  project_id            = var.gcp_project
+  region                = var.region
+  secret_ids            = var.secret_ids
+  model_armor_templates = var.model_armor_templates
+  tags                  = var.tags
 }
 
 output "reasoning_engines" {

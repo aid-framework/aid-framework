@@ -846,6 +846,71 @@ describe('rule-level unit tests', () => {
     expect(paths(diagnostics)).toEqual(['guardrails.inbound.engine']);
   });
 
+  it('accepts a Model Armor policy block at 0.15 and lets the spec own the template', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.15',
+      project: { name: 'p' },
+      guardrails: {
+        inbound: {
+          engine: 'model-armor',
+          stages: ['input'],
+          action: 'block',
+          modelArmor: {
+            rai: { hate: 'medium-and-above', dangerous: 'high' },
+            promptInjection: 'low-and-above',
+            maliciousUri: false,
+          },
+          onFail: { message: 'nope', log: true },
+        },
+      },
+    });
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('refuses a Model Armor policy block below 0.15 rather than silently dropping it', () => {
+    // 0.14 keeps working: the engine still names a template the operator created. What
+    // 0.14 cannot say is "this deployment creates the template", so the block is
+    // reported instead of ignored -- an ignored filter is a filter nobody applied.
+    const diagnostics = validateSpec({
+      specVersion: '0.14',
+      project: { name: 'p' },
+      guardrails: {
+        inbound: {
+          engine: 'model-armor',
+          stages: ['input'],
+          action: 'block',
+          modelArmor: { rai: { hate: 'high' } },
+          onFail: { message: 'nope', log: true },
+        },
+      },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['guardrails.inbound.modelArmor']);
+  });
+
+  it('refuses a Model Armor policy block on a builtin or Bedrock guardrail', () => {
+    // The block is the policy a managed template carries, so an engine that cannot own
+    // one has nowhere to put it. Both spellings land on `engine`, where the fix is.
+    for (const engine of ['builtin', 'bedrock']) {
+      const diagnostics = validateSpec({
+        specVersion: '0.15',
+        project: { name: 'p' },
+        guardrails: {
+          inbound: {
+            ...(engine === 'builtin' ? {} : { engine }),
+            stages: ['input'],
+            action: 'block',
+            policies: engine === 'builtin' ? ['prompt-injection'] : undefined,
+            modelArmor: { rai: { hate: 'high' } },
+            onFail: { message: 'nope', log: true },
+          },
+        },
+      });
+      expect(codes(diagnostics), engine).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+      expect(paths(diagnostics), engine).toEqual(['guardrails.inbound.engine']);
+    }
+  });
+
   it('refuses redaction that also blocks a content category', () => {
     const diagnostics = validateSpec({
       specVersion: '0.11',
