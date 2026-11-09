@@ -72,6 +72,19 @@ import { DEFAULT_SPEC_PATH } from '../targets.js';
 
 const SUBCOMMANDS = ['gen', 'plan', 'apply', 'drift'] as const;
 
+/**
+ * The cloud that evaluates each managed guardrail engine, and the wording a refusal uses.
+ * `builtin` has no entry: the generated app evaluates it, so every cloud and every target
+ * has it.
+ */
+const GUARDRAIL_HOMES: Record<
+  'bedrock' | 'model-armor',
+  { cloud: Cloud; product: string; names: string }
+> = {
+  bedrock: { cloud: 'aws', product: 'Bedrock', names: 'a Bedrock guardrail' },
+  'model-armor': { cloud: 'gcp', product: 'Model Armor', names: 'a Model Armor template' },
+};
+
 /** The backends a bare action can drive. `tofu` stays the default, so nothing shipped moves. */
 const IAC_BACKENDS = ['tofu', 'cdk'] as const;
 
@@ -230,16 +243,42 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
     }
   }
 
-  // A managed guardrail is evaluated by Bedrock, so a plan that asks for one cannot run
-  // where Bedrock does not exist. An edge function is refused for a second reason: it has
-  // no environment variables, so it could not be told which guardrail to call.
-  const misplaced = deployPlan.services.filter(
-    (service) =>
-      service.guardrailEngines.includes('bedrock') &&
-      (cloud === 'gcp' || service.target === 'edge'),
+  // A managed guardrail is evaluated by a provider product, so a plan that asks for one
+  // cannot run where that product does not exist: Bedrock is AWS-only and Model Armor is
+  // GCP-only. An edge function is refused for a second reason: it has no environment
+  // variables, so it could not be told which guardrail or template to call.
+  const misplaced = deployPlan.services.flatMap((service) =>
+    service.guardrailEngines.flatMap((engine) => {
+      if (engine !== 'bedrock' && engine !== 'model-armor') return [];
+      if (GUARDRAIL_HOMES[engine].cloud === cloud && service.target !== 'edge') return [];
+      return [{ id: service.id, engine, edge: service.target === 'edge' }];
+    }),
   );
   if (misplaced.length > 0) {
-    const services = misplaced.map((service) => `"${service.id}"`).join(', ');
+    const listed = misplaced
+      .map(({ id, engine, edge }) =>
+        edge
+          ? `"${id}" targets edge, which has no environment to name ${GUARDRAIL_HOMES[engine].names}`
+          : `"${id}" asks ${GUARDRAIL_HOMES[engine].product} to evaluate its guardrail, which ${cloud === 'gcp' ? 'GCP' : 'AWS'} cannot do`,
+      )
+      .join('; ');
+    const hints: string[] = [];
+    const engines = new Set(misplaced.filter((entry) => !entry.edge).map((entry) => entry.engine));
+    if (engines.has('bedrock')) {
+      hints.push(
+        'Remove `engine: bedrock` from the guardrail, or deploy this environment with --cloud aws.',
+      );
+    }
+    if (engines.has('model-armor')) {
+      hints.push(
+        'Remove `engine: model-armor` from the guardrail, or deploy this environment with --cloud gcp.',
+      );
+    }
+    if (misplaced.some((entry) => entry.edge)) {
+      hints.push(
+        'Serve the service from `serverless` or `container`, or evaluate the guardrail in the edge handler itself.',
+      );
+    }
     return outcome({
       command,
       exitCode: EXIT_FAILURE,
@@ -247,14 +286,8 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
       diagnostics: [
         cliError({
           code: CLI_DIAGNOSTIC_CODES.infraGuardrailUnsupported,
-          message:
-            cloud === 'gcp'
-              ? `Service ${services} asks Bedrock to evaluate its guardrail, which GCP cannot do.`
-              : `Service ${services} targets edge, which has no environment to name a Bedrock guardrail.`,
-          hint:
-            cloud === 'gcp'
-              ? 'Remove `engine: bedrock` from the guardrail, or deploy this environment with --cloud aws.'
-              : 'Serve the service from `serverless` or `container`, or evaluate the guardrail in the edge handler itself.',
+          message: `Service ${listed}.`,
+          hint: hints.join(' '),
         }),
       ],
     });

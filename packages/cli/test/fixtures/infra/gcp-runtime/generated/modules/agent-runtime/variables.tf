@@ -60,3 +60,9 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "model_armor_templates" {
+  description = "Template resource names this module may export, keyed by service id."
+  type        = map(string)
+  default     = {}
+}

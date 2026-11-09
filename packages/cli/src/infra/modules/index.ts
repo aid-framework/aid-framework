@@ -30,6 +30,12 @@ export { type EnvRootModules, envRoot } from './env-root.js';
 export type { ModuleFile } from './hcl.js';
 export { hcl } from './hcl.js';
 export { emitKnowledgeBaseModule, KNOWLEDGE_BASE_MODULE_DIR } from './knowledge-base.js';
+export {
+  emitModelArmorModule,
+  MODEL_ARMOR_MODULE_DIR,
+  MODEL_ARMOR_VARIABLES,
+  modelArmorLocals,
+} from './model-armor.js';
 export { emitServerlessModule, SERVERLESS_MODULE_DIR } from './serverless.js';
 export { emitVertexRagModule, VERTEX_RAG_MODULE_DIR } from './vertex-rag.js';
 
@@ -41,6 +47,7 @@ import { emitCloudRunJobModule } from './cloudrunjob.js';
 import { emitContainerModule } from './container.js';
 import { emitEdgeModule } from './edge.js';
 import { emitKnowledgeBaseModule } from './knowledge-base.js';
+import { emitModelArmorModule } from './model-armor.js';
 import { emitServerlessModule } from './serverless.js';
 import { emitVertexRagModule } from './vertex-rag.js';
 
@@ -66,6 +73,8 @@ export function modulesOf(
   edge: boolean;
   knowledgeBase: boolean;
   agentRuntime: boolean;
+  /** A Model Armor template this plan owns, which only a GCP plan can. */
+  modelArmor: boolean;
 } {
   const managed = (service: DeployPlan['services'][number]) =>
     service.runtime !== undefined && service.runtime !== null;
@@ -88,6 +97,11 @@ export function modulesOf(
     agentRuntime: plan.services.some(
       (service) => service.runtime !== undefined && service.runtime.cloud === cloud,
     ),
+    // Model Armor is a Google product: `infra gen` refuses the engine on AWS, so the
+    // cloud check is a restatement of that refusal rather than a second rule.
+    modelArmor:
+      cloud === 'gcp' &&
+      plan.services.some((service) => service.managedGuardrail?.engine === 'model-armor'),
   };
 }
 
@@ -98,6 +112,7 @@ export function emitProviderModules(plan: DeployPlan, cloud: Cloud = DEFAULT_CLO
         ...emitCloudRunModule(plan),
         ...emitCloudRunJobModule(plan),
         ...emitVertexRagModule(plan),
+        ...emitModelArmorModule(plan),
         ...emitAgentRuntimeModule(plan, cloud),
       ]
     : [

@@ -381,6 +381,43 @@ describe('guardrails/policies — Model Armor', () => {
     expect(diagnostics[0]?.path).toEqual(['guardrails', 'refund_writes', 'engine']);
     expect(diagnostics[0]?.message).toContain('one set of environment variables');
   });
+
+  it('accepts the policy block that makes the deployment own the template', () => {
+    const ir = modelArmor();
+    byId(ir.guardrails, 'inbound').modelArmor = { rai: { hate: 'high' }, maliciousUri: false };
+    expect(runGates(ir).byGate['guardrails/policies'].diagnostics).toEqual([]);
+  });
+
+  it('refuses an env entry that competes with the template it provisions', () => {
+    // The module injects the resource name it created; an entry under the same name
+    // would be a second source of truth, shadowed or shadowing by order alone.
+    const ir = modelArmor();
+    byId(ir.guardrails, 'inbound').modelArmor = { rai: { hate: 'high' } };
+    const deployment = ir.deployments[0];
+    if (deployment === undefined) throw new Error('the fixture declares a deployment');
+    const index = deployment.env.length;
+    deployment.env.push({
+      name: 'MODEL_ARMOR_TEMPLATE',
+      value: 'projects/p/locations/global/templates/guard',
+    });
+    const diagnostics = runGates(ir).byGate['guardrails/policies'].diagnostics;
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.path).toEqual(['deployments', deployment.id, 'env', index, 'name']);
+    expect(diagnostics[0]?.message).toContain('cannot also set MODEL_ARMOR_TEMPLATE');
+  });
+
+  it('refuses a second declaration beside a spec-owned template', () => {
+    const ir = modelArmor();
+    byId(ir.guardrails, 'inbound').modelArmor = { rai: { hate: 'high' } };
+    const second = byId(ir.guardrails, 'refund_writes');
+    second.engine = 'bedrock';
+    second.policies = [];
+    second.stages = ['output'];
+    second.bedrock = { pii: ['phone'] };
+    const diagnostics = runGates(ir).byGate['guardrails/policies'].diagnostics;
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.path).toEqual(['guardrails', 'refund_writes', 'engine']);
+  });
 });
 
 describe('hitl/side-effects', () => {

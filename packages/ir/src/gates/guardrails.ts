@@ -166,7 +166,10 @@ export function guardrailPolicyGate(ir: IR, options: GateOptions): GateResult {
             code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
             message: `the guardrails gate rejected "${guardrail.id}": engine "model-armor" is evaluated by the managed service, so it cannot also name local policies (${guardrail.policies.join(', ')})`,
             path: ['guardrails', guardrail.id, 'policies'],
-            hint: 'configure the rule in the Model Armor template and name it with MODEL_ARMOR_TEMPLATE, or set engine: builtin',
+            hint:
+              guardrail.modelArmor === undefined
+                ? 'configure the rule in a Model Armor template and name it with MODEL_ARMOR_TEMPLATE, or set engine: builtin'
+                : 'configure the rule under "modelArmor", which provisions the template, or set engine: builtin',
           }),
         );
       }
@@ -204,8 +207,9 @@ export function guardrailPolicyGate(ir: IR, options: GateOptions): GateResult {
       if (guardrail.action === 'redact') {
         // Model Armor's basic sensitive-data filter inspects and reports. Only a
         // template whose SDP settings name an advanced DLP de-identify template
-        // returns rewritten text, and an operator-owned template cannot be inspected
-        // from here, so the promise "this guardrail anonymises" is unverifiable.
+        // returns rewritten text. The spec surface cannot express one, and an
+        // operator-owned template cannot be inspected from here, so the promise
+        // "this guardrail anonymises" is unverifiable either way.
         diagnostics.push(
           report.error({
             code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
@@ -214,6 +218,24 @@ export function guardrailPolicyGate(ir: IR, options: GateOptions): GateResult {
             hint: 'use block or flag, or keep the builtin engine, which redacts locally',
           }),
         );
+      }
+      // A spec that owns the template also owns the one name the runtime reads, so an
+      // environment entry with the same name would be a second, competing source of
+      // truth: the infra module injects the provisioned template, and this entry would
+      // either be shadowed or shadow it. Refused rather than resolved silently.
+      if (guardrail.modelArmor !== undefined) {
+        for (const deployment of ir.deployments) {
+          const index = deployment.env.findIndex((entry) => entry.name === 'MODEL_ARMOR_TEMPLATE');
+          if (index === -1) continue;
+          diagnostics.push(
+            report.error({
+              code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+              message: `the guardrails gate rejected "${guardrail.id}": it owns a Model Armor template, so deployment "${deployment.id}" cannot also set MODEL_ARMOR_TEMPLATE; the deployment injects the template it provisions`,
+              path: ['deployments', deployment.id, 'env', index, 'name'],
+              hint: 'remove the environment entry and keep the filters under "modelArmor", or drop "modelArmor" and let the operator name an existing template',
+            }),
+          );
+        }
       }
       continue;
     }

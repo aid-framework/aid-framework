@@ -117,7 +117,7 @@ export const AI_INFRA = [
     title: 'Vertex AI Model Armor as the guardrail engine',
     declares: 'guardrails[].engine: model-armor',
     emits:
-      '`MODEL_ARMOR_TEMPLATE`, the full template name `projects/{project}/locations/{location}/templates/{id}` the runtime reads, and `sanitizeUserPrompt` / `sanitizeModelResponse` calls against it; neither the template nor the variable is provisioned, so the operator owns the filters and grants the service account `roles/modelarmor.user`',
+      '`MODEL_ARMOR_TEMPLATE`, the full template name `projects/{project}/locations/{location}/templates/{id}` the runtime reads, and `sanitizeUserPrompt` / `sanitizeModelResponse` calls against it; a 0.15 `modelArmor:` block makes the module create a `google_model_armor_template` from the spec and hand its name to the service, and without one the app reads the variable for a template the operator owns',
     credential: 'a service account the operator grants `roles/modelarmor.user`',
     since: '0.1.109',
   },

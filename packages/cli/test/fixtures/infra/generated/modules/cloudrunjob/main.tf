@@ -77,6 +77,14 @@ locals {
     }
   }
 
+  # The template name the runtime reads. Exported only once the resource exists.
+  model_armor_env = {
+    for id, name in var.model_armor_templates : id => {
+      MODEL_ARMOR_TEMPLATE = name
+    }
+    if name != ""
+  }
+
   # The Vertex adapter reads its project and location from the environment, and Cloud Run
   # sets neither. Both facts are already inputs here, so they are supplied rather than
   # left to fail on the first model call. A variable the spec declares itself wins:
@@ -212,6 +220,17 @@ resource "google_cloud_run_v2_job" "job" {
         # that binds the base, and only once the corpus exists.
         dynamic "env" {
           for_each = lookup(local.knowledge_base_env, each.key, {})
+          content {
+            name  = env.key
+            value = env.value
+          }
+        }
+
+        # The Model Armor template the runtime guards with, exported only when the plan
+        # owns one, so an operator-created template still reaches its job through the
+        # service env the spec declares.
+        dynamic "env" {
+          for_each = lookup(local.model_armor_env, each.key, {})
           content {
             name  = env.key
             value = env.value

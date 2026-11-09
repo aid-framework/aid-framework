@@ -1035,6 +1035,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      modelArmor: false,
     });
     expect(modulesOf(planOf('serverless', 'container'))).toEqual({
       serverless: true,
@@ -1043,6 +1044,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      modelArmor: false,
     });
     expect(modulesOf(planOf('batch'))).toEqual({
       serverless: false,
@@ -1051,6 +1053,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      modelArmor: false,
     });
     expect(modulesOf(planOf('edge'))).toEqual({
       serverless: false,
@@ -1059,6 +1062,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: true,
       agentRuntime: false,
       knowledgeBase: false,
+      modelArmor: false,
     });
     // A runtime service belongs to the runtime module, not the compute module: the flag
     // is exclusive so the two never both claim the same service.
@@ -1069,6 +1073,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: true,
       knowledgeBase: false,
+      modelArmor: false,
     });
   });
 
@@ -1084,6 +1089,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      modelArmor: false,
     });
     expect(modulesOf(planOf('serverless'), 'gcp')).toEqual({
       serverless: false,
@@ -1092,6 +1098,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      modelArmor: false,
     });
     expect(modulesOf(planOf('batch'), 'gcp')).toEqual({
       serverless: false,
@@ -1100,6 +1107,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      modelArmor: false,
     });
     expect(modulesOf(planOf('edge'), 'gcp')).toEqual({
       serverless: false,
@@ -1108,6 +1116,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      modelArmor: false,
     });
     // The runtime's cloud decides, not the target it happens to share with Cloud Run.
     expect(modulesOf(GCP_RUNTIME, 'gcp').agentRuntime).toBe(true);
@@ -1120,6 +1129,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      modelArmor: false,
     });
   });
 

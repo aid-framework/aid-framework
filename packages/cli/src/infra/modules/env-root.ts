@@ -25,6 +25,8 @@ export interface EnvRootModules {
   readonly knowledgeBase?: boolean;
   /** Optional for the same reason: "no managed agent runtime" unless a caller says so. */
   readonly agentRuntime?: boolean;
+  /** Optional for the same reason: "no managed guardrail template" unless a caller says so. */
+  readonly modelArmor?: boolean;
 }
 
 /** The plan-shaped variables every env root declares, so the generated tfvars binds. */
@@ -37,6 +39,7 @@ const PLAN_VARIABLES = [
   'variable "tasks" {}',
   'variable "alarms" {}',
   'variable "knowledge_bases" {}',
+  'variable "model_armor_templates" {}',
 ];
 
 const IMAGE_URIS = [
@@ -527,10 +530,11 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   const job = modules.batch === true;
   const corpus = modules.knowledgeBase === true;
   const runtime = modules.agentRuntime === true;
+  const armor = modules.modelArmor === true;
   // A corpus-only root still needs the project, region, tags and provider, but no image
   // or secret inputs: nothing runs. `compute` keeps those tied to a module that reads them.
   const compute = run || job || runtime;
-  const any = compute || corpus;
+  const any = compute || corpus || armor;
 
   const variables = [
     ...PLAN_VARIABLES,
@@ -551,6 +555,28 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   // returned. Without one the plan's map passes straight through, which is the case that
   // keeps a project with no base byte-identical to the tree it generated before.
   const knowledgeBases = corpus ? 'module.vertex-rag.knowledge_bases' : 'var.knowledge_bases';
+
+  // Same shape for the guardrail template: a plan that owns a Model Armor template has
+  // one module create it, and every compute module reads the name it returned. A plan
+  // that only names a template an operator created passes the map straight through.
+  const armorTemplates = armor ? 'module.model-armor.templates' : 'var.model_armor_templates';
+
+  if (armor) {
+    calls.push(
+      moduleCall('model-armor', [
+        'project               = var.project',
+        'project_id            = var.gcp_project',
+        'region                = var.region',
+        'model_armor_templates = var.model_armor_templates',
+        'tags                  = var.tags',
+      ]),
+    );
+    outputs.push([
+      'output "model_armor_templates" {',
+      '  value = module.model-armor.templates',
+      '}',
+    ]);
+  }
 
   if (corpus) {
     calls.push(
@@ -578,6 +604,7 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         'allow_unauthenticated = var.allow_unauthenticated',
         'deletion_protection   = var.deletion_protection',
         `knowledge_bases       = ${knowledgeBases}`,
+        `model_armor_templates = ${armorTemplates}`,
         'tags                  = var.tags',
       ]),
     );
@@ -587,16 +614,17 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   if (job) {
     calls.push(
       moduleCall('cloudrunjob', [
-        'project             = var.project',
-        'services            = var.services',
-        'image_uris          = var.image_uris',
-        'secret_ids          = var.secret_ids',
-        'batch_sizing        = var.batch_sizing',
-        'project_id          = var.gcp_project',
-        'region              = var.region',
-        'deletion_protection = var.deletion_protection',
-        `knowledge_bases     = ${knowledgeBases}`,
-        'tags                = var.tags',
+        'project               = var.project',
+        'services              = var.services',
+        'image_uris            = var.image_uris',
+        'secret_ids            = var.secret_ids',
+        'batch_sizing          = var.batch_sizing',
+        'project_id            = var.gcp_project',
+        'region                = var.region',
+        'deletion_protection   = var.deletion_protection',
+        `knowledge_bases       = ${knowledgeBases}`,
+        `model_armor_templates = ${armorTemplates}`,
+        'tags                  = var.tags',
       ]),
     );
     outputs.push(['output "batch_jobs" {', '  value = module.cloudrunjob.job_ids', '}']);
@@ -607,13 +635,14 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   if (runtime) {
     calls.push(
       moduleCall('agent-runtime', [
-        'project         = var.project',
-        'services        = var.services',
-        'image_uris      = var.image_uris',
-        'project_id      = var.gcp_project',
-        'region          = var.region',
-        'secret_ids      = var.secret_ids',
-        'tags            = var.tags',
+        'project               = var.project',
+        'services              = var.services',
+        'image_uris            = var.image_uris',
+        'project_id            = var.gcp_project',
+        'region                = var.region',
+        'secret_ids            = var.secret_ids',
+        `model_armor_templates = ${armorTemplates}`,
+        'tags                  = var.tags',
       ]),
     );
     outputs.push([

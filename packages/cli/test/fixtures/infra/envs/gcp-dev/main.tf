@@ -21,22 +21,24 @@ module "cloudrun" {
   allow_unauthenticated = var.allow_unauthenticated
   deletion_protection   = var.deletion_protection
   knowledge_bases       = var.knowledge_bases
+  model_armor_templates = var.model_armor_templates
   tags                  = var.tags
 }
 
 module "cloudrunjob" {
   source = "../../generated/modules/cloudrunjob"
 
-  project             = var.project
-  services            = var.services
-  image_uris          = var.image_uris
-  secret_ids          = var.secret_ids
-  batch_sizing        = var.batch_sizing
-  project_id          = var.gcp_project
-  region              = var.region
-  deletion_protection = var.deletion_protection
-  knowledge_bases     = var.knowledge_bases
-  tags                = var.tags
+  project               = var.project
+  services              = var.services
+  image_uris            = var.image_uris
+  secret_ids            = var.secret_ids
+  batch_sizing          = var.batch_sizing
+  project_id            = var.gcp_project
+  region                = var.region
+  deletion_protection   = var.deletion_protection
+  knowledge_bases       = var.knowledge_bases
+  model_armor_templates = var.model_armor_templates
+  tags                  = var.tags
 }
 
 output "cloudrun_urls" {

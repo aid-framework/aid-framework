@@ -17,6 +17,7 @@ import type {
   GuardrailShape,
   IR,
   KnowledgeBaseEngine,
+  ModelArmorGuardrailPolicy,
   Provider,
   VectorStoreKind,
 } from './shapes.js';
@@ -137,14 +138,23 @@ export interface DeployService {
   ingest: string[];
 }
 
-/** The managed policy a service's `bedrock`-engine guardrail owns, spelled spec-side. */
-export interface DeployManagedGuardrail {
-  /** The guardrail declaration id; the provisioned resource carries it in its name. */
-  id: string;
-  action: GuardrailShape['action'];
-  message: string;
-  policy: BedrockGuardrailPolicy;
-}
+/** The managed policy a service's guardrail owns, spelled spec-side. */
+export type DeployManagedGuardrail =
+  | {
+      engine: 'bedrock';
+      /** The guardrail declaration id; the provisioned resource carries it in its name. */
+      id: string;
+      action: GuardrailShape['action'];
+      message: string;
+      policy: BedrockGuardrailPolicy;
+    }
+  | {
+      engine: 'model-armor';
+      id: string;
+      action: GuardrailShape['action'];
+      message: string;
+      policy: ModelArmorGuardrailPolicy;
+    };
 
 export interface DeployStore {
   id: string;
@@ -230,7 +240,9 @@ export function buildDeployPlan(ir: IR): DeployPlan {
     (ir.guardrails ?? []).map((guardrail) => guardrail.engine),
   ) as GuardrailEngine[];
   const managed = (ir.guardrails ?? []).find(
-    (guardrail) => guardrail.engine === 'bedrock' && guardrail.bedrock !== undefined,
+    (guardrail) =>
+      (guardrail.engine === 'bedrock' && guardrail.bedrock !== undefined) ||
+      (guardrail.engine === 'model-armor' && guardrail.modelArmor !== undefined),
   );
 
   const services: DeployService[] = ir.deployments.map((deployment) => {
@@ -254,10 +266,19 @@ export function buildDeployPlan(ir: IR): DeployPlan {
     }
     if (managed?.bedrock !== undefined) {
       service.managedGuardrail = {
+        engine: 'bedrock',
         id: managed.id,
         action: managed.action,
         message: managed.onFail.message,
         policy: managed.bedrock,
+      };
+    } else if (managed?.modelArmor !== undefined) {
+      service.managedGuardrail = {
+        engine: 'model-armor',
+        id: managed.id,
+        action: managed.action,
+        message: managed.onFail.message,
+        policy: managed.modelArmor,
       };
     }
     return service;

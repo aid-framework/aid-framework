@@ -18,6 +18,9 @@ import type {
   BedrockPiiEntity,
   DeployManagedGuardrail,
   DeployPlan,
+  ModelArmorConfidence,
+  ModelArmorGuardrailPolicy,
+  ModelArmorRaiFilter,
 } from '@aid-framework/ir';
 
 import { type Cloud, DEFAULT_CLOUD } from './cloud.js';
@@ -81,7 +84,9 @@ const BEDROCK_PII_TYPES: Record<BedrockPiiEntity, string> = {
   'aws-secret-key': 'AWS_SECRET_KEY',
 };
 
-export function deployGuardrail(guardrail: DeployManagedGuardrail): DeployGuardrail {
+export function deployGuardrail(
+  guardrail: Extract<DeployManagedGuardrail, { engine: 'bedrock' }>,
+): DeployGuardrail {
   return {
     id: guardrail.id,
     message: guardrail.message,
@@ -98,6 +103,54 @@ export function deployGuardrail(guardrail: DeployManagedGuardrail): DeployGuardr
       type: BEDROCK_PII_TYPES[entity],
       action: guardrail.action === 'redact' ? ('ANONYMIZE' as const) : ('BLOCK' as const),
     })),
+  };
+}
+
+/**
+ * A managed guardrail spelled for the Google provider.
+ *
+ * There is no message here: a Model Armor template carries filters only, and the refusal
+ * users read is the guardrail declaration's `onFail.message`, which the generated app
+ * already owns. An absent key means the spec said nothing about that filter, which is
+ * different from `false`: `false` writes an explicit `DISABLED`.
+ */
+export interface DeployModelArmorTemplate {
+  readonly rai: readonly { readonly type: string; readonly confidence: string }[];
+  readonly prompt_injection?: { readonly confidence: string };
+  readonly malicious_uri?: boolean;
+  readonly sensitive_data?: boolean;
+}
+
+const MODEL_ARMOR_RAI_TYPES: Record<ModelArmorRaiFilter, string> = {
+  sexual: 'SEXUALLY_EXPLICIT',
+  hate: 'HATE_SPEECH',
+  harassment: 'HARASSMENT',
+  dangerous: 'DANGEROUS',
+};
+
+const MODEL_ARMOR_CONFIDENCE_LEVELS: Record<ModelArmorConfidence, string> = {
+  'low-and-above': 'LOW_AND_ABOVE',
+  'medium-and-above': 'MEDIUM_AND_ABOVE',
+  high: 'HIGH',
+};
+
+export function deployModelArmorTemplate(
+  policy: ModelArmorGuardrailPolicy,
+): DeployModelArmorTemplate {
+  return {
+    rai: Object.entries(policy.rai ?? {}).map(([type, confidence]) => ({
+      type: MODEL_ARMOR_RAI_TYPES[type as ModelArmorRaiFilter],
+      confidence: MODEL_ARMOR_CONFIDENCE_LEVELS[confidence],
+    })),
+    ...(policy.promptInjection === undefined
+      ? {}
+      : {
+          prompt_injection: {
+            confidence: MODEL_ARMOR_CONFIDENCE_LEVELS[policy.promptInjection],
+          },
+        }),
+    ...(policy.maliciousUri === undefined ? {} : { malicious_uri: policy.maliciousUri }),
+    ...(policy.sensitiveData === undefined ? {} : { sensitive_data: policy.sensitiveData }),
   };
 }
 
@@ -155,6 +208,13 @@ export interface DeployTfvars {
    * spec must not name an enum a different cloud would read differently.
    */
   readonly guardrails: Readonly<Record<string, DeployGuardrail>>;
+  /**
+   * The Model Armor template each service owns, keyed by service id like `guardrails`.
+   *
+   * GCP-only: a GCP plan is never rendered as CDK (`infra gen` refuses that combination),
+   * so `cdkContext` drops this rather than carry a fact no stack could read.
+   */
+  readonly model_armor_templates: Readonly<Record<string, DeployModelArmorTemplate>>;
   /**
    * The managed knowledge bases, spelled the way the module reads them.
    *
@@ -331,9 +391,15 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
   }
 
   const guardrails: Record<string, DeployGuardrail> = {};
+  const modelArmorTemplates: Record<string, DeployModelArmorTemplate> = {};
   for (const service of plan.services) {
-    if (service.managedGuardrail === undefined) continue;
-    guardrails[service.id] = deployGuardrail(service.managedGuardrail);
+    const managed = service.managedGuardrail;
+    if (managed === undefined) continue;
+    if (managed.engine === 'bedrock') {
+      guardrails[service.id] = deployGuardrail(managed);
+    } else {
+      modelArmorTemplates[service.id] = deployModelArmorTemplate(managed.policy);
+    }
   }
 
   const knowledgeBases: Record<string, DeployTfvars['knowledge_bases'][string]> = {};
@@ -376,6 +442,7 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
     project: { name: plan.project.name, namespace: plan.project.namespace },
     services,
     guardrails,
+    model_armor_templates: modelArmorTemplates,
     knowledge_bases: knowledgeBases,
     data_stores: dataStores,
     tasks: plan.tasks.map((task) => ({

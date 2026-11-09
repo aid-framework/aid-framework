@@ -801,12 +801,43 @@ export interface BedrockGuardrailPolicy {
   pii?: BedrockPiiEntity[];
 }
 
+/** The responsible-AI categories a Model Armor template can filter. */
+export const MODEL_ARMOR_RAI_FILTERS = ['sexual', 'hate', 'harassment', 'dangerous'] as const;
+
+export type ModelArmorRaiFilter = (typeof MODEL_ARMOR_RAI_FILTERS)[number];
+
+/** How confident a Model Armor filter must be before it refuses content. */
+export const MODEL_ARMOR_CONFIDENCES = ['low-and-above', 'medium-and-above', 'high'] as const;
+
+export type ModelArmorConfidence = (typeof MODEL_ARMOR_CONFIDENCES)[number];
+
+/**
+ * The managed policy a `model-armor`-engine guardrail owns.
+ *
+ * Unlike the Bedrock block, this one is optional: its absence is the 0.14 story,
+ * where the operator created the template and the deployment only names it. When it
+ * is present the deployment creates a `google_model_armor_template`, so every filter
+ * the template can carry is stated here or left off -- there is no per-call policy
+ * the way `ApplyGuardrail` has one.
+ *
+ * DLP inspect/deidentify templates and custom filter rules are deliberately absent:
+ * both name resources this deployment does not create, so they stay operator inputs.
+ */
+export interface ModelArmorGuardrailPolicy {
+  rai?: Partial<Record<ModelArmorRaiFilter, ModelArmorConfidence>>;
+  promptInjection?: ModelArmorConfidence;
+  maliciousUri?: boolean;
+  sensitiveData?: boolean;
+}
+
 export interface GuardrailShape {
   id: string;
   /** Where the policy is evaluated; `builtin` when the document does not say. */
   engine: GuardrailEngine;
   /** The managed policy, when `engine` is `bedrock` and the spec owns it. */
   bedrock?: BedrockGuardrailPolicy;
+  /** The template policy, when `engine` is `model-armor` and the spec owns it. */
+  modelArmor?: ModelArmorGuardrailPolicy;
   stages: ('input' | 'output' | 'retrieval' | 'tool-call')[];
   policies: GuardrailPolicyKind[];
   action: 'block' | 'redact' | 'flag' | 'escalate';

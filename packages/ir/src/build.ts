@@ -70,6 +70,11 @@ import {
   type MapStep,
   type MemoryShape,
   type MetricShape,
+  MODEL_ARMOR_CONFIDENCES,
+  MODEL_ARMOR_RAI_FILTERS,
+  type ModelArmorConfidence,
+  type ModelArmorGuardrailPolicy,
+  type ModelArmorRaiFilter,
   type ModelLimits,
   type ModelParams,
   type ModelShape,
@@ -1051,6 +1056,8 @@ function buildGuardrails(raw: unknown): GuardrailShape[] {
     if (minConfidence !== undefined) guardrail.minConfidence = minConfidence;
     const bedrock = buildBedrockPolicy(entry.bedrock);
     if (bedrock !== undefined) guardrail.bedrock = bedrock;
+    const modelArmor = buildModelArmorPolicy(entry.modelArmor);
+    if (modelArmor !== undefined) guardrail.modelArmor = modelArmor;
     return guardrail;
   });
 }
@@ -1097,6 +1104,46 @@ function buildBedrockPolicy(raw: unknown): BedrockGuardrailPolicy | undefined {
 
   const words = asStringArray(record.words);
   if (words.length > 0) policy.words = words;
+
+  return Object.keys(policy).length > 0 ? policy : undefined;
+}
+
+/**
+ * The Model Armor template policy, with the closed vocabularies applied.
+ *
+ * The same rule as the Bedrock block: an enum this build does not know is dropped
+ * rather than passed through, and an empty policy is `undefined` -- which is how "the
+ * operator owns the template" stays distinguishable from "the spec said nothing".
+ * A `false` toggle is kept, because it is an explicit `DISABLED` rather than an
+ * omission.
+ */
+function buildModelArmorPolicy(raw: unknown): ModelArmorGuardrailPolicy | undefined {
+  const record = asRecord(raw);
+  if (record === undefined) return undefined;
+  const policy: ModelArmorGuardrailPolicy = {};
+
+  const rai = asRecord(record.rai);
+  if (rai !== undefined) {
+    const filters: Partial<Record<ModelArmorRaiFilter, ModelArmorConfidence>> = {};
+    for (const key of sortedKeys(rai)) {
+      if (!(MODEL_ARMOR_RAI_FILTERS as readonly string[]).includes(key)) continue;
+      const confidence = asString(rai[key]);
+      if (!(MODEL_ARMOR_CONFIDENCES as readonly string[]).includes(confidence ?? '')) continue;
+      filters[key as ModelArmorRaiFilter] = confidence as ModelArmorConfidence;
+    }
+    if (Object.keys(filters).length > 0) policy.rai = filters;
+  }
+
+  const promptInjection = asString(record.promptInjection);
+  if ((MODEL_ARMOR_CONFIDENCES as readonly string[]).includes(promptInjection ?? '')) {
+    policy.promptInjection = promptInjection as ModelArmorConfidence;
+  }
+
+  const maliciousUri = asBoolean(record.maliciousUri);
+  if (maliciousUri !== undefined) policy.maliciousUri = maliciousUri;
+
+  const sensitiveData = asBoolean(record.sensitiveData);
+  if (sensitiveData !== undefined) policy.sensitiveData = sensitiveData;
 
   return Object.keys(policy).length > 0 ? policy : undefined;
 }

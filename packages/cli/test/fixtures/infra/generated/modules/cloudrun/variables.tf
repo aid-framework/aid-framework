@@ -13,8 +13,8 @@ variable "services" {
     providers    = list(string)
     ingest       = list(string)
     secret_names = list(string)
-    # Declared for shape parity with the AWS modules; `aid infra gen` refuses a managed
-    # guardrail engine on GCP, since nothing there evaluates one.
+    # Engines the declaring guardrail uses. Only `model-armor` reaches this module:
+    # `bedrock` has no GCP counterpart and `aid infra gen` refuses it here.
     guardrail_engines = list(string)
     # Set only by a `batch` service; the other targets ignore it and the entrypoint does
     # not read it, but the shared variable type must admit it.
@@ -98,4 +98,10 @@ variable "knowledge_bases" {
     retrievers = list(string)
   }))
   default = {}
+}
+
+variable "model_armor_templates" {
+  description = "Template resource names this module may export, keyed by service id."
+  type        = map(string)
+  default     = {}
 }

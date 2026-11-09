@@ -439,6 +439,9 @@ describe('infra gen', () => {
     const context = JSON.parse(made.read(CDK_CONTEXT));
     expect(context.guardrails).toEqual(tfvars.guardrails);
     expect(context.services.api.guardrailEngines).toEqual(['bedrock']);
+    // A GCP-only template variable has no construct to read it, and CDK has no
+    // `google_model_armor_template`; the key must not leak into the context.
+    expect(context).not.toHaveProperty('model_armor_templates');
   });
 
   it('provisions the managed guardrail beside the compute and grants only the runtime call', () => {
@@ -1096,6 +1099,176 @@ guardrails:
 deployments:
   api:
     target: edge
+    secrets: [OPENAI_API_KEY]
+pipelines:
+  ping:
+    trigger:
+      http:
+        method: get
+        path: /ping
+    steps:
+      - generate:
+          prompt: answer
+          as: reply
+`;
+
+  /** A Cloud Run service whose guardrail owns the Model Armor template it calls. */
+  const MODEL_ARMOR = `specVersion: "0.15"
+project:
+  name: ping
+  namespace: aid.test
+  targets: [py-fastapi]
+models:
+  small:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  answer:
+    version: 1
+    model: small
+    template: "Answer the request."
+    output:
+      kind: text
+guardrails:
+  inbound:
+    engine: model-armor
+    stages: [input, output]
+    action: block
+    modelArmor:
+      rai:
+        hate: medium-and-above
+        dangerous: high
+      promptInjection: low-and-above
+      maliciousUri: false
+    onFail:
+      message: rejected.
+      log: true
+deployments:
+  api:
+    target: container
+    secrets: [OPENAI_API_KEY]
+pipelines:
+  ping:
+    trigger:
+      http:
+        method: get
+        path: /ping
+    steps:
+      - generate:
+          prompt: answer
+          as: reply
+`;
+
+  it('refuses a Model Armor guardrail on AWS, which has no such product', () => {
+    const made = project(MODEL_ARMOR);
+    created.push(made);
+
+    const run = aid(made, ['infra', 'gen', '--json']);
+    expect(run.code).toBe(1);
+    const [diagnostic] = diagnosticsOf(run);
+    expect(diagnostic?.code).toBe('cli/infra-guardrail-unsupported');
+    expect(diagnostic?.message).toContain('Model Armor');
+    expect(diagnostic?.message).toContain('api');
+    expect(diagnostic?.hint).toContain('Remove `engine: model-armor`');
+    expect(made.walk()).not.toContain(TFVARS);
+  });
+
+  it('refuses a Model Armor guardrail on an edge function, which has no environment', () => {
+    // The engine is the right one for the cloud here; the target is what cannot carry it.
+    const made = project(MODEL_ARMOR.replace('    target: container', '    target: edge'));
+    created.push(made);
+
+    const run = aid(made, ['infra', 'gen', '--json']);
+    expect(run.code).toBe(1);
+    const [diagnostic] = diagnosticsOf(run);
+    expect(diagnostic?.code).toBe('cli/infra-guardrail-unsupported');
+    expect(diagnostic?.message).toContain('a Model Armor template');
+    expect(made.walk()).not.toContain(TFVARS);
+  });
+
+  it('provisions the Model Armor template the spec owns and exports it to the service', () => {
+    const made = project(MODEL_ARMOR);
+    created.push(made);
+
+    const run = aid(made, ['infra', 'gen', '--cloud', 'gcp', '--json']);
+    expect(run.code).toBe(0);
+
+    expect(made.walk()).toContain('infra/generated/modules/model-armor/main.tf');
+
+    const tfvars = JSON.parse(made.read(TFVARS));
+    expect(tfvars.services.api.guardrail_engines).toEqual(['model-armor']);
+    // The spec vocabulary is not a Cloud enum, so it is translated exactly once, here.
+    // Categories are sorted by their Cloud spelling, not by spec order.
+    expect(tfvars.model_armor_templates).toEqual({
+      api: {
+        rai: [
+          { type: 'DANGEROUS', confidence: 'HIGH' },
+          { type: 'HATE_SPEECH', confidence: 'MEDIUM_AND_ABOVE' },
+        ],
+        prompt_injection: { confidence: 'LOW_AND_ABOVE' },
+        // An explicit `false` is kept: omitting a filter is a different intent.
+        malicious_uri: false,
+      },
+    });
+
+    // The module creates the template; the env root hands its resource names to the
+    // compute module, which is the only place that can spell MODEL_ARMOR_TEMPLATE.
+    const readme = made.read(`${GENERATED}/README.md`);
+    expect(readme).toContain('module "model-armor"');
+    expect(readme).toContain('model_armor_templates = module.model-armor.templates');
+    const cloudrun = made.read(`${GENERATED}/modules/cloudrun/main.tf`);
+    expect(cloudrun).toContain('MODEL_ARMOR_TEMPLATE');
+  });
+
+  it('names no template variable when the operator owns it', () => {
+    // 0.14's story: the app reads MODEL_ARMOR_TEMPLATE the operator supplies. The module
+    // is not emitted, so the env root falls back to the variable rather than a resource.
+    const made = project(MODEL_ARMOR_OPERATOR);
+    created.push(made);
+
+    const run = aid(made, ['infra', 'gen', '--cloud', 'gcp', '--json']);
+    expect(run.code).toBe(0);
+
+    expect(made.walk()).not.toContain('infra/generated/modules/model-armor/main.tf');
+    const tfvars = JSON.parse(made.read(TFVARS));
+    expect(tfvars.model_armor_templates).toEqual({});
+    expect(made.read(`${GENERATED}/README.md`)).toContain(
+      'model_armor_templates = var.model_armor_templates',
+    );
+  });
+
+  /** 0.14's story: the engine names a template the operator created and supplies. */
+  const MODEL_ARMOR_OPERATOR = `specVersion: "0.14"
+project:
+  name: ping
+  namespace: aid.test
+  targets: [py-fastapi]
+models:
+  small:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  answer:
+    version: 1
+    model: small
+    template: "Answer the request."
+    output:
+      kind: text
+guardrails:
+  inbound:
+    engine: model-armor
+    stages: [input, output]
+    action: block
+    onFail:
+      message: rejected.
+      log: true
+deployments:
+  api:
+    target: container
     secrets: [OPENAI_API_KEY]
 pipelines:
   ping:
