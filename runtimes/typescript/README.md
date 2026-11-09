@@ -113,6 +113,27 @@ missing rather than failing later at the provider.
 `generate(alias, request, { fallbacks })` tries the alias, then each fallback **in the order given**. Fallbacks
 are ordered, not conditional, and `result.attempts` reports what was actually tried.
 
+## Streaming
+
+`gateway.stream(alias, request)` is an `AsyncGenerator<string, void, undefined>` that yields **SSE frames**, not
+bare deltas: each chunk is a `data: {...}` frame with a `delta` field, and the generator ends with one terminal
+frame carrying `done: true`, the finish reason, the model and the provider. A route can pipe it straight into a
+`Response` with `text/event-stream`.
+
+The same pre-flight a `generate` call performs runs first. `require(alias, ['streaming'])` refuses a model or
+adapter without the capability with `CapabilityMismatchError`, and the budget check runs before the provider is
+called. An adapter that advertises streaming without implementing `Provider.stream` fails with
+`ConfigurationError` — advertising a capability is not the same as honouring it.
+
+Usage and cost are charged once, when the provider stream completes. A stream that fails mid-flight charges
+nothing, so a partial response is never billed as a complete one. When the adapter reports no usage, usage is
+estimated from the emitted text rather than recorded as zero. Abandoning the iterator (`return()`) closes the
+provider iterator and releases the concurrency slot immediately, so a client that disconnects cannot starve the
+limiter.
+
+The fake and OpenAI-compatible adapters implement streaming. Anthropic, Bedrock, Gemini and Vertex do not yet,
+and a route that requires streaming on them is refused rather than buffered.
+
 ## Decisions are not chat
 
 `DecisionClient` calls TypeSafe AI's Jev (`POST /v1/systemone`), which takes a state plus typed questions and
@@ -185,9 +206,9 @@ because retrieval scores a *retrieved set* rather than a single string. Retrieva
 
 ## Limits, stated plainly
 
-- **Streaming is declared, not implemented.** `Capability` includes it so a spec can require it and a build-time
-  gate can check it; calling `ModelGateway.stream` raises `FeatureDeferredError`. The transport is
-  request/response only.
+- **Streaming covers the OpenAI-compatible wire and the fake.** The Anthropic, Bedrock, Gemini and Vertex
+  adapters do not implement `Provider.stream`, so a route that needs it is refused with
+  `CapabilityMismatchError` rather than answered with one buffered body.
 - **One HTTP provider and one fake.** Breadth of vendor coverage is a later concern; a narrow, correct seam is
   worth more than a wide shallow one.
 - `PgVectorStore` needs a live `vector` extension and is not exercised by CI; the in-memory store carries the

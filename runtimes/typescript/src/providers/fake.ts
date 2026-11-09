@@ -33,10 +33,14 @@ import {
   CompletionResponse,
   type FinishReason,
   type ModelSpec,
+  StreamChunk,
   TokenUsage,
   ToolCall,
 } from '../types.js';
 import type { Provider } from './base.js';
+
+/** Characters per delta on the fake provider's stream. */
+const STREAM_CHUNK_SIZE = 4;
 
 /** A responder sees the request and its call index, and returns the model's text. */
 export type Responder = (request: CompletionRequest, index: number) => string;
@@ -141,7 +145,7 @@ export class FakeProvider implements Provider {
   }
 
   get capabilities(): ReadonlySet<Capability> {
-    return new Set<Capability>(['tool-calling', 'structured-output', 'long-context']);
+    return new Set<Capability>(['tool-calling', 'structured-output', 'long-context', 'streaming']);
   }
 
   async complete(request: CompletionRequest, model: ModelSpec): Promise<CompletionResponse> {
@@ -183,6 +187,48 @@ export class FakeProvider implements Provider {
 
   async close(): Promise<void> {
     return;
+  }
+
+  /**
+   * Stream the same answer {@link complete} would have produced.
+   *
+   * Four-character deltas, and a terminal chunk that carries the finish reason and the
+   * usage counted the same way `complete` counts it, so a streamed call and a buffered
+   * call of the same prompt are billed identically.
+   */
+  async *stream(
+    request: CompletionRequest,
+    _model: ModelSpec,
+  ): AsyncGenerator<StreamChunk, void, undefined> {
+    this.calls.push(request);
+    const index = this.calls.length - 1;
+
+    const failure = this._failures.shift();
+    if (failure !== undefined) throw new ProviderError(failure);
+
+    const inputTokens = this.countTokens(promptText(request));
+    const turn = this._served < this._script.length ? this._script[this._served] : undefined;
+    let text: string;
+    let finishReason: FinishReason;
+    if (turn !== undefined) {
+      this._served += 1;
+      text = turn.text;
+      finishReason = turn.finishReason;
+    } else {
+      text = this.respondTo(request, index);
+      finishReason = 'stop';
+    }
+
+    for (let offset = 0; offset < text.length; offset += STREAM_CHUNK_SIZE) {
+      yield new StreamChunk({ delta: text.slice(offset, offset + STREAM_CHUNK_SIZE) });
+    }
+    yield new StreamChunk({
+      finishReason,
+      usage: new TokenUsage({
+        inputTokens,
+        outputTokens: this.countTokens(text),
+      }),
+    });
   }
 
   private respondTo(request: CompletionRequest, index: number): string {

@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { FetchLike } from '../src/index.js';
+import type { FetchLike, StreamChunk } from '../src/index.js';
 import {
   CompletionRequest,
   DEFAULT_BASE_URL,
@@ -21,6 +21,7 @@ import {
   OpenAICompatibleProvider,
   ProviderError,
   ProviderResponseError,
+  ScriptedTurn,
   supports,
   ToolDefinition,
 } from '../src/index.js';
@@ -132,17 +133,16 @@ describe('FakeProvider', () => {
 
   it('declares the capabilities the gateway negotiates on', () => {
     const provider = new FakeProvider();
-    // The simulation advertises exactly what it can serve: `streaming` is withheld
-    // because `stream()` is not implemented, which is what keeps the declaration
-    // honest rather than aspirational.
+    // The simulation advertises exactly what it can serve, and it now serves a stream.
     expect([...provider.capabilities].sort()).toEqual([
       'long-context',
+      'streaming',
       'structured-output',
       'tool-calling',
     ]);
     expect(supports(provider, 'tool-calling')).toBe(true);
     expect(supports(provider, 'long-context')).toBe(true);
-    expect(supports(provider, 'streaming')).toBe(false);
+    expect(supports(provider, 'streaming')).toBe(true);
   });
 
   it('names itself, and can be renamed', () => {
@@ -539,5 +539,102 @@ describe('OpenAICompatibleProvider', () => {
     expect(
       new OpenAICompatibleProvider({ name: 'azure', baseUrl: 'https://example.test' }).name,
     ).toBe('azure');
+  });
+});
+
+/** A response body delivered as the given text chunks, in order. */
+function streamBody(chunks: readonly string[]): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+}
+
+/** A `FetchLike` that answers with a streaming body and records the payload sent. */
+function stubStream(
+  chunks: readonly string[],
+  status = 200,
+): {
+  readonly fetch: FetchLike;
+  readonly calls: { body: string; headers: Readonly<Record<string, string>> }[];
+} {
+  const calls: { body: string; headers: Readonly<Record<string, string>> }[] = [];
+  const fetch: FetchLike = (_url, init) => {
+    calls.push({ body: init.body ?? '', headers: init.headers });
+    return Promise.resolve({
+      ok: status >= 200 && status < 300,
+      status,
+      text: () => Promise.resolve('error body'),
+      body: streamBody(chunks),
+    });
+  };
+  return { fetch, calls };
+}
+
+async function collectChunks(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[]> {
+  const chunks: StreamChunk[] = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  return chunks;
+}
+
+describe('OpenAICompatibleProvider.stream', () => {
+  it('asks for streamed frames with usage and parses deltas across chunk boundaries', async () => {
+    const stub = stubStream([
+      // Split mid-frame on purpose: SSE framing must survive reader chunk edges.
+      'data: {"choices":[{"delta":{"content":"Hel"',
+      '}}]}\n\ndata: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
+      ': keep-alive\n\ndata: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":2}}\n\n',
+      'data: [DONE]\n\n',
+    ]);
+
+    const chunks = await collectChunks(provider(stub.fetch).stream(ask('hi'), smallSpec()));
+
+    expect(chunks.map((chunk) => chunk.delta)).toEqual(['Hel', 'lo', '', '']);
+    expect(at(chunks, 2).finishReason).toBe('length');
+    expect(at(chunks, 3).usage?.toJSON()).toEqual({ inputTokens: 7, outputTokens: 2 });
+    expect(chunks).toHaveLength(4);
+
+    const payload = JSON.parse(at(stub.calls, 0).body) as Record<string, unknown>;
+    expect(payload.stream).toBe(true);
+    expect(payload.stream_options).toEqual({ include_usage: true });
+  });
+
+  it('makes one attempt rather than replaying a failed stream', async () => {
+    const stub = stubStream([], 500);
+
+    await expect(
+      collectChunks(provider(stub.fetch).stream(ask('hi'), smallSpec())),
+    ).rejects.toThrow(ProviderError);
+    expect(stub.calls).toHaveLength(1);
+  });
+
+  it('refuses a frame that is not JSON', async () => {
+    const stub = stubStream(['data: not-json\n\n']);
+
+    await expect(
+      collectChunks(provider(stub.fetch).stream(ask('hi'), smallSpec())),
+    ).rejects.toThrow(ProviderResponseError);
+  });
+});
+
+describe('FakeProvider.stream', () => {
+  it('streams the text and usage its complete would have produced', async () => {
+    const text = 'abcdefghij';
+    const buffered = await new FakeProvider({ script: [ScriptedTurn.answer(text)] }).complete(
+      ask('hi'),
+      smallSpec(),
+    );
+
+    const chunks = await collectChunks(
+      new FakeProvider({ script: [ScriptedTurn.answer(text)] }).stream(ask('hi'), smallSpec()),
+    );
+
+    expect(chunks.map((chunk) => chunk.delta).join('')).toBe(text);
+    expect(chunks.slice(0, -1).map((chunk) => chunk.delta.length)).toEqual([4, 4, 2]);
+    expect(at(chunks, chunks.length - 1).usage?.toJSON()).toEqual(buffered.usage.toJSON());
   });
 });

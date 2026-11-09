@@ -70,6 +70,37 @@ export class ConcurrencyLimiter {
     }
   }
 
+  /**
+   * Hold one slot for the whole lifetime of a stream.
+   *
+   * A stream cannot use {@link run}: its body is a generator, and yielding from inside
+   * `run`'s callback would release the slot at the first `yield` rather than at the end
+   * of the stream. So the slot is acquired here and each `next()` is executed inside
+   * the held context, which is what keeps nested model and tool calls from deadlocking
+   * at a cap of one. The `finally` releases the slot on exhaustion, on error, and when
+   * the consumer abandons the stream, after closing the provider's iterator so it stops
+   * producing.
+   */
+  async *runStream<T>(body: () => AsyncIterable<T>): AsyncGenerator<T, void, undefined> {
+    if (holdsSlot()) {
+      yield* body();
+      return;
+    }
+    await this.acquire();
+    let iterator: AsyncIterator<T> | undefined;
+    try {
+      iterator = body()[Symbol.asyncIterator]();
+      while (true) {
+        const step = await HELD.run(true, () => iterator?.next());
+        if (step === undefined || step.done === true) return;
+        yield step.value;
+      }
+    } finally {
+      await iterator?.return?.();
+      this.release();
+    }
+  }
+
   private async acquire(): Promise<void> {
     if (this.active < this.limit) {
       this.active += 1;

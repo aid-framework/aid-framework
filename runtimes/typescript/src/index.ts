@@ -12,9 +12,12 @@
  *   engine here. A generated app is ordinary code that is easy to read and to test.
  * - **zod is used only for structured output.** No other responsibility is delegated
  *   to it.
- * - **Streaming is declared, not implemented.** `Capability` includes it so a spec
- *   can require it and a gate can check it; calling `ModelGateway.stream` raises
- *   {@link FeatureDeferredError}.
+ * - **Streaming is a capability, not a promise.** `Capability` includes it so a spec
+ *   can require it and a gate can check it. The fake and OpenAI-compatible adapters
+ *   implement `Provider.stream`, and `ModelGateway.stream` serves them as SSE frames;
+ *   a model or adapter without the capability raises a {@link CapabilityMismatchError}
+ *   rather than returning a buffered response. The Anthropic, Bedrock, Gemini, and
+ *   Vertex adapters do not stream yet.
  * - **Four HTTP provider adapters and one fake.** OpenAI-compatible endpoints share
  *   one adapter because they share a wire format; Anthropic's Messages API,
  *   Bedrock's Converse API, and Vertex AI's `generateContent` each get their own
@@ -310,6 +313,7 @@ export {
   Message,
   ModelSpec,
   PinnedModel,
+  StreamChunk,
   TokenUsage,
   ToolCall,
   ToolDefinition,
