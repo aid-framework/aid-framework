@@ -29,6 +29,31 @@
       "providers": ["bedrock"],
       "ingest": ["docs"],
       "guardrailEngines": []
+    },
+    "nightly": {
+      "target": "batch",
+      "streaming": false,
+      "pipeline": "ping",
+      "routes": [],
+      "env": [
+        { "name": "LOG_LEVEL", "secret": false, "from": "spec", "value": "info" }
+      ],
+      "secrets": [],
+      "providers": ["bedrock"],
+      "ingest": ["docs"],
+      "guardrailEngines": []
+    },
+    "edge": {
+      "target": "edge",
+      "streaming": false,
+      "routes": [{ "pipeline": "ping", "method": "GET", "path": "/edge/ping" }],
+      "env": [
+        { "name": "LOG_LEVEL", "secret": false, "from": "spec", "value": "info" }
+      ],
+      "secrets": [],
+      "providers": ["bedrock"],
+      "ingest": [],
+      "guardrailEngines": []
     }
   },
   "guardrails": {

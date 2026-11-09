@@ -396,6 +396,7 @@ const MAIN_TF = hcl([
   '    command = local.command[each.key]',
   '',
   '    taskRoleArn = aws_iam_role.task[0].arn',
+  '    executionRoleArn = aws_iam_role.execution[0].arn',
   '',
   '    resourceRequirements = [',
   '      {',

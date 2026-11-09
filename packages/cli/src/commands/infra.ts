@@ -518,15 +518,17 @@ interface SavedPlanService {
 /**
  * The services a CDK app would silently drop.
  *
- * `target` rather than a fixed `batch`/`edge` list so a target added later fails closed
- * instead of deploying a partial project.
+ * `target` rather than a fixed list so a target added later fails closed instead of
+ * deploying a partial project. The list names every target a construct exists for;
+ * `batch` and `edge` were the case this guard existed for, and now have one.
  */
 function cdkObstacles(services: readonly SavedPlanService[]): CdkObstacle[] {
+  const represented = new Set(['serverless', 'container', 'batch', 'edge']);
   const obstacles: CdkObstacle[] = [];
   for (const service of services) {
     if (service.runtime !== undefined) {
       obstacles.push({ reason: 'runtime', id: service.id });
-    } else if (service.target !== 'serverless' && service.target !== 'container') {
+    } else if (!represented.has(service.target)) {
       obstacles.push({ reason: 'target', id: service.id, detail: service.target });
     }
   }
@@ -557,7 +559,7 @@ function cdkObstacleDiagnostic(obstacles: readonly CdkObstacle[]): CliDiagnostic
   return cliError({
     code: CLI_DIAGNOSTIC_CODES.infraCloudBackendUnsupported,
     message: sentences.join(' '),
-    hint: 'Use --iac tofu, which emits a module for every target and the managed runtime, or retarget the service to `serverless` or `container`.',
+    hint: 'Use --iac tofu, which emits a module for every target and the managed runtime, or retarget the service to a target with a construct (`serverless`, `container`, `batch` or `edge`).',
   });
 }
 
