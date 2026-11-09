@@ -52,20 +52,34 @@ updates:
           - minor
           - patch
 
-# Disabled until runtimes/python/pyproject.toml exists (PR 3). Re-enable by
-# uncommenting this and deleting the note.
-#
-# - package-ecosystem: uv
-#   directory: /runtimes/python
-#   schedule:
-#     interval: daily
-#     time: "06:00"
-#     timezone: Etc/UTC
-#   open-pull-requests-limit: 5
-#   cooldown:
-#     default-days: 7
-#   commit-message:
-#     prefix: "chore(deps)"
-#   labels:
-#     - dependencies
-#     - python
+    # The Python runtime installs with `pip install -e .[dev,deepagents]` in every job and
+  # has no lockfile, so `pip` is the ecosystem that reads the manifest CI actually uses.
+  # `uv` would need a committed `uv.lock` that nothing verifies.
+  - package-ecosystem: pip
+    directory: /runtimes/python
+    schedule:
+      interval: daily
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+      - python
+    groups:
+      python-minor-and-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    # `deepagents` is an exact pin on purpose: the IR gate requires a pinned
+    # `engineVersion`, and `aid_runtime.agents.engine.DEEPAGENTS_PIN` must move with it in
+    # the same commit. A bot PR that bumps only the manifest fails that gate, so the bump
+    # stays a deliberate, human change.
+    ignore:
+      - dependency-name: deepagents
