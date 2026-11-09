@@ -1343,15 +1343,20 @@
           }
         },
         "image": {
-          "description": "Where the image for this deployment is published; only a container deployment can carry one.",
+          "description": "Where the image for this deployment is published; only a container deployment can carry one. `loginServer` and `loginFields` are present only when the registry's host or credential is derived from declared fields, so a `ghcr.io` or `docker.io` image serializes exactly as it did before a cloud registry existed.",
           "type": "object",
           "additionalProperties": false,
           "required": ["registry", "name"],
           "properties": {
-            "registry": { "enum": ["ghcr.io", "docker.io"] },
+            "registry": { "enum": ["ghcr.io", "docker.io", "aws.ecr", "gcp.artifact-registry"] },
             "name": {
               "type": "string",
               "pattern": "^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$"
+            },
+            "loginServer": { "type": "string", "minLength": 1 },
+            "loginFields": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
             },
             "usernameSecret": { "type": "string", "minLength": 1 },
             "tokenSecret": { "type": "string", "minLength": 1 }

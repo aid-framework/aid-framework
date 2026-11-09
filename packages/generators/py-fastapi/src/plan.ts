@@ -179,19 +179,29 @@ function evalsScaffold(ir: IR): readonly GeneratedFile[] {
  * would race with itself.
  */
 function releaseScaffold(ir: IR): readonly GeneratedFile[] {
-  // Keyed by registry as well as repository: the same path on two registries is two
-  // artifacts, and collapsing them would push one of them nowhere.
+  // Keyed by the published location, not by the registry id: an ECR host carries the
+  // account, so the same repository path under two accounts is two artifacts.
   const byRepository = new Map<
     string,
-    { registry: string; name: string; usernameSecret?: string; tokenSecret?: string; ids: string[] }
+    {
+      registry: string;
+      name: string;
+      loginServer?: string;
+      loginFields?: Record<string, string>;
+      usernameSecret?: string;
+      tokenSecret?: string;
+      ids: string[];
+    }
   >();
   for (const deployment of ir.deployments) {
     const image = deployment.image;
     if (image === undefined) continue;
-    const key = `${image.registry}\u0000${image.name}`;
+    const key = `${image.registry}\u0000${image.loginServer ?? ''}\u0000${image.name}`;
     const entry = byRepository.get(key) ?? {
       registry: image.registry,
       name: image.name,
+      ...(image.loginServer === undefined ? {} : { loginServer: image.loginServer }),
+      ...(image.loginFields === undefined ? {} : { loginFields: image.loginFields }),
       ...(image.usernameSecret === undefined ? {} : { usernameSecret: image.usernameSecret }),
       ...(image.tokenSecret === undefined ? {} : { tokenSecret: image.tokenSecret }),
       ids: [] as string[],
@@ -205,6 +215,8 @@ function releaseScaffold(ir: IR): readonly GeneratedFile[] {
       registry: entry.registry,
       name: entry.name,
       deploymentIds: [...entry.ids].sort(),
+      ...(entry.loginServer === undefined ? {} : { loginServer: entry.loginServer }),
+      ...(entry.loginFields === undefined ? {} : { loginFields: entry.loginFields }),
       ...(entry.usernameSecret === undefined ? {} : { usernameSecret: entry.usernameSecret }),
       ...(entry.tokenSecret === undefined ? {} : { tokenSecret: entry.tokenSecret }),
     }))

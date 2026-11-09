@@ -35,11 +35,14 @@ export {
   IMAGE_CREDENTIAL_FIELDS,
   IMAGE_REGISTRIES,
   IMAGE_REGISTRY_DESCRIPTORS,
+  IMAGE_REGISTRY_FIELDS,
   type ImageCredentialField,
   type ImageRegistry,
+  type ImageRegistryField,
   imageRegistry,
   type RegistryAuthKind,
   type RegistryDescriptor,
+  type RegistryImageFields,
 } from './registries.js';
 export { SourceDocument } from './source-document.js';
 
@@ -80,7 +83,7 @@ import { validateSpec } from './validate.js';
 export const SPEC_VERSION = '0.1';
 
 /** The newest version this build reads. Sections above this are rejected, not ignored. */
-export const SPEC_VERSION_LATEST: SpecVersion = '0.16';
+export const SPEC_VERSION_LATEST: SpecVersion = '0.18';
 
 export interface SpecCheckResult {
   /** True when no diagnostic has `error` severity. Warnings do not fail a check. */

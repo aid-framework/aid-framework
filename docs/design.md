@@ -638,11 +638,17 @@ type DeploymentShape = {
   secrets: string[];
   env: { name: string; value?: string; secret?: boolean }[];
   image?: {
-    registry: 'ghcr.io'|'docker.io';
-    name: string;
-    // `docker.io` names the secrets its login reads; `ghcr.io` reads neither.
+    registry: 'ghcr.io'|'docker.io'|'aws.ecr'|'gcp.artifact-registry';
+    name: string;                 // repository path under the registry
+    // The host the login step addresses, when it is not the registry id: an ECR host
+    // carries the account and the region. Absent on `ghcr.io`/`docker.io`.
+    loginServer?: string;
+    // `docker.io` names the secrets its login reads; a cloud registry names the
+    // fields (region, roleArn, project, ...) its credential is built from; `ghcr.io`
+    // reads neither.
     usernameSecret?: string;
     tokenSecret?: string;
+    loginFields?: Record<string, string>;
   };
   traits: Trait[];
 };

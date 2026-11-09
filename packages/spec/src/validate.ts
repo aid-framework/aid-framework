@@ -10,7 +10,7 @@ import {
   type PathSegment,
 } from './diagnostics.js';
 import { findMalformedTemplate, templateRoots } from './parse.js';
-import { IMAGE_CREDENTIAL_FIELDS, IMAGE_REGISTRIES, imageRegistry } from './registries.js';
+import { IMAGE_REGISTRIES, IMAGE_REGISTRY_FIELDS, imageRegistry } from './registries.js';
 import specSchema from './schema/spec.schema.json' with { type: 'json' };
 import type { SourceDocument } from './source-document.js';
 
@@ -64,6 +64,8 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.14',
   '0.15',
   '0.16',
+  '0.17',
+  '0.18',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -850,10 +852,10 @@ function modelCacheDiagnostics(
  * registry carries its own `minVersion`, checked after 0.4 for the same reason.
  *
  * Two contradictions follow, both reported with their fix rather than left to the
- * generator: only a `target: container` deployment produces an image, and a registry that
- * logs in with a declared secret is unusable when the document names no secret -- the
- * workflow would fail on its first tag. A credential a registry does not read is refused
- * too, so a `ghcr.io` image carrying a Docker Hub token never emits a secret nothing uses.
+ * generator: only a `target: container` deployment produces an image, and a registry whose
+ * login needs fields the document does not declare is unusable -- the workflow would fail
+ * on its first tag. A field the registry does not read is refused too, so a `ghcr.io` image
+ * carrying a Docker Hub token never emits a secret nothing uses.
  */
 function deploymentImageDiagnostics(
   spec: Record<string, unknown>,
@@ -922,7 +924,7 @@ function deploymentImageDiagnostics(
     // anything is generated -- with the names to declare.
     if (descriptor === undefined) continue;
     const missing = descriptor.declares.filter((field) => image[field] === undefined);
-    const unknown = IMAGE_CREDENTIAL_FIELDS.filter(
+    const unknown = IMAGE_REGISTRY_FIELDS.filter(
       (field) => !descriptor.declares.includes(field) && image[field] !== undefined,
     );
     if (missing.length === 0 && unknown.length === 0) continue;
@@ -937,8 +939,8 @@ function deploymentImageDiagnostics(
         path: ['deployments', id, 'image'],
         hint:
           descriptor.declares.length === 0
-            ? `drop the credential fields; \`${registry}\` logs in with the GITHUB_TOKEN the release workflow already holds`
-            : `declare ${descriptor.credentialHint}; they name repository secrets, so no value is written into the spec`,
+            ? `drop the registry fields; \`${registry}\` logs in with the GITHUB_TOKEN the release workflow already holds`
+            : `declare ${descriptor.credentialHint}`,
       }),
     );
     reported.add(JSON.stringify(['deployments', id, 'image']));

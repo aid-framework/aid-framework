@@ -82,9 +82,14 @@ directory exists. `release.yml` is scaffolded when a deployment declares `deploy
   workflow is the one pipeline a tag pushes: it re-checks the tagged tree against the spec,
   then builds the image the deployment named and pushes it to that registry, tagged with both
   the release name and the commit. Its credential follows the registry: `ghcr.io` logs in with
-  the token the run already holds and asks for `packages: write` and nothing wider, while
-  `docker.io` (spec `0.16`) reads the two repository secrets the image names. Publishing an
-  image is not deploying it - no infrastructure is applied and no service restarts.
+  the token the run already holds and asks for `packages: write` and nothing wider, `docker.io`
+  (spec `0.16`) reads the two repository secrets the image names, and the cloud registries
+  exchange the run's OIDC identity for a short-lived credential - `aws.ecr` (spec `0.17`)
+  assumes the declared role and derives the host from the account and region, while
+  `gcp.artifact-registry` (spec `0.18`) federates through Workload Identity and prefixes the
+  repository with the project. A cloud login asks for `id-token: write` and stores no key.
+  Publishing an image is not deploying it - no infrastructure is applied and no service
+  restarts.
 
 Every file carries the tier in its first line, so a reader can tell without consulting the
 manifest:
