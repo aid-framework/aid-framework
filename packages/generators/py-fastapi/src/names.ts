@@ -332,9 +332,14 @@ export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, readonly str
     'Capability.TOOL_CALLING',
   ],
   // The Gemini API serves SSE and the adapter decodes it, so `streaming` is honest.
-  // No `EMBEDDINGS`: the pinned Gemini chat models are not embedders, and a spec that
-  // wants one pins `gemini-embedding-001`, which `embedder_for` routes separately.
+  // Embeddings are served too, but by a different adapter than chat: `embedder_for`
+  // routes a gemini pin to `GeminiEmbedder`, which speaks `:batchEmbedContents` with
+  // the same key. The capability is advertised per model, so only a model whose spec
+  // declares `embeddings` -- `gemini-embedding-001`, the one Gemini embedding model
+  // the offline catalog carries a width for, not a Gemini chat model -- lands it in
+  // the emitted pinned spec.
   GeminiProvider: [
+    'Capability.EMBEDDINGS',
     'Capability.STREAMING',
     'Capability.STRUCTURED_OUTPUT',
     'Capability.TOOL_CALLING',
