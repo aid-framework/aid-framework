@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import {
   AI_INFRA,
   CAPABILITY_AXES,
+  CAPABILITY_FAMILIES,
   CLOUD_REFUSALS,
   CLOUD_SERVICES,
   REFUSALS,
@@ -996,6 +997,57 @@ function withDescription(description, body) {
   return `---\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`;
 }
 
+/** The markers the generated capability band lives between on the homepage. */
+const HOMEPAGE_BAND_START = '<!-- capability-band:start -->';
+const HOMEPAGE_BAND_END = '<!-- capability-band:end -->';
+
+/**
+ * The capability band, rendered from `CAPABILITY_FAMILIES`.
+ *
+ * The band exists to answer one question above the fold -- how much of a service is
+ * already written -- without repeating the inventory on `/features`. Every count comes
+ * from the registry, so the band cannot claim a family wider than what actually shipped.
+ */
+function capabilityBand() {
+  const registered = new Set([...SHIPPED_FEATURES, ...AI_INFRA].map((entry) => entry.id));
+  const lines = [
+    '| Capability | Declared by | What it covers | Shipped |',
+    '| --- | --- | --- | --- |',
+  ];
+  for (const family of CAPABILITY_FAMILIES) {
+    const shipped = family.featureIds.filter((id) => registered.has(id)).length;
+    lines.push(
+      `| **[${family.title}](${family.href})** | \`${family.declaredBy}\` | ${family.pitch} | ${shipped} |`,
+    );
+  }
+  return lines.join('\n');
+}
+
+/**
+ * The homepage with its capability band regenerated.
+ *
+ * The homepage is hand-written prose, so this is a generated *region* rather than a
+ * generated page: only the bytes between the markers are replaced, and the argument
+ * around them stays editable. `--check` compares the whole file, so a stale band fails
+ * exactly like a stale reference page.
+ *
+ * @returns {string}
+ */
+function homepagePage() {
+  const existing = readFileSync(join(repoRoot, 'docs', 'index.md'), 'utf8');
+  const start = existing.indexOf(HOMEPAGE_BAND_START);
+  const end = existing.indexOf(HOMEPAGE_BAND_END);
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error(
+      'docs/index.md is missing the `capability-band` markers the generated band replaces',
+    );
+  }
+  return (
+    `${existing.slice(0, start + HOMEPAGE_BAND_START.length)}\n\n` +
+    `${capabilityBand()}\n\n${existing.slice(end)}`
+  );
+}
+
 /** @type {[string, string][]} */
 const pages = [
   [
@@ -1037,6 +1089,9 @@ const pages = [
       ),
     ),
   ],
+  // The homepage is prose, so only the region between the capability-band markers is
+  // generated; everything else on the page stays hand-written and reviewable.
+  ['docs/index.md', attempt(homepagePage)],
   // `conformancePage` applies its own description, because the counts in it are read
   // from the corpus it just parsed.
   ['docs/reference/conformance.md', conformancePage()],
