@@ -48,6 +48,7 @@ import {
   providerAdapter,
 } from './names.js';
 import { templatePlaceholders } from './placeholders.js';
+import { nonStreamableReason } from './streaming.js';
 
 export type PlanProblemCode =
   | 'ir-version-unsupported'
@@ -84,6 +85,7 @@ export type PlanProblemCode =
   | 'eval-target-unsupported'
   | 'eval-metric-unsupported'
   | 'eval-dataset-unsupported'
+  | 'streaming-unsupported'
   | 'deployment-unsupported';
 
 export interface PlanProblem {
@@ -178,10 +180,12 @@ export function checkTarget(ir: IR): PlanProblem[] {
 /**
  * `deployments`: only the concurrency cap is emitted, and only what the host can honour.
  *
- * The route handler this target emits answers with one buffered body, so a deployment
- * asking for streaming is refused rather than emitted as something that only looks
- * streamed. `secrets` needs no check: the adapters read a declared secret by name from
- * the environment, so the declaration is documentation, not an artifact to emit.
+ * `secrets` needs no check: the adapters read a declared secret by name from the
+ * environment, so the declaration is documentation, not an artifact to emit.
+ *
+ * A `batch` target is refused because it runs to completion rather than answering a
+ * request. Whether streaming is possible is a property of the pipelines, not of the
+ * deployment that asks for it, so `checkStreaming` owns that question.
  */
 export function checkDeployments(ir: IR): PlanProblem[] {
   const problems: PlanProblem[] = [];
@@ -197,15 +201,6 @@ export function checkDeployments(ir: IR): PlanProblem[] {
         ),
       );
     }
-    if (deployment.streaming) {
-      problems.push(
-        problem(
-          'deployment-unsupported',
-          at,
-          'streaming needs a streaming host; the emitted route answers with one buffered body',
-        ),
-      );
-    }
     if (deployment.concurrency !== undefined && deployment.concurrency < 1) {
       problems.push(
         problem(
@@ -214,6 +209,51 @@ export function checkDeployments(ir: IR): PlanProblem[] {
           `concurrency is the cap the emitter passes to the runtime's limiter, so it must be at least 1, got ${deployment.concurrency}`,
         ),
       );
+    }
+  }
+  return problems;
+}
+
+/**
+ * `deployments[].streaming`: the document asks for SSE, so every HTTP pipeline must be
+ * able to serve it.
+ *
+ * The shape rule is `./streaming.ts`'s, deliberately not restated here: a stream carries
+ * exactly one `generate` step's output, so a pipeline with no single top-level `generate`,
+ * or with a step after it that is not `emit`, has work a stream cannot represent. Emitting
+ * the route anyway would run that work on the JSON path and skip it on the streaming path
+ * -- the same request answered differently depending on what the caller's `Accept` header
+ * said. Refused by name instead, because a route that quietly drops a step is worse than
+ * one that will not generate.
+ *
+ * An `output` guardrail is refused for the same reason from the other direction: nothing
+ * inspects the finished text on a stream, so the declaration would be enforced for one
+ * media type and not the other.
+ */
+export function checkStreaming(ir: IR): PlanProblem[] {
+  const problems: PlanProblem[] = [];
+  const asking = ir.deployments.filter(
+    (deployment) => deployment.streaming && deployment.target !== 'batch',
+  );
+  if (asking.length === 0) return problems;
+
+  const output = ir.guardrails.filter((guardrail) => guardrail.stages.includes('output'));
+  if (output.length > 0) {
+    problems.push(
+      problem(
+        'streaming-unsupported',
+        `deployments.${asking[0]?.id ?? ''}`,
+        "streaming sends the model's text as it is produced, so an `output`-stage guardrail " +
+          `would never run; '${output[0]?.id ?? ''}' is declared, so either drop it or drop streaming`,
+      ),
+    );
+  }
+
+  for (const pipeline of ir.pipelines) {
+    if (pipeline.trigger.kind !== 'http') continue;
+    const reason = nonStreamableReason(pipeline);
+    if (reason !== undefined) {
+      problems.push(problem('streaming-unsupported', `pipelines.${pipeline.id}`, reason));
     }
   }
   return problems;
@@ -1485,6 +1525,7 @@ export function checkPlan(ir: IR): PlanProblem[] {
     ...checkIrVersion(ir),
     ...checkTarget(ir),
     ...checkDeployments(ir),
+    ...checkStreaming(ir),
     ...checkObservability(ir),
     ...checkRuntime(ir),
     ...checkTypes(ir),

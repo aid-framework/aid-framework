@@ -97,18 +97,17 @@ describe('the concurrency cap', () => {
     );
   });
 
-  it('refuses streaming, which the emitted route cannot honour', () => {
-    // The route answers with one buffered body, so accepting `streaming: true` would emit
-    // an app whose deployment declaration is a lie about how it responds.
+  it('accepts a streaming deployment when every pipeline can carry a stream', () => {
+    // Streaming used to be refused here, on the theory that the emitted route had one
+    // buffered body. The route now answers `gateway.stream`'s frames when `Accept` asks
+    // for them, so the refusal moved to `checkStreaming`, which refuses the *shapes* a
+    // stream cannot carry rather than the declaration itself. A streamable pipeline --
+    // the example is tool, retrieve, generate, emit -- must therefore plan cleanly.
     const ir = mutatedDeployment((deployment) => {
       deployment.streaming = true;
     });
 
-    const problems = checkPlan(ir);
-    expect(problems.map((problem) => problem.code)).toContain('deployment-unsupported');
-    expect(
-      problems.find((problem) => problem.code === 'deployment-unsupported')?.message,
-    ).toContain('streaming');
+    expect(checkPlan(ir)).toEqual([]);
   });
 
   it('accepts both deployments of a well-formed spec, so the refusals are not blanket', () => {

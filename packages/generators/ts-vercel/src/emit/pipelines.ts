@@ -33,6 +33,7 @@ import type {
 } from '@aid-framework/ir';
 import { TsVercelPlanError } from '../errors.js';
 import { className, literal, memberAccess, propertyKey, toSnakeCase } from '../names.js';
+import { streamedStepIndex, streams } from '../streaming.js';
 import { problem, stepUnsupported } from '../validate.js';
 import { type EmittedFile, generated, paths, pipelinePath, routePath } from './file.js';
 import { stageTable, usesStage } from './guardrails.js';
@@ -771,14 +772,24 @@ function retrieveStepModule(
   ].join('\n');
 }
 
-function generateStepModule(
+/**
+ * The `prompts.render` inputs for one `generate` step.
+ *
+ * Both paths render the same prompt from the same bindings -- the buffered step calls
+ * `runStructured` on the result and the streaming path hands it to `gateway.stream` --
+ * so the bindings are computed once here. Deriving them twice would let a change to one
+ * path render a subtly different prompt from the other, which is exactly the kind of
+ * drift a stream and a buffered response must never have.
+ */
+function generateRender(
   ir: IR,
   pipeline: PipelineShape,
   step: GenerateStep,
-  path: StepPath,
-  contextType: string,
-): string {
-  const constant = stepConstant(pipeline, step, path);
+): {
+  readonly bindings: readonly string[];
+  readonly inputCheck: boolean;
+  readonly inputAsync: boolean;
+} {
   const prompt = ir.prompts.find((candidate) => candidate.id === step.prompt);
   const types = bindingTypes(ir, pipeline);
   const variables =
@@ -791,10 +802,24 @@ function generateStepModule(
     if (value === undefined) return `${propertyKey(name)}: context.require(${literal(name)})`;
     return `${propertyKey(name)}: ${valueExpression(value, types)}`;
   });
+  return {
+    bindings,
+    inputCheck: usesStage(ir, 'input'),
+    inputAsync: stageNeedsAsync(ir, 'input'),
+  };
+}
+
+function generateStepModule(
+  ir: IR,
+  pipeline: PipelineShape,
+  step: GenerateStep,
+  path: StepPath,
+  contextType: string,
+): string {
+  const constant = stepConstant(pipeline, step, path);
+  const { bindings, inputCheck, inputAsync } = generateRender(ir, pipeline, step);
   const outputConstantName = outputConstant(pipeline, step, path);
-  const inputCheck = usesStage(ir, 'input');
   const outputCheck = usesStage(ir, 'output');
-  const inputAsync = stageNeedsAsync(ir, 'input');
   const outputAsync = stageNeedsAsync(ir, 'output');
   return [
     `/** \`${step.as}\`: render \`${step.prompt}\` and run it through the gateway. */`,
@@ -830,6 +855,74 @@ function generateStepModule(
     });`,
     `  return context.withValues({ ${propertyKey(step.as)}: ${propertyKey(step.as)} });`,
     '};',
+  ].join('\n');
+}
+
+/**
+ * The streaming half of a `generate` step: everything the buffered step does *except*
+ * the call.
+ *
+ * It runs as a plain function, not a `Step`, because its result is not a context value --
+ * the caller answers with the gateway stream itself. The steps before the generate step
+ * are run by the route through the pipeline exactly as they are on the buffered path, so
+ * a tool or retrieval guardrail still applies; this function only renders the request
+ * and applies the `input` stage. A refusal there is a real 4xx rather than a truncated
+ * stream, which is why the guardrail runs here and not inside the stream.
+ */
+function streamRequestModule(
+  ir: IR,
+  pipeline: PipelineShape,
+  step: GenerateStep,
+  contextType: string,
+  leading: readonly { readonly name: string; readonly constant: string }[],
+): string {
+  const { bindings, inputCheck, inputAsync } = generateRender(ir, pipeline, step);
+  const name = `${camel(pipeline.id)}StreamRequest`;
+  // The leading steps run through a real `Pipeline`, not a hand-rolled loop: a step
+  // returns values to merge or a context to replace, and re-stating that rule here is a
+  // second implementation that can drift from the runtime's. `seeded` is the same seed
+  // the buffered route passes to `run`. With no leading step there is nothing to replay,
+  // so the seed is unused and takes the underscore name `noUnusedParameters` tolerates.
+  const scope =
+    leading.length === 0
+      ? []
+      : [
+          '  const context = await new Pipeline([',
+          ...leading.map((entry) => `    [${literal(entry.name)}, ${entry.constant}],`),
+          '  ]).run(seed);',
+        ];
+  return [
+    '/**',
+    ` * Render \`${step.prompt}\` into the request \`gateway.stream\` sends, for the SSE route.`,
+    ' *',
+    ' * The steps before the generation run here, in declaration order, so a tool or',
+    ' * retrieval guardrail applies on the streaming path exactly as it does on the buffered',
+    ' * one. A refusal is thrown before any byte is sent, which is what lets the route answer',
+    ' * with a real 4xx instead of a truncated stream.',
+    ' */',
+    `export async function ${name}(`,
+    `  ${leading.length === 0 ? '_seed' : 'seed'}: Record<string, unknown>,`,
+    '): Promise<{ readonly alias: string; readonly request: CompletionRequest }> {',
+    '  const deps = getDeps();',
+    ...scope,
+    ...eventLine(contextType, ...bindings),
+    `  const rendered = deps.prompts.render(${literal(step.prompt)}, {`,
+    ...bindings.map((binding) => `    ${binding},`),
+    '  });',
+    ...(inputCheck
+      ? [
+          `  const verdict = enforceGuardrail(${inputAsync ? 'await ' : ''}ENGINE.${
+            inputAsync ? 'checkInputAsync' : 'checkInput'
+          }(INPUT_GUARDRAILS, rendered.text));`,
+        ]
+      : []),
+    '  return {',
+    `    alias: ${literal(step.model)},`,
+    '    request: new CompletionRequest({',
+    `      messages: [Message.user(${inputCheck ? 'verdict.text' : 'rendered.text'})],`,
+    '    }),',
+    '  };',
+    '}',
   ].join('\n');
 }
 
@@ -1034,6 +1127,26 @@ function compositeHelpers(steps: readonly StepShape[]): string[] {
 export function emitPipelineModule(ir: IR, pipeline: PipelineShape): EmittedFile {
   const contextType = eventCast(ir, pipeline);
   const steps = emitSteps(ir, pipeline, pipeline.steps, contextType, []);
+
+  // The stream request is emitted only where the route is allowed to negotiate one, so
+  // the module never carries a function no route can call.
+  const streamIndex = streams(ir, pipeline) ? streamedStepIndex(pipeline) : undefined;
+  const streamStep = streamIndex === undefined ? undefined : pipeline.steps[streamIndex];
+  // The steps before the generation, in the order the buffered path runs them. `emit`
+  // steps are skipped because they emit no constant: they project the response, which
+  // the streaming path has not produced yet. `emitSteps` is reused rather than mapping
+  // the step shapes here so the names the replay traces with are the names the buffered
+  // pipeline declares.
+  const streamLeading =
+    streamIndex === undefined
+      ? []
+      : emitSteps(ir, pipeline, pipeline.steps.slice(0, streamIndex), contextType, []).map(
+          ({ name, constant }) => ({ name, constant }),
+        );
+  const streamModule =
+    streamStep !== undefined && streamStep.kind === 'generate'
+      ? streamRequestModule(ir, pipeline, streamStep, contextType, streamLeading)
+      : undefined;
   const all = [...walkSteps(ir, pipeline.steps)].map((entry) => entry.step);
   const hasStructured = all.some((step) => step.kind === 'generate');
   const hasTool = all.some((step) => step.kind === 'tool');
@@ -1070,6 +1183,9 @@ export function emitPipelineModule(ir: IR, pipeline: PipelineShape): EmittedFile
     ...(inlineOutput ? [stageTable('output')] : []),
     ...(inlineToolCall ? [stageTable('tool-call')] : []),
   ];
+  const usesContextType =
+    steps.some((step) => step.text.includes(`as ${contextType}`)) ||
+    (streamModule?.includes(`as ${contextType}`) ?? false);
   const relativeImports: { specifier: string; names: ImportName[] }[] = [
     ...(hasAgentStep
       ? [
@@ -1089,7 +1205,9 @@ export function emitPipelineModule(ir: IR, pipeline: PipelineShape): EmittedFile
             names: sortedNames(guardrailNames).map((name) => ({ name, type: false })),
           },
         ]),
-    { specifier: '../requests.js', names: [{ name: contextType, type: true }] },
+    ...(usesContextType
+      ? [{ specifier: '../requests.js', names: [{ name: contextType, type: true }] }]
+      : []),
   ].sort((a, b) => (a.specifier < b.specifier ? -1 : a.specifier > b.specifier ? 1 : 0));
   const header = [
     importStatement('@aid-framework/runtime', [
@@ -1124,6 +1242,7 @@ export function emitPipelineModule(ir: IR, pipeline: PipelineShape): EmittedFile
       decisionDeclaration,
       ...steps.map((step) => step.text).filter((text) => text.length > 0),
       factory,
+      ...(streamModule === undefined ? [] : [streamModule]),
     ),
   );
 }
@@ -1289,6 +1408,7 @@ export function emitRouteModule(ir: IR, pipeline: PipelineShape): EmittedFile {
   const trigger =
     pipeline.trigger.kind === 'http' ? pipeline.trigger : { method: 'POST', path: '/' };
   const canBlock = pipelineCanBlock(ir, pipeline);
+  const streaming = streams(ir, pipeline);
 
   const header = [
     importStatement('@aid-framework/runtime', [
@@ -1296,16 +1416,28 @@ export function emitRouteModule(ir: IR, pipeline: PipelineShape): EmittedFile {
       { name: 'PipelineContext', type: true },
     ]),
     importStatement('../control.js', [{ name: 'seeded', type: false }]),
+    ...(streaming ? [importStatement('../deps.js', [{ name: 'getDeps', type: false }])] : []),
     ...(canBlock
       ? [importStatement('../guardrails.js', [{ name: 'guardrailBlock', type: false }])]
       : []),
     importStatement(`../pipelines/${toSnakeCase(pipeline.id)}.js`, [
       { name: `${camel(pipeline.id)}Pipeline`, type: false },
+      ...(streaming ? [{ name: `${camel(pipeline.id)}StreamRequest`, type: false }] : []),
     ]),
     importStatement('../requests.js', [{ name: requestSchema, type: false }]),
     ...(answer === undefined
       ? []
       : [importStatement('../schemas.js', [{ name: answer, type: true }])]),
+    ...(streaming
+      ? [
+          importStatement('../sse.js', [
+            { name: 'EVENT_STREAM', type: false },
+            { name: 'RouteHeaders', type: true },
+            { name: 'toEventStream', type: false },
+            { name: 'wantsEventStream', type: false },
+          ]),
+        ]
+      : []),
   ]
     .filter((line) => line.length > 0)
     .join('\n');
@@ -1319,17 +1451,40 @@ export function emitRouteModule(ir: IR, pipeline: PipelineShape): EmittedFile {
     '/** The request half of the Fetch API that a route handler actually uses. */',
     'export interface RouteRequest {',
     '  readonly json: () => Promise<unknown>;',
+    ...(streaming
+      ? [
+          "  /** Present when the adapter forwards the incoming request's headers. */",
+          '  readonly headers?: RouteHeaders;',
+        ]
+      : []),
     '}',
     '',
     'export interface RouteResponse {',
     '  readonly status: number;',
     '  readonly body: unknown;',
+    ...(streaming
+      ? [
+          '  /** `content-type` and any other header the adapter must copy onto the response. */',
+          '  readonly headers?: Readonly<Record<string, string>>;',
+          '  /** `null` on a streamed response, where `stream` carries the content instead. */',
+          '  readonly stream?: ReadableStream<Uint8Array>;',
+        ]
+      : []),
     '}',
     '',
     '/**',
     ' * Run the pipeline for one request. The body is validated before the pipeline runs;',
     ' * a guardrail that refuses the request is a 400, and any other pipeline failure is a',
     ' * 502 -- the request was well formed, the run was not.',
+    ...(streaming
+      ? [
+          ' *',
+          " * A caller that sends `Accept: text/event-stream` gets the run's one `generate` step",
+          ' * as it is produced, in the frames the gateway yields. Every check that runs before',
+          ' * the model call still runs before the first frame: nothing is sent until the',
+          ' * prompt the model sees is the prompt the buffered path would have sent.',
+        ]
+      : []),
     ' */',
     `export async function ${handler}(request: RouteRequest): Promise<RouteResponse> {`,
     '  let payload: unknown;',
@@ -1342,6 +1497,37 @@ export function emitRouteModule(ir: IR, pipeline: PipelineShape): EmittedFile {
     '  if (!parsed.success) {',
     "    return { status: 400, body: { error: 'request body does not match the declared schema' } };",
     '  }',
+    ...(streaming
+      ? [
+          '  if (wantsEventStream(request.headers)) {',
+          '    try {',
+          `      const streaming = await ${camel(pipeline.id)}StreamRequest(seeded(parsed.data));`,
+          '      return {',
+          '        status: 200,',
+          '        body: null,',
+          "        headers: { 'content-type': EVENT_STREAM, 'cache-control': 'no-store' },",
+          '        stream: toEventStream(getDeps().gateway.stream(streaming.alias, streaming.request)),',
+          '      };',
+          '    } catch (error) {',
+          ...(canBlock
+            ? [
+                '      const block = guardrailBlock(error);',
+                '      if (block !== undefined) {',
+                '        return {',
+                '          status: 400,',
+                '          body: { error: block.message, guardrail: block.guardrail, stage: block.stage },',
+                '        };',
+                '      }',
+              ]
+            : []),
+          '      if (error instanceof PipelineError) {',
+          '        return { status: 502, body: { error: error.message } };',
+          '      }',
+          '      throw error;',
+          '    }',
+          '  }',
+        ]
+      : []),
     '  let context: PipelineContext;',
     '  try {',
     `    context = await ${camel(pipeline.id)}Pipeline().run(seeded(parsed.data));`,

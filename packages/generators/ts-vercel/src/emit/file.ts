@@ -41,6 +41,7 @@ export const paths = {
   deps: `${GENERATED_ROOT}/deps.ts`,
   control: `${GENERATED_ROOT}/control.ts`,
   guardrails: `${GENERATED_ROOT}/guardrails.ts`,
+  sse: `${GENERATED_ROOT}/sse.ts`,
   agents: `${GENERATED_ROOT}/agents.ts`,
   observability: `${GENERATED_ROOT}/observability.ts`,
   gatewayModels: `${GENERATED_ROOT}/gateway/models.ts`,

@@ -15,7 +15,7 @@ import type { IR, LocalRetrieverShape } from '@aid-framework/ir';
 import { isLocalRetriever } from '@aid-framework/ir';
 import { literal, propertyKey } from '../names.js';
 import { type EmittedFile, generated, paths, retrievalIngestModulePath } from './file.js';
-import { exportStatement, importStatement, moduleText, tsValue } from './text.js';
+import { exportStatement, type ImportName, importStatement, moduleText, tsValue } from './text.js';
 
 function sourceExpression(retriever: LocalRetrieverShape): string {
   const fields = [
@@ -77,17 +77,28 @@ function retrieverExpression(retriever: LocalRetrieverShape): string {
 }
 
 export function emitRetrievalBindings(ir: IR): EmittedFile {
-  const header = importStatement('@aid-framework/runtime', [
-    { name: 'ChunkingSpec', type: false },
-    { name: 'EmbeddingCostProfile', type: false },
+  const localRetrievers = ir.retrievers.filter(isLocalRetriever);
+  const imports: ImportName[] = [
+    // The records are typed even when empty, so these three are unconditional.
     { name: 'EmbeddingSpec', type: false },
-    { name: 'IndexSpec', type: false },
-    { name: 'RefreshSpec', type: false },
-    { name: 'RerankSpec', type: false },
     { name: 'RetrieverSpec', type: false },
-    { name: 'SourceSpec', type: false },
     { name: 'VectorStoreSpec', type: false },
-  ]);
+  ];
+  if (ir.embeddings.some((embedding) => embedding.costProfile !== undefined)) {
+    imports.push({ name: 'EmbeddingCostProfile', type: false });
+  }
+  if (localRetrievers.length > 0) {
+    imports.push(
+      { name: 'ChunkingSpec', type: false },
+      { name: 'IndexSpec', type: false },
+      { name: 'RefreshSpec', type: false },
+      { name: 'SourceSpec', type: false },
+    );
+  }
+  if (localRetrievers.some((retriever) => retriever.rerank !== undefined)) {
+    imports.push({ name: 'RerankSpec', type: false });
+  }
+  const header = importStatement('@aid-framework/runtime', imports);
 
   const embeddings = ir.embeddings
     .map((embedding) => {

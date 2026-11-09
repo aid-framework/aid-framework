@@ -59,6 +59,7 @@ and lists what is declared, because generating a stack the spec never asked for 
 | `app/generated/evals/` | The eval dataset and gate thresholds |
 | `app/generated/retrieval/` | Retriever bindings, plus `ingest/` for corpus indexing |
 | `app/generated/routes/` | Request handlers for pipelines with an `http` trigger |
+| `app/generated/sse.ts` | Event-stream negotiation, emitted only when a pipeline can stream |
 | `app/business/`, `app/business/prompts/`, `app/business/tools/` | Your seam — created once, then never touched |
 
 The exact file set follows the spec: a spec that declares no retrievers emits no `retrieval/` modules.
@@ -73,14 +74,37 @@ than merging the two.
 ## Capabilities
 
 ```text
-http-trigger, json-schema, tool-calling, otel,
+http-trigger, streaming, json-schema, tool-calling, otel,
 embeddings, rerank, guardrails, agents, cursor-memory
 ```
 
 It emits against **zod** for structured output and **`otel-genai`** for tracing.
 
-Note the absence of `streaming`: this target does not declare it, so the IR's `deploy/streaming` gate rejects a
-spec that asks for a streaming deployment here rather than emitting an endpoint that cannot stream.
+`streaming` is a promise about the route, and the route keeps it: a pipeline served over
+`http` answers `Accept: text/event-stream` with the gateway's frames when the response is
+one `generate` step's output. "One `generate` step's output" is a shape rule, not a
+preference — a stream cannot carry two model calls, and a step after the `generate` that
+does more than `emit` would run on the JSON path and be skipped on the streaming path. So
+an app that asks for streaming must have every HTTP pipeline shaped that way, and no
+`output`-stage guardrail (the text leaves as it is produced, so the policy would never
+run). The plan refuses the document and names the pipeline and step, rather than emitting
+a route that quietly skips work. Steps *before* the `generate` still run, so tool and
+retrieval guardrails apply to a streamed answer exactly as they do to a buffered one.
+
+Because the emitted route cannot touch the `Request` itself, one thing is yours: the hand-written adapter. A
+streaming route's `RouteRequest` gains `headers`, and its `RouteResponse` gains `headers` and `stream`, so the
+adapter forwards `request.headers` and answers with the body it was handed:
+
+```ts
+const result = await handleAnswerTicket({ json: () => request.json(), headers: request.headers });
+if (result.stream !== undefined) {
+  return new Response(result.stream, { status: result.status, headers: result.headers });
+}
+return Response.json(result.body, { status: result.status, headers: result.headers });
+```
+
+Those fields exist only on routes whose pipeline can stream, so an adapter for a buffered route — like the one in
+`examples/support-copilot-ts` — compiles and runs unchanged.
 
 ## The `business/` seam
 

@@ -114,26 +114,30 @@ function requestFieldLine(entry: { name: string; field?: TypeField }): string {
   return fieldLine(field);
 }
 
-function requestModule(ir: IR): string | undefined {
+/**
+ * The request schema of every pipeline.
+ *
+ * A pipeline that references no `event.*` field still gets one: the route and the
+ * pipeline module name `<Pipeline>Request` unconditionally, so omitting the type when
+ * the body carries no declared fields emitted an import of a symbol that did not
+ * exist. An empty object is the honest schema for such a body -- it accepts a JSON
+ * object, which is what `seeded` needs, and declares no field.
+ */
+function requestModule(ir: IR): string {
   const fields = eventFields(ir);
-  if (fields.length === 0) return undefined;
   const modules = ir.pipelines.map((pipeline) => {
     const name = `${className(pipeline.id)}Request`;
-    return [
-      `export const ${name} = z.object({`,
-      ...fields.map(requestFieldLine),
-      '});',
-      '',
-      `export type ${name} = z.infer<typeof ${name}>;`,
-    ].join('\n');
+    const declaration =
+      fields.length === 0
+        ? `export const ${name} = z.object({});`
+        : [`export const ${name} = z.object({`, ...fields.map(requestFieldLine), '});'].join('\n');
+    return [declaration, '', `export type ${name} = z.infer<typeof ${name}>;`].join('\n');
   });
   return modules.join('\n\n');
 }
 
-export function emitRequests(ir: IR): EmittedFile | undefined {
-  const body = requestModule(ir);
-  if (body === undefined) return undefined;
-  return generated(paths.requests, moduleText(ZOD_HEADER, body));
+export function emitRequests(ir: IR): EmittedFile {
+  return generated(paths.requests, moduleText(ZOD_HEADER, requestModule(ir)));
 }
 
 /** The request type name of one pipeline. */

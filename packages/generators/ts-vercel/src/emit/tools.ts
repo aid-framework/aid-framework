@@ -10,7 +10,14 @@
 import type { IR, ToolShape, TypeRef, TypeShape } from '@aid-framework/ir';
 import { className, literal, memberAccess, propertyKey, toSnakeCase } from '../names.js';
 import { type EmittedFile, generated, paths, toolAdapterPath, toolContractPath } from './file.js';
-import { fits, importStatement, lines, moduleText, sortStatements } from './text.js';
+import {
+  fits,
+  type ImportName,
+  importStatement,
+  lines,
+  moduleText,
+  sortStatements,
+} from './text.js';
 
 /** The TypeScript type a `TypeRef` denotes, in a signature position. */
 function refType(ref: TypeRef): string {
@@ -190,23 +197,26 @@ export function emitToolsIndex(ir: IR): EmittedFile {
     { specifier: `../contracts/${tool.id}.js`, name: `${className(tool.id)}Handler`, type: true },
     { specifier: `./${tool.id}.js`, name: `as${className(tool.id)}`, type: false },
   ]);
+  const runtimeImports: ImportName[] = [{ name: 'Tool', type: true }];
+  runtimeImports.push({ name: 'ToolExecutor', type: false });
+  if (tools.length > 0) runtimeImports.unshift({ name: 'ConfigurationError', type: false });
   const header = [
-    importStatement('@aid-framework/runtime', [
-      { name: 'ConfigurationError', type: false },
-      { name: 'Tool', type: true },
-      { name: 'ToolExecutor', type: false },
-    ]),
+    importStatement('@aid-framework/runtime', runtimeImports),
     ...sortStatements([
       ...toolImports.map((entry) => ({
         from: entry.specifier,
         text: importStatement(entry.specifier, [{ name: entry.name, type: entry.type }]),
       })),
-      {
-        from: '../../business/tools/index.js',
-        text: importStatement('../../business/tools/index.js', [
-          { name: 'IMPLEMENTATIONS', type: false },
-        ]),
-      },
+      ...(tools.length === 0
+        ? []
+        : [
+            {
+              from: '../../business/tools/index.js',
+              text: importStatement('../../business/tools/index.js', [
+                { name: 'IMPLEMENTATIONS', type: false },
+              ]),
+            },
+          ]),
     ]),
   ].join('\n');
 
@@ -240,7 +250,9 @@ export function emitToolsIndex(ir: IR): EmittedFile {
     '}',
     '',
     '/** Build the adapters with every IR tool bound to an implementation. */',
-    'export function buildTools(options: BuildExecutorOptions = {}): Tool[] {',
+    `export function buildTools(${
+      tools.length === 0 ? '_options' : 'options'
+    }: BuildExecutorOptions = {}): Tool[] {`,
     '  const adapters: Tool[] = [];',
     ...args,
     '  return adapters;',

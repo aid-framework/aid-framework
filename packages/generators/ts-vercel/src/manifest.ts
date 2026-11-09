@@ -48,9 +48,18 @@ export const TS_VERCEL_TARGET = 'ts-vercel';
  * runtime cannot honour (four memory kinds, `ttl`, `redact`, a non-`in-process`
  * backend, three guardrail policies with no detector, a non-native engine), so a
  * declaration here is not a claim that every field is expressible.
+ *
+ * `streaming` is declared since the route negotiates `Accept: text/event-stream` and
+ * returns `gateway.stream`'s frames: `./emit/sse.ts` owns the negotiation, the pipeline
+ * module carries the request the stream sends, and `./validate.ts` refuses a document
+ * whose pipelines cannot carry one stream (see `./streaming.ts` for the rule). It is a
+ * declaration about a *deployment*, not about every pipeline: a pipeline that cannot
+ * stream cannot exist alongside the declaration, which is why the refusal is by name
+ * rather than a quiet fallback to JSON.
  */
 export const TS_VERCEL_CAPABILITIES = [
   'http-trigger',
+  'streaming',
   'json-schema',
   'tool-calling',
   'otel',
