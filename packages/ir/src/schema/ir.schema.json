@@ -1348,11 +1348,13 @@
           "additionalProperties": false,
           "required": ["registry", "name"],
           "properties": {
-            "registry": { "enum": ["ghcr.io"] },
+            "registry": { "enum": ["ghcr.io", "docker.io"] },
             "name": {
               "type": "string",
               "pattern": "^[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*$"
-            }
+            },
+            "usernameSecret": { "type": "string", "minLength": 1 },
+            "tokenSecret": { "type": "string", "minLength": 1 }
           }
         },
         "pipeline": {

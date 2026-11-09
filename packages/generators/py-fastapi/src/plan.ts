@@ -179,22 +179,39 @@ function evalsScaffold(ir: IR): readonly GeneratedFile[] {
  * would race with itself.
  */
 function releaseScaffold(ir: IR): readonly GeneratedFile[] {
-  const byRepository = new Map<string, { registry: string; ids: string[] }>();
+  // Keyed by registry as well as repository: the same path on two registries is two
+  // artifacts, and collapsing them would push one of them nowhere.
+  const byRepository = new Map<
+    string,
+    { registry: string; name: string; usernameSecret?: string; tokenSecret?: string; ids: string[] }
+  >();
   for (const deployment of ir.deployments) {
     const image = deployment.image;
     if (image === undefined) continue;
-    const entry = byRepository.get(image.name) ?? { registry: image.registry, ids: [] };
+    const key = `${image.registry}\u0000${image.name}`;
+    const entry = byRepository.get(key) ?? {
+      registry: image.registry,
+      name: image.name,
+      ...(image.usernameSecret === undefined ? {} : { usernameSecret: image.usernameSecret }),
+      ...(image.tokenSecret === undefined ? {} : { tokenSecret: image.tokenSecret }),
+      ids: [] as string[],
+    };
     entry.ids.push(deployment.id);
-    byRepository.set(image.name, entry);
+    byRepository.set(key, entry);
   }
   if (byRepository.size === 0) return [];
-  const images = [...byRepository.entries()]
-    .map(([name, entry]) => ({
+  const images = [...byRepository.values()]
+    .map((entry) => ({
       registry: entry.registry,
-      name,
+      name: entry.name,
       deploymentIds: [...entry.ids].sort(),
+      ...(entry.usernameSecret === undefined ? {} : { usernameSecret: entry.usernameSecret }),
+      ...(entry.tokenSecret === undefined ? {} : { tokenSecret: entry.tokenSecret }),
     }))
-    .sort((left, right) => compareCodeUnits(left.name, right.name));
+    .sort(
+      (left, right) =>
+        compareCodeUnits(left.name, right.name) || compareCodeUnits(left.registry, right.registry),
+    );
   const profile = ciProfile();
   return [
     scaffoldRelease(

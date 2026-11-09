@@ -1277,11 +1277,64 @@ describe('deployments', () => {
   });
 
   it('refuses a registry it cannot push to', () => {
-    const diagnostics = validateSpec(
-      at('0.4', { image: { registry: 'docker.io', name: 'acme/p' } }),
-    );
+    const diagnostics = validateSpec(at('0.4', { image: { registry: 'quay.io', name: 'acme/p' } }));
     expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
     expect(paths(diagnostics)).toEqual(['deployments.prod.image.registry']);
+  });
+
+  it('refuses a registry before the version that admits it', () => {
+    const diagnostics = validateSpec(
+      at('0.4', {
+        image: {
+          registry: 'docker.io',
+          name: 'acme/p',
+          usernameSecret: 'DOCKERHUB_USERNAME',
+          tokenSecret: 'DOCKERHUB_TOKEN',
+        },
+      }),
+    );
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.image.registry']);
+    expect(diagnostics[0]?.message).toContain('requires specVersion 0.16');
+  });
+
+  it('accepts a registry whose credential the document declares', () => {
+    const diagnostics = validateSpec(
+      at('0.16', {
+        image: {
+          registry: 'docker.io',
+          name: 'acme/p',
+          usernameSecret: 'DOCKERHUB_USERNAME',
+          tokenSecret: 'DOCKERHUB_TOKEN',
+        },
+      }),
+    );
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('refuses a registry whose credential the document does not declare', () => {
+    const diagnostics = validateSpec(
+      at('0.16', { image: { registry: 'docker.io', name: 'acme/p' } }),
+    );
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.deploymentImageCredentials]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.image']);
+    expect(diagnostics[0]?.message).toContain('no `usernameSecret` or `tokenSecret`');
+  });
+
+  it('refuses a credential the registry does not read', () => {
+    const diagnostics = validateSpec(
+      at('0.4', {
+        image: {
+          registry: 'ghcr.io',
+          name: 'acme/p',
+          usernameSecret: 'DOCKERHUB_USERNAME',
+          tokenSecret: 'DOCKERHUB_TOKEN',
+        },
+      }),
+    );
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.deploymentImageCredentials]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.image']);
+    expect(diagnostics[0]?.message).toContain('which registry');
   });
 });
 

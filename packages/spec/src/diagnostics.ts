@@ -37,6 +37,7 @@ export const DIAGNOSTIC_CODES = {
   deploymentAutoscaleRange: 'spec/deployment-autoscale-range',
   deploymentEnvDuplicate: 'spec/deployment-env-duplicate',
   deploymentEnvValueAndSecret: 'spec/deployment-env-value-and-secret',
+  deploymentImageCredentials: 'spec/deployment-image-credentials',
   deploymentImageWithoutContainer: 'spec/deployment-image-without-container',
   deploymentPipelineWithoutBatch: 'spec/deployment-pipeline-without-batch',
   batchDeploymentWithoutPipeline: 'spec/batch-deployment-without-pipeline',

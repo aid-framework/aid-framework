@@ -637,7 +637,13 @@ type DeploymentShape = {
   autoscale?: { min: number; max: number; metric: string };
   secrets: string[];
   env: { name: string; value?: string; secret?: boolean }[];
-  image?: { registry: 'ghcr.io'; name: string };
+  image?: {
+    registry: 'ghcr.io'|'docker.io';
+    name: string;
+    // `docker.io` names the secrets its login reads; `ghcr.io` reads neither.
+    usernameSecret?: string;
+    tokenSecret?: string;
+  };
   traits: Trait[];
 };
 ```

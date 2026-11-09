@@ -10,6 +10,7 @@ import {
   type PathSegment,
 } from './diagnostics.js';
 import { findMalformedTemplate, templateRoots } from './parse.js';
+import { IMAGE_CREDENTIAL_FIELDS, IMAGE_REGISTRIES, imageRegistry } from './registries.js';
 import specSchema from './schema/spec.schema.json' with { type: 'json' };
 import type { SourceDocument } from './source-document.js';
 
@@ -62,6 +63,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.13',
   '0.14',
   '0.15',
+  '0.16',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -839,16 +841,19 @@ function modelCacheDiagnostics(
 }
 
 /**
- * Nested version gating and the container-only rule for `deployments[].image`.
+ * The `deployments[].image` contract: version gates, the container-only rule, and the
+ * credential each registry needs.
  *
  * The version half mirrors `models[].cache`: the `deployments` section exists from 0.2,
  * but an image contract is a 0.4 construct, so a 0.2/0.3 document that declares one is
- * refused with the version it needs instead of being read as if it always existed.
+ * refused with the version it needs instead of being read as if it always existed. Each
+ * registry carries its own `minVersion`, checked after 0.4 for the same reason.
  *
- * The second half is a contradiction, not a version problem: only a `target: container`
- * deployment produces an image, so an image on a `serverless`, `batch` or `edge`
- * deployment names an artifact nothing builds. Reported here rather than in the schema so
- * the message can say why, and so a document below 0.4 hears about the version first.
+ * Two contradictions follow, both reported with their fix rather than left to the
+ * generator: only a `target: container` deployment produces an image, and a registry that
+ * logs in with a declared secret is unusable when the document names no secret -- the
+ * workflow would fail on its first tag. A credential a registry does not read is refused
+ * too, so a `ghcr.io` image carrying a Docker Hub token never emits a secret nothing uses.
  */
 function deploymentImageDiagnostics(
   spec: Record<string, unknown>,
@@ -867,6 +872,7 @@ function deploymentImageDiagnostics(
   for (const [id, raw] of Object.entries(asRecord(spec.deployments))) {
     const deployment = asRecord(raw);
     if (deployment.image === undefined) continue;
+    const image = asRecord(deployment.image);
     if (needsVersion) {
       diagnostics.push(
         errorDiagnostic({
@@ -879,16 +885,63 @@ function deploymentImageDiagnostics(
       reported.add(JSON.stringify(['deployments', id, 'image']));
       continue;
     }
-    if (deployment.target === 'container') continue;
-    const target = typeof deployment.target === 'string' ? deployment.target : 'unknown';
+    // Each registry arrives with the version that first knew its credential path, so a
+    // 0.4 document naming one hears the version it needs rather than a credential error
+    // it cannot resolve at 0.4.
+    const registry = typeof image.registry === 'string' ? image.registry : undefined;
+    const descriptor = registry === undefined ? undefined : imageRegistry(registry);
+    if (
+      descriptor !== undefined &&
+      !specVersionAtLeast(declared, descriptor.minVersion as SpecVersion)
+    ) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'deployments.${id}.image.registry: ${registry}' requires specVersion ${descriptor.minVersion}, but this specification declares version ${declared}`,
+          path: ['deployments', id, 'image', 'registry'],
+          hint: `set specVersion: "${descriptor.minVersion}", or publish to \`${IMAGE_REGISTRIES[0]}\`, which ${DEPLOYMENT_IMAGE_MIN_VERSION} already admits`,
+        }),
+      );
+      reported.add(JSON.stringify(['deployments', id, 'image', 'registry']));
+      continue;
+    }
+    if (deployment.target !== 'container') {
+      const target = typeof deployment.target === 'string' ? deployment.target : 'unknown';
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.deploymentImageWithoutContainer,
+          message: `deployment '${id}' declares an image but targets '${target}', which builds no image`,
+          path: ['deployments', id, 'image'],
+          hint: 'set `target: container` to get a Dockerfile and a release workflow, or drop `image`; the generator will not publish an artifact it cannot build',
+        }),
+      );
+      continue;
+    }
+    // The credential is part of the registry's contract: without it the emitted workflow
+    // logs in with nothing and fails on the first tag, so it is refused here -- before
+    // anything is generated -- with the names to declare.
+    if (descriptor === undefined) continue;
+    const missing = descriptor.declares.filter((field) => image[field] === undefined);
+    const unknown = IMAGE_CREDENTIAL_FIELDS.filter(
+      (field) => !descriptor.declares.includes(field) && image[field] !== undefined,
+    );
+    if (missing.length === 0 && unknown.length === 0) continue;
+    const problem =
+      missing.length > 0
+        ? `declares no ${missing.map((field) => `\`${field}\``).join(' or ')} for registry '${registry}'`
+        : `declares \`${unknown.join('` and `')}\`, which registry '${registry}' does not read`;
     diagnostics.push(
       errorDiagnostic({
-        code: DIAGNOSTIC_CODES.deploymentImageWithoutContainer,
-        message: `deployment '${id}' declares an image but targets '${target}', which builds no image`,
+        code: DIAGNOSTIC_CODES.deploymentImageCredentials,
+        message: `deployment '${id}' ${problem}`,
         path: ['deployments', id, 'image'],
-        hint: 'set `target: container` to get a Dockerfile and a release workflow, or drop `image`; the generator will not publish an artifact it cannot build',
+        hint:
+          descriptor.declares.length === 0
+            ? `drop the credential fields; \`${registry}\` logs in with the GITHUB_TOKEN the release workflow already holds`
+            : `declare ${descriptor.credentialHint}; they name repository secrets, so no value is written into the spec`,
       }),
     );
+    reported.add(JSON.stringify(['deployments', id, 'image']));
   }
 }
 

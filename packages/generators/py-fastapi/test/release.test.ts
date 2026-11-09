@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: assertions read the emitted GitHub Actions expressions literally.
 /**
  * The image release: `.github/workflows/release.yml`.
  *
@@ -45,6 +46,24 @@ function specWithImage(registry = 'ghcr.io', name = 'acme/support-copilot'): str
 /** The example plus a second container deployment. */
 function specWithWorker(registry: string, name: string): string {
   return `${specWithImage()}\n  worker:\n    target: container\n    secrets: [OPENAI_API_KEY]\n    image:\n      registry: ${registry}\n      name: ${name}\n`;
+}
+
+/** The example, publishing to Docker Hub with the two repository secrets its login reads. */
+function specWithDockerHub(
+  usernameSecret = 'DOCKERHUB_USERNAME',
+  tokenSecret = 'DOCKERHUB_TOKEN',
+): string {
+  return exampleSpecText()
+    .replace('specVersion: "0.2"', 'specVersion: "0.16"')
+    .replace(
+      '    secrets: [OPENAI_API_KEY]',
+      `    secrets: [OPENAI_API_KEY]\n    image:\n      registry: docker.io\n      name: acme/support-copilot\n      usernameSecret: ${usernameSecret}\n      tokenSecret: ${tokenSecret}`,
+    );
+}
+
+/** One image per credential path: a GITHUB_TOKEN login and a declared secret pair. */
+function specWithBothRegistries(): string {
+  return `${specWithImage().replace('specVersion: "0.4"', 'specVersion: "0.16"')}\n  worker:\n    target: container\n    secrets: [OPENAI_API_KEY]\n    image:\n      registry: docker.io\n      name: acme/worker\n      usernameSecret: DOCKERHUB_USERNAME\n      tokenSecret: DOCKERHUB_TOKEN\n`;
 }
 
 function matrixRegistries(content: string): string[] {
@@ -104,6 +123,16 @@ describe('a spec that declares an image', () => {
     expect(content).toContain('          # deployments.api, deployments.worker');
   });
 
+  it('logs in with the workflow token and asks only for packages: write', () => {
+    const content = releaseFor(specWithImage());
+
+    expect(content).toContain('permissions:\n  contents: read\n  packages: write\n');
+    expect(content).toContain('          REGISTRY_TOKEN: ${{ github.token }}');
+    expect(content).toContain('--username "$GITHUB_ACTOR"');
+    // No secret is read, so none has to exist.
+    expect(content).not.toContain('secrets.');
+  });
+
   it('orders entries by repository name, so declaration order does not change the matrix', () => {
     const content = releaseFor(specWithWorker('ghcr.io', 'acme/aaa-worker'));
 
@@ -112,5 +141,62 @@ describe('a spec that declares an image', () => {
     expect(first).toBeGreaterThan(-1);
     expect(second).toBeGreaterThan(-1);
     expect(first).toBeLessThan(second);
+  });
+});
+
+describe('a Docker Hub image', () => {
+  it('logs in with the repository secrets the image names', () => {
+    const content = releaseFor(specWithDockerHub());
+
+    expect(matrixRegistries(content)).toEqual(['docker.io']);
+    expect(content).toContain('      - name: Log in to docker.io');
+    expect(content).toContain('          REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}');
+    expect(content).toContain('          REGISTRY_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}');
+    expect(content).toContain('--username "$REGISTRY_USERNAME"');
+  });
+
+  it('asks for no packages scope and reads no workflow token', () => {
+    const content = releaseFor(specWithDockerHub());
+
+    expect(content).toContain('permissions:\n  contents: read\n');
+    expect(content).not.toContain('packages: write');
+    expect(content).not.toContain('github.token');
+  });
+
+  it('is byte-identical on a second plan', () => {
+    expect(releaseFor(specWithDockerHub())).toBe(releaseFor(specWithDockerHub()));
+  });
+
+  it('carries the declared secret names through, not a conventional default', () => {
+    const content = releaseFor(specWithDockerHub('HUB_ACCOUNT', 'HUB_PAT'));
+
+    expect(content).toContain('          REGISTRY_USERNAME: ${{ secrets.HUB_ACCOUNT }}');
+    expect(content).toContain('          REGISTRY_TOKEN: ${{ secrets.HUB_PAT }}');
+    expect(content).not.toContain('DOCKERHUB_TOKEN');
+  });
+});
+
+describe('two credential paths in one project', () => {
+  it('guards each login with the matrix entry it serves', () => {
+    const content = releaseFor(specWithBothRegistries());
+
+    expect(content.match(/ {6}- name: Log in to /g)).toHaveLength(2);
+    expect(content).toContain("        if: matrix.image == 'acme/support-copilot'");
+    expect(content).toContain("        if: matrix.image == 'acme/worker'");
+    // The GITHUB_TOKEN login still needs the scope, even though the other does not.
+    expect(content).toContain('packages: write');
+  });
+
+  it('emits one login per account when two images share a registry', () => {
+    const content = releaseFor(
+      `${specWithDockerHub('HUB_A_USER', 'HUB_A_TOKEN')}\n  worker:\n    target: container\n    secrets: [OPENAI_API_KEY]\n    image:\n      registry: docker.io\n      name: acme/worker\n      usernameSecret: HUB_B_USER\n      tokenSecret: HUB_B_TOKEN\n`,
+    );
+
+    // A registry-only guard would run both logins for both images, so each names its own.
+    expect(content.match(/ {6}- name: Log in to docker\.io/g)).toHaveLength(2);
+    expect(content).toContain('          REGISTRY_TOKEN: ${{ secrets.HUB_A_TOKEN }}');
+    expect(content).toContain('          REGISTRY_TOKEN: ${{ secrets.HUB_B_TOKEN }}');
+    expect(content).toContain("        if: matrix.image == 'acme/support-copilot'");
+    expect(content).toContain("        if: matrix.image == 'acme/worker'");
   });
 });

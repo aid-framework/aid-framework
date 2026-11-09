@@ -3,11 +3,10 @@
  *
  * A deployment that asks for streaming asks for something a target can only honour if
  * it declares the capability. The Python `ModelGateway.stream()` produces SSE bytes
- * (Phase 2 L5) and the py-fastapi generator now emits a `text/event-stream` branch on
- * the pipeline route (P7a), so py-fastapi declares `streaming` and this gate passes for
- * it. The TypeScript runtime's `ModelGateway.stream` serves SSE too, but the ts-vercel
- * generator does not emit a streaming route yet, so that target still declares nothing
- * and still fails closed here.
+ * (Phase 2 L5) and the py-fastapi generator emits a `text/event-stream` branch on the
+ * pipeline route (P7a). The TypeScript runtime's `ModelGateway.stream` serves SSE too,
+ * and the ts-vercel generator emits the same negotiation (`emit/sse.ts`, L6d), so both
+ * targets declare `streaming` and this gate passes for either.
  *
  * The decision is read from the injected declarations rather than hard-coded, which is
  * what keeps the gate honest in both directions: it fails while a target has no

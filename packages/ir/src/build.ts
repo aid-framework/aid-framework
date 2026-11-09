@@ -56,9 +56,11 @@ import {
   type GuardrailShape,
   type GuardStep,
   type Idempotency,
+  IMAGE_CREDENTIAL_FIELDS,
   IMAGE_REGISTRIES,
   type IR,
   IR_VERSION,
+  imageRegistry,
   isGuardrailPolicyKind,
   isIndexMetric,
   isKnowledgeBaseEngine,
@@ -1324,16 +1326,15 @@ function buildDeploymentImage(
   if (image === undefined) return undefined;
   const registry = asString(image.registry);
   const name = asString(image.name);
-  const knownRegistry =
-    registry !== undefined && (IMAGE_REGISTRIES as readonly string[]).includes(registry);
-  if (registry === undefined || name === undefined || !knownRegistry) {
+  const descriptor = registry === undefined ? undefined : imageRegistry(registry);
+  if (registry === undefined || name === undefined || descriptor === undefined) {
     // The spec schema and its version gate both reject this, so reaching it means the
     // document bypassed validation. Dropping the image would make a deployment look
     // unpublishable when it declared otherwise, so the builder reports instead.
     const problem =
       registry === undefined
         ? 'no registry'
-        : !knownRegistry
+        : descriptor === undefined
           ? `registry "${registry}", which is not one of ${IMAGE_REGISTRIES.join(', ')}`
           : 'no name';
     context.diagnostics.push(
@@ -1346,7 +1347,47 @@ function buildDeploymentImage(
     );
     return undefined;
   }
-  return { registry: registry as DeploymentImageShape['registry'], name };
+  // The credential is part of the registry's contract, not an optional extra: a registry
+  // whose login cannot be built is a workflow that fails on the first tag, so it is
+  // refused here rather than emitted. A field the registry does not consume is refused
+  // too -- a `ghcr.io` image carrying a Docker Hub token names a secret nothing reads.
+  const credentials: { usernameSecret?: string; tokenSecret?: string } = {};
+  const missing: string[] = [];
+  const unknown: string[] = [];
+  for (const field of descriptor.declares) {
+    const value = asString(image[field]);
+    if (value === undefined) missing.push(field);
+    else credentials[field] = value;
+  }
+  for (const field of IMAGE_CREDENTIAL_FIELDS) {
+    if (!descriptor.declares.includes(field) && image[field] !== undefined) unknown.push(field);
+  }
+  if (missing.length > 0 || unknown.length > 0) {
+    const problem =
+      missing.length > 0
+        ? `no ${missing.map((field) => `\`${field}\``).join(' or ')} for registry "${registry}"`
+        : `\`${unknown.join('` and `')}\`, which registry "${registry}" does not consume`;
+    context.diagnostics.push(
+      errorDiagnostic({
+        code: IR_DIAGNOSTIC_CODES.deployImageCredentials,
+        message: `deployment "${id}" declares an image with ${problem}`,
+        path: ['deployments', id, 'image'],
+        hint:
+          descriptor.declares.length === 0
+            ? `drop the credential fields; \`${registry}\` is a registry the release workflow authenticates to with the GITHUB_TOKEN it already holds`
+            : `declare ${descriptor.credentialHint}; the values never enter the repository, only their names do`,
+      }),
+    );
+    return undefined;
+  }
+  return {
+    registry: registry as DeploymentImageShape['registry'],
+    name,
+    ...(credentials.usernameSecret === undefined
+      ? {}
+      : { usernameSecret: credentials.usernameSecret }),
+    ...(credentials.tokenSecret === undefined ? {} : { tokenSecret: credentials.tokenSecret }),
+  };
 }
 
 function buildDeploymentRuntime(
