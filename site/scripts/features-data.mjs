@@ -112,6 +112,16 @@ export const AI_INFRA = [
     since: '0.1.98',
   },
   {
+    id: 'model-armor',
+    cloud: 'gcp',
+    title: 'Vertex AI Model Armor as the guardrail engine',
+    declares: 'guardrails[].engine: model-armor',
+    emits:
+      '`MODEL_ARMOR_TEMPLATE`, the full template name `projects/{project}/locations/{location}/templates/{id}` the runtime reads, and `sanitizeUserPrompt` / `sanitizeModelResponse` calls against it; neither the template nor the variable is provisioned, so the operator owns the filters and grants the service account `roles/modelarmor.user`',
+    credential: 'a service account the operator grants `roles/modelarmor.user`',
+    since: '0.1.109',
+  },
+  {
     id: 'bedrock-knowledge-base',
     cloud: 'aws',
     title: 'Bedrock knowledge bases',

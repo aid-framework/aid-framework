@@ -775,6 +775,77 @@ describe('rule-level unit tests', () => {
     expect(paths(diagnostics)).toEqual(['guardrails.inbound.engine']);
   });
 
+  it('accepts a Model Armor guardrail at 0.14 with no policy block', () => {
+    // The template is operator-owned: the declaration names the engine and the
+    // deployment names the template through MODEL_ARMOR_TEMPLATE. Nothing about the
+    // policy is expressible here, which is why the case has no `modelArmor` key.
+    const diagnostics = validateSpec({
+      specVersion: '0.14',
+      project: { name: 'p' },
+      guardrails: {
+        inbound: {
+          engine: 'model-armor',
+          stages: ['input', 'output'],
+          action: 'block',
+          onFail: { message: 'nope', log: true },
+        },
+      },
+    });
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('refuses a Model Armor engine below 0.14 rather than silently ignoring it', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.13',
+      project: { name: 'p' },
+      guardrails: {
+        inbound: {
+          engine: 'model-armor',
+          stages: ['input'],
+          action: 'block',
+          onFail: { message: 'nope', log: true },
+        },
+      },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['guardrails.inbound.engine']);
+  });
+
+  it('refuses redaction on a Model Armor guardrail, whose filters only report', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.14',
+      project: { name: 'p' },
+      guardrails: {
+        inbound: {
+          engine: 'model-armor',
+          stages: ['input'],
+          action: 'redact',
+          onFail: { message: 'nope', log: true },
+        },
+      },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['guardrails.inbound.action']);
+  });
+
+  it('refuses a Bedrock policy block on a Model Armor guardrail', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.14',
+      project: { name: 'p' },
+      guardrails: {
+        inbound: {
+          engine: 'model-armor',
+          stages: ['input'],
+          action: 'block',
+          bedrock: { pii: ['email'] },
+          onFail: { message: 'nope', log: true },
+        },
+      },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['guardrails.inbound.engine']);
+  });
+
   it('refuses redaction that also blocks a content category', () => {
     const diagnostics = validateSpec({
       specVersion: '0.11',

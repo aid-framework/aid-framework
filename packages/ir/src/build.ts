@@ -1026,7 +1026,8 @@ function buildGuardrails(raw: unknown): GuardrailShape[] {
     const onDecision = asRecord(entry.onDecision) ?? {};
     const guardrail: GuardrailShape = {
       id,
-      engine: entry.engine === 'bedrock' ? 'bedrock' : 'builtin',
+      engine:
+        entry.engine === 'bedrock' || entry.engine === 'model-armor' ? entry.engine : 'builtin',
       stages,
       policies: asStringArray(entry.policies).filter(isGuardrailPolicyKind),
       action: (GUARDRAIL_ACTIONS as readonly string[]).includes(action ?? '')

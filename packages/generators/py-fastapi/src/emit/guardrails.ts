@@ -53,9 +53,16 @@ export function stageGuardrails(ir: IR, stage: GuardrailStage): GuardrailShape[]
   return orderedGuardrails(ir).filter((guardrail) => guardrail.stages.includes(stage));
 }
 
-/** Whether any guardrail in this document is evaluated by the managed service. */
-function hasManagedEngine(ir: IR): boolean {
-  return orderedGuardrails(ir).some((guardrail) => guardrail.engine === 'bedrock');
+/** The managed engine this document names, if any.
+ *
+ * The IR gate permits one managed declaration per deployment, because the runtime
+ * wires one managed client, so at most one engine can appear here.
+ */
+function managedEngineOf(ir: IR): 'bedrock' | 'model-armor' | undefined {
+  return orderedGuardrails(ir).find((guardrail) => guardrail.engine !== 'builtin')?.engine as
+    | 'bedrock'
+    | 'model-armor'
+    | undefined;
 }
 
 /**
@@ -107,6 +114,10 @@ function definition(guardrail: GuardrailShape): string {
   if (guardrail.engine === 'bedrock' && guardrail.bedrock !== undefined) {
     arguments_.push(`engine=${pythonString('bedrock')}`);
     arguments_.push(`bedrock=${bedrockPolicy(guardrail.bedrock)}`);
+  } else if (guardrail.engine === 'model-armor') {
+    // The template, not this declaration, holds the policy; the runtime names it
+    // through `MODEL_ARMOR_TEMPLATE`.
+    arguments_.push(`engine=${pythonString('model-armor')}`);
   }
   if (guardrail.decision !== undefined) {
     const outcomes = Object.entries(guardrail.onDecision ?? {}).map(([label, action]) =>
@@ -249,23 +260,32 @@ const BLOCK = [
 export function emitGuardrails(ir: IR): EmittedFile {
   const definitions = orderedGuardrails(ir).map(definition);
   const decisions = referencedDecisions(ir);
-  const managed = hasManagedEngine(ir);
+  const managedEngine = managedEngineOf(ir);
+  const managed = managedEngine !== undefined;
   const agentImports = ['GuardrailDefinition', 'GuardrailEngine', 'GuardrailVerdict'];
   if (decisions.length > 0) agentImports.unshift('DecisionDefinition');
   if (managed) {
-    agentImports.push('BedrockGuardrailClient', 'BedrockGuardrailPolicy');
-    agentImports.push('managed_guardrail_settings');
+    if (managedEngine === 'bedrock') {
+      agentImports.push('BedrockGuardrailClient', 'BedrockGuardrailPolicy');
+      agentImports.push('managed_guardrail_settings');
+    } else {
+      agentImports.push('ModelArmorGuardrailClient', 'model_armor_settings');
+    }
     agentImports.sort();
   }
   const engine: string[] = [];
+  let factory = '';
   if (managed) {
-    // Reading the two names at import is what makes a missing resource fail at
+    // Reading the managed resource's name at import is what makes a missing one fail at
     // start-up rather than on the first request that needs a check.
-    engine.push('_MANAGED_SETTINGS = managed_guardrail_settings()');
+    const settings = managedEngine === 'bedrock' ? '_MANAGED_SETTINGS' : '_MODEL_ARMOR_SETTINGS';
+    const read =
+      managedEngine === 'bedrock' ? 'managed_guardrail_settings' : 'model_armor_settings';
+    const client =
+      managedEngine === 'bedrock' ? 'BedrockGuardrailClient' : 'ModelArmorGuardrailClient';
+    engine.push(`${settings} = ${read}()`);
+    factory = `${INDENT}guardrail_client_factory=lambda: ${client}(settings=${settings})`;
   }
-  const factory =
-    `${INDENT}guardrail_client_factory=lambda: BedrockGuardrailClient(` +
-    'settings=_MANAGED_SETTINGS)';
   if (managed) {
     engine.push(
       [
@@ -297,11 +317,15 @@ export function emitGuardrails(ir: IR): EmittedFile {
           'defines -- ' +
           "{'text': ...} for the `input`, `output` and `retrieval` stages, the tool's own " +
           'arguments for `tool-call` -- so a `redact` action names `text` on the first three.' +
-          (managed
+          (managedEngine === 'bedrock'
             ? ' A document that declares an `engine: bedrock` guardrail reads its resource' +
               ' id and pinned version at import, so a deployment that forgot them fails at' +
               ' start-up instead of at the first request that needs a check.'
-            : ''),
+            : managedEngine === 'model-armor'
+              ? ' A document that declares an `engine: model-armor` guardrail reads its' +
+                ' template name at import, so a deployment that forgot it fails at start-up' +
+                ' instead of at the first request that needs a check.'
+              : ''),
       ),
       importBlock([
         ['import logging'],

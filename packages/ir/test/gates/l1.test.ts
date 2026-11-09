@@ -294,7 +294,92 @@ describe('guardrails/policies — a managed engine', () => {
     const diagnostics = runGates(ir).byGate['guardrails/policies'].diagnostics;
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.path).toEqual(['guardrails', 'refund_writes', 'engine']);
-    expect(diagnostics[0]?.message).toContain('one pair of environment variables');
+    expect(diagnostics[0]?.message).toContain('one set of environment variables');
+  });
+});
+
+describe('guardrails/policies — Model Armor', () => {
+  /** A template the operator owns: the declaration names no policy at all. */
+  function modelArmor() {
+    const ir = mutateIR(POSITIVE);
+    const guardrail = byId(ir.guardrails, 'inbound');
+    guardrail.engine = 'model-armor';
+    guardrail.policies = [];
+    guardrail.stages = ['input', 'output'];
+    guardrail.bedrock = undefined;
+    return ir;
+  }
+
+  it('accepts an operator-owned template with no policy block', () => {
+    expect(runGates(modelArmor()).byGate['guardrails/policies'].diagnostics).toEqual([]);
+  });
+
+  it('rejects local policies beside the engine, which the template would ignore', () => {
+    const ir = modelArmor();
+    byId(ir.guardrails, 'inbound').policies = ['pii-detect'];
+    expect(
+      diagnosticAt(
+        runGates(ir).byGate['guardrails/policies'].diagnostics,
+        'guardrails.inbound.policies',
+      ).message,
+    ).toContain('cannot also name local policies');
+  });
+
+  it('rejects a decision, which the template cannot ask', () => {
+    const ir = modelArmor();
+    byId(ir.guardrails, 'inbound').decision = 'relevance';
+    expect(
+      diagnosticAt(
+        runGates(ir).byGate['guardrails/policies'].diagnostics,
+        'guardrails.inbound.decision',
+      ).message,
+    ).toContain('cannot ask decision');
+  });
+
+  it('rejects a retrieval or tool-call stage, which has no text to send', () => {
+    const ir = modelArmor();
+    byId(ir.guardrails, 'inbound').stages = ['input', 'tool-call'];
+    const diagnostic = diagnosticAt(
+      runGates(ir).byGate['guardrails/policies'].diagnostics,
+      'guardrails.inbound.stages.1',
+    );
+    expect(diagnostic.message).toContain('only evaluates text');
+    expect(diagnostic.hint).toContain('builtin guardrail');
+  });
+
+  it('rejects escalation, which a managed check has no checkpoint for', () => {
+    const ir = modelArmor();
+    byId(ir.guardrails, 'inbound').action = 'escalate';
+    expect(
+      diagnosticAt(
+        runGates(ir).byGate['guardrails/policies'].diagnostics,
+        'guardrails.inbound.action',
+      ).message,
+    ).toContain('cannot escalate to a human');
+  });
+
+  it('rejects redaction, which the template only promises with an advanced DLP setup', () => {
+    const ir = modelArmor();
+    byId(ir.guardrails, 'inbound').action = 'redact';
+    const diagnostic = diagnosticAt(
+      runGates(ir).byGate['guardrails/policies'].diagnostics,
+      'guardrails.inbound.action',
+    );
+    expect(diagnostic.message).toContain('inspect and report');
+    expect(diagnostic.hint).toContain('builtin engine, which redacts locally');
+  });
+
+  it('refuses a Bedrock declaration beside it, since one client is wired', () => {
+    const ir = modelArmor();
+    const second = byId(ir.guardrails, 'refund_writes');
+    second.engine = 'bedrock';
+    second.policies = [];
+    second.stages = ['output'];
+    second.bedrock = { pii: ['phone'] };
+    const diagnostics = runGates(ir).byGate['guardrails/policies'].diagnostics;
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.path).toEqual(['guardrails', 'refund_writes', 'engine']);
+    expect(diagnostics[0]?.message).toContain('one set of environment variables');
   });
 });
 

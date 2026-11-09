@@ -746,7 +746,7 @@ export function decisionIdentity(id: string): string {
 }
 
 /** The engines a guardrail's policy can live in. */
-export const GUARDRAIL_ENGINES = ['builtin', 'bedrock'] as const;
+export const GUARDRAIL_ENGINES = ['builtin', 'bedrock', 'model-armor'] as const;
 
 export type GuardrailEngine = (typeof GUARDRAIL_ENGINES)[number];
 
