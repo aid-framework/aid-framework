@@ -211,6 +211,15 @@ export const SHIPPED_FEATURES = [
     since: '0.1.6',
   },
   {
+    id: 'provider-embeddings',
+    title: 'Embeddings on Bedrock and Vertex AI',
+    detail:
+      'A pinned embedding is routed by its provider, so Titan on Bedrock is signed with SigV4 and Gemini on Vertex AI is sent under the project and bearer token instead of the OpenAI-compatible shape.',
+    declaredBy: 'models[].capabilities',
+    href: './reference/spec.md#model',
+    since: '0.1.109',
+  },
+  {
     id: 'guardrails',
     title: 'Guardrail stages',
     detail:
@@ -374,7 +383,7 @@ export const REFUSALS = [
     id: 'embeddings-without-endpoint',
     title: 'Embeddings on a provider with no embeddings endpoint',
     reason:
-      'The Anthropic Messages API and the Bedrock Converse API have no embeddings endpoint, so the adapter does not advertise `embeddings` and a spec that declares it is refused.',
+      'The Anthropic Messages API serves chat only, so its adapter does not advertise `embeddings` and a spec that declares it is refused; Bedrock and Vertex AI do advertise it, because each serves an embedding model over `invoke` and `:predict`.',
     code: 'ir/model-capability-missing',
   },
   {

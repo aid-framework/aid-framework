@@ -335,12 +335,13 @@ export function checkModels(ir: IR): PlanProblem[] {
     //
     // `embeddings` is the exception, because it is the one declared capability the
     // runtime routes by *provider* rather than by the pinned spec. `embedder_for`
-    // sends every non-`fake` embedding model to `OpenAICompatibleEmbedder`, so a model
-    // declaring it on a provider with no embeddings endpoint would POST an
-    // OpenAI-shaped payload to a vendor that has no such route -- and it would do so
-    // from `bindings.py`, far from the declaration that caused it. The other four are
-    // negotiated by `ModelGateway` against the pinned capabilities, so a shortfall
-    // there already fails at the one call site with a readable error.
+    // dispatches on the provider -- `bedrock` and `google` to their own adapters,
+    // `gemini` to `GeminiEmbedder`, the rest to the OpenAI-compatible wire -- so a
+    // model declaring it on a provider with no embeddings route would POST an
+    // envelope that vendor cannot serve, from `bindings.py`, far from the declaration
+    // that caused it. The other four are negotiated by `ModelGateway` against the
+    // pinned capabilities, so a shortfall there already fails at the one call site
+    // with a readable error.
     if (
       adapter !== undefined &&
       model.capabilities.includes('embeddings') &&
@@ -355,8 +356,8 @@ export function checkModels(ir: IR): PlanProblem[] {
           'unsupported-capability',
           `${path}.capabilities`,
           `model '${model.id}' declares 'embeddings', but provider '${model.provider}' is ` +
-            `served by ${adapter}, which has no embeddings endpoint; the runtime would ` +
-            'embed through the OpenAI-compatible wire regardless of provider',
+            `served by ${adapter}, which has no embeddings endpoint; no runtime adapter ` +
+            'can serve that declaration',
         ),
       );
     }

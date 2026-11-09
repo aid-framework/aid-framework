@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  BedrockEmbedder,
+  BedrockProvider,
   ConfigurationError,
   DEFAULT_GEMINI_BASE_URL,
   EmbeddingBatch,
@@ -14,6 +16,8 @@ import {
   ProviderError,
   ProviderResponseError,
   TokenUsage,
+  VertexEmbedder,
+  VertexProvider,
 } from '../src/index.js';
 import type { FetchLike } from '../src/providers/http.js';
 import { at, EMBED_DIMENSIONS, MODEL_ID, pinned } from './support.js';
@@ -651,5 +655,238 @@ describe('GeminiEmbedder', () => {
 
   it('refuses a base URL that is not http', () => {
     expect(() => new GeminiEmbedder({ baseUrl: 'ftp://nope' })).toThrow(ConfigurationError);
+  });
+});
+
+function bedrockPin(modelId = 'amazon.titan-embed-text-v2:0'): PinnedEmbedding {
+  return new PinnedEmbedding({
+    alias: 'titan',
+    provider: 'bedrock',
+    modelId,
+    dimensions: EMBED_DIMENSIONS,
+    cost: MODEL.cost,
+  });
+}
+
+function bedrock(fetchImpl: FetchLike): BedrockEmbedder {
+  return new BedrockEmbedder({
+    provider: new BedrockProvider({
+      region: 'us-east-2',
+      accessKeyId: 'AKIDEXAMPLE',
+      secretAccessKey: 'secret',
+      baseUrl: 'https://bedrock.test',
+      backoffSeconds: 0,
+      fetchImpl,
+    }),
+  });
+}
+
+function bedrockReply(vector: readonly number[], counted?: number): string {
+  return JSON.stringify({
+    embedding: vector,
+    ...(counted === undefined ? {} : { inputTextTokenCount: counted }),
+  });
+}
+
+function bedrockVector(): number[] {
+  return Array.from({ length: EMBED_DIMENSIONS }, () => 0.5);
+}
+
+describe('BedrockEmbedder', () => {
+  it('picks the Bedrock adapter for the bedrock provider', () => {
+    expect(embedderFor(bedrockPin())).toBeInstanceOf(BedrockEmbedder);
+  });
+
+  it('invokes the model once per text with a signed request', async () => {
+    const { fetchImpl, calls } = stubFetch([
+      bedrockReply(bedrockVector()),
+      bedrockReply(bedrockVector()),
+    ]);
+
+    const batch = await bedrock(fetchImpl).embed(['alpha', 'beta'], { model: bedrockPin() });
+
+    expect(calls).toHaveLength(2);
+    const first = at(calls, 0);
+    expect(first.url).toBe('https://bedrock.test/model/amazon.titan-embed-text-v2%3A0/invoke');
+    expect(first.headers.authorization).toMatch(/^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\//);
+    expect(JSON.parse(first.body)).toEqual({ inputText: 'alpha' });
+    expect(JSON.parse(at(calls, 1).body)).toEqual({ inputText: 'beta' });
+    expect(batch.vectors).toHaveLength(2);
+    expect(batch.usage.inputTokens).toBe(estimateTokens('alpha') + estimateTokens('beta'));
+  });
+
+  it('reads the token count from the reply when it carries one', async () => {
+    const { fetchImpl } = stubFetch([bedrockReply(bedrockVector(), 7)]);
+
+    const batch = await bedrock(fetchImpl).embed(['alpha'], { model: bedrockPin() });
+
+    expect(batch.usage.inputTokens).toBe(7);
+  });
+
+  it('refuses a width that disagrees with the pin', async () => {
+    const { fetchImpl } = stubFetch([bedrockReply([0.5, 0.5])]);
+
+    await expect(bedrock(fetchImpl).embed(['alpha'], { model: bedrockPin() })).rejects.toThrow(
+      'dimensions',
+    );
+  });
+
+  it('refuses a non-list embedding', async () => {
+    const { fetchImpl } = stubFetch([JSON.stringify({ embedding: 'nope' })]);
+
+    await expect(bedrock(fetchImpl).embed(['alpha'], { model: bedrockPin() })).rejects.toThrow(
+      'non-list',
+    );
+  });
+
+  it('retries a transient status', async () => {
+    const { fetchImpl, calls } = stubFetch([
+      { status: 503, body: 'try again' },
+      bedrockReply(bedrockVector()),
+    ]);
+
+    const batch = await bedrock(fetchImpl).embed(['alpha'], { model: bedrockPin() });
+
+    expect(calls).toHaveLength(2);
+    expect(batch.vectors).toHaveLength(1);
+  });
+
+  it('does not retry a bad request', async () => {
+    const { fetchImpl, calls } = stubFetch([{ status: 400, body: 'bad model' }]);
+
+    await expect(bedrock(fetchImpl).embed(['alpha'], { model: bedrockPin() })).rejects.toThrow(
+      '400',
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  it('leaves an injected provider open when it closes', async () => {
+    const { fetchImpl, calls } = stubFetch([bedrockReply(bedrockVector())]);
+    const provider = new BedrockProvider({
+      region: 'us-east-2',
+      accessKeyId: 'AKIDEXAMPLE',
+      secretAccessKey: 'secret',
+      baseUrl: 'https://bedrock.test',
+      backoffSeconds: 0,
+      fetchImpl,
+    });
+    const embedder = new BedrockEmbedder({ provider });
+
+    await embedder.close();
+
+    await expect(
+      provider.invokeModel('amazon.titan-embed-text-v2:0', { inputText: 'x' }),
+    ).resolves.toBeDefined();
+    expect(calls).toHaveLength(1);
+  });
+});
+
+function googlePin(modelId = 'gemini-embedding-001'): PinnedEmbedding {
+  return new PinnedEmbedding({
+    alias: 'vertex',
+    provider: 'google',
+    modelId,
+    dimensions: EMBED_DIMENSIONS,
+    cost: MODEL.cost,
+  });
+}
+
+function vertex(fetchImpl: FetchLike): VertexEmbedder {
+  return new VertexEmbedder({
+    provider: new VertexProvider({
+      project: 'proj',
+      location: 'europe-west4',
+      accessToken: 'token',
+      baseUrl: 'https://vertex.test',
+      backoffSeconds: 0,
+      fetchImpl,
+    }),
+  });
+}
+
+function vertexReply(count: number, counted?: number): string {
+  return JSON.stringify({
+    predictions: Array.from({ length: count }, () => ({
+      embeddings: {
+        values: bedrockVector(),
+        ...(counted === undefined ? {} : { statistics: { token_count: counted } }),
+      },
+    })),
+  });
+}
+
+describe('VertexEmbedder', () => {
+  it('picks the Vertex adapter for the google provider', () => {
+    expect(embedderFor(googlePin())).toBeInstanceOf(VertexEmbedder);
+  });
+
+  it('predicts with the project, location and bearer token', async () => {
+    const { fetchImpl, calls } = stubFetch([vertexReply(1, 4)]);
+
+    const batch = await vertex(fetchImpl).embed(['alpha'], { model: googlePin() });
+
+    const call = at(calls, 0);
+    expect(call.url).toBe(
+      'https://vertex.test/v1/projects/proj/locations/europe-west4' +
+        '/publishers/google/models/gemini-embedding-001:predict',
+    );
+    expect(call.headers.authorization).toBe('Bearer token');
+    expect(JSON.parse(call.body)).toEqual({
+      instances: [{ content: 'alpha' }],
+      parameters: { outputDimensionality: EMBED_DIMENSIONS },
+    });
+    expect(batch.vectors).toHaveLength(1);
+    expect(batch.usage.inputTokens).toBe(4);
+  });
+
+  it('splits batches of more than two hundred and fifty', async () => {
+    const { fetchImpl, calls } = stubFetch([vertexReply(250), vertexReply(1)]);
+
+    const batch = await vertex(fetchImpl).embed(
+      Array.from({ length: 251 }, (_, index) => `text-${index}`),
+      { model: googlePin() },
+    );
+
+    expect(calls).toHaveLength(2);
+    const first = JSON.parse(at(calls, 0).body) as { instances: unknown[] };
+    const second = JSON.parse(at(calls, 1).body) as { instances: unknown[] };
+    expect(first.instances).toHaveLength(250);
+    expect(second.instances).toHaveLength(1);
+    expect(batch.vectors).toHaveLength(251);
+  });
+
+  it('reports an offline estimate when predictions carry no token counts', async () => {
+    const { fetchImpl } = stubFetch([vertexReply(2)]);
+
+    const batch = await vertex(fetchImpl).embed(['abcd', 'abcdefgh'], { model: googlePin() });
+
+    expect(batch.usage.inputTokens).toBe(estimateTokens('abcd') + estimateTokens('abcdefgh'));
+  });
+
+  it('refuses a reply with the wrong number of predictions', async () => {
+    const { fetchImpl } = stubFetch([vertexReply(1)]);
+
+    await expect(
+      vertex(fetchImpl).embed(['alpha', 'beta'], { model: googlePin() }),
+    ).rejects.toThrow('for 2 input');
+  });
+
+  it('refuses a width that disagrees with the pin', async () => {
+    const { fetchImpl } = stubFetch([
+      JSON.stringify({
+        predictions: [{ embeddings: { values: [0.5, 0.5] } }],
+      }),
+    ]);
+
+    await expect(vertex(fetchImpl).embed(['alpha'], { model: googlePin() })).rejects.toThrow(
+      'dimensions',
+    );
+  });
+
+  it('does not retry a bad request', async () => {
+    const { fetchImpl, calls } = stubFetch([{ status: 400, body: 'bad request' }]);
+
+    await expect(vertex(fetchImpl).embed(['alpha'], { model: googlePin() })).rejects.toThrow('400');
+    expect(calls).toHaveLength(1);
   });
 });

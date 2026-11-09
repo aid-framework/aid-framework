@@ -174,13 +174,13 @@ describe('adapter capabilities', () => {
     expect(() => buildForSpecText(spec)).toThrow(/BedrockProvider/u);
   });
 
-  it('refuses bedrock embeddings, which Converse has no endpoint for', () => {
+  it('advertises bedrock embeddings, which InvokeModel serves', () => {
     const spec = bedrockSpecText().replace(
       'capabilities: [json-schema, tools]',
       'capabilities: [json-schema, tools, embeddings]',
     );
 
-    expect(() => buildForSpecText(spec)).toThrow(/model-capability-unsupported/u);
+    expect(models(spec)).toMatch(/capabilities: \[[^\]]*'embeddings'/u);
   });
 
   it('refuses Vertex streaming, which this target cannot carry', () => {
@@ -195,13 +195,13 @@ describe('adapter capabilities', () => {
     expect(() => buildForSpecText(spec)).toThrow(/VertexProvider/u);
   });
 
-  it('refuses Vertex embeddings, which the adapter does not call', () => {
+  it('advertises Vertex embeddings, which :predict serves', () => {
     const spec = vertexSpecText().replace(
       'capabilities: [json-schema, tools]',
       'capabilities: [json-schema, tools, embeddings]',
     );
 
-    expect(() => buildForSpecText(spec)).toThrow(/model-capability-unsupported/u);
+    expect(models(spec)).toMatch(/capabilities: \[[^\]]*'embeddings'/u);
   });
 
   it('refuses gemini streaming, which this target cannot carry', () => {

@@ -1,6 +1,6 @@
 {
   "$comment": "Offline model catalog. Lookups are deterministic and never touch the network. `models` maps a provider model id to its limits and, optionally, a `costProfiles` key. `knowledgeBases` prices a managed knowledge base's Retrieve call per query unit; a null rate means the price has not been verified offline, and the cost gate treats it as unknown rather than free.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "costProfiles": {
     "openai-gpt-4o-mini": { "inputPerMTok": 0.15, "outputPerMTok": 0.6 },
     "openai-gpt-4o": { "inputPerMTok": 2.5, "outputPerMTok": 10 },
@@ -12,6 +12,7 @@
     "azure-gpt-4o-mini": { "inputPerMTok": 0.165, "outputPerMTok": 0.66 },
     "bedrock-claude-3-5-haiku": { "inputPerMTok": 0.8, "outputPerMTok": 4 },
     "bedrock-claude-3-5-sonnet": { "inputPerMTok": 3, "outputPerMTok": 15 },
+    "bedrock-titan-embed-text-v2": { "inputPerMTok": 0.02, "outputPerMTok": 0 },
     "google-gemini-2-5-flash": { "inputPerMTok": 0.3, "outputPerMTok": 2.5 },
     "google-gemini-2-5-pro": { "inputPerMTok": 1.25, "outputPerMTok": 10 },
     "gemini-gemini-embedding-001": { "inputPerMTok": 0.15, "outputPerMTok": 0 }
@@ -72,6 +73,12 @@
       "provider": "bedrock",
       "limits": { "contextTokens": 200000, "maxOutputTokens": 8192 },
       "costProfiles": ["bedrock-claude-3-5-sonnet"]
+    },
+    "amazon.titan-embed-text-v2:0": {
+      "provider": "bedrock",
+      "limits": { "contextTokens": 8192 },
+      "costProfiles": ["bedrock-titan-embed-text-v2"],
+      "dimensions": 1024
     },
     "gemini-2.5-flash": {
       "provider": "google",

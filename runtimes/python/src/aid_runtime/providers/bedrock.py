@@ -19,6 +19,10 @@ There is no ``stream``: ``/converse-stream`` frames events in AWS's binary
 event-stream format (length-prefixed records with CRC32) rather than SSE, which
 is out of scope for this adapter. ``STREAMING`` is therefore not advertised, and
 the capability gate refuses a spec that asks for it instead of failing mid-run.
+
+``EMBEDDINGS`` *is* advertised: Titan models answer on ``InvokeModel``, which is
+the uninterpreted sibling of ``complete`` sharing this adapter's region,
+credential chain, signature and retry.
 """
 
 from __future__ import annotations
@@ -229,7 +233,11 @@ class BedrockProvider:
 
     @property
     def capabilities(self) -> frozenset[Capability]:
-        return frozenset({Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT})
+        # Embeddings are served by InvokeModel on this same host and identity, so the
+        # method that backs them is on this adapter rather than a separate client.
+        return frozenset(
+            {Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT, Capability.EMBEDDINGS}
+        )
 
     async def complete(self, request: CompletionRequest, *, model: ModelSpec) -> CompletionResponse:
         body = json.dumps(self._build_payload(request, model), separators=(",", ":"))
@@ -388,6 +396,33 @@ class BedrockProvider:
     async def send(self, url: str, *, body: str, headers: dict[str, str]) -> httpx.Response:
         """One signed POST, uninterpreted: shared with the managed-guardrail adapter."""
         return await self._client.post(url, content=body, headers=headers)
+
+    async def invoke_model(self, model_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """One signed ``InvokeModel`` call, uninterpreted.
+
+        Converse is the portable *chat* surface; embeddings are not on it. Titan
+        embeddings answer on ``/model/{id}/invoke`` from the same host and under the
+        same identity, so this adapter owns the path rather than a second client
+        re-deriving the region, the credential chain and the signature.
+        """
+        body = json.dumps(payload, separators=(",", ":"))
+        region = self._resolve_region()
+        credentials = await self._credentials()
+        base = self._base_url or default_bedrock_base_url(region)
+        url = f"{base}/model/{rfc3986(model_id)}/invoke"
+        headers = self._headers(url, body, region, credentials, self._now())
+        text = await self._post(url, headers, body)
+        try:
+            answer = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ProviderResponseError(
+                f"{self._name} returned a body that is not JSON", text
+            ) from exc
+        if not isinstance(answer, dict):
+            raise ProviderResponseError(
+                f"{self._name} returned a JSON body that is not an object", text
+            )
+        return answer
 
     async def credentials(self) -> dict[str, Any]:
         """The SigV4 credentials, resolved lazily.

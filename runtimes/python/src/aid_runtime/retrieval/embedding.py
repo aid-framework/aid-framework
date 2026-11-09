@@ -1,11 +1,14 @@
 """Turning text into vectors.
 
-Two adapters, and that is the whole Phase 1 surface: one deterministic fake and one
-OpenAI-compatible HTTP client. The fake is not a testing afterthought -- it is the
-adapter the eval gate runs against, because a gate that needed an API key could not
-run offline in CI. That is the same reason the spec DSL already has
-``provider: fake`` ("deterministic and keyless, which is what lets the eval gate run
-offline").
+One fake plus one adapter per wire the pinned providers speak: an OpenAI-compatible
+client, Gemini's ``batchEmbedContents``, Bedrock's ``InvokeModel`` and Vertex AI's
+``:predict``. They are separate adapters rather than base URLs because the envelopes
+differ -- nested content parts, ``embedding`` versus ``embeddings.values`` versus
+``predictions[].embeddings.values``, API key versus SigV4 versus bearer token. The
+fake is not a testing afterthought -- it is the adapter the eval gate runs against,
+because a gate that needed an API key could not run offline in CI. That is the same
+reason the spec DSL already has ``provider: fake`` ("deterministic and keyless, which
+is what lets the eval gate run offline").
 
 The pinning rule lives in the seam, not in the adapters: ``embed`` takes a
 :class:`~aid_runtime.retrieval.types.PinnedEmbedding` and uses its ``model_id`` and
@@ -28,17 +31,21 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from aid_runtime.errors import ConfigurationError, ProviderError, ProviderResponseError
+from aid_runtime.providers.bedrock import BedrockProvider
 from aid_runtime.providers.gemini import DEFAULT_GEMINI_BASE_URL, GEMINI_API_KEY_ENV
 from aid_runtime.providers.http import DEFAULT_BASE_URL
+from aid_runtime.providers.vertex import VertexProvider
 from aid_runtime.retrieval.types import PinnedEmbedding
 from aid_runtime.types import TokenUsage
 
 __all__ = [
+    "BedrockEmbedder",
     "Embedder",
     "EmbeddingBatch",
     "FakeDeterministicEmbedder",
     "GeminiEmbedder",
     "OpenAICompatibleEmbedder",
+    "VertexEmbedder",
     "embedder_for",
     "estimate_tokens",
 ]
@@ -55,6 +62,9 @@ _CHARS_PER_TOKEN = 4
 
 #: ``batchEmbedContents`` accepts at most 100 inputs per call.
 _GEMINI_BATCH_LIMIT = 100
+
+#: ``:predict`` accepts at most 250 embedding instances per call.
+_VERTEX_BATCH_LIMIT = 250
 
 #: Only these embedding models take ``outputDimensionality``; older ones reject it.
 _GEMINI_DIMENSIONED_MODELS = frozenset({"gemini-embedding-001"})
@@ -373,6 +383,135 @@ class GeminiEmbedder:
         return vectors
 
 
+class BedrockEmbedder:
+    """``InvokeModel`` on Bedrock, one input per signed request.
+
+    Titan's embeddings endpoint takes a single ``inputText``; InvokeModel has no
+    batch variant, so a batch is one request per text and input order is preserved
+    by construction. Region resolution, the credential chain, SigV4 and retry stay in
+    :class:`~aid_runtime.providers.bedrock.BedrockProvider` rather than being
+    re-derived here: the same identity invokes a chat model and an embedding model.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: BedrockProvider | None = None,
+        base_url: str | None = None,
+        name: str = "bedrock-embedder",
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._provider = provider or BedrockProvider(base_url=base_url, client=client)
+        self._owns_provider = provider is None
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def embed(self, texts: Sequence[str], *, model: PinnedEmbedding) -> EmbeddingBatch:
+        vectors: list[tuple[float, ...]] = []
+        input_tokens = 0
+        for text in texts:
+            answer = await self._provider.invoke_model(model.model_id, {"inputText": text})
+            vectors.append(_embedding_vector(answer.get("embedding"), self._name, model))
+            counted = answer.get("inputTextTokenCount")
+            input_tokens += counted if isinstance(counted, int) else estimate_tokens(text)
+        return EmbeddingBatch(
+            vectors=tuple(vectors),
+            usage=TokenUsage(input_tokens=input_tokens, output_tokens=0),
+        )
+
+    async def aclose(self) -> None:
+        if self._owns_provider:
+            await self._provider.aclose()
+
+
+class VertexEmbedder:
+    """``:predict`` on Vertex AI, in batches of up to 250 instances.
+
+    Vertex is not the Gemini API: the host is regional, the path carries the project
+    and location, auth is the adapter's bearer token, and the envelopes are
+    ``instances``/``predictions[].embeddings.values`` rather than
+    ``requests``/``embeddings[].values``. Project, location and token are delegated
+    to :class:`~aid_runtime.providers.vertex.VertexProvider` so the embedder cannot
+    address a different deployment than the chat model in the same app.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: VertexProvider | None = None,
+        base_url: str | None = None,
+        name: str = "vertex-embedder",
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._provider = provider or VertexProvider(base_url=base_url, client=client)
+        self._owns_provider = provider is None
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def embed(self, texts: Sequence[str], *, model: PinnedEmbedding) -> EmbeddingBatch:
+        vectors: list[tuple[float, ...]] = []
+        input_tokens = 0
+        for start in range(0, len(texts), _VERTEX_BATCH_LIMIT):
+            batch = list(texts[start : start + _VERTEX_BATCH_LIMIT])
+            answer = await self._provider.predict(
+                model.model_id,
+                {
+                    "instances": [{"content": text} for text in batch],
+                    "parameters": {"outputDimensionality": model.dimensions},
+                },
+            )
+            predictions = answer.get("predictions")
+            if not isinstance(predictions, list) or len(predictions) != len(batch):
+                raise ProviderResponseError(
+                    f"{self._name} returned "
+                    f"{len(predictions) if isinstance(predictions, list) else 0} embeddings "
+                    f"for {len(batch)} input(s)"
+                )
+            counted: int | None = 0
+            for prediction in predictions:
+                embeddings = prediction.get("embeddings") if isinstance(prediction, dict) else None
+                values = embeddings.get("values") if isinstance(embeddings, dict) else None
+                vectors.append(_embedding_vector(values, self._name, model))
+                statistics = embeddings.get("statistics") if isinstance(embeddings, dict) else None
+                tokens = statistics.get("token_count") if isinstance(statistics, dict) else None
+                # One prediction without a count makes the batch total unknown; falling
+                # back to the estimate keeps the sum from silently under-reporting.
+                if counted is not None:
+                    counted = tokens if isinstance(tokens, int) else None
+            input_tokens += (
+                counted if counted is not None else sum(estimate_tokens(text) for text in batch)
+            )
+        return EmbeddingBatch(
+            vectors=tuple(vectors),
+            usage=TokenUsage(input_tokens=input_tokens, output_tokens=0),
+        )
+
+    async def aclose(self) -> None:
+        if self._owns_provider:
+            await self._provider.aclose()
+
+
+def _embedding_vector(values: Any, name: str, model: PinnedEmbedding) -> tuple[float, ...]:
+    if not isinstance(values, list):
+        raise ProviderResponseError(f"{name} returned a non-list embedding")
+    try:
+        vector = tuple(float(value) for value in values)
+    except (TypeError, ValueError) as error:
+        raise ProviderResponseError(f"{name} returned a non-numeric embedding") from error
+    if len(vector) != model.dimensions:
+        raise ProviderResponseError(
+            f"{name} returned {len(vector)} dimensions for {model.model_id!r} but "
+            f"{model.dimensions} are pinned; the pin and the response must agree"
+        )
+    return vector
+
+
 async def _post_json(
     client: httpx.AsyncClient,
     url: str,
@@ -437,6 +576,12 @@ def embedder_for(
     """
     if model.provider == "fake":
         return FakeDeterministicEmbedder()
+    if model.provider == "bedrock":
+        return BedrockEmbedder(base_url=base_url, client=client)
+    if model.provider == "google":
+        # `google`, not `gemini`: `gemini` is the AI Studio API key, `google` is
+        # Vertex AI, which authenticates with a bearer token instead.
+        return VertexEmbedder(base_url=base_url, client=client)
     if model.provider == "gemini":
         return GeminiEmbedder(
             base_url=base_url or DEFAULT_GEMINI_BASE_URL, api_key=api_key, client=client

@@ -631,14 +631,14 @@ describe('BedrockProvider', () => {
     );
   });
 
-  it('claims tool-calling and structured-output but not embeddings or streaming', () => {
-    // Converse has no embeddings endpoint, and /converse-stream is a binary
-    // event stream this adapter cannot read; claiming either would let a spec
-    // bind a model that can only fail when it is finally called.
+  it('claims tool-calling, structured-output and embeddings but not streaming', () => {
+    // Embeddings are served by InvokeModel, which this adapter signs with the
+    // same identity as Converse. /converse-stream is a binary event stream this
+    // adapter cannot read, so streaming stays unclaimed.
     const subject = new BedrockProvider();
     expect(supports(subject, 'tool-calling')).toBe(true);
     expect(supports(subject, 'structured-output')).toBe(true);
-    expect(supports(subject, 'embeddings')).toBe(false);
+    expect(supports(subject, 'embeddings')).toBe(true);
     expect(supports(subject, 'streaming')).toBe(false);
   });
 

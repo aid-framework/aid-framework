@@ -19,12 +19,14 @@ import httpx
 import pytest
 
 from aid_runtime import ConfigurationError, ProviderError, ProviderResponseError
-from aid_runtime.providers import GEMINI_API_KEY_ENV
+from aid_runtime.providers import GEMINI_API_KEY_ENV, BedrockProvider, VertexProvider
 from aid_runtime.retrieval import (
+    BedrockEmbedder,
     Embedder,
     FakeDeterministicEmbedder,
     GeminiEmbedder,
     OpenAICompatibleEmbedder,
+    VertexEmbedder,
     embedder_for,
     estimate_tokens,
 )
@@ -542,3 +544,198 @@ async def test_gemini_refuses_a_width_that_disagrees_with_the_pin() -> None:
 
     with pytest.raises(ProviderResponseError, match="dimensions"):
         await embed.embed(["alpha"], model=pinned(provider="gemini"))
+
+
+# --- Bedrock ----------------------------------------------------------------
+
+
+def _bedrock(recorder: Recorder, **kwargs: Any) -> BedrockEmbedder:
+    options: dict[str, Any] = {
+        "region": "us-east-2",
+        "access_key_id": "AKIDEXAMPLE",
+        "secret_access_key": "secret",
+        "base_url": "https://bedrock.test",
+        "backoff_seconds": 0.0,
+        "client": _client(recorder),
+    }
+    options.update(kwargs)
+    return BedrockEmbedder(provider=BedrockProvider(**options), name="bedrock-embedder")
+
+
+def _bedrock_reply(vector: list[float], *, counted: int | None = 3) -> httpx.Response:
+    body: dict[str, Any] = {"embedding": vector}
+    if counted is not None:
+        body["inputTextTokenCount"] = counted
+    return httpx.Response(200, json=body)
+
+
+def test_a_bedrock_pin_selects_the_bedrock_adapter() -> None:
+    assert isinstance(embedder_for(pinned(provider="bedrock")), BedrockEmbedder)
+
+
+async def test_bedrock_invokes_the_model_once_per_text_with_a_signature() -> None:
+    recorder = Recorder(_bedrock_reply(_vector()), _bedrock_reply(_vector()))
+    embed = _bedrock(recorder)
+
+    batch = await embed.embed(
+        ["alpha", "beta"], model=pinned(provider="bedrock", model_id="amazon.titan-embed-text-v2:0")
+    )
+
+    assert len(recorder.requests) == 2
+    first = recorder.requests[0]
+    # `:` is percent-encoded, exactly as the Converse endpoint does it.
+    assert str(first.url) == "https://bedrock.test/model/amazon.titan-embed-text-v2%3A0/invoke"
+    assert first.headers["authorization"].startswith("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/")
+    assert json.loads(first.content) == {"inputText": "alpha"}
+    assert json.loads(recorder.requests[1].content) == {"inputText": "beta"}
+    assert len(batch.vectors) == 2
+    assert batch.usage.input_tokens == 6
+
+
+async def test_bedrock_falls_back_to_the_estimate_without_a_token_count() -> None:
+    recorder = Recorder(_bedrock_reply(_vector(), counted=None))
+    embed = _bedrock(recorder)
+
+    batch = await embed.embed(
+        ["abcdefgh"], model=pinned(provider="bedrock", model_id="amazon.titan-embed-text-v2:0")
+    )
+
+    assert batch.usage.input_tokens == 2
+
+
+async def test_bedrock_refuses_a_width_that_disagrees_with_the_pin() -> None:
+    recorder = Recorder(_bedrock_reply([0.5, 0.5]))
+    embed = _bedrock(recorder)
+
+    with pytest.raises(ProviderResponseError, match="dimensions"):
+        await embed.embed(["alpha"], model=pinned(provider="bedrock"))
+
+
+async def test_bedrock_refuses_a_non_list_embedding() -> None:
+    recorder = Recorder(httpx.Response(200, json={"embedding": "not-a-list"}))
+    embed = _bedrock(recorder)
+
+    with pytest.raises(ProviderResponseError, match="non-list"):
+        await embed.embed(["alpha"], model=pinned(provider="bedrock"))
+
+
+async def test_bedrock_retries_a_transient_status() -> None:
+    recorder = Recorder(httpx.Response(503, text="try again"), _bedrock_reply(_vector()))
+    embed = _bedrock(recorder)
+
+    batch = await embed.embed(["alpha"], model=pinned(provider="bedrock"))
+
+    assert len(recorder.requests) == 2
+    assert len(batch.vectors) == 1
+
+
+async def test_bedrock_does_not_retry_a_bad_request() -> None:
+    recorder = Recorder(httpx.Response(400, text="bad model"))
+    embed = _bedrock(recorder)
+
+    with pytest.raises(ProviderError, match="400"):
+        await embed.embed(["alpha"], model=pinned(provider="bedrock"))
+
+
+# --- Vertex -----------------------------------------------------------------
+
+
+def _vertex(recorder: Recorder, **kwargs: Any) -> VertexEmbedder:
+    options: dict[str, Any] = {
+        "project": "proj",
+        "location": "europe-west4",
+        "access_token": "token",
+        "base_url": "https://vertex.test",
+        "backoff_seconds": 0.0,
+        "client": _client(recorder),
+    }
+    options.update(kwargs)
+    return VertexEmbedder(provider=VertexProvider(**options), name="vertex-embedder")
+
+
+def _vertex_reply(vectors: list[list[float]], *, counted: int | None = 2) -> httpx.Response:
+    predictions: list[dict[str, Any]] = []
+    for vector in vectors:
+        embeddings: dict[str, Any] = {"values": vector}
+        if counted is not None:
+            embeddings["statistics"] = {"token_count": counted}
+        predictions.append({"embeddings": embeddings})
+    return httpx.Response(200, json={"predictions": predictions})
+
+
+def test_a_google_pin_selects_the_vertex_adapter() -> None:
+    assert isinstance(embedder_for(pinned(provider="google")), VertexEmbedder)
+
+
+async def test_vertex_predicts_with_the_project_location_and_bearer_token() -> None:
+    recorder = Recorder(_vertex_reply([_vector()]))
+    embed = _vertex(recorder)
+
+    batch = await embed.embed(
+        ["alpha"], model=pinned(provider="google", model_id="gemini-embedding-001")
+    )
+
+    request = recorder.requests[0]
+    assert str(request.url) == (
+        "https://vertex.test/v1/projects/proj/locations/europe-west4"
+        "/publishers/google/models/gemini-embedding-001:predict"
+    )
+    assert request.headers["authorization"] == "Bearer token"
+    assert json.loads(request.content) == {
+        "instances": [{"content": "alpha"}],
+        "parameters": {"outputDimensionality": DIMENSIONS},
+    }
+    assert len(batch.vectors) == 1
+    assert batch.usage.input_tokens == 2
+
+
+async def test_vertex_splits_batches_of_more_than_two_hundred_and_fifty() -> None:
+    recorder = Recorder(_vertex_reply([_vector() for _ in range(250)]), _vertex_reply([_vector()]))
+    embed = _vertex(recorder)
+
+    batch = await embed.embed(
+        [f"text-{index}" for index in range(251)],
+        model=pinned(provider="google", model_id="gemini-embedding-001"),
+    )
+
+    assert len(recorder.requests) == 2
+    assert len(json.loads(recorder.requests[0].content)["instances"]) == 250
+    assert len(json.loads(recorder.requests[1].content)["instances"]) == 1
+    assert len(batch.vectors) == 251
+
+
+async def test_vertex_falls_back_to_the_estimate_without_token_counts() -> None:
+    recorder = Recorder(_vertex_reply([_vector(), _vector()], counted=None))
+    embed = _vertex(recorder)
+
+    batch = await embed.embed(
+        ["abcd", "abcdefgh"], model=pinned(provider="google", model_id="gemini-embedding-001")
+    )
+
+    assert batch.usage.input_tokens == 3
+
+
+async def test_vertex_refuses_a_reply_with_the_wrong_number_of_predictions() -> None:
+    recorder = Recorder(_vertex_reply([_vector()]))
+    embed = _vertex(recorder)
+
+    with pytest.raises(ProviderResponseError, match="for 2 input"):
+        await embed.embed(
+            ["alpha", "beta"], model=pinned(provider="google", model_id="gemini-embedding-001")
+        )
+
+
+async def test_vertex_refuses_a_width_that_disagrees_with_the_pin() -> None:
+    recorder = Recorder(_vertex_reply([[0.5, 0.5]]))
+    embed = _vertex(recorder)
+
+    with pytest.raises(ProviderResponseError, match="dimensions"):
+        await embed.embed(["alpha"], model=pinned(provider="google"))
+
+
+async def test_vertex_does_not_retry_a_bad_request() -> None:
+    recorder = Recorder(httpx.Response(400, text="bad request"))
+    embed = _vertex(recorder)
+
+    with pytest.raises(ProviderError, match="400"):
+        await embed.embed(["alpha"], model=pinned(provider="google"))

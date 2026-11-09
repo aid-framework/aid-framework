@@ -26,9 +26,9 @@ Every provider in `SERVED_PROVIDERS` is a row. A check means the generated adapt
 | Provider | Adapter | Tools | Structured output | Streaming | Embeddings | Catalog |
 | --- | --- | --- | --- | --- | --- | --- |
 | `anthropic` | `AnthropicProvider` | yes | yes | yes | <span title="AnthropicProvider does not advertise EMBEDDINGS.">—</span> | 2 models, 2 priced |
-| `bedrock` | `BedrockProvider` | yes | yes | <span title="BedrockProvider does not advertise STREAMING.">—</span> | <span title="BedrockProvider does not advertise EMBEDDINGS.">—</span> | 2 models, 2 priced |
+| `bedrock` | `BedrockProvider` | yes | yes | <span title="BedrockProvider does not advertise STREAMING.">—</span> | yes | 3 models, 3 priced |
 | `gemini` | `GeminiProvider` | yes | yes | yes | <span title="GeminiProvider does not advertise EMBEDDINGS.">—</span> | 1 model, 1 priced |
-| `google` | `VertexProvider` | yes | yes | yes | <span title="VertexProvider does not advertise EMBEDDINGS.">—</span> | 2 models, 2 priced |
+| `google` | `VertexProvider` | yes | yes | yes | yes | 2 models, 2 priced |
 | `openai` | `OpenAICompatibleProvider` | yes | yes | yes | yes | 5 models, 5 priced |
 | `openai-compatible` | `OpenAICompatibleProvider` | yes | yes | yes | yes | <span title="No pinned model or cost profile is published for this provider, so the spec must give an explicit modelId and the call prices as unknown.">—</span> |
 | `fake` | `FakeProvider` | yes | yes | yes | yes | <span title="No pinned model or cost profile is published for this provider, so the spec must give an explicit modelId and the call prices as unknown.">—</span> |
@@ -58,6 +58,7 @@ Each row is behaviour the generator writes for you, the spec key or command that
 | **Capability refusal** | A spec that asks a target for something it cannot serve is refused at plan time with a named diagnostic, not shipped and debugged in production. | `deployments[].target` | [targets](./reference/targets.md#capability-matrix) | `0.1.2` |
 | **Eval coverage** | An HTTP pipeline with no CI eval claiming it is a build error, so a prompt edit cannot ship unmeasured. | `evals[].gate.ci` | [spec](./reference/spec.md#eval) | `0.1.2` |
 | **Retrieval with citations** | A retriever can require that retrieved items carry the source path and offsets a generated answer cites. | `retrievers[].traits` | [spec](./reference/spec.md#retriever) | `0.1.6` |
+| **Embeddings on Bedrock and Vertex AI** | A pinned embedding is routed by its provider, so Titan on Bedrock is signed with SigV4 and Gemini on Vertex AI is sent under the project and bearer token instead of the OpenAI-compatible shape. | `models[].capabilities` | [spec](./reference/spec.md#model) | `0.1.109` |
 | **Guardrail stages** | Policies are evaluated at declared stages, and a failing policy has a declared action rather than a default. | `guardrails[]` | [spec](./reference/spec.md#guardrail) | `0.1.18` |
 | **Unprotected routes are refused** | A POST route that passes caller text to a prompt with no input guardrail fails the build before it can be exposed. | `guardrails[].stages` | [spec](./reference/spec.md#guardrail) | `0.1.18` |
 | **Agents and handoffs** | An agent declares its model, instructions, tools, retrievers and budget; a handoff cycle and an exhausted budget are plan-time errors. | `agents[]` | [spec](./reference/spec.md#agent) | `0.1.19` |
@@ -82,7 +83,7 @@ An absent capability is stated once, here, with the diagnostic that enforces it,
 | --- | --- | --- |
 | Streaming on `ts-vercel` | The Vercel target declares no `streaming` capability, so a spec that needs SSE is refused rather than emitted with a buffered response. | `ir/capability-missing` |
 | Jev as a generation model | Jev answers a declared decision. It is not in `SERVED_PROVIDERS`, so a `models[]` entry naming it has no adapter and is refused. | `ir/provider-unsupported` |
-| Embeddings on a provider with no embeddings endpoint | The Anthropic Messages API and the Bedrock Converse API have no embeddings endpoint, so the adapter does not advertise `embeddings` and a spec that declares it is refused. | `ir/model-capability-missing` |
+| Embeddings on a provider with no embeddings endpoint | The Anthropic Messages API serves chat only, so its adapter does not advertise `embeddings` and a spec that declares it is refused; Bedrock and Vertex AI do advertise it, because each serves an embedding model over `invoke` and `:predict`. | `ir/model-capability-missing` |
 | Streaming on an HTTP API | A deployment whose transport cannot stream is refused instead of buffering the response and calling it streaming. | `ir/deploy-streaming` |
 | `edge` on GCP | Cloud CDN serves static assets and cannot run the app, so the infra planner refuses the plan instead of emitting part of a project. | `cli/infra-cloud-target-unsupported` |
 
