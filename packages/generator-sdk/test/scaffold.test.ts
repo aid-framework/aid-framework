@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: assertions read the emitted shell and Actions expressions literally.
 /**
  * The scaffold tier: a file the generator creates once and then hands over.
  *
@@ -182,7 +183,6 @@ describe('scaffoldEvals', () => {
   });
 
   it('takes the spending ceiling from a repository variable, never an invented default', () => {
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting on GitHub's expression syntax
     expect(file.content).toContain('BUDGET: ${{ vars.AID_COST_BUDGET }}');
     expect(file.content).toContain('aid cost .aid-traces --budget "$BUDGET"');
     // Unset means report-only, so a project that spends more is not failed by a guess.
@@ -368,11 +368,8 @@ describe('scaffoldRelease', () => {
 
   it('builds the Dockerfile from the repository root, tagging the release and the commit', () => {
     expect(file.content).toContain(`-f ${RELEASE_PROFILE.dockerfile}`);
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: the emitted shell variable, asserted literally.
     expect(file.content).toContain('sha="sha-${GITHUB_SHA::7}"');
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: the emitted shell variable, asserted literally.
     expect(file.content).toContain('docker push "${REGISTRY}/${IMAGE}:${tag}"');
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: the emitted shell variable, asserted literally.
     expect(file.content).toContain('docker push "${REGISTRY}/${IMAGE}:${sha}"');
   });
 
@@ -392,6 +389,48 @@ describe('scaffoldRelease', () => {
     for (const reference of uses) {
       expect(reference, reference).toMatch(/^[^@]+@[0-9a-f]{40}$/);
     }
+  });
+
+  it('swaps the token login for the secret pair a registry declares', () => {
+    const docker = scaffoldRelease(
+      {
+        ...RELEASE_PROFILE,
+        images: [
+          {
+            registry: 'docker.io',
+            name: 'acme/support-copilot',
+            deploymentIds: ['api'],
+            usernameSecret: 'DOCKERHUB_USERNAME',
+            tokenSecret: 'DOCKERHUB_TOKEN',
+          },
+        ],
+      },
+      '0.1',
+    );
+
+    expect(docker.content).toContain('      - name: Log in to docker.io');
+    expect(docker.content).toContain(
+      '          REGISTRY_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}',
+    );
+    expect(docker.content).toContain('          REGISTRY_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}');
+    expect(docker.content).toContain('--username "$REGISTRY_USERNAME"');
+    // Nothing reads the workflow token, so the push scope is not requested.
+    expect(docker.content).not.toContain('GITHUB_ACTOR');
+    expect(docker.content).not.toContain('packages: write');
+  });
+
+  it('refuses to emit a login it has no secret names for', () => {
+    // The spec gate reports this first; reaching the scaffold means a hand-built
+    // profile, and `secrets.undefined` would fail on the first tag instead of here.
+    expect(() =>
+      scaffoldRelease(
+        {
+          ...RELEASE_PROFILE,
+          images: [{ registry: 'docker.io', name: 'acme/p', deploymentIds: ['api'] }],
+        },
+        '0.1',
+      ),
+    ).toThrow(/needs `usernameSecret` and `tokenSecret`/);
   });
 });
 

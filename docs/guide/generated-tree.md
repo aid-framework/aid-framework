@@ -81,9 +81,10 @@ directory exists. `release.yml` is scaffolded when a deployment declares `deploy
   `aid infra plan`, which drives `tofu` or `cdk` but does not run `init` itself. The release
   workflow is the one pipeline a tag pushes: it re-checks the tagged tree against the spec,
   then builds the image the deployment named and pushes it to that registry, tagged with both
-  the release name and the commit. Its credential is the token the run already holds, which is
-  why it asks for `packages: write` and nothing wider, and publishing an image is not deploying
-  it - no infrastructure is applied and no service restarts.
+  the release name and the commit. Its credential follows the registry: `ghcr.io` logs in with
+  the token the run already holds and asks for `packages: write` and nothing wider, while
+  `docker.io` (spec `0.16`) reads the two repository secrets the image names. Publishing an
+  image is not deploying it - no infrastructure is applied and no service restarts.
 
 Every file carries the tier in its first line, so a reader can tell without consulting the
 manifest:

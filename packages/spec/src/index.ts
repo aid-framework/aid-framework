@@ -31,6 +31,16 @@ export {
   type ParseResult,
   parseSpecDocument,
 } from './parse.js';
+export {
+  IMAGE_CREDENTIAL_FIELDS,
+  IMAGE_REGISTRIES,
+  IMAGE_REGISTRY_DESCRIPTORS,
+  type ImageCredentialField,
+  type ImageRegistry,
+  imageRegistry,
+  type RegistryAuthKind,
+  type RegistryDescriptor,
+} from './registries.js';
 export { SourceDocument } from './source-document.js';
 
 export {
@@ -70,7 +80,7 @@ import { validateSpec } from './validate.js';
 export const SPEC_VERSION = '0.1';
 
 /** The newest version this build reads. Sections above this are rejected, not ignored. */
-export const SPEC_VERSION_LATEST: SpecVersion = '0.15';
+export const SPEC_VERSION_LATEST: SpecVersion = '0.16';
 
 export interface SpecCheckResult {
   /** True when no diagnostic has `error` severity. Warnings do not fail a check. */

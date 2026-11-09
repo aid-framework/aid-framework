@@ -284,6 +284,22 @@ deployments:
       name: acme/support-copilot
 ```
 
+A registry other than `ghcr.io` names the repository secrets its login reads, because the
+spec holds names and never values (spec `0.16`):
+
+```yaml
+    image:
+      registry: docker.io
+      name: acme/support-copilot
+      usernameSecret: DOCKERHUB_USERNAME
+      tokenSecret: DOCKERHUB_TOKEN
+```
+
+`ghcr.io` needs neither field: the release workflow logs in with the `GITHUB_TOKEN` it
+already holds and asks only for `packages: write`. A spec that names a credential on
+`ghcr.io`, or omits one on `docker.io`, is refused rather than emitting a login that
+cannot work.
+
 ```sh
 aid infra gen --cloud aws
 aid infra plan --cloud aws --iac tofu
@@ -305,6 +321,8 @@ What is refused:
 - An unknown cloud, or a cloud and target pair with no module, such as `edge` on GCP, rather
   than emitting half a project.
 - Streaming on an HTTP API target that cannot carry SSE.
+- An image on a registry the release workflow has no login for, or one whose credential
+  names the registry does not read.
 
 `aid eject` moves a generated file into `business/` and stops generating it. After that the
 file is yours, and the manifest says so instead of re-reporting it as drift.

@@ -12,6 +12,7 @@
  * gates the repository and stops there. Deployment stays a human action, per §12.6.
  */
 
+import { imageRegistry, type RegistryAuthKind } from '@aid-framework/spec';
 import type { GeneratedFile } from './plan.js';
 
 /** The repository CI: the spec gates, then lint/build/test for the app tier. */
@@ -418,6 +419,10 @@ export interface ReleaseImage {
   readonly name: string;
   /** The deployments that declared it, in code-unit order, for the reader. */
   readonly deploymentIds: readonly string[];
+  /** The repository secret naming the account, for a `secret-pair` registry. */
+  readonly usernameSecret?: string;
+  /** The repository secret holding the access token, for a `secret-pair` registry. */
+  readonly tokenSecret?: string;
 }
 
 export interface ReleaseProfile {
@@ -436,10 +441,10 @@ export interface ReleaseProfile {
  *
  * A tag push publishes, because an image tag is a release artifact: two commits cannot
  * push the same tag without one of them being the one a consumer pulls. The registry is
- * whatever the spec declared, and the credential is the `GITHUB_TOKEN` the run already
- * holds -- writing packages with it is why the workflow asks for `packages: write` and
- * nothing else. No long-lived registry password is stored, and there is no `apply` step:
- * publishing an image is not deploying it.
+ * whatever the spec declared, and the login follows that registry's credential path: the
+ * `GITHUB_TOKEN` the run already holds (which is why a `ghcr.io` release asks for
+ * `packages: write`), or the repository secrets the image names, never a password stored
+ * in the repository. There is no `apply` step: publishing an image is not deploying it.
  *
  * The build is the one the Dockerfile's own header documents, so the workflow and the
  * file agree by construction: the context is the repository root and the file is named
@@ -454,13 +459,30 @@ export function scaffoldRelease(profile: ReleaseProfile, cliRange: string): Gene
     `            image: ${image.name}`,
   ]);
 
+  const logins = releaseLogins(profile.images);
+  // One login step is the common case and stays unguarded, which also keeps a
+  // `ghcr.io`-only release byte-for-byte what it was before a second registry existed.
+  const loginSteps = logins.flatMap((login) =>
+    loginStep(login, logins.length === 1 ? undefined : matrixCondition(login)),
+  );
+  const tokenOnly = logins.every((login) => login.authKind === 'github-token');
+  const credentialLines = tokenOnly
+    ? [
+        '# `deployments[].image`, and the credential is the token GitHub already issues, so',
+        '# there is no registry password to store. Publishing is not deploying: nothing here',
+        '# applies infrastructure or restarts a service.',
+      ]
+    : [
+        '# `deployments[].image`, and each login uses credentials the workflow already has or',
+        '# the repository secrets it names, so no credential value is stored here. Publishing',
+        '# is not deploying: nothing here applies infrastructure or restarts a service.',
+      ];
+
   const content = [
     `# Generated once by \`aid gen\` for the \`${profile.target}\` target, then yours.`,
     '# A scaffold file is never overwritten and never recorded in aid.manifest.json.',
     '# A tag push publishes the image the spec names. The registry is the one declared in',
-    '# `deployments[].image`, and the credential is the token GitHub already issues, so',
-    '# there is no registry password to store. Publishing is not deploying: nothing here',
-    '# applies infrastructure or restarts a service.',
+    ...credentialLines,
     'name: Release',
     '',
     'on:',
@@ -476,7 +498,8 @@ export function scaffoldRelease(profile: ReleaseProfile, cliRange: string): Gene
     '',
     'permissions:',
     '  contents: read',
-    '  packages: write',
+    // `packages: write` is the GITHUB_TOKEN scope; a declared secret pair needs no scope.
+    ...(logins.some((login) => login.authKind === 'github-token') ? ['  packages: write'] : []),
     '',
     'jobs:',
     '  guard:',
@@ -515,12 +538,11 @@ export function scaffoldRelease(profile: ReleaseProfile, cliRange: string): Gene
     '      IMAGE: ${{ matrix.image }}',
     '    steps:',
     `      - uses: ${ACTION_PINS.checkout}`,
-    '      - name: Log in to the registry',
-    '        env:',
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
-    '          REGISTRY_TOKEN: ${{ github.token }}',
-    '        # The password reaches docker on stdin, so it is not part of the process list.',
-    '        run: echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" --username "$GITHUB_ACTOR" --password-stdin',
+    // Only a mixed profile needs the guard; a single login applies to every entry.
+    ...(logins.length === 1
+      ? []
+      : ['      # One login per credential path; the condition selects the entry it serves.']),
+    ...loginSteps,
     '      - name: Build and publish',
     '        run: |',
     // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell variable, emitted literally.
@@ -544,6 +566,94 @@ export function scaffoldRelease(profile: ReleaseProfile, cliRange: string): Gene
   ].join('\n');
 
   return { path: RELEASE_WORKFLOW_PATH, content, owner: 'scaffold' };
+}
+
+/** One login, shared by every image entry that resolves to the same credential. */
+interface ReleaseLogin {
+  readonly authKind: RegistryAuthKind;
+  readonly registry: string;
+  readonly usernameSecret?: string;
+  readonly tokenSecret?: string;
+  readonly images: readonly ReleaseImage[];
+}
+
+/**
+ * Groups the matrix entries by the credential they need.
+ *
+ * Two images pushed under one Docker Hub account declare the same two secret names and
+ * share a step; two accounts do not, and each gets its own guarded step. The grouping is
+ * by the literal secret names, so the emitted `secrets.<NAME>` references are static.
+ */
+function releaseLogins(images: readonly ReleaseImage[]): ReleaseLogin[] {
+  const byKey = new Map<
+    string,
+    {
+      authKind: RegistryAuthKind;
+      registry: string;
+      usernameSecret?: string;
+      tokenSecret?: string;
+      images: ReleaseImage[];
+    }
+  >();
+  for (const image of images) {
+    const authKind: RegistryAuthKind = imageRegistry(image.registry)?.authKind ?? 'github-token';
+    const usernameSecret = authKind === 'secret-pair' ? image.usernameSecret : undefined;
+    const tokenSecret = authKind === 'secret-pair' ? image.tokenSecret : undefined;
+    if (authKind === 'secret-pair' && (usernameSecret === undefined || tokenSecret === undefined)) {
+      // The spec gate refuses this before a generator runs; reaching it means a profile
+      // was assembled by hand, and `secrets.undefined` would fail on the first tag rather
+      // than here.
+      throw new Error(
+        `release image ${image.registry}/${image.name} needs \`usernameSecret\` and \`tokenSecret\`; ${image.registry} authenticates with a secret pair`,
+      );
+    }
+    const key = [image.registry, authKind, usernameSecret ?? '', tokenSecret ?? ''].join('\u0000');
+    const existing = byKey.get(key);
+    if (existing === undefined) {
+      byKey.set(key, {
+        authKind,
+        registry: image.registry,
+        ...(usernameSecret === undefined ? {} : { usernameSecret }),
+        ...(tokenSecret === undefined ? {} : { tokenSecret }),
+        images: [image],
+      });
+    } else {
+      existing.images.push(image);
+    }
+  }
+  return [...byKey.values()];
+}
+
+/** The `if:` that selects the matrix entries a guarded login serves. */
+function matrixCondition(login: ReleaseLogin): string {
+  // Selected by image, not by registry: two accounts on the same registry are two
+  // variants, and a registry-only guard would run both logins for both.
+  return login.images.map((image) => `matrix.image == '${image.name}'`).join(' || ');
+}
+
+/** The login step for one credential path, unguarded when it is the only one. */
+function loginStep(login: ReleaseLogin, condition: string | undefined): string[] {
+  const guard = condition === undefined ? [] : [`        if: ${condition}`];
+  if (login.authKind === 'github-token') {
+    return [
+      '      - name: Log in to the registry',
+      ...guard,
+      '        env:',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
+      '          REGISTRY_TOKEN: ${{ github.token }}',
+      '        # The password reaches docker on stdin, so it is not part of the process list.',
+      '        run: echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" --username "$GITHUB_ACTOR" --password-stdin',
+    ];
+  }
+  return [
+    `      - name: Log in to ${login.registry}`,
+    ...guard,
+    '        env:',
+    `          REGISTRY_USERNAME: \${{ secrets.${login.usernameSecret} }}`,
+    `          REGISTRY_TOKEN: \${{ secrets.${login.tokenSecret} }}`,
+    '        # The password reaches docker on stdin, so it is not part of the process list.',
+    '        run: echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" --username "$REGISTRY_USERNAME" --password-stdin',
+  ];
 }
 
 export interface InfraPlanProfile {

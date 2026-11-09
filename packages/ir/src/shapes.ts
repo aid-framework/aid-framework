@@ -13,6 +13,7 @@
  * not arrays.
  */
 
+import type { ImageRegistry } from '@aid-framework/spec';
 import type { ModelCapability, RequiredCapability } from './capabilities.js';
 import type { PolicyExpr } from './policy/index.js';
 import type { PredicateNode } from './predicate/index.js';
@@ -904,20 +905,33 @@ export type DeploymentTarget = (typeof DEPLOY_TARGETS)[number];
 /**
  * The registries a container image may be published to.
  *
- * Closed, and `ghcr.io` is the only entry for now: a generated release workflow pushes
- * with the `GITHUB_TOKEN` it already holds, while every other registry needs a
- * credential (an ECR role, a Docker Hub token) the spec cannot hold without inventing
- * one. Extending this list means adding the push path that makes the new entry true.
+ * The table itself lives in `@aid-framework/spec` (`registries.ts`), next to the schema
+ * enum and the credential check it has to agree with; the IR re-exports it so generators
+ * and the CLI have one import for the shape and its values.
  */
-export const IMAGE_REGISTRIES = ['ghcr.io'] as const;
-
-export type ImageRegistry = (typeof IMAGE_REGISTRIES)[number];
+export {
+  IMAGE_CREDENTIAL_FIELDS,
+  IMAGE_REGISTRIES,
+  IMAGE_REGISTRY_DESCRIPTORS,
+  type ImageCredentialField,
+  type ImageRegistry,
+  imageRegistry,
+  type RegistryAuthKind,
+  type RegistryDescriptor,
+} from '@aid-framework/spec';
 
 /** Where the image for a container deployment is published; there is one image per project. */
 export interface DeploymentImageShape {
   registry: ImageRegistry;
   /** Repository path under the registry, without the host: `acme/support-copilot`. */
   name: string;
+  /**
+   * The repository secret holding the account name, for a `secret-pair` registry. Absent
+   * on a `github-token` registry, which has no account to name.
+   */
+  usernameSecret?: string;
+  /** The repository secret holding the access token, for a `secret-pair` registry. */
+  tokenSecret?: string;
 }
 
 /**
@@ -960,8 +974,9 @@ export interface DeploymentShape {
   env: { name: string; value?: string; secret?: boolean }[];
   /**
    * Where a container image is published. Present only on a `target: container`
-   * deployment, and only from spec 0.4: the registry is a closed set (`ghcr.io`), so a
-   * release workflow can push with a token the repository already has.
+   * deployment, and only from spec 0.4. The registry is one of
+   * `IMAGE_REGISTRY_DESCRIPTORS`, and a `secret-pair` registry carries the *names* of the
+   * repository secrets the release workflow logs in with, never their values.
    */
   image?: DeploymentImageShape;
   /**

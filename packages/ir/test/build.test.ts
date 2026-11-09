@@ -611,11 +611,76 @@ describe('deployments', () => {
       specVersion: '0.4',
       project: { name: 'p' },
       deployments: {
-        api: { target: 'container', secrets: [], image: { registry: 'docker.io', name: 'acme/p' } },
+        api: { target: 'container', secrets: [], image: { registry: 'quay.io', name: 'acme/p' } },
       },
     });
     expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       IR_DIAGNOSTIC_CODES.deployImageIncomplete,
+    );
+    expect(ir.deployments[0]?.image).toBeUndefined();
+  });
+
+  it('carries the declared credentials onto the image', () => {
+    const { ir, diagnostics } = buildIR({
+      specVersion: '0.16',
+      project: { name: 'p' },
+      deployments: {
+        api: {
+          target: 'container',
+          secrets: [],
+          image: {
+            registry: 'docker.io',
+            name: 'acme/p',
+            usernameSecret: 'DOCKERHUB_USERNAME',
+            tokenSecret: 'DOCKERHUB_TOKEN',
+          },
+        },
+      },
+    });
+    expect(diagnostics).toEqual([]);
+    expect(ir.deployments[0]?.image).toEqual({
+      registry: 'docker.io',
+      name: 'acme/p',
+      usernameSecret: 'DOCKERHUB_USERNAME',
+      tokenSecret: 'DOCKERHUB_TOKEN',
+    });
+  });
+
+  it('reports a registry whose login it cannot build', () => {
+    // Validation rejects this, so reaching the builder means the document bypassed it;
+    // emitting the image anyway would produce a workflow that fails on its first tag.
+    const { ir, diagnostics } = buildIR({
+      specVersion: '0.16',
+      project: { name: 'p' },
+      deployments: {
+        api: { target: 'container', secrets: [], image: { registry: 'docker.io', name: 'acme/p' } },
+      },
+    });
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      IR_DIAGNOSTIC_CODES.deployImageCredentials,
+    );
+    expect(ir.deployments[0]?.image).toBeUndefined();
+  });
+
+  it('reports a credential the registry does not read', () => {
+    const { ir, diagnostics } = buildIR({
+      specVersion: '0.16',
+      project: { name: 'p' },
+      deployments: {
+        api: {
+          target: 'container',
+          secrets: [],
+          image: {
+            registry: 'ghcr.io',
+            name: 'acme/p',
+            usernameSecret: 'DOCKERHUB_USERNAME',
+            tokenSecret: 'DOCKERHUB_TOKEN',
+          },
+        },
+      },
+    });
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      IR_DIAGNOSTIC_CODES.deployImageCredentials,
     );
     expect(ir.deployments[0]?.image).toBeUndefined();
   });
