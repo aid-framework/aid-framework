@@ -24,6 +24,7 @@ export {
   ACTION_FLAG,
   ACTION_REDACT,
   DETECTORS,
+  type DecisionAsker,
   type Detection,
   detect,
   fired,
@@ -36,6 +37,7 @@ export {
 } from './guardrails.js';
 export {
   type AgentDefinition,
+  type DecisionDefinition,
   fromIr,
   GUARDRAIL_ACTIONS,
   GUARDRAIL_POLICIES,

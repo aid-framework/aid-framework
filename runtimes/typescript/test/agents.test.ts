@@ -92,6 +92,9 @@ function guardrailDefinition(overrides: Partial<GuardrailDefinition> = {}): Guar
     message: 'blocked by pii',
     fallbackPrompt: undefined,
     log: true,
+    decision: undefined,
+    onDecision: {},
+    minConfidence: 0,
     ...overrides,
   };
 }

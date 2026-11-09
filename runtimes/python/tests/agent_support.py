@@ -117,6 +117,9 @@ def guardrail_def(
     redact: Sequence[str] = (),
     tools: Sequence[str] = (),
     message: str = "blocked by a guardrail",
+    decision: str | None = None,
+    on_decision: Sequence[tuple[str, str]] | None = None,
+    min_confidence: float | None = None,
     fallback_prompt: str | None = None,
     log: bool = True,
 ) -> dict[str, Any]:
@@ -124,7 +127,7 @@ def guardrail_def(
     on_fail: dict[str, Any] = {"message": message, "log": log}
     if fallback_prompt is not None:
         on_fail["fallbackPrompt"] = fallback_prompt
-    return {
+    entry: dict[str, Any] = {
         "id": guardrail_id,
         "stages": list(stages),
         "policies": list(policies),
@@ -134,6 +137,13 @@ def guardrail_def(
         "onFail": on_fail,
         "traits": [],
     }
+    if decision is not None:
+        entry["decision"] = decision
+    if on_decision is not None:
+        entry["onDecision"] = dict(on_decision)
+    if min_confidence is not None:
+        entry["minConfidence"] = min_confidence
+    return entry
 
 
 def memory_def(
@@ -215,6 +225,7 @@ def document(
     tools: Sequence[Mapping[str, Any]] = (),
     memory: Sequence[Mapping[str, Any]] = (),
     guardrails: Sequence[Mapping[str, Any]] = (),
+    decisions: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     return {
         "version": "0.2.0",
@@ -223,6 +234,7 @@ def document(
         "tools": [dict(entry) for entry in tools],
         "memory": [dict(entry) for entry in memory],
         "guardrails": [dict(entry) for entry in guardrails],
+        "decisions": [dict(entry) for entry in decisions],
         "agents": [dict(entry) for entry in agents],
     }
 
@@ -234,6 +246,7 @@ def solo(
     tool_specs: Sequence[Mapping[str, Any]] = (),
     memory: Sequence[Mapping[str, Any]] = (),
     guardrail_specs: Sequence[Mapping[str, Any]] = (),
+    decisions: Sequence[Mapping[str, Any]] = (),
     models: Sequence[Mapping[str, Any]] | None = None,
     **agent_fields: Any,
 ) -> dict[str, Any]:
@@ -249,6 +262,7 @@ def solo(
         tools=tool_specs,
         memory=memory,
         guardrails=guardrail_specs,
+        decisions=decisions,
         agents=[
             agent_def(
                 "solo",

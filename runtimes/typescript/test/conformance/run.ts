@@ -1052,6 +1052,14 @@ function guardrailDefinition(data: Json): GuardrailDefinition {
         ? undefined
         : asString(onFail.fallbackPrompt, 'guardrail.onFail.fallbackPrompt'),
     log: onFail.log === true,
+    decision:
+      entry.decision === undefined ? undefined : asString(entry.decision, 'guardrail.decision'),
+    onDecision: Object.fromEntries(
+      Object.entries(asRecord(entry.onDecision ?? {}, 'guardrail.onDecision')).map(
+        ([label, action]) => [label, asString(action, `guardrail.onDecision.${label}`)],
+      ),
+    ),
+    minConfidence: typeof entry.minConfidence === 'number' ? entry.minConfidence : 0,
   };
 }
 

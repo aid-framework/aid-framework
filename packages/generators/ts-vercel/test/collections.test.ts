@@ -231,9 +231,10 @@ describe('the guardrails collection', () => {
     expect(refusalCodes({ guardrails: redacting })).toEqual([]);
   });
 
-  it('refuses a guardrail answered by a decision, which this engine cannot ask', () => {
-    // The ts-vercel engine is synchronous and owns no decision client, so the check
-    // would never run. Refusing keeps the generated app from silently allowing it.
+  it('accepts a guardrail answered by a decision, which the pipeline awaits', () => {
+    // The stage check is emitted as `checkInputAsync`, so the pipeline route can ask
+    // the classifier without blocking. A *guard step* still refuses this pair, because
+    // a step is emitted synchronously; see the `checkGuardStep` cases.
     const decided = `guardrails:
   handbook_pii:
     stages: [input]
@@ -245,9 +246,7 @@ describe('the guardrails collection', () => {
       message: The payload was refused.
       log: true`;
 
-    expect(refusalCodes({ decisions: DECISIONS, guardrails: decided }, '0.7')).toContain(
-      'guardrail-unsupported',
-    );
+    expect(refusalCodes({ decisions: DECISIONS, guardrails: decided }, '0.7')).toEqual([]);
   });
 
   it('refuses a guardrail a managed service evaluates, which this target cannot call', () => {

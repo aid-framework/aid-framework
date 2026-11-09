@@ -27,7 +27,7 @@
  * `text` on the first three -- the validator refuses anything else at plan time.
  */
 
-import type { GuardrailShape, IR } from '@aid-framework/ir';
+import type { DecisionShape, GuardrailShape, IR } from '@aid-framework/ir';
 
 import { stringLiteral } from '../names.js';
 import { type EmittedFile, generated, paths } from './file.js';
@@ -100,8 +100,68 @@ function definition(guardrail: GuardrailShape): string {
         : stringLiteral(guardrail.onFail.fallbackPrompt),
     ],
     ['log', guardrail.onFail.log ? 'true' : 'false'],
+    [
+      'decision',
+      guardrail.decision === undefined ? 'undefined' : stringLiteral(guardrail.decision),
+    ],
+    [
+      'onDecision',
+      objectLiteral(
+        Object.entries(guardrail.onDecision ?? {}).map(([label, action]) => [
+          stringLiteral(label),
+          stringLiteral(action),
+        ]),
+        '  ',
+      ),
+    ],
+    ['minConfidence', String(guardrail.minConfidence ?? 0)],
   ];
   return objectLiteral(entries, '  ');
+}
+
+/** The labels a `choice` decision offers; a record names each label's intent. */
+export function decisionLabels(decision: DecisionShape): string[] {
+  const criteria = decision.criteria;
+  if (criteria === undefined) return [];
+  return Array.isArray(criteria) ? [...criteria] : Object.keys(criteria);
+}
+
+/** The `DecisionDefinition` literal for one decision a guardrail asks. */
+export function decisionDefinition(decision: DecisionShape, indent = ''): string {
+  return objectLiteral(
+    [
+      ['id', stringLiteral(decision.id)],
+      ['model', stringLiteral(decision.model)],
+      ['instructions', stringLiteral(decision.instructions)],
+      ['criteria', stringArray(decisionLabels(decision))],
+    ],
+    indent,
+  );
+}
+
+/** One `[id, definition]` entry of the decision table. */
+function decisionEntry(decision: DecisionShape): string {
+  return [
+    '  [',
+    `    ${stringLiteral(decision.id)},`,
+    `    ${decisionDefinition(decision, '    ')},`,
+    '  ],',
+  ].join('\n');
+}
+
+/**
+ * The decisions the guardrails in this document actually ask, in IR order.
+ *
+ * A decision declared but never named by a guardrail is not emitted: the generated
+ * module is the wiring a guardrail needs, not a copy of the document's analysis.
+ */
+function referencedDecisions(ir: IR): DecisionShape[] {
+  const used = new Set(
+    orderedGuardrails(ir)
+      .map((guardrail) => guardrail.decision)
+      .filter((id): id is string => id !== undefined),
+  );
+  return (ir.decisions ?? []).filter((decision) => used.has(decision.id));
 }
 
 /**
@@ -168,11 +228,13 @@ const BLOCK = [
 
 export function emitGuardrails(ir: IR): EmittedFile {
   const definitions = orderedGuardrails(ir).map(definition);
+  const decisions = referencedDecisions(ir);
   return generated(
     paths.guardrails,
     moduleText(
       importStatement('@aid-framework/runtime', [
         { name: 'ConfigurationError', type: false },
+        ...(decisions.length > 0 ? [{ name: 'DecisionDefinition', type: true }] : []),
         { name: 'GuardrailBlockedError', type: false },
         { name: 'GuardrailDefinition', type: true },
         { name: 'GuardrailEngine', type: false },
@@ -207,9 +269,21 @@ export function emitGuardrails(ir: IR): EmittedFile {
         '  GUARDRAILS.map((guardrail) => [guardrail.id, guardrail] as const),',
         ');',
       ].join('\n'),
+      ...(decisions.length === 0
+        ? []
+        : [
+            [
+              '/** The decisions these guardrails ask, by id. */',
+              'export const DECISIONS: ReadonlyMap<string, DecisionDefinition> = new Map([',
+              ...decisions.map(decisionEntry),
+              ']);',
+            ].join('\n'),
+          ]),
       [
         "/** The engine every call site shares, over this app's declarations. */",
-        'export const ENGINE = new GuardrailEngine(BY_ID);',
+        decisions.length === 0
+          ? 'export const ENGINE = new GuardrailEngine(BY_ID);'
+          : 'export const ENGINE = new GuardrailEngine(BY_ID, { decisions: DECISIONS });',
       ].join('\n'),
       [
         '/** The declarations that run at one stage. */',

@@ -33,9 +33,11 @@
  * run may.
  */
 
+import type { DecisionResponse } from '../decisions.js';
+import { DecisionClient, DecisionQuestion } from '../decisions.js';
 import { ConfigurationError, GuardrailBlockedError } from '../errors.js';
 import { repr } from '../internal/json.js';
-import type { GuardrailDefinition } from './ir.js';
+import type { DecisionDefinition, GuardrailDefinition } from './ir.js';
 
 export type GuardrailStage = 'input' | 'output' | 'retrieval' | 'tool-call';
 export type GuardrailAction = 'block' | 'redact' | 'flag' | 'escalate';
@@ -44,6 +46,21 @@ export const ACTION_BLOCK: GuardrailAction = 'block';
 export const ACTION_REDACT: GuardrailAction = 'redact';
 export const ACTION_FLAG: GuardrailAction = 'flag';
 export const ACTION_ESCALATE: GuardrailAction = 'escalate';
+
+/**
+ * What a decision answer can mean. `allow` is not a guardrail action: it is the one
+ * answer that produces no record at all, because "the model saw nothing wrong" is the
+ * absence of a finding rather than a finding that says so.
+ */
+export const ACTION_ALLOW = 'allow';
+
+/** The outcomes an `onDecision` map may name. */
+export const DECISION_OUTCOMES: ReadonlySet<string> = new Set([
+  ACTION_ALLOW,
+  ACTION_BLOCK,
+  ACTION_FLAG,
+  ACTION_ESCALATE,
+]);
 
 export const GUARDRAIL_STAGES: readonly GuardrailStage[] = [
   'input',
@@ -75,6 +92,12 @@ export interface GuardrailRecord {
   readonly action: GuardrailAction;
   readonly policies: readonly string[];
   readonly message: string;
+  /** The decision that answered, when a model rather than a detector decided. */
+  readonly decision?: string;
+  /** The label the decision answered with, when it answered. */
+  readonly label?: string;
+  /** The confidence the answer carried, when the question type reports one. */
+  readonly confidence?: number;
 }
 
 /**
@@ -257,12 +280,40 @@ function texts(payload: Readonly<Record<string, unknown>>): Array<[string, strin
   return pairs;
 }
 
+/** The narrow decision seam the engine needs; a test can supply its own. */
+export interface DecisionAsker {
+  decide(options: {
+    readonly model: string;
+    readonly state: unknown;
+    readonly questions: Readonly<Record<string, DecisionQuestion>>;
+    readonly reproducible?: boolean;
+  }): Promise<DecisionResponse>;
+}
+
+export interface GuardrailEngineOptions {
+  /** The decisions this app's guardrails may ask, keyed by decision id. */
+  readonly decisions?: ReadonlyMap<string, DecisionDefinition>;
+  /**
+   * Built on first use, not at import: an app with no TypeSafe key must still boot when
+   * no request reaches a decision-backed guardrail.
+   */
+  readonly decisionClient?: () => DecisionAsker;
+}
+
 /** Evaluates an agent's guardrails at one stage. */
 export class GuardrailEngine {
   readonly #declared: ReadonlyMap<string, GuardrailDefinition>;
+  readonly #decisions: ReadonlyMap<string, DecisionDefinition>;
+  readonly #ask: () => DecisionAsker;
+  #client: DecisionAsker | undefined;
 
-  constructor(guardrails?: ReadonlyMap<string, GuardrailDefinition>) {
+  constructor(
+    guardrails?: ReadonlyMap<string, GuardrailDefinition>,
+    options: GuardrailEngineOptions = {},
+  ) {
     this.#declared = new Map(guardrails ?? []);
+    this.#decisions = new Map(options.decisions ?? []);
+    this.#ask = options.decisionClient ?? (() => new DecisionClient());
   }
 
   declared(guardrailId: string): GuardrailDefinition | undefined {
@@ -301,6 +352,41 @@ export class GuardrailEngine {
     return this.check('tool-call', guardrails, { ...arguments_ }, toolId);
   }
 
+  /**
+   * The `input` stage when a guardrail is answered by a decision.
+   *
+   * A decision is a network round trip, so the synchronous `checkInput` cannot ask one.
+   * This is the twin a caller awaits when the spec declares decision-backed guardrails.
+   */
+  async checkInputAsync(
+    guardrails: readonly GuardrailDefinition[],
+    text: string,
+  ): Promise<GuardrailVerdict> {
+    return this.checkAsync('input', guardrails, { text }, undefined);
+  }
+
+  async checkOutputAsync(
+    guardrails: readonly GuardrailDefinition[],
+    text: string,
+  ): Promise<GuardrailVerdict> {
+    return this.checkAsync('output', guardrails, { text }, undefined);
+  }
+
+  async checkRetrievalAsync(
+    guardrails: readonly GuardrailDefinition[],
+    results: readonly string[],
+  ): Promise<GuardrailVerdict> {
+    return this.checkAsync('retrieval', guardrails, { text: results.join('\n') }, undefined);
+  }
+
+  async checkToolCallAsync(
+    guardrails: readonly GuardrailDefinition[],
+    toolId: string,
+    arguments_: Readonly<Record<string, unknown>>,
+  ): Promise<GuardrailVerdict> {
+    return this.checkAsync('tool-call', guardrails, { ...arguments_ }, toolId);
+  }
+
   check(
     stage: GuardrailStage,
     guardrails: readonly GuardrailDefinition[],
@@ -314,7 +400,19 @@ export class GuardrailEngine {
     const firedGuardrails: GuardrailDefinition[] = [];
     for (const guardrail of applicable) {
       const policies = firingPolicies(guardrail, stage, payload);
-      if (policies.length === 0) continue;
+      if (policies.length === 0) {
+        if (guardrail.decision !== undefined) {
+          // Fail closed rather than skip: a synchronous caller cannot await the model,
+          // and returning "no violation" would be an allow nobody declared. The agent
+          // loop and the generated routes call the async variant instead.
+          throw new GuardrailBlockedError(
+            guardrail.id,
+            stage,
+            `guardrail is answered by decision ${repr(guardrail.decision)}, which needs the async check`,
+          );
+        }
+        continue;
+      }
       firedGuardrails.push(guardrail);
       records.push({
         guardrail: guardrail.id,
@@ -352,6 +450,197 @@ export class GuardrailEngine {
       deciding,
       text: textOf(redacted),
       arguments: { ...redacted },
+    };
+  }
+
+  /**
+   * One stage, allowing the guardrails that need an await.
+   *
+   * Order and precedence are the synchronous path's: a policy hit is recorded before the
+   * decision is considered, declaration order still decides between comparable actions,
+   * and `block` still outranks it. A policy hit is a finding the detectors made locally,
+   * so the model is not asked to second-guess it.
+   */
+  async checkAsync(
+    stage: GuardrailStage,
+    guardrails: readonly GuardrailDefinition[],
+    payload: Readonly<Record<string, unknown>>,
+    toolId: string | undefined,
+  ): Promise<GuardrailVerdict> {
+    const applicable = guardrails.filter(
+      (guardrail) => guardrail.stages.includes(stage) && covers(guardrail, stage, toolId),
+    );
+    const records: GuardrailRecord[] = [];
+    const firedGuardrails: GuardrailDefinition[] = [];
+    for (const guardrail of applicable) {
+      const policies = firingPolicies(guardrail, stage, payload);
+      let record: GuardrailRecord | undefined;
+      if (policies.length > 0) {
+        record = {
+          guardrail: guardrail.id,
+          stage,
+          action: actionOf(guardrail),
+          policies,
+          message: guardrail.message,
+        };
+      } else if (guardrail.decision !== undefined) {
+        record = await this.#askDecision(guardrail, stage, textOf(payload));
+      }
+      if (record === undefined) continue;
+      firedGuardrails.push(guardrail);
+      records.push(record);
+    }
+
+    const deciding = decide(records);
+    if (deciding === undefined) {
+      return {
+        stage,
+        records: [],
+        action: undefined,
+        deciding: undefined,
+        text: textOf(payload),
+        arguments: { ...payload },
+      };
+    }
+
+    let redacted = payload;
+    if (deciding.action === ACTION_REDACT) {
+      redacted = redact(
+        stage,
+        firedGuardrails.filter((guardrail) => guardrail.action === ACTION_REDACT),
+        payload,
+      );
+    }
+    return {
+      stage,
+      records,
+      action: deciding.action,
+      deciding,
+      text: textOf(redacted),
+      arguments: { ...redacted },
+    };
+  }
+
+  /**
+   * Ask one `choice` decision and turn its label into a record, or `undefined`.
+   *
+   * Everything that is not a usable answer is a {@link GuardrailBlockedError}: an
+   * undeclared decision, an unmapped label, a confidence below the declared floor, or a
+   * call that raised. That is the same rule the policy path follows -- there is no path
+   * from "the check could not run" to "no violation found".
+   */
+  async #askDecision(
+    guardrail: GuardrailDefinition,
+    stage: GuardrailStage,
+    text: string,
+  ): Promise<GuardrailRecord | undefined> {
+    const name = guardrail.decision ?? '';
+    const definition = this.#decisions.get(name);
+    if (definition === undefined) {
+      throw new GuardrailBlockedError(
+        guardrail.id,
+        stage,
+        `decision ${repr(name)} has no definition in this runtime`,
+      );
+    }
+    const outcomes = guardrail.onDecision;
+    if (Object.keys(outcomes).length === 0) {
+      throw new GuardrailBlockedError(
+        guardrail.id,
+        stage,
+        `decision ${repr(name)} maps no answer label, so no answer could be acted on`,
+      );
+    }
+    this.#client ??= this.#ask();
+    const question = new DecisionQuestion({
+      type: 'choice',
+      instructions: definition.instructions,
+      criteria: definition.criteria,
+    });
+    let response: DecisionResponse;
+    try {
+      response = await this.#client.decide({
+        model: definition.model,
+        state: text,
+        questions: { [name]: question },
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new GuardrailBlockedError(
+        guardrail.id,
+        stage,
+        `decision ${repr(name)} could not answer: ${detail}`,
+      );
+    }
+
+    const answer = response.answers[name];
+    if (answer === undefined) {
+      throw new GuardrailBlockedError(
+        guardrail.id,
+        stage,
+        `decision ${repr(name)} returned no answer for its own question`,
+      );
+    }
+    const label = answer.choice;
+    if (label === undefined) {
+      throw new GuardrailBlockedError(
+        guardrail.id,
+        stage,
+        `decision ${repr(name)} returned an answer with no choice`,
+      );
+    }
+    if (!Object.hasOwn(outcomes, label)) {
+      throw new GuardrailBlockedError(
+        guardrail.id,
+        stage,
+        `decision ${repr(name)} answered ${repr(label)}, which this guardrail does not map`,
+      );
+    }
+    const floor = guardrail.minConfidence;
+    if (floor > 0 && answer.confidence === undefined) {
+      // A `noul` answer carries no confidence, and the wire contract forbids one on it.
+      // A floor that cannot be read must not pass: treating the missing value as "no
+      // opinion, therefore allow" is exactly the failure this check exists to stop.
+      throw new GuardrailBlockedError(
+        guardrail.id,
+        stage,
+        `decision ${repr(name)} answered without a confidence, and this guardrail ` +
+          `requires at least ${floor}`,
+      );
+    }
+    if (answer.confidence !== undefined && answer.confidence < floor) {
+      throw new GuardrailBlockedError(
+        guardrail.id,
+        stage,
+        `decision ${repr(name)} answered ${repr(label)} with confidence ` +
+          `${answer.confidence}, below the declared minimum ${floor}`,
+      );
+    }
+    const outcome = outcomes[label];
+    if (outcome === undefined) {
+      throw new GuardrailBlockedError(
+        guardrail.id,
+        stage,
+        `decision ${repr(name)} maps ${repr(label)} to no outcome`,
+      );
+    }
+    if (!DECISION_OUTCOMES.has(outcome)) {
+      throw new GuardrailBlockedError(
+        guardrail.id,
+        stage,
+        `decision ${repr(name)} maps ${repr(label)} to unknown outcome ${repr(outcome)}`,
+      );
+    }
+    if (outcome === ACTION_ALLOW) return undefined;
+    return {
+      guardrail: guardrail.id,
+      stage,
+      action: outcome as GuardrailAction,
+      policies: [],
+      message: guardrail.message,
+      decision: name,
+      label,
+      confidence: answer.confidence,
     };
   }
 }

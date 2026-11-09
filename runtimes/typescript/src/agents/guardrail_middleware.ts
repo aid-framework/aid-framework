@@ -89,7 +89,7 @@ export function guardrailMiddleware(options: GuardrailMiddlewareOptions): AgentM
       if (call.name === DELEGATE_TOOL) return await handler(request);
 
       host.authorize(frame.agent, call, principal);
-      const guarded = host.guardrailToolCalls(frame, [call], memoryKey);
+      const guarded = await host.guardrailToolCalls(frame, [call], memoryKey);
       if (guarded.paused !== undefined) throw new HaltError(guarded.paused);
       const rewritten = guarded.calls[0];
       if (
