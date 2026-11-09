@@ -5,8 +5,9 @@
  * it declares the capability. The Python `ModelGateway.stream()` produces SSE bytes
  * (Phase 2 L5) and the py-fastapi generator now emits a `text/event-stream` branch on
  * the pipeline route (P7a), so py-fastapi declares `streaming` and this gate passes for
- * it. The TypeScript gateway still raises `FeatureDeferredError` (ratified L6), so the
- * TypeScript target still declares nothing and still fails closed here.
+ * it. The TypeScript runtime's `ModelGateway.stream` serves SSE too, but the ts-vercel
+ * generator does not emit a streaming route yet, so that target still declares nothing
+ * and still fails closed here.
  *
  * The decision is read from the injected declarations rather than hard-coded, which is
  * what keeps the gate honest in both directions: it fails while a target has no

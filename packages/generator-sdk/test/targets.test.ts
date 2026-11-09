@@ -78,7 +78,8 @@ describe('the py-fastapi declaration', () => {
     // Defect D-1 was this declaration against a runtime that raised
     // `FeatureDeferredError`. It is declared again because the runtime implements
     // `ModelGateway.stream()` and the generator emits the `Accept: text/event-stream`
-    // branch that calls it; the TypeScript target still omits it, which is L6's work.
+    // branch that calls it; the TypeScript target still omits it, because its emitted
+    // route buffers even though the TypeScript runtime now streams too.
     expect(PY_FASTAPI_MANIFEST.capabilities).toContain('streaming');
     expect(PY_FASTAPI_MANIFEST_INPUT.capabilities).toContain('streaming');
   });

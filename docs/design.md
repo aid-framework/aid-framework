@@ -948,9 +948,11 @@ interface Generator {
   version: string;
   irRange: string;                    // semver range, e.g. '^1.0'
   capabilities: TargetCapability[];   // streaming, tool-calling, cursor-memory, otel, ...
-                                      // streaming is withheld from every target until L5, where
-                                      // the runtimes stop raising FeatureDeferredError; a target
-                                      // declares only what it can actually emit.
+                                      // a target declares only what it can actually emit:
+                                      // `py-fastapi` declares streaming because its route serves
+                                      // SSE; `ts-vercel` withholds it because the emitted route
+                                      // answers with one buffered body, even though the TS
+                                      // runtime's `ModelGateway.stream` can stream.
   emitsAgainst: {                     // the ecosystem libs it generates against
     orchestration?: 'langgraph' | 'llamaindex' | 'dspy' | 'vercel-ai' | 'semantic-kernel';
     structuredOutput?: 'pydantic' | 'instructor' | 'zod';

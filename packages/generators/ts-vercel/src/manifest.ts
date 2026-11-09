@@ -12,9 +12,10 @@
  *   unknown `emitsAgainst` key is a hard manifest error (`manifestEmitsAgainstUnknown`),
  *   so `pgvector` is expressed as the emitted vector-store kind instead: the IR's
  *   `stores.<id>.kind` selects the runtime store, and this target supports `pgvector`.
- * - `streaming` is not declared, because the emitted code does not honour it. Calling
- *   `ModelGateway.stream` raises `FeatureDeferredError`, so declaring the capability
- *   would be exactly the fail-open the capability discipline forbids.
+ * - `streaming` is not declared, because the emitted code does not honour it: the route
+ *   answers with one buffered body even though the TypeScript runtime's
+ *   `ModelGateway.stream` can serve SSE. Declaring the capability before the emitter
+ *   exists would be exactly the fail-open the capability discipline forbids.
  */
 
 import {
