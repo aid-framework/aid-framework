@@ -1,0 +1,39 @@
+/**
+ * VitePress defaults a table to `display: block; overflow-x: auto`, which sizes it
+ * to its longest cell. On a page with prose columns -- the feature inventory, the
+ * diagnostics reference -- that means the table runs past the viewport and its
+ * horizontal scrollbar sits at the bottom, so reaching a clipped column means
+ * scrolling the whole page down first.
+ *
+ * These tables are prose, not data dumps: give them the width the page has and let
+ * the cells wrap. The header stays pinned so a long table never loses its column
+ * meanings, and a narrow screen keeps the original sideways scroll rather than
+ * squeezing six columns into a phone.
+ */
+.vp-doc table {
+  display: table;
+  width: 100%;
+}
+
+.vp-doc th,
+.vp-doc td {
+  overflow-wrap: anywhere;
+}
+
+.vp-doc thead th {
+  position: sticky;
+  top: var(--vp-nav-height);
+  z-index: 1;
+  background-color: var(--vp-c-bg);
+}
+
+@media (max-width: 639px) {
+  .vp-doc table {
+    display: block;
+    overflow-x: auto;
+  }
+
+  .vp-doc thead th {
+    position: static;
+  }
+}
