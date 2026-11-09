@@ -680,6 +680,58 @@ if (REGISTRIES.size > 0) {
 }
 
 /**
+ * Every object the schema inlines is sectioned in the generated spec reference.
+ *
+ * `retriever.source`, `metric`'s per-variant fields and the rest of the sub-shapes are
+ * written inline under their parent rather than named in `$defs`. The renderer used to stop
+ * at `object`, so the page named a field's type and never its keys -- and read `metric`'s
+ * const-marker branches as the marker alone, printing "no other keys" for ten variants that
+ * each take one to four more. The renderer now walks both idioms; this rule refuses a schema
+ * addition the page does not section, so the gap cannot reopen quietly.
+ */
+const SPEC_REFERENCE = 'docs/reference/spec.md';
+const specReference = read(SPEC_REFERENCE);
+if (schemaSource !== undefined && specReference !== undefined) {
+  try {
+    const schema = JSON.parse(schemaSource);
+    /** @type {string[]} */
+    const inlined = [];
+    /** @param {any} owner @param {string} prefix */
+    const walkInlined = (owner, prefix) => {
+      for (const [key, value] of Object.entries(owner?.properties ?? {})) {
+        if (value?.type !== 'object' || value.properties === undefined) continue;
+        inlined.push(`${prefix}.${key}`);
+        walkInlined(value, `${prefix}.${key}`);
+      }
+    };
+    for (const [name, def] of Object.entries(schema.$defs ?? {})) {
+      if (!Array.isArray(def.oneOf)) {
+        walkInlined(def, name);
+        continue;
+      }
+      for (const branch of def.oneOf) {
+        const keys = Object.keys(branch.properties ?? {});
+        const discriminator = keys[0] ?? '';
+        const marker = branch.properties?.[discriminator] ?? {};
+        // The const-marker idiom keeps the body beside the marker; the single-key idiom
+        // nests it under the discriminator.
+        const tagged = marker.const !== undefined;
+        walkInlined(tagged ? branch : marker, `${name}.${tagged ? marker.const : discriminator}`);
+      }
+    }
+    for (const path of inlined) {
+      claimsChecked += 1;
+      const heading = new RegExp(`^#{2,} \`${path.replaceAll('.', '\\.')}\`$`, 'm');
+      if (!heading.test(specReference)) {
+        fail(SPEC_REFERENCE, 1, `has no section for the inlined object \`${path}\``);
+      }
+    }
+  } catch (cause) {
+    fail(SPEC_REFERENCE, 1, `could not verify the inlined objects: ${String(cause)}`);
+  }
+}
+
+/**
  * Every target id in prose is a registered generator, and every capability a
  * sentence attributes to a target is one that target's manifest declares.
  *

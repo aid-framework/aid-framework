@@ -75,14 +75,39 @@ Semantic cache settings. `threshold` is the minimum cosine similarity (0..1) a n
 | `provider` | `openai`, `openai-compatible`, `anthropic`, `bedrock`, `google`, `gemini`, `fake` | yes | The provider set the shipped adapters serve. `fake` is deterministic and keyless, which is what lets the eval gate run offline in CI. `bedrock` takes its credentials from the execution role and `google` (Vertex AI) from a short-lived bearer token supplied by the environment or the metadata server, so neither needs an `apiKeyEnv`. `gemini` is the Gemini API, not Vertex: one API key and no project, location or OAuth2. |
 | `modelId` | `string` | yes | Pinned vendor model id. Never an alias or a moving target: the resolved id is recorded in the IR so a run is reproducible. |
 | `capabilities` | array of `json-schema`, `tools`, `streaming`, `embeddings` | no | Declared model capabilities. json-schema is negotiated within a prompt (a structured-output prompt must bind a model that declares it) and embeddings within a retriever (a retriever's embedModel must declare it); the others are recorded in the IR for the capability gate to use in later phases. The embeddings capability additionally requires a provider that serves an embeddings endpoint: the runtime routes embedding calls by provider (bedrock and google to their own adapters, gemini to the AI Studio adapter, openai and openai-compatible to the OpenAI-compatible wire), so declaring it on anthropic is refused rather than sent over a wire that vendor does not serve. |
-| `params` | object | no | — |
+| `params` | object (fields below) | no | — |
 | `fallbacks` | array of `name` | no | Ordered model aliases to fail over to. Simple alias failover only; no routing policy in Phase 0. |
 | `costProfile` | `string` | no | Name of a priced entry in the pinned model catalog. Omit to resolve it from the catalog by modelId. |
-| `limits` | object | no | — |
+| `limits` | object (fields below) | no | — |
 | `baseUrl` | `string` | no | Required for openai-compatible. Never a credential. |
 | `apiKeyEnv` | `string` | no | — |
-| `cache` | object | no | Model caching, declarable from spec v0.3. `prompt` is the exact-match layer (model, prompt, tool schema and temperature); `semantic` is the opt-in fuzzy layer and carries its own threshold and TTL so there is no silent default. |
+| `cache` | object (fields below) | no | Model caching, declarable from spec v0.3. `prompt` is the exact-match layer (model, prompt, tool schema and temperature); `semantic` is the opt-in fuzzy layer and carries its own threshold and TTL so there is no silent default. |
 | `description` | `string` | no | — |
+
+### `model.params`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `temperature` | `number` | no | — |
+| `topP` | `number` | no | — |
+| `maxTokens` | `integer` | no | — |
+| `seed` | `integer` | no | — |
+
+### `model.limits`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `maxInputTokens` | `integer` | no | — |
+| `maxOutputTokens` | `integer` | no | — |
+
+### `model.cache`
+
+Model caching, declarable from spec v0.3. `prompt` is the exact-match layer (model, prompt, tool schema and temperature); `semantic` is the opt-in fuzzy layer and carries its own threshold and TTL so there is no silent default.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `prompt` | `boolean` | no | — |
+| `semantic` | `semanticCache` | no | — |
 
 ## `prompt`
 
@@ -92,7 +117,14 @@ Semantic cache settings. `threshold` is the minimum cosine similarity (0..1) a n
 | `model` | `name` | yes | — |
 | `template` | `string` | yes | Mustache-style text. Placeholders are &#123;&#123;variable&#125;&#125; references and are checked by the parser for well-formedness; whether each one resolves is a build-time IR gate, not a schema concern. |
 | `variables` | map of `variable` | no | — |
-| `output` | object | yes | — |
+| `output` | object (fields below) | yes | — |
+
+### `prompt.output`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | `text`, `json`, `structured` | yes | — |
+| `schema` | `typeName` | no | — |
 
 ## `variable`
 
@@ -112,11 +144,20 @@ Semantic cache settings. `threshold` is the minimum cosine similarity (0..1) a n
 | `output` | `typeName` | yes | — |
 | `sideEffects` | `none`, `read`, `write`, `destructive` | no | Drives the fail-closed security gate: write and destructive require auth. |
 | `requiresConfirmation` | `boolean` | no | The agent loop pauses before running this tool and waits for a human decision. A pipeline step has no confirmation step, so a target that emits no agent route refuses the flag rather than ignoring it. |
-| `handler` | object | yes | Where the implementation lives. `business` means a user-owned module, so the generated code imports it rather than inlining logic. |
+| `handler` | object (fields below) | yes | Where the implementation lives. `business` means a user-owned module, so the generated code imports it rather than inlining logic. |
 | `timeoutMs` | `integer` | no | — |
 | `retries` | `integer` | no | — |
 | `idempotency` | `none`, `key`, `natural` | no | — |
 | `auth` | `string` | no | PolicyExpr source. Parsed once, on the TypeScript side, into a JSON AST that the runtime interprets; the string form never reaches a runtime. |
+
+### `tool.handler`
+
+Where the implementation lives. `business` means a user-owned module, so the generated code imports it rather than inlining logic.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | `"business"` | yes | — |
+| `symbol` | `string` | no | — |
 
 ## `store`
 
@@ -143,36 +184,111 @@ A managed knowledge base: the cloud owns ingestion, chunking, embedding, the vec
 | --- | --- | --- | --- |
 | `engine` | `aws-bedrock`, `vertex-rag` | yes | Which cloud's managed knowledge base this is. `aws-bedrock` is Bedrock Knowledge Bases; `vertex-rag` is the Vertex AI RAG Engine. Both are reachable only from their own cloud, which the infra emitter checks against `--cloud`. |
 | `dataSource` | `knowledgeDataSource` | yes | — |
-| `chunking` | object | yes | How the managed engine splits documents. The engine performs the split, so this is configured on the knowledge base rather than performed by the runtime. |
+| `chunking` | object (fields below) | yes | How the managed engine splits documents. The engine performs the split, so this is configured on the knowledge base rather than performed by the runtime. |
 | `embedModel` | `name` | yes | Model alias that must declare `embeddings`, and whose provider must belong to the same cloud as `engine`. The knowledge base owns the vector store, so this replaces the store-width gate rather than being exempt from it. |
 | `filterable` | array of `name` | no | Metadata keys the filter contract may use. Bedrock sources need metadata sidecar files for a filter to match anything, so this is what makes the emitter write the sidecar convention instead of a filter that silently matches nothing. |
-| `vectorStore` | object | no | Where the engine keeps vectors. `provisioned` (the default) has the module create one; `existing` points at a store the operator already pays for and requires `arn`. The plan's default is not OpenSearch Serverless: its two-OCU floor is the most common way this feature becomes a surprise bill. |
+| `vectorStore` | object (fields below) | no | Where the engine keeps vectors. `provisioned` (the default) has the module create one; `existing` points at a store the operator already pays for and requires `arn`. The plan's default is not OpenSearch Serverless: its two-OCU floor is the most common way this feature becomes a surprise bill. |
+
+### `knowledgeBase.chunking`
+
+How the managed engine splits documents. The engine performs the split, so this is configured on the knowledge base rather than performed by the runtime.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `strategy` | `fixed`, `recursive`, `code` | yes | — |
+| `size` | `integer` | yes | — |
+| `overlap` | `integer` | yes | — |
+
+### `knowledgeBase.vectorStore`
+
+Where the engine keeps vectors. `provisioned` (the default) has the module create one; `existing` points at a store the operator already pays for and requires `arn`. The plan's default is not OpenSearch Serverless: its two-OCU floor is the most common way this feature becomes a surprise bill.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | `provisioned`, `existing` | yes | — |
+| `arn` | `string` | no | — |
 
 ## `retriever`
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `knowledgeBase` | `name` | no | Bind this retriever to a managed knowledge base. It replaces `source`, `chunking`, `embedModel`, `store` and `index` -- declaring one of those beside it is ambiguous and refused rather than silently preferred. |
-| `source` | object | no | — |
-| `chunking` | object | no | — |
+| `source` | object (fields below) | no | — |
+| `chunking` | object (fields below) | no | — |
 | `embedModel` | `name` | no | Model alias that must declare the `embeddings` capability; the referential gate enforces that. |
 | `store` | `name` | no | — |
-| `index` | object | no | — |
+| `index` | object (fields below) | no | — |
 | `topK` | `integer` | yes | Candidates the retriever returns per query. This is the retriever's value; Phase 1 has no step-level override. |
-| `rerank` | object | no | — |
+| `rerank` | object (fields below) | no | — |
 | `filters` | array of `string` | no | Reserved: the expression form is not implemented in Phase 1, so a spec-local rule rejects it rather than accepting a filter nothing applies. |
-| `refresh` | object | no | — |
+| `refresh` | object (fields below) | no | — |
 | `traits` | array of `citations` | no | Behavioural traits the generated retrieval path must honour. `citations` means retrieved items carry the source path and offsets a generated answer can cite. |
+
+### `retriever.source`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | `file`, `s3`, `http`, `db`, `mcp` | yes | Only `file` is implemented in Phase 1. s3/http/db/mcp are reserved by the design and rejected by a spec-local rule until the phase that ships their loaders, so a spec can be written against the final spelling without being silently ignored. |
+| `uri` | `string` | yes | — |
+| `glob` | `string` | no | — |
+
+### `retriever.chunking`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `strategy` | `fixed`, `recursive`, `semantic`, `code` | yes | `semantic` is reserved: it needs an embedding pass over the whole source at ingest, which Phase 1 does not implement, so a spec-local rule rejects it. |
+| `size` | `integer` | yes | Target chunk size in characters. The cost gate turns it into tokens at a fixed characters-per-token ratio, so estimates compare. |
+| `overlap` | `integer` | yes | — |
+| `keepMetadata` | array of `name` | no | — |
+
+### `retriever.index`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `metric` | `cosine`, `dot`, `l2` | yes | — |
+| `hybrid` | `boolean` | no | Blend the lexical and the vector ranking instead of ranking on the vector alone. Off by default, so a retrieval that needs no lexical half declares nothing. |
+
+### `retriever.rerank`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `model` | `name` | yes | Model alias the reranker is bound to. Phase 1 ships a deterministic lexical reranker, so the alias is a `fake` or local model; a hosted reranker adapter is a later phase's seam. |
+| `topN` | `integer` | yes | — |
+
+### `retriever.refresh`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `mode` | `full`, `incremental` | yes | `incremental` and `schedule` are reserved: an index that claims to refresh incrementally but is rebuilt from scratch is a lie, so a spec-local rule rejects both until the ingestion runtime honours them. |
+| `schedule` | `string` | no | — |
 
 ## `eval`
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `target` | `string` | yes | Only pipelines are evaluable in Phase 0. |
-| `dataset` | object | yes | — |
+| `dataset` | object (fields below) | yes | — |
 | `metrics` | array of `metric` | yes | — |
-| `gate` | object | no | How this eval's result is compared against the committed baseline. Never an equality check: sampling noise is expected, so the gate is a threshold on the regression relative to the baseline. |
+| `gate` | object (fields below) | no | How this eval's result is compared against the committed baseline. Never an equality check: sampling noise is expected, so the gate is a threshold on the regression relative to the baseline. |
 | `description` | `string` | no | — |
+
+### `eval.dataset`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `source` | `"file"` | yes | — |
+| `uri` | `string` | no | — |
+
+### `eval.gate`
+
+How this eval's result is compared against the committed baseline. Never an equality check: sampling noise is expected, so the gate is a threshold on the regression relative to the baseline.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `ci` | `boolean` | no | When true this eval runs in the CI gate. At least one eval per HTTP-triggered pipeline should set it (an IR warning, not a schema rule). |
+| `maxRegression` | `number` | no | Largest tolerated absolute drop in the metric's score versus the baseline. |
+| `samples` | `integer` | no | Runs per case. More samples shrink the sampling-uncertainty term the gate also requires before it fails. |
+| `minMean` | `number` | no | Absolute floor: the eval fails whenever the mean score falls below this value, regardless of maxRegression. A 0/1 metric (such as `assert`) needs it, because the regression allowance can otherwise absorb a drop it must never absorb. Required to be 1 when an `assert` metric is present. |
 
 ## `metric`
 
@@ -180,59 +296,102 @@ A `metric` is exactly one of the 10 forms below; each form is recognised by its 
 
 ### `kind` = `exact`
 
-Takes the value `"exact"` and no other keys.
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `field` | `name` | yes | — |
 
 ### `kind` = `contains`
 
-Takes the value `"contains"` and no other keys.
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `field` | `name` | yes | — |
+| `value` | `string` | no | — |
 
 ### `kind` = `json-schema`
 
-Takes the value `"json-schema"` and no other keys.
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `schema` | `typeName` | yes | — |
 
 ### `kind` = `tool-trace`
 
-Takes the value `"tool-trace"` and no other keys.
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `expect` | array of `name` | yes | — |
+| `ordered` | `boolean` | no | — |
 
 ### `kind` = `cost`
 
-Takes the value `"cost"` and no other keys.
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `max` | `number` | yes | Maximum tolerated USD per case. |
 
 ### `kind` = `latency`
 
-Takes the value `"latency"` and no other keys.
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `maxMs` | `integer` | yes | — |
 
 ### `kind` = `llm-judge`
 
 Allowed in the spec but rejected by a spec-local rule when gate.ci is true: a judging model is neither deterministic nor available offline, so it can never be part of the CI gate.
 
-Takes the value `"llm-judge"` and no other keys.
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `rubric` | `string` | yes | — |
+| `field` | `name` | no | — |
+| `model` | `name` | no | — |
+| `threshold` | `number` | no | — |
 
 ### `kind` = `retrieval`
 
 Deterministic and offline: it compares the ranking against known-correct source paths, so unlike llm-judge it is allowed under gate.ci.
 
-Takes the value `"retrieval"` and no other keys.
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `expectDocs` | array of `string` | yes | Source paths, spelled relative to the retriever's source uri, that the ranking must place inside the top k. A warning in the eval-coverage gate if a spec declares retrievers and no eval measures them. |
+| `k` | `integer` | yes | — |
 
 ### `kind` = `assert`
 
 Deterministic and offline: a closed predicate evaluated against the prediction and the case, so unlike llm-judge it is allowed under gate.ci. Needs `gate.minMean: 1.0`, which a spec-local rule enforces.
 
-Takes the value `"assert"` and no other keys.
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `expr` | `string` | yes | A PredicateExpr over `prediction`, `case.id` and `case.metadata.&lt;name&gt;`. Closed grammar: no eval, no regex. |
+| `message` | `string` | yes | The failure detail, verbatim. Required: it is the whole value of a failing assertion. |
 
 ### `kind` = `decision`
 
 Scores a prediction with a `score` decision: the rubric is declared once in `decisions` and the answer's position becomes the metric. Not deterministic, so a spec-local rule rejects it under gate.ci.
 
-Takes the value `"decision"` and no other keys.
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `decision` | `name` | yes | The name of a `decisions` entry whose `type` is `score`. A moving alias is refused, because two runs of an eval would otherwise score two different models. |
 
 ## `pipeline`
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `description` | `string` | no | — |
-| `trigger` | one of 2 | yes | How the pipeline starts. `http` mounts a route; `manual` starts nothing on its own and exists so a `target: batch` deployment can run the pipeline once to completion. Exactly one of the two is declared. |
+| `trigger` | one of 2 (fields below) | yes | How the pipeline starts. `http` mounts a route; `manual` starts nothing on its own and exists so a `target: batch` deployment can run the pipeline once to completion. Exactly one of the two is declared. |
 | `steps` | array of `step` | yes | — |
+
+### `pipeline.trigger`
+
+How the pipeline starts. `http` mounts a route; `manual` starts nothing on its own and exists so a `target: batch` deployment can run the pipeline once to completion. Exactly one of the two is declared.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `http` | object (fields below) | no | — |
+| `manual` | `true` | no | A pipeline with no inbound route. A `target: batch` deployment names it and runs it once per job. |
+
+#### `pipeline.trigger.http`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `method` | `get`, `post`, `put`, `patch`, `delete` | yes | — |
+| `path` | `string` | yes | — |
 
 ## `step`
 
@@ -253,7 +412,7 @@ Explicitly invoked by the pipeline, never chosen by the model. That is what keep
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `tool` | `name` | yes | — |
+| `tool` | `name` | no | — |
 | `input` | `stepInput` | no | — |
 | `as` | `binding` | yes | — |
 
@@ -295,7 +454,7 @@ Runs a declared agent to completion and binds its answer. The step owns a fresh 
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `agent` | `name` | yes | — |
+| `agent` | `name` | no | — |
 | `text` | `string` | yes | Mustache-style text sent as the agent's user turn. |
 | `as` | `binding` | yes | — |
 
@@ -375,7 +534,14 @@ Data-driven control flow: asks a declared `choice` decision what the input is, t
 | `delegates` | array of `name` | no | Agents this one may delegate a sub-task to; control returns to this agent when the sub-task finishes. |
 | `engine` | `native`, `deepagents` | no | Who owns the loop. `native` is the AID agent runtime; `deepagents` delegates to the pinned framework, which requires an engineVersion. |
 | `engineVersion` | `string` | no | — |
-| `humanInTheLoop` | object | no | — |
+| `humanInTheLoop` | object (fields below) | no | — |
+
+### `agent.humanInTheLoop`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `when` | `string` | yes | Closed policy expression deciding when a human must approve. |
+| `channel` | `string` | yes | — |
 
 ## `decision`
 
@@ -399,14 +565,55 @@ A check at one stage. A guardrail is either a policy check (`policies` + `action
 | `policies` | array of `pii-detect`, `pii-redact`, `prompt-injection`, `jailbreak`, `moderation`, `toxicity`, `secret-scan` | no | Closed policy vocabulary; a name the guardrails engine does not implement is rejected at the spec layer, never passed through. |
 | `action` | `block`, `redact`, `flag`, `escalate` | no | — |
 | `engine` | `builtin`, `bedrock`, `model-armor` | no | Who evaluates the declaration. `builtin` (the default) is the runtime's offline detector layer; `bedrock` is a managed AWS Bedrock guardrail; `model-armor` (spec 0.14) is a Vertex AI Model Armor template in Google Cloud, owned by the spec from 0.15 when a `modelArmor` block is present. An engine is a location for the policy, not a policy itself, so a managed guardrail carries no `policies`. |
-| `bedrock` | object | no | The managed policy a `bedrock`-engine guardrail owns, rendered into the deployment as an `aws_bedrock_guardrail`. Omit the block to point the app at a guardrail the operator already owns, through `BEDROCK_GUARDRAIL_ID` and `BEDROCK_GUARDRAIL_VERSION`. Account ids and ARNs are never spec inputs. |
-| `modelArmor` | object | no | The managed policy a `model-armor`-engine guardrail owns, rendered into the deployment as a `google_model_armor_template`. Omit the block to point the app at a template the operator already created, through `MODEL_ARMOR_TEMPLATE`. DLP inspect/deidentify templates and custom filter rules are references to resources this deployment does not create, so they stay operator inputs. |
+| `bedrock` | object (fields below) | no | The managed policy a `bedrock`-engine guardrail owns, rendered into the deployment as an `aws_bedrock_guardrail`. Omit the block to point the app at a guardrail the operator already owns, through `BEDROCK_GUARDRAIL_ID` and `BEDROCK_GUARDRAIL_VERSION`. Account ids and ARNs are never spec inputs. |
+| `modelArmor` | object (fields below) | no | The managed policy a `model-armor`-engine guardrail owns, rendered into the deployment as a `google_model_armor_template`. Omit the block to point the app at a template the operator already created, through `MODEL_ARMOR_TEMPLATE`. DLP inspect/deidentify templates and custom filter rules are references to resources this deployment does not create, so they stay operator inputs. |
 | `decision` | `name` | no | A `choice` decision to ask before the stage runs. Only the `input` stage may carry one, and the name must be declared under `decisions` (spec 0.7). |
 | `onDecision` | map of `allow`, `block`, `flag`, `escalate` | no | What each answer label means. `allow` lets the run continue; the others record that action. Every label the decision declares must appear here, and no other label may (checked by the spec gate, which knows the criteria). |
 | `minConfidence` | `number` | no | The lowest answer confidence this guardrail accepts. A less confident answer counts as a failed check and fails closed as a block. Defaults to 0. |
 | `redact` | array of `string` | no | Field names the `redact` action removes. Required when `action: redact`, which the guardrails gate enforces. |
 | `tools` | array of `name` | no | Tools this guardrail covers. Absent or empty means every tool that reaches the stage. |
-| `onFail` | object | yes | — |
+| `onFail` | object (fields below) | yes | — |
+
+### `guardrail.bedrock`
+
+The managed policy a `bedrock`-engine guardrail owns, rendered into the deployment as an `aws_bedrock_guardrail`. Omit the block to point the app at a guardrail the operator already owns, through `BEDROCK_GUARDRAIL_ID` and `BEDROCK_GUARDRAIL_VERSION`. Account ids and ARNs are never spec inputs.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `content` | map of `low`, `medium`, `high` | no | Content-filter strength per category; the same strength is applied to input and output. A category absent from the map is not filtered. |
+| `topics` | map of `string` | no | Denied topics, name -&gt; the definition the classifier is given. The definition is the policy: two specs that name the same topic but describe it differently are asking different questions. |
+| `words` | array of `string` | no | Exact terms the managed word filter refuses. |
+| `pii` | array of `email`, `phone`, `name`, `address`, `ssn`, `credit-card`, `bank-account`, `passport`, `drivers-license`, `ip-address`, `url`, `aws-access-key`, `aws-secret-key` | no | Personal-information entities the managed policy detects. `action: redact` anonymises them; `action: block` refuses the text instead. |
+
+### `guardrail.modelArmor`
+
+The managed policy a `model-armor`-engine guardrail owns, rendered into the deployment as a `google_model_armor_template`. Omit the block to point the app at a template the operator already created, through `MODEL_ARMOR_TEMPLATE`. DLP inspect/deidentify templates and custom filter rules are references to resources this deployment does not create, so they stay operator inputs.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `rai` | object (fields below) | no | Responsible-AI categories the template filters, category -&gt; the lowest confidence it refuses. A category absent from the map is not filtered. |
+| `promptInjection` | `modelArmorConfidence` | no | Refuse prompt-injection and jailbreak attempts at this confidence or above. Absent leaves the filter off. |
+| `maliciousUri` | `boolean` | no | Refuse text that carries a malicious or phishing URL. `false` writes an explicit `DISABLED`, which differs from omission only in intent. |
+| `sensitiveData` | `boolean` | no | Inspect text for sensitive data with the basic configuration. `false` writes an explicit `DISABLED`. A DLP inspect or deidentify template is an operator input, not a spec input. |
+
+#### `guardrail.modelArmor.rai`
+
+Responsible-AI categories the template filters, category -> the lowest confidence it refuses. A category absent from the map is not filtered.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `sexual` | `modelArmorConfidence` | no | — |
+| `hate` | `modelArmorConfidence` | no | — |
+| `harassment` | `modelArmorConfidence` | no | — |
+| `dangerous` | `modelArmorConfidence` | no | — |
+
+### `guardrail.onFail`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `message` | `string` | yes | — |
+| `fallbackPrompt` | `name` | no | — |
+| `log` | `boolean` | yes | — |
 
 ## `memory`
 
@@ -428,12 +635,20 @@ A check at one stage. A guardrail is either a policy check (`policies` + `action
 | `target` | `serverless`, `container`, `batch`, `edge` | yes | — |
 | `streaming` | `boolean` | no | — |
 | `concurrency` | `integer` | no | — |
-| `autoscale` | object | no | — |
+| `autoscale` | object (fields below) | no | — |
 | `secrets` | array of `string` | yes | — |
 | `image` | `image` | no | Where the image is published. Spec 0.4, and only on a `target: container` deployment: another target builds no image to publish. |
 | `pipeline` | `name` | no | The pipeline this job runs, by id. Spec 0.5, and only on a `target: batch` deployment: a run-to-completion job exists to run exactly one pipeline once, and a target that answers requests runs whichever pipeline its route names. The pipeline must declare `trigger.manual`. |
 | `runtime` | `runtime` | no | The managed agent runtime the process runs on. Spec 0.13, and only on a `target: container` deployment: the platform schedules, isolates and addresses the process, so the compute module is replaced rather than paired with it. The spec must declare exactly one HTTP route, because the platform's invocation route carries one request shape. The app is unchanged: the generated contract wrapper mounts the same ASGI app and route handlers, so the cost ceiling, trace span, eval hook and refusals stay on the invocation path. |
 | `env` | array of object | no | — |
+
+### `deployment.autoscale`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `min` | `integer` | yes | — |
+| `max` | `integer` | yes | — |
+| `metric` | `string` | yes | — |
 
 ## `runtime`
 
@@ -442,8 +657,24 @@ A managed agent runtime: a service that stops being a container the operator kee
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `platform` | `aws-agentcore`, `gcp-agent-platform` | yes | The platform that runs the process. The platform's credentials are the deploy's credentials, so a platform and `--cloud` that disagree are refused instead of deployed unreachable. |
-| `memory` | object | no | AgentCore Memory. Short-term events are the session transcript; long-term memory is deliberately absent until the spec has a construct that names what is stored and who may read it. |
-| `session` | object | no | How long one session may live. Defaults to 480 minutes, the AgentCore microVM ceiling. |
+| `memory` | object (fields below) | no | AgentCore Memory. Short-term events are the session transcript; long-term memory is deliberately absent until the spec has a construct that names what is stored and who may read it. |
+| `session` | object (fields below) | no | How long one session may live. Defaults to 480 minutes, the AgentCore microVM ceiling. |
+
+### `runtime.memory`
+
+AgentCore Memory. Short-term events are the session transcript; long-term memory is deliberately absent until the spec has a construct that names what is stored and who may read it.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `shortTerm` | `boolean` | no | Store the session transcript in AgentCore Memory. `aws-agentcore` only; the Google platform has no Terraform resource for a memory bank in v1. |
+
+### `runtime.session`
+
+How long one session may live. Defaults to 480 minutes, the AgentCore microVM ceiling.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `ttlMinutes` | `integer` | no | Session lifetime in minutes. AgentCore microVMs stop at 480; the Google platform accepts up to 20160 (14 days). |
 
 ## `image`
 

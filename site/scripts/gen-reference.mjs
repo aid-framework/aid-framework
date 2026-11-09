@@ -147,6 +147,71 @@ const GENERATED_NOTE =
 // Spec reference
 // ---------------------------------------------------------------------------
 
+/**
+ * A `| Field | Type | Required | Description |` table for one object's properties.
+ *
+ * A field that is itself an object of named fields is marked `(fields below)`, because the
+ * subsection that documents it follows this table.
+ *
+ * @param {Record<string, any>} properties
+ * @param {Set<string>} required
+ * @returns {string[]}
+ */
+function fieldTable(properties, required) {
+  const lines = ['| Field | Type | Required | Description |', '| --- | --- | --- | --- |'];
+  for (const [key, value] of Object.entries(properties)) {
+    const nested =
+      value !== null &&
+      typeof value === 'object' &&
+      value.type === 'object' &&
+      value.properties !== undefined;
+    const type = nested ? `${typeLabel(value)} (fields below)` : typeLabel(value);
+    lines.push(
+      `| \`${key}\` | ${cell(type)} | ${required.has(key) ? 'yes' : 'no'} | ${descriptionCell(value.description)} |`,
+    );
+  }
+  return lines;
+}
+
+/** How deep the spec reference follows inlined objects. */
+const MAX_NESTING = 2;
+
+/**
+ * Emit a subsection for every field of `owner` that is an object with named fields.
+ *
+ * The schema inlines these objects instead of naming them in `$defs`, so a table that stopped at
+ * `object` left 33 sub-shapes undocumented -- `retriever.chunking`, `model.limits`,
+ * `pipeline.trigger.http` and the rest. The heading is the dotted path as written in YAML.
+ *
+ * @param {any} owner
+ * @param {string} prefix
+ * @param {number} depth
+ * @param {string[]} lines
+ */
+function emitNested(owner, prefix, depth, lines) {
+  if (depth > MAX_NESTING) return;
+  const properties = owner?.properties ?? {};
+  for (const [key, value] of Object.entries(properties)) {
+    if (value === null || value === undefined) continue;
+    if (value.type !== 'object' || value.properties === undefined) continue;
+    const path = `${prefix}.${key}`;
+    lines.push(`${'#'.repeat(depth + 2)} \`${path}\``);
+    lines.push('');
+    if (value.description) {
+      lines.push(protectBraces(value.description));
+      lines.push('');
+    }
+    if (Object.keys(value.properties).length === 0) {
+      lines.push('An object with no named fields.');
+      lines.push('');
+      continue;
+    }
+    lines.push(...fieldTable(value.properties, new Set(value.required ?? [])));
+    lines.push('');
+    emitNested(value, path, depth + 1, lines);
+  }
+}
+
 /** Top-level keys, in the order the schema declares them. */
 function specPage() {
   const schema = readJson('packages/spec/src/schema/spec.schema.json');
@@ -202,39 +267,42 @@ function specPage() {
         const inner = branch.properties ?? {};
         const keys = Object.keys(inner);
         const discriminator = keys[0] ?? 'unknown';
-        const body = branch.description ? [protectBraces(branch.description)] : [];
-        const innerDef = inner[discriminator] ?? {};
-        const formLabel =
-          innerDef.const === undefined
-            ? `\`${discriminator}\``
-            : `\`${discriminator}\` = \`${innerDef.const}\``;
+        const marker = inner[discriminator] ?? {};
+        // Two idioms appear in the schema: the branch's only key names the body
+        // (`step.generate`), or the first key is a const marker and the remaining keys are
+        // the body (`metric.kind = exact` plus `field`). Reading the marker's absent
+        // `properties` as the body would report "no other keys" for every `metric` form.
+        const tagged = marker.const !== undefined;
+        const bodyDef = tagged ? branch : marker;
+        const bodyProperties = tagged
+          ? Object.fromEntries(Object.entries(inner).filter(([key]) => key !== discriminator))
+          : (marker.properties ?? {});
+        const required = new Set(bodyDef.required ?? []);
+        required.delete(discriminator);
+        const formLabel = tagged
+          ? `\`${discriminator}\` = \`${marker.const}\``
+          : `\`${discriminator}\``;
+        const formPath = `${name}.${tagged ? marker.const : discriminator}`;
         lines.push(`### ${formLabel}`);
         lines.push('');
-        if (innerDef.description) {
-          lines.push(protectBraces(innerDef.description));
+        if (marker.description) {
+          lines.push(protectBraces(marker.description));
           lines.push('');
         }
-        for (const paragraph of body) {
-          lines.push(paragraph);
+        if (branch.description) {
+          lines.push(protectBraces(branch.description));
           lines.push('');
         }
-        const bodyProperties = innerDef.properties ?? {};
-        const required = new Set(innerDef.required ?? []);
         if (Object.keys(bodyProperties).length === 0) {
           lines.push(
-            `Takes the value \`${JSON.stringify(innerDef.const ?? '')}\` and no other keys.`,
+            `Takes the value \`${JSON.stringify(marker.const ?? '')}\` and no other keys.`,
           );
           lines.push('');
           continue;
         }
-        lines.push('| Field | Type | Required | Description |');
-        lines.push('| --- | --- | --- | --- |');
-        for (const [key, value] of Object.entries(bodyProperties)) {
-          lines.push(
-            `| \`${key}\` | ${cell(typeLabel(value))} | ${required.has(key) ? 'yes' : 'no'} | ${descriptionCell(value.description)} |`,
-          );
-        }
+        lines.push(...fieldTable(bodyProperties, required));
         lines.push('');
+        emitNested(bodyDef, formPath, 1, lines);
       }
       continue;
     }
@@ -246,14 +314,9 @@ function specPage() {
       lines.push('');
       continue;
     }
-    lines.push('| Field | Type | Required | Description |');
-    lines.push('| --- | --- | --- | --- |');
-    for (const [key, value] of entries) {
-      lines.push(
-        `| \`${key}\` | ${cell(typeLabel(value))} | ${required.has(key) ? 'yes' : 'no'} | ${descriptionCell(value.description)} |`,
-      );
-    }
+    lines.push(...fieldTable(def.properties, required));
     lines.push('');
+    emitNested(def, name, 1, lines);
   }
 
   lines.push('---');
