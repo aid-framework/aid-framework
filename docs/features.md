@@ -244,7 +244,7 @@ A deployment plan derives OpenTofu modules for the chosen cloud, byte-asserted a
 
 The same deployment plan can emit a CDK app instead, for a team already deploying with it.
 
-- **Turned on by:** `aid infra --backend cdk`
+- **Turned on by:** `aid infra --iac cdk`
 - **Reference:** [cli](./reference/cli.md#infra)
 - **Since:** `0.1.57`
 

@@ -15,7 +15,16 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import {
+  aidFlags,
+  capabilityClaims,
+  commandsNamed,
+  exactPins,
+  headingSlugs,
+  targetTokens,
+} from './docs-claims.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
@@ -194,110 +203,83 @@ const NUMBER_WORDS = new Map([
 const README = 'README.md';
 const EXAMPLES_README = 'examples/README.md';
 
-const readme = read(README);
+// Build output and vendored trees hold copies of READMEs and generated files,
+// not claims about this repository, so they are not part of any surface.
+const PRUNED = new Set(['node_modules', 'dist', 'build', '.venv', '__pycache__', '.pytest_cache']);
 
-if (readme !== undefined) {
-  // Every implemented command must exist in COMMANDS, and every command in
-  // COMMANDS must be described as implemented.
+/**
+ * The command names in the CLI's `COMMANDS` table, or `undefined` when the table
+ * cannot be read. Every claim about a command is compared against this list, so
+ * the parse lives in one place and a malformed table fails once.
+ *
+ * @returns {string[] | undefined}
+ */
+function cliCommands() {
   const mainPath = 'packages/cli/src/main.ts';
   const mainSource = read(mainPath);
-  if (mainSource !== undefined) {
-    const table = mainSource.match(
-      /export const COMMANDS: readonly Command\[\] = \[([\s\S]*?)\n\];/,
+  if (mainSource === undefined) return undefined;
+
+  const table = mainSource.match(/export const COMMANDS: readonly Command\[\] = \[([\s\S]*?)\n\];/);
+  if (table === null) {
+    fail(
+      mainPath,
+      1,
+      'cannot parse the `COMMANDS` table; expected `export const COMMANDS = [...]`',
     );
-    if (table === null) {
-      fail(
-        mainPath,
-        1,
-        'cannot parse the `COMMANDS` table; expected `export const COMMANDS = [...]`',
-      );
-    } else {
-      const commands = unique(
-        [...(table[1] ?? '').matchAll(/\bname:\s*'([^']+)'/g)].map((match) => match[1] ?? ''),
-      );
-      if (commands.length === 0) {
-        fail(mainPath, 1, 'parsed `COMMANDS` as an empty list; expected at least one command');
-      } else {
-        const implemented = lineContaining(
-          readme,
-          'The CLI ships',
-          README,
-          'the sentence listing implemented CLI commands',
-        );
-        if (implemented !== undefined) {
-          compareSets(
-            README,
-            implemented.line,
-            'the implemented-commands claim',
-            unique(backticked(implemented.text)),
-            commands,
-          );
-        }
+    return undefined;
+  }
 
-        const unimplemented = maybeLineContaining(readme, 'not implemented yet');
-        if (unimplemented !== undefined) {
-          const claimed = unique(backticked(unimplemented.text));
-          claimsChecked += 1;
-          for (const command of claimed) {
-            if (commands.includes(command)) {
-              fail(
-                README,
-                unimplemented.line,
-                `\`${command}\` is described as unimplemented but is in COMMANDS`,
-              );
-            }
-          }
+  const commands = unique(
+    [...(table[1] ?? '').matchAll(/\bname:\s*'([^']+)'/g)].map((match) => match[1] ?? ''),
+  );
+  if (commands.length === 0) {
+    fail(mainPath, 1, 'parsed `COMMANDS` as an empty list; expected at least one command');
+    return undefined;
+  }
+  return commands;
+}
 
-          const countWord = unimplemented.text.match(
-            /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/i,
-          );
-          if (countWord === null) {
-            fail(
-              README,
-              unimplemented.line,
-              'the unimplemented-commands claim does not state a count; expected a number word',
-            );
-          } else {
-            const claimedCount = NUMBER_WORDS.get((countWord[1] ?? '').toLowerCase());
-            if (claimedCount !== claimed.length) {
-              fail(
-                README,
-                unimplemented.line,
-                `the unimplemented-commands claim says ${claimedCount} but lists ${claimed.length}`,
-              );
-            }
-          }
-        }
+/**
+ * Every flag the CLI defines, or `undefined` when the definitions cannot be read.
+ *
+ * Flags are declared either as a `--name` literal in a `usage` string or as a
+ * `booleanFlag('name', ...)` / `valueFlag('name', ...)` call, so both spellings
+ * are collected. The result is a name set: it resolves a flag the docs use, and
+ * it does not care which command owns it.
+ *
+ * @returns {string[] | undefined}
+ */
+function cliFlags() {
+  const sources = ['packages/cli/src/main.ts', 'packages/cli/src/args.ts'];
+  /** @type {Set<string>} */
+  const flags = new Set();
+  let found = false;
 
-        // The mermaid diagram is prose too: it must name the same commands.
-        const cliNode = lineContaining(
-          readme,
-          '5. CLI',
-          README,
-          'the CLI node in the mermaid diagram',
-        );
-        if (cliNode !== undefined) {
-          const nodeText = cliNode.text.split('<br/>')[1]?.split('"]')[0] ?? '';
-          const named = unique(
-            nodeText
-              .split('·')
-              .map((part) => part.trim())
-              .filter((part) => part.length > 0),
-          );
-          compareSets(
-            README,
-            cliNode.line,
-            'the commands named in the mermaid CLI node',
-            named,
-            commands,
-          );
-        }
-      }
+  for (const path of sources) {
+    const source = read(path);
+    if (source === undefined) continue;
+    found = true;
+    for (const match of source.matchAll(/--([a-z0-9][a-z0-9-]*)/g)) flags.add(match[1] ?? '');
+    for (const match of source.matchAll(/(?:boolean|value)Flag\(\s*'([a-z0-9-]+)'/g)) {
+      flags.add(match[1] ?? '');
     }
   }
 
-  // Every target named in prose must exist, and every registered target must be
-  // named. The generator directories are the registry.
+  if (!found) return undefined;
+  flags.delete('');
+  return [...flags].sort();
+}
+
+/**
+ * Every registered target and the capabilities its manifest declares.
+ *
+ * The generator directories are the registry. `capabilities:` is written either
+ * as an inline array or as a spread of a constant declared in the same file, and
+ * both spellings are the same claim.
+ *
+ * @returns {{ targets: string[], capabilities: Map<string, string[]> }}
+ */
+function generatorCapabilities() {
   const generatorsRoot = 'packages/generators';
   /** @type {string[]} */
   let generatorNames = [];
@@ -308,14 +290,19 @@ if (readme !== undefined) {
       .sort();
   } catch (cause) {
     fail(generatorsRoot, 1, `cannot list generator packages: ${String(cause)}`);
+    return { targets: [], capabilities: new Map() };
   }
 
   /** @type {string[]} */
   const targets = [];
+  /** @type {Map<string, string[]>} */
+  const capabilities = new Map();
+
   for (const generator of generatorNames) {
     const manifestPath = `${generatorsRoot}/${generator}/src/manifest.ts`;
     const manifest = read(manifestPath);
     if (manifest === undefined) continue;
+
     const declared = [...manifest.matchAll(/export const [A-Z0-9_]+_TARGET = '([^']+)'/g)].map(
       (match) => match[1] ?? '',
     );
@@ -328,7 +315,124 @@ if (readme !== undefined) {
       continue;
     }
     targets.push(...declared);
+
+    const declaration = manifest.match(/capabilities:\s*\[([\s\S]*?)\]/);
+    if (declaration === null) {
+      fail(manifestPath, 1, 'cannot parse `capabilities: [...]` from the manifest');
+      continue;
+    }
+
+    const body = declaration[1] ?? '';
+    /** @type {string[]} */
+    const declaredCapabilities = [...body.matchAll(/'([^']+)'/g)].map((match) => match[1] ?? '');
+    for (const spread of body.matchAll(/\.\.\.([A-Za-z0-9_]+)/g)) {
+      const name = spread[1] ?? '';
+      const constant = manifest.match(
+        new RegExp(`export const ${name} = \\[([\\s\\S]*?)\\] as const;`),
+      );
+      if (constant === null) {
+        fail(manifestPath, 1, `cannot parse \`${name}\`, which is spread into \`capabilities\``);
+        continue;
+      }
+      declaredCapabilities.push(
+        ...[...(constant[1] ?? '').matchAll(/'([^']+)'/g)].map((match) => match[1] ?? ''),
+      );
+    }
+    if (declaredCapabilities.length === 0) {
+      fail(manifestPath, 1, 'parsed `capabilities` as an empty list; expected at least one entry');
+      continue;
+    }
+    for (const target of declared) capabilities.set(target, unique(declaredCapabilities));
   }
+
+  return { targets, capabilities };
+}
+
+const REGISTRY = generatorCapabilities();
+const COMMANDS = cliCommands();
+const FLAGS = cliFlags();
+
+const readme = read(README);
+
+if (readme !== undefined) {
+  // Every implemented command must exist in COMMANDS, and every command in
+  // COMMANDS must be described as implemented.
+  const commands = COMMANDS;
+  if (commands !== undefined) {
+    const implemented = lineContaining(
+      readme,
+      'The CLI ships',
+      README,
+      'the sentence listing implemented CLI commands',
+    );
+    if (implemented !== undefined) {
+      compareSets(
+        README,
+        implemented.line,
+        'the implemented-commands claim',
+        unique(backticked(implemented.text)),
+        commands,
+      );
+    }
+
+    const unimplemented = maybeLineContaining(readme, 'not implemented yet');
+    if (unimplemented !== undefined) {
+      const claimed = unique(backticked(unimplemented.text));
+      claimsChecked += 1;
+      for (const command of claimed) {
+        if (commands.includes(command)) {
+          fail(
+            README,
+            unimplemented.line,
+            `\`${command}\` is described as unimplemented but is in COMMANDS`,
+          );
+        }
+      }
+
+      const countWord = unimplemented.text.match(
+        /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/i,
+      );
+      if (countWord === null) {
+        fail(
+          README,
+          unimplemented.line,
+          'the unimplemented-commands claim does not state a count; expected a number word',
+        );
+      } else {
+        const claimedCount = NUMBER_WORDS.get((countWord[1] ?? '').toLowerCase());
+        if (claimedCount !== claimed.length) {
+          fail(
+            README,
+            unimplemented.line,
+            `the unimplemented-commands claim says ${claimedCount} but lists ${claimed.length}`,
+          );
+        }
+      }
+    }
+
+    // The mermaid diagram is prose too: it must name the same commands.
+    const cliNode = lineContaining(readme, '5. CLI', README, 'the CLI node in the mermaid diagram');
+    if (cliNode !== undefined) {
+      const nodeText = cliNode.text.split('<br/>')[1]?.split('"]')[0] ?? '';
+      const named = unique(
+        nodeText
+          .split('·')
+          .map((part) => part.trim())
+          .filter((part) => part.length > 0),
+      );
+      compareSets(
+        README,
+        cliNode.line,
+        'the commands named in the mermaid CLI node',
+        named,
+        commands,
+      );
+    }
+  }
+
+  // Every target named in prose must exist, and every registered target must be
+  // named. The generator directories are the registry.
+  const targets = REGISTRY.targets;
 
   if (targets.length > 0) {
     const targetsClaim = lineContaining(readme, '**Targets:**', README, 'the "Targets" claim');
@@ -422,6 +526,507 @@ if (readme !== undefined) {
 }
 
 /**
+ * The line containing `needle` in `text`, for reporting against a source file
+ * that is parsed as data rather than read line by line.
+ *
+ * @param {string} text
+ * @param {string} needle
+ * @returns {number}
+ */
+function lineOf(text, needle) {
+  const index = text.indexOf(needle);
+  return index < 0 ? 1 : lineAt(text, index);
+}
+
+/**
+ * Every document the site publishes, read once so each claim check walks the
+ * same list.
+ *
+ * @returns {string[]}
+ */
+const documents = markdownFiles();
+
+/**
+ * Every `aid <command>` in prose is a command the CLI implements.
+ *
+ * A guide that documents a command the CLI does not have is a promise the tool
+ * cannot keep, and it is the shape of drift that a green build hides.
+ */
+if (COMMANDS !== undefined) {
+  for (const file of documents) {
+    const text = read(file);
+    if (text === undefined) continue;
+    for (const claim of commandsNamed(text)) {
+      claimsChecked += 1;
+      if (!COMMANDS.includes(claim.command)) {
+        fail(file, claim.line, `names \`aid ${claim.command}\`, which is not in COMMANDS`);
+      }
+    }
+  }
+}
+
+/**
+ * Every `aid ... --flag` in prose is a flag the CLI defines.
+ *
+ * A renamed flag is the quietest kind of drift: the command still exists, so a
+ * reader follows the guide, gets a usage error, and blames the tool.
+ */
+if (FLAGS !== undefined) {
+  for (const file of documents) {
+    const text = read(file);
+    if (text === undefined) continue;
+    for (const claim of aidFlags(text)) {
+      claimsChecked += 1;
+      if (!FLAGS.includes(claim.flag)) {
+        fail(file, claim.line, `passes \`--${claim.flag}\`, which the CLI does not define`);
+      }
+    }
+  }
+}
+
+/**
+ * Every `package==x.y.z` in prose is a pin the runtime metadata declares.
+ *
+ * The dependency is bumped in one file and quoted in another, and the sentence is
+ * the copy nobody compiles, so it is the one that goes stale.
+ *
+ * @returns {Set<string>}
+ */
+function runtimePins() {
+  /** @type {Set<string>} */
+  const pins = new Set();
+  /** @param {string} directory */
+  function walk(directory) {
+    let entries;
+    try {
+      entries = readdirSync(join(root, directory), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const next = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (!PRUNED.has(entry.name)) walk(next);
+      } else if (entry.isFile() && entry.name.endsWith('.toml')) {
+        const text = read(next);
+        if (text === undefined) continue;
+        for (const match of text.matchAll(/\b([a-z][a-z0-9_.-]*==\d+\.\d+\.\d+)\b/g)) {
+          pins.add(match[1] ?? '');
+        }
+      }
+    }
+  }
+  walk('runtimes');
+  return pins;
+}
+
+const PINS = runtimePins();
+
+for (const file of documents) {
+  const text = read(file);
+  if (text === undefined) continue;
+  for (const claim of exactPins(text)) {
+    claimsChecked += 1;
+    if (!PINS.has(claim.pin)) {
+      fail(file, claim.line, `pins \`${claim.pin}\`, which no runtime manifest declares`);
+    }
+  }
+}
+
+/**
+ * Every registry a document names is one the schema admits.
+ *
+ * The image registry is a closed set because each member has a login the release
+ * workflow knows how to write. A doc that invents a fifth id describes a workflow
+ * the generator refuses to emit, which is the failure a reader only finds on the
+ * first tag.
+ */
+const SCHEMA_PATH = 'packages/spec/src/schema/spec.schema.json';
+const schemaSource = read(SCHEMA_PATH);
+/** @type {Set<string>} */
+let REGISTRIES = new Set();
+if (schemaSource === undefined) {
+  fail(SCHEMA_PATH, 1, 'cannot read the spec schema');
+} else {
+  try {
+    const schema = JSON.parse(schemaSource);
+    const values = schema?.$defs?.image?.properties?.registry?.enum;
+    if (Array.isArray(values)) REGISTRIES = new Set(values);
+    else fail(SCHEMA_PATH, 1, 'has no `$defs.image.properties.registry.enum` to compare against');
+  } catch (cause) {
+    fail(SCHEMA_PATH, 1, `is not JSON: ${String(cause)}`);
+  }
+}
+
+if (REGISTRIES.size > 0) {
+  for (const file of documents) {
+    const text = read(file);
+    if (text === undefined) continue;
+    text.split('\n').forEach((line, index) => {
+      const marker = /\bregistry\s*:/.exec(line);
+      if (marker === null) return;
+      // Only the value is a registry claim; a dotted token before the colon is
+      // the path to the field (`deployments[].image.registry`) or a due version.
+      const value = line.slice(marker.index + marker[0].length).split('#')[0] ?? '';
+      for (const match of value.matchAll(/['"]?([a-z0-9-]+(?:\.[a-z0-9-]+)+)['"]?/g)) {
+        const registry = match[1] ?? '';
+        claimsChecked += 1;
+        if (!REGISTRIES.has(registry)) {
+          fail(file, index + 1, `names \`${registry}\` as a registry the schema does not admit`);
+        }
+      }
+    });
+  }
+}
+
+/**
+ * Every target id in prose is a registered generator, and every capability a
+ * sentence attributes to a target is one that target's manifest declares.
+ *
+ * The target shape is derived from the registry rather than hard-coded, so a
+ * target added under a new prefix is covered the day it lands.
+ */ const knownTargets = new Set(REGISTRY.targets);
+const targetPrefixes = unique(
+  REGISTRY.targets.map((target) => target.split('-')[0] ?? '').filter((prefix) => prefix !== ''),
+);
+const targetShape =
+  targetPrefixes.length === 0
+    ? undefined
+    : new RegExp(`^(?:${targetPrefixes.join('|')})-[a-z0-9]+(?:-[a-z0-9]+)*$`);
+const knownCapabilities = new Set([...REGISTRY.capabilities.values()].flat());
+
+for (const file of documents) {
+  const text = read(file);
+  if (text === undefined) continue;
+
+  if (targetShape !== undefined) {
+    for (const claim of targetTokens(text, targetShape)) {
+      claimsChecked += 1;
+      if (!knownTargets.has(claim.token)) {
+        fail(file, claim.line, `names \`${claim.token}\`, which is not a registered target`);
+      }
+    }
+  }
+
+  for (const claim of capabilityClaims(
+    text,
+    (token) => knownTargets.has(token),
+    knownCapabilities,
+  )) {
+    for (const target of claim.targets) {
+      const declared = REGISTRY.capabilities.get(target) ?? [];
+      for (const capability of claim.capabilities) {
+        claimsChecked += 1;
+        if (!declared.includes(capability)) {
+          fail(
+            file,
+            claim.line,
+            `says \`${target}\` declares \`${capability}\`, which its manifest does not`,
+          );
+        }
+      }
+    }
+  }
+}
+
+/**
+ * The `/features` page's own claims: every link points at a heading that exists,
+ * every id is unique so an anchor stays stable, and every command a feature says
+ * turns it on is a command the CLI has.
+ */
+const FEATURES_DATA = 'site/scripts/features-data.mjs';
+const featuresSource = read(FEATURES_DATA);
+
+/**
+ * The version the released CLI declares, so a `since` marker cannot name a
+ * release that has not happened yet. The root manifest is a private workspace
+ * with `0.0.0`; every released package shares one stamped version.
+ *
+ * @returns {string | undefined}
+ */
+function currentVersion() {
+  const manifest = read('packages/cli/package.json');
+  if (manifest === undefined) return undefined;
+  try {
+    const version = JSON.parse(manifest).version;
+    return typeof version === 'string' ? version : undefined;
+  } catch (cause) {
+    fail('packages/cli/package.json', 1, `cannot parse the version: ${String(cause)}`);
+    return undefined;
+  }
+}
+
+/**
+ * @param {string} left
+ * @param {string} right
+ * @returns {number}
+ */
+function compareVersions(left, right) {
+  const a = left.split('.').map(Number);
+  const b = right.split('.').map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+const CURRENT_VERSION = currentVersion();
+
+if (featuresSource !== undefined) {
+  /** @type {Record<string, unknown>} */
+  let data;
+  try {
+    data = await import(pathToFileURL(join(root, FEATURES_DATA)).href);
+  } catch (cause) {
+    fail(FEATURES_DATA, 1, `cannot import the feature data: ${String(cause)}`);
+    data = {};
+  }
+
+  /** @type {Map<string, string>} */
+  const seenIds = new Map();
+  const bands = ['SHIPPED_FEATURES', 'REFUSALS', 'AI_INFRA', 'CLOUD_REFUSALS'];
+
+  for (const band of bands) {
+    const list = data[band];
+    if (!Array.isArray(list) || list.length === 0) {
+      fail(FEATURES_DATA, 1, `\`${band}\` is not a non-empty array`);
+      continue;
+    }
+
+    for (const entry of list) {
+      const label = `\`${band}\` entry \`${entry.id ?? entry.title ?? entry.target ?? '?'}\``;
+
+      if (typeof entry.id === 'string') {
+        claimsChecked += 1;
+        if (seenIds.has(entry.id)) {
+          fail(FEATURES_DATA, 1, `${label} repeats the id \`${entry.id}\``);
+        } else {
+          seenIds.set(entry.id, band);
+        }
+      }
+
+      if (typeof entry.href === 'string') {
+        claimsChecked += 1;
+        const [path, fragment] = entry.href.split('#');
+        const target = join('docs', (path ?? '').replace(/^\.\//, ''));
+        const repositoryPath = relative(root, target).split(sep).join('/');
+        const document = read(repositoryPath);
+        if (
+          document !== undefined &&
+          fragment !== undefined &&
+          fragment.length > 0 &&
+          !headingSlugs(document).has(fragment)
+        ) {
+          fail(
+            FEATURES_DATA,
+            lineOf(featuresSource, `href: '${entry.href}'`),
+            `${label} links \`${entry.href}\`, whose fragment names no heading in \`${repositoryPath}\``,
+          );
+        }
+      }
+
+      if (typeof entry.declaredBy === 'string' && COMMANDS !== undefined) {
+        for (const match of entry.declaredBy.matchAll(/\baid\s+([a-z][a-z0-9-]*)\b/g)) {
+          const command = match[1] ?? '';
+          claimsChecked += 1;
+          if (!COMMANDS.includes(command)) {
+            fail(
+              FEATURES_DATA,
+              lineOf(featuresSource, `declaredBy: '${entry.declaredBy}'`),
+              `${label} says \`aid ${command}\` turns it on, which is not in COMMANDS`,
+            );
+          }
+        }
+        if (FLAGS !== undefined) {
+          for (const match of entry.declaredBy.matchAll(/--([a-z0-9][a-z0-9-]*)/g)) {
+            const flag = match[1] ?? '';
+            claimsChecked += 1;
+            if (!FLAGS.includes(flag)) {
+              fail(
+                FEATURES_DATA,
+                lineOf(featuresSource, `declaredBy: '${entry.declaredBy}'`),
+                `${label} says \`--${flag}\` turns it on, which the CLI does not define`,
+              );
+            }
+          }
+        }
+      }
+
+      if (typeof entry.since === 'string') {
+        claimsChecked += 1;
+        if (!/^\d+\.\d+\.\d+$/.test(entry.since)) {
+          fail(
+            FEATURES_DATA,
+            lineOf(featuresSource, `since: '${entry.since}'`),
+            `${label} names \`${entry.since}\` as a release, which is not a version`,
+          );
+        } else if (
+          CURRENT_VERSION !== undefined &&
+          compareVersions(entry.since, CURRENT_VERSION) > 0
+        ) {
+          fail(
+            FEATURES_DATA,
+            lineOf(featuresSource, `since: '${entry.since}'`),
+            `${label} says \`${entry.since}\` shipped it, but the project is at \`${CURRENT_VERSION}\``,
+          );
+        }
+      }
+    }
+  }
+}
+
+/**
+ * The generated-tree page's counts are measured, not remembered.
+ *
+ * A hand-maintained count is a claim with no gate behind it: the example grows a
+ * test, the table still says the old number, and nothing goes red. Two rows, two
+ * independent ways to prove them:
+ *
+ * - `examples/support-copilot` is committed, so its row is counted from disk and
+ *   from the manifest that `aid gen` writes beside it.
+ * - the tutorial's tree exists only after following the walkthrough, so its row
+ *   is counted from the labelled tree block on the same page. That does not
+ *   prove the tree, but it does prove the two claims agree, which is the way a
+ *   hand-edited table usually drifts.
+ */
+const GENERATED_TREE = 'docs/guide/generated-tree.md';
+const GENERATED_TREE_EXAMPLE = 'examples/support-copilot';
+const generatedTree = read(GENERATED_TREE);
+
+/**
+ * @param {string} directory
+ * @returns {number}
+ */
+function countTreeFiles(directory) {
+  let total = 0;
+  /** @param {string} current */
+  function walk(current) {
+    let entries;
+    try {
+      entries = readdirSync(join(root, current), { withFileTypes: true });
+    } catch (cause) {
+      fail(current, 1, `cannot list \`${current}\`: ${String(cause)}`);
+      return;
+    }
+    for (const entry of entries) {
+      const next = `${current}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (!PRUNED.has(entry.name)) walk(next);
+      } else if (entry.isFile()) {
+        total += 1;
+      }
+    }
+  }
+  walk(directory);
+  return total;
+}
+
+/**
+ * The tutorial's counts, read from the `text` block that lists its tree. A line
+ * labelled `generated` or `business` is in the manifest; a line whose label
+ * carries a `when` clause describes a file the tutorial does not emit.
+ *
+ * @param {string} text
+ * @returns {{ files: number, managed: number } | undefined}
+ */
+function labelledTreeCounts(text) {
+  const block = /```text\n(app\/[\s\S]*?)```/.exec(text);
+  if (block === null || block[1] === undefined) return undefined;
+  let files = 0;
+  let managed = 0;
+  for (const line of block[1].split('\n')) {
+    const labelled = /^\s+(\S.*?)\s{2,}(\S.*)$/.exec(line);
+    if (labelled === null || labelled[2] === undefined) continue;
+    const label = labelled[2];
+    if (/\bwhen\b/.test(label)) continue;
+    files += 1;
+    if (/^(?:generated|business)\b/.test(label)) managed += 1;
+  }
+  return { files, managed };
+}
+
+if (generatedTree !== undefined) {
+  const rows = [
+    ...generatedTree.matchAll(
+      /^\|\s*(?<tree>[^|]+?)\s*\|\s*(?<files>\d+)\s*\|\s*(?<managed>\d+)\s*\|\s*$/gm,
+    ),
+  ].map((match) => ({
+    text: match[0],
+    tree: match.groups?.tree ?? '',
+    files: Number(match.groups?.files ?? NaN),
+    managed: Number(match.groups?.managed ?? NaN),
+  }));
+
+  const exampleRow = rows.find((row) => row.tree.includes(`\`${GENERATED_TREE_EXAMPLE}\``));
+  if (exampleRow === undefined) {
+    fail(GENERATED_TREE, 1, `has no counted row for \`${GENERATED_TREE_EXAMPLE}\``);
+  } else {
+    const manifest = read(`${GENERATED_TREE_EXAMPLE}/app/aid.manifest.json`);
+    /** @type {unknown[]} */
+    let entries = [];
+    if (manifest === undefined) {
+      fail(GENERATED_TREE, 1, `cannot read the manifest of \`${GENERATED_TREE_EXAMPLE}\``);
+    } else {
+      try {
+        const parsed = JSON.parse(manifest);
+        if (Array.isArray(parsed?.files)) entries = parsed.files;
+        else fail(GENERATED_TREE, 1, `the manifest of \`${GENERATED_TREE_EXAMPLE}\` has no files`);
+      } catch (cause) {
+        fail(
+          GENERATED_TREE,
+          1,
+          `the manifest of \`${GENERATED_TREE_EXAMPLE}\` is not JSON: ${String(cause)}`,
+        );
+      }
+    }
+
+    const files = countTreeFiles(GENERATED_TREE_EXAMPLE);
+    claimsChecked += 1;
+    if (exampleRow.files !== files) {
+      fail(
+        GENERATED_TREE,
+        lineOf(generatedTree, exampleRow.text),
+        `says \`${GENERATED_TREE_EXAMPLE}\` ships ${exampleRow.files} files; it has ${files}`,
+      );
+    }
+
+    claimsChecked += 1;
+    if (exampleRow.managed !== entries.length) {
+      fail(
+        GENERATED_TREE,
+        lineOf(generatedTree, exampleRow.text),
+        `says \`${GENERATED_TREE_EXAMPLE}\` has ${exampleRow.managed} manifest entries; it has ${entries.length}`,
+      );
+    }
+  }
+
+  const tutorialRow = rows.find((row) => !row.tree.includes(`\`${GENERATED_TREE_EXAMPLE}\``));
+  const tutorialTree = labelledTreeCounts(generatedTree);
+  if (tutorialRow === undefined) {
+    fail(GENERATED_TREE, 1, 'has no counted row for the tutorial tree');
+  } else if (tutorialTree === undefined) {
+    fail(GENERATED_TREE, 1, 'has no labelled `text` block for the tutorial tree');
+  } else {
+    claimsChecked += 2;
+    if (tutorialRow.files !== tutorialTree.files) {
+      fail(
+        GENERATED_TREE,
+        lineOf(generatedTree, tutorialRow.text),
+        `says the tutorial ships ${tutorialRow.files} files; its tree block lists ${tutorialTree.files}`,
+      );
+    }
+    if (tutorialRow.managed !== tutorialTree.managed) {
+      fail(
+        GENERATED_TREE,
+        lineOf(generatedTree, tutorialRow.text),
+        `says the tutorial has ${tutorialRow.managed} manifest entries; its tree block labels ${tutorialTree.managed}`,
+      );
+    }
+  }
+}
+
+/**
  * Every Markdown file whose relative links are part of the docs surface.
  *
  * @returns {string[]}
@@ -446,14 +1051,18 @@ function markdownFiles() {
     for (const entry of entries) {
       const next = `${directory}/${entry.name}`;
       if (entry.isDirectory()) {
-        walk(next);
+        if (!PRUNED.has(entry.name)) walk(next);
       } else if (entry.isFile() && entry.name.endsWith('.md')) {
         files.push(next);
       }
     }
   }
 
-  walk('docs');
+  // `packages/*/README.md` documents install commands and per-target behaviour,
+  // so a stale flag there is the same false promise as one in `docs/`.
+  for (const directory of ['docs', 'packages', 'runtimes', 'examples']) {
+    walk(directory);
+  }
   return files;
 }
 
@@ -524,7 +1133,7 @@ function checkRelativeLinks(file) {
   }
 }
 
-for (const file of markdownFiles()) {
+for (const file of documents) {
   checkRelativeLinks(file);
 }
 

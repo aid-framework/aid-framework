@@ -204,7 +204,7 @@ evals:
 
 What comes out:
 
-- `aid eval --record` writes the baseline; `aid eval` exits non-zero when the run drops below
+- `aid eval --baseline` writes the baseline; `aid eval` exits non-zero when the run drops below
   `maxRegression` against it, so the exit code is the contract CI reads.
 - `.github/workflows/evals.yml`, scaffolded for exactly the evals that gate CI.
 - A cost-ceiling job built from the same priced profiles, so a budget is enforced in CI

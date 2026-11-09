@@ -9,10 +9,10 @@ happens on the second run.
 
 ## Two numbers, one rule
 
-| Tree | Files it ships | Managed by the generator |
+| Tree | Files in the tree | In the manifest |
 | --- | --- | --- |
-| The tutorial from [getting started](getting-started.md) | 24 | 21 |
-| `examples/support-copilot` | 62 | 44 |
+| The tutorial from [getting started](getting-started.md) | 24 | 20 |
+| `examples/support-copilot` | 62 | 41 |
 
 The difference is not the generator being inconsistent. It is the rule: **the generator only
 manages what it can reproduce from the spec.** A file you write - `app/main.py`, an eval
