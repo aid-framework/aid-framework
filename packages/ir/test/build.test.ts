@@ -685,6 +685,95 @@ describe('deployments', () => {
     expect(ir.deployments[0]?.image).toBeUndefined();
   });
 
+  it('derives an ECR host from the account and region it declares', () => {
+    const { ir, diagnostics } = buildIR({
+      specVersion: '0.17',
+      project: { name: 'p' },
+      deployments: {
+        api: {
+          target: 'container',
+          secrets: [],
+          image: {
+            registry: 'aws.ecr',
+            name: 'acme/p',
+            accountId: '123456789012',
+            region: 'eu-west-1',
+            roleArn: 'arn:aws:iam::123456789012:role/publisher',
+          },
+        },
+      },
+    });
+    expect(diagnostics).toEqual([]);
+    // The host is not restated in the spec, so it is derived here; the identity travels
+    // with the matrix entry because two accounts are two registries.
+    expect(ir.deployments[0]?.image).toEqual({
+      registry: 'aws.ecr',
+      name: 'acme/p',
+      loginServer: '123456789012.dkr.ecr.eu-west-1.amazonaws.com',
+      loginFields: {
+        region: 'eu-west-1',
+        roleArn: 'arn:aws:iam::123456789012:role/publisher',
+      },
+    });
+  });
+
+  it('prefixes an Artifact Registry repository with the project', () => {
+    const { ir, diagnostics } = buildIR({
+      specVersion: '0.18',
+      project: { name: 'p' },
+      deployments: {
+        api: {
+          target: 'container',
+          secrets: [],
+          image: {
+            registry: 'gcp.artifact-registry',
+            name: 'acme/p',
+            project: 'acme-prod',
+            region: 'europe-west1',
+            workloadIdentityProvider:
+              'projects/123456789/locations/global/workloadIdentityPools/gh/providers/main',
+            serviceAccount: 'publisher@acme-prod.iam.gserviceaccount.com',
+          },
+        },
+      },
+    });
+    expect(diagnostics).toEqual([]);
+    expect(ir.deployments[0]?.image).toEqual({
+      registry: 'gcp.artifact-registry',
+      name: 'acme-prod/acme/p',
+      loginServer: 'europe-west1-docker.pkg.dev',
+      loginFields: {
+        region: 'europe-west1',
+        workloadIdentityProvider:
+          'projects/123456789/locations/global/workloadIdentityPools/gh/providers/main',
+        serviceAccount: 'publisher@acme-prod.iam.gserviceaccount.com',
+      },
+    });
+  });
+
+  it('reports a cloud image missing an identity field instead of emitting an empty one', () => {
+    const { ir, diagnostics } = buildIR({
+      specVersion: '0.17',
+      project: { name: 'p' },
+      deployments: {
+        api: {
+          target: 'container',
+          secrets: [],
+          image: {
+            registry: 'aws.ecr',
+            name: 'acme/p',
+            accountId: '123456789012',
+            region: 'eu-west-1',
+          },
+        },
+      },
+    });
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      IR_DIAGNOSTIC_CODES.deployImageCredentials,
+    );
+    expect(ir.deployments[0]?.image).toBeUndefined();
+  });
+
   it('reports a runtime whose platform would otherwise be invented', () => {
     // Validation rejects this platform, so reaching the builder means the document
     // bypassed it; dropping the block would deploy to compute the document excluded.

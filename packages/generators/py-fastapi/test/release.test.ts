@@ -66,6 +66,30 @@ function specWithBothRegistries(): string {
   return `${specWithImage().replace('specVersion: "0.4"', 'specVersion: "0.16"')}\n  worker:\n    target: container\n    secrets: [OPENAI_API_KEY]\n    image:\n      registry: docker.io\n      name: acme/worker\n      usernameSecret: DOCKERHUB_USERNAME\n      tokenSecret: DOCKERHUB_TOKEN\n`;
 }
 
+/** The example, publishing to ECR with the identity fields its OIDC login needs. */
+function specWithEcr(
+  accountId = '123456789012',
+  region = 'eu-west-1',
+  roleArn = 'arn:aws:iam::123456789012:role/publisher',
+): string {
+  return exampleSpecText()
+    .replace('specVersion: "0.2"', 'specVersion: "0.17"')
+    .replace(
+      '    secrets: [OPENAI_API_KEY]',
+      `    secrets: [OPENAI_API_KEY]\n    image:\n      registry: aws.ecr\n      name: acme/support-copilot\n      accountId: "${accountId}"\n      region: ${region}\n      roleArn: ${roleArn}`,
+    );
+}
+
+/** The example, publishing to Artifact Registry through Workload Identity. */
+function specWithArtifactRegistry(): string {
+  return exampleSpecText()
+    .replace('specVersion: "0.2"', 'specVersion: "0.18"')
+    .replace(
+      '    secrets: [OPENAI_API_KEY]',
+      '    secrets: [OPENAI_API_KEY]\n    image:\n      registry: gcp.artifact-registry\n      name: acme/support-copilot\n      project: acme-prod\n      region: europe-west1\n      workloadIdentityProvider: projects/123456789/locations/global/workloadIdentityPools/gh/providers/main\n      serviceAccount: publisher@acme-prod.iam.gserviceaccount.com',
+    );
+}
+
 function matrixRegistries(content: string): string[] {
   return content
     .split('\n')
@@ -181,8 +205,12 @@ describe('two credential paths in one project', () => {
     const content = releaseFor(specWithBothRegistries());
 
     expect(content.match(/ {6}- name: Log in to /g)).toHaveLength(2);
-    expect(content).toContain("        if: matrix.image == 'acme/support-copilot'");
-    expect(content).toContain("        if: matrix.image == 'acme/worker'");
+    expect(content).toContain(
+      "        if: matrix.registry == 'ghcr.io' && matrix.image == 'acme/support-copilot'",
+    );
+    expect(content).toContain(
+      "        if: matrix.registry == 'docker.io' && matrix.image == 'acme/worker'",
+    );
     // The GITHUB_TOKEN login still needs the scope, even though the other does not.
     expect(content).toContain('packages: write');
   });
@@ -196,7 +224,111 @@ describe('two credential paths in one project', () => {
     expect(content.match(/ {6}- name: Log in to docker\.io/g)).toHaveLength(2);
     expect(content).toContain('          REGISTRY_TOKEN: ${{ secrets.HUB_A_TOKEN }}');
     expect(content).toContain('          REGISTRY_TOKEN: ${{ secrets.HUB_B_TOKEN }}');
-    expect(content).toContain("        if: matrix.image == 'acme/support-copilot'");
-    expect(content).toContain("        if: matrix.image == 'acme/worker'");
+    expect(content).toContain(
+      "        if: matrix.registry == 'docker.io' && matrix.image == 'acme/support-copilot'",
+    );
+    expect(content).toContain(
+      "        if: matrix.registry == 'docker.io' && matrix.image == 'acme/worker'",
+    );
+  });
+});
+
+describe('an ECR image', () => {
+  it('derives the host and role from the spec and carries them in the matrix', () => {
+    const content = releaseFor(specWithEcr());
+
+    expect(matrixRegistries(content)).toEqual(['aws.ecr']);
+    // The account is part of the host, so the spec does not restate it.
+    expect(content).toContain('            login: 123456789012.dkr.ecr.eu-west-1.amazonaws.com');
+    expect(content).toContain('            region: eu-west-1');
+    expect(content).toContain('            roleArn: arn:aws:iam::123456789012:role/publisher');
+    expect(content).toContain('      REGISTRY: ${{ matrix.login }}');
+    expect(content).toContain('${REGISTRY}/${IMAGE}:${tag}');
+  });
+
+  it('assumes the role with OIDC instead of reading an access key', () => {
+    const content = releaseFor(specWithEcr());
+
+    expect(content).toContain('      - name: Assume the publish role');
+    expect(content).toContain('          role-to-assume: ${{ matrix.roleArn }}');
+    expect(content).toContain('          aws-region: ${{ matrix.region }}');
+    expect(content).toContain('aws ecr get-login-password');
+    expect(content).toContain('--username AWS');
+    // No long-lived credential is invented, and the workflow token pushes nothing.
+    expect(content).not.toContain('secrets.');
+    expect(content).not.toContain('github.token');
+    expect(content).not.toContain('packages: write');
+  });
+
+  it('asks for the OIDC scope and nothing else', () => {
+    const content = releaseFor(specWithEcr());
+    expect(content).toContain('permissions:\n  contents: read\n  id-token: write\n');
+  });
+
+  it('is byte-identical on a second plan', () => {
+    expect(releaseFor(specWithEcr())).toBe(releaseFor(specWithEcr()));
+  });
+
+  it('emits one guarded login per account when two images share a registry', () => {
+    const content = releaseFor(
+      `${specWithEcr()}\n  worker:\n    target: container\n    secrets: [OPENAI_API_KEY]\n    image:\n      registry: aws.ecr\n      name: acme/worker\n      accountId: "210987654321"\n      region: us-east-1\n      roleArn: arn:aws:iam::210987654321:role/publisher\n`,
+    );
+
+    expect(content.match(/ {6}- name: Assume the publish role/g)).toHaveLength(2);
+    expect(content).toContain(
+      "        if: matrix.registry == 'aws.ecr' && matrix.image == 'acme/support-copilot' && matrix.login == '123456789012.dkr.ecr.eu-west-1.amazonaws.com'",
+    );
+    expect(content).toContain(
+      "        if: matrix.registry == 'aws.ecr' && matrix.image == 'acme/worker' && matrix.login == '210987654321.dkr.ecr.us-east-1.amazonaws.com'",
+    );
+  });
+});
+
+describe('an Artifact Registry image', () => {
+  it('prefixes the repository with the project the host names', () => {
+    const content = releaseFor(specWithArtifactRegistry());
+
+    expect(matrixRegistries(content)).toEqual(['gcp.artifact-registry']);
+    // Artifact Registry paths start with the project, so the spec's `name` is a suffix.
+    expect(matrixImages(content)).toEqual(['acme-prod/acme/support-copilot']);
+    expect(content).toContain('            login: europe-west1-docker.pkg.dev');
+    expect(content).toContain('      REGISTRY: ${{ matrix.login }}');
+  });
+
+  it('federates through Workload Identity instead of a service-account key', () => {
+    const content = releaseFor(specWithArtifactRegistry());
+
+    expect(content).toContain(
+      '          workload_identity_provider: ${{ matrix.workloadIdentityProvider }}',
+    );
+    expect(content).toContain('          service_account: ${{ matrix.serviceAccount }}');
+    expect(content).toContain('gcloud auth print-access-token');
+    expect(content).toContain('--username oauth2accesstoken');
+    expect(content).not.toContain('secrets.');
+    expect(content).not.toContain('packages: write');
+    expect(content).toContain('  id-token: write');
+  });
+
+  it('is byte-identical on a second plan', () => {
+    expect(releaseFor(specWithArtifactRegistry())).toBe(releaseFor(specWithArtifactRegistry()));
+  });
+});
+
+describe('a workflow that publishes to two credential paths', () => {
+  it('asks for both scopes and guards each login', () => {
+    const content = releaseFor(
+      `${specWithEcr()}\n  worker:\n    target: container\n    secrets: [OPENAI_API_KEY]\n    image:\n      registry: ghcr.io\n      name: acme/worker\n`,
+    );
+
+    expect(content).toContain('  packages: write');
+    expect(content).toContain('  id-token: write');
+    // A ghcr entry takes part in the derived-host matrix, so it names its own host.
+    expect(content).toContain('            login: ghcr.io');
+    expect(content).toContain(
+      "        if: matrix.registry == 'ghcr.io' && matrix.image == 'acme/worker'",
+    );
+    expect(content).toContain(
+      "        if: matrix.registry == 'aws.ecr' && matrix.image == 'acme/support-copilot' && matrix.login == '123456789012.dkr.ecr.eu-west-1.amazonaws.com'",
+    );
   });
 });

@@ -284,8 +284,9 @@ deployments:
       name: acme/support-copilot
 ```
 
-A registry other than `ghcr.io` names the repository secrets its login reads, because the
-spec holds names and never values (spec `0.16`):
+A registry other than `ghcr.io` names the credential its login reads, because the spec
+holds names and identifiers and never secret values. Docker Hub takes the names of two
+repository secrets (spec `0.16`):
 
 ```yaml
     image:
@@ -299,6 +300,36 @@ spec holds names and never values (spec `0.16`):
 already holds and asks only for `packages: write`. A spec that names a credential on
 `ghcr.io`, or omits one on `docker.io`, is refused rather than emitting a login that
 cannot work.
+
+A cloud registry is named by an id, not a host, because the host is account-specific. ECR
+derives it from the account and region and assumes a role with OIDC (spec `0.17`), so no
+access key is stored:
+
+```yaml
+    image:
+      registry: aws.ecr
+      name: acme/support-copilot
+      accountId: "123456789012"
+      region: eu-west-1
+      roleArn: arn:aws:iam::123456789012:role/publisher
+```
+
+Artifact Registry federates through Workload Identity and prefixes the repository path
+with the project (spec `0.18`):
+
+```yaml
+    image:
+      registry: gcp.artifact-registry
+      name: acme/support-copilot
+      project: acme-prod
+      region: europe-west1
+      workloadIdentityProvider: projects/123456789/locations/global/workloadIdentityPools/gh/providers/main
+      serviceAccount: publisher@acme-prod.iam.gserviceaccount.com
+```
+
+Both cloud paths ask for `id-token: write` and nothing else; the emitted workflow carries
+the derived host and the identity per matrix entry, so two accounts publishing in one
+project do not share a login.
 
 ```sh
 aid infra gen --cloud aws
@@ -321,8 +352,9 @@ What is refused:
 - An unknown cloud, or a cloud and target pair with no module, such as `edge` on GCP, rather
   than emitting half a project.
 - Streaming on an HTTP API target that cannot carry SSE.
-- An image on a registry the release workflow has no login for, or one whose credential
-  names the registry does not read.
+- An image on a registry the release workflow has no login for, a cloud image missing the
+  account, role or provider its login federates with, or one whose credential names the
+  registry does not read.
 
 `aid eject` moves a generated file into `business/` and stops generating it. After that the
 file is yours, and the manifest says so instead of re-reporting it as drift.

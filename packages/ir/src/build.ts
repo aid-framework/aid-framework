@@ -56,8 +56,8 @@ import {
   type GuardrailShape,
   type GuardStep,
   type Idempotency,
-  IMAGE_CREDENTIAL_FIELDS,
   IMAGE_REGISTRIES,
+  IMAGE_REGISTRY_FIELDS,
   type IR,
   IR_VERSION,
   imageRegistry,
@@ -94,6 +94,7 @@ import {
   pipelineIdentity,
   promptIdentity,
   RETRIEVAL_TRAITS,
+  type RegistryImageFields,
   type RetrieverShape,
   type RetrieveStep,
   type RouteStep,
@@ -1347,19 +1348,19 @@ function buildDeploymentImage(
     );
     return undefined;
   }
-  // The credential is part of the registry's contract, not an optional extra: a registry
-  // whose login cannot be built is a workflow that fails on the first tag, so it is
-  // refused here rather than emitted. A field the registry does not consume is refused
+  // The declared fields are part of the registry's contract, not an optional extra: a
+  // registry whose login cannot be built is a workflow that fails on the first tag, so it
+  // is refused here rather than emitted. A field the registry does not consume is refused
   // too -- a `ghcr.io` image carrying a Docker Hub token names a secret nothing reads.
-  const credentials: { usernameSecret?: string; tokenSecret?: string } = {};
+  const fields: RegistryImageFields = {};
   const missing: string[] = [];
   const unknown: string[] = [];
   for (const field of descriptor.declares) {
     const value = asString(image[field]);
     if (value === undefined) missing.push(field);
-    else credentials[field] = value;
+    else fields[field] = value;
   }
-  for (const field of IMAGE_CREDENTIAL_FIELDS) {
+  for (const field of IMAGE_REGISTRY_FIELDS) {
     if (!descriptor.declares.includes(field) && image[field] !== undefined) unknown.push(field);
   }
   if (missing.length > 0 || unknown.length > 0) {
@@ -1374,19 +1375,28 @@ function buildDeploymentImage(
         path: ['deployments', id, 'image'],
         hint:
           descriptor.declares.length === 0
-            ? `drop the credential fields; \`${registry}\` is a registry the release workflow authenticates to with the GITHUB_TOKEN it already holds`
-            : `declare ${descriptor.credentialHint}; the values never enter the repository, only their names do`,
+            ? `drop the registry fields; \`${registry}\` is a registry the release workflow authenticates to with the GITHUB_TOKEN it already holds`
+            : `declare ${descriptor.credentialHint}`,
       }),
     );
     return undefined;
   }
+  // The host and the repository path are derived from the declared fields rather than
+  // restated in the spec, so the two cannot disagree. Both are omitted when the registry
+  // id already is the host, which keeps a `ghcr.io` or `docker.io` image byte-identical.
+  const loginServer = descriptor.loginServer(fields);
+  const repository = descriptor.repository?.(fields, name) ?? name;
+  const loginFields =
+    descriptor.loginFields === undefined
+      ? undefined
+      : Object.fromEntries(descriptor.loginFields.map((field) => [field, fields[field] ?? '']));
   return {
     registry: registry as DeploymentImageShape['registry'],
-    name,
-    ...(credentials.usernameSecret === undefined
-      ? {}
-      : { usernameSecret: credentials.usernameSecret }),
-    ...(credentials.tokenSecret === undefined ? {} : { tokenSecret: credentials.tokenSecret }),
+    name: repository,
+    ...(loginServer === registry ? {} : { loginServer }),
+    ...(loginFields === undefined ? {} : { loginFields }),
+    ...(fields.usernameSecret === undefined ? {} : { usernameSecret: fields.usernameSecret }),
+    ...(fields.tokenSecret === undefined ? {} : { tokenSecret: fields.tokenSecret }),
   };
 }
 

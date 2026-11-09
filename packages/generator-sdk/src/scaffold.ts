@@ -42,6 +42,7 @@ export const ACTION_PINS = {
   setupNode: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
   setupPython: 'actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065',
   configureAws: 'aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd',
+  googleAuth: 'google-github-actions/auth@71f986410dfbc7added4569d411d040a91dc6935',
   setupTofu: 'opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4',
 } as const;
 
@@ -419,6 +420,18 @@ export interface ReleaseImage {
   readonly name: string;
   /** The deployments that declared it, in code-unit order, for the reader. */
   readonly deploymentIds: readonly string[];
+  /**
+   * The host `docker login` and `docker push` address, when it is not the registry id. An
+   * ECR host carries the account and the region, which the workflow derives rather than
+   * asking the spec to restate.
+   */
+  readonly loginServer?: string;
+  /**
+   * The values the login step reads from this matrix entry, when the credential is
+   * per-account: a region and a role for ECR, a region and a Workload Identity pair for
+   * Artifact Registry.
+   */
+  readonly loginFields?: Readonly<Record<string, string>>;
   /** The repository secret naming the account, for a `secret-pair` registry. */
   readonly usernameSecret?: string;
   /** The repository secret holding the access token, for a `secret-pair` registry. */
@@ -453,10 +466,18 @@ export interface ReleaseProfile {
  * two racing pushes.
  */
 export function scaffoldRelease(profile: ReleaseProfile, cliRange: string): GeneratedFile {
+  // A cloud registry's host is derived from the account, so the matrix carries it and the
+  // job reads it back. A profile whose hosts are all registry ids keeps the two-line entry
+  // it always had, which is why this is conditional rather than always emitted.
+  const derivedHosts = profile.images.some((image) => image.loginServer !== undefined);
   const matrix = profile.images.flatMap((image) => [
     `          # ${image.deploymentIds.map((id) => `deployments.${id}`).join(', ')}`,
     `          - registry: ${image.registry}`,
     `            image: ${image.name}`,
+    ...(derivedHosts ? [`            login: ${image.loginServer ?? image.registry}`] : []),
+    ...Object.entries(image.loginFields ?? {}).map(
+      ([field, value]) => `            ${field}: ${value}`,
+    ),
   ]);
 
   const logins = releaseLogins(profile.images);
@@ -473,9 +494,10 @@ export function scaffoldRelease(profile: ReleaseProfile, cliRange: string): Gene
         '# applies infrastructure or restarts a service.',
       ]
     : [
-        '# `deployments[].image`, and each login uses credentials the workflow already has or',
-        '# the repository secrets it names, so no credential value is stored here. Publishing',
-        '# is not deploying: nothing here applies infrastructure or restarts a service.',
+        '# `deployments[].image`, and each login uses the token this run already has, the',
+        '# repository secrets it names, or an OIDC identity exchanged for a short-lived cloud',
+        '# credential, so no credential value is stored here. Publishing is not deploying:',
+        '# nothing here applies infrastructure or restarts a service.',
       ];
 
   const content = [
@@ -500,6 +522,10 @@ export function scaffoldRelease(profile: ReleaseProfile, cliRange: string): Gene
     '  contents: read',
     // `packages: write` is the GITHUB_TOKEN scope; a declared secret pair needs no scope.
     ...(logins.some((login) => login.authKind === 'github-token') ? ['  packages: write'] : []),
+    // A federated cloud login exchanges the run's OIDC token, which needs its own scope.
+    ...(logins.some((login) => login.authKind === 'aws-oidc' || login.authKind === 'gcp-wif')
+      ? ['  id-token: write']
+      : []),
     '',
     'jobs:',
     '  guard:',
@@ -532,8 +558,17 @@ export function scaffoldRelease(profile: ReleaseProfile, cliRange: string): Gene
     '        include:',
     ...matrix,
     '    env:',
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
-    '      REGISTRY: ${{ matrix.registry }}',
+    // The login, the build and the push all address `REGISTRY`. For a registry whose host
+    // is derived it is the matrix's `login`, so the image reference is the real one.
+    ...(derivedHosts
+      ? [
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
+          '      REGISTRY: ${{ matrix.login }}',
+        ]
+      : [
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
+          '      REGISTRY: ${{ matrix.registry }}',
+        ]),
     // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
     '      IMAGE: ${{ matrix.image }}',
     '    steps:',
@@ -582,7 +617,9 @@ interface ReleaseLogin {
  *
  * Two images pushed under one Docker Hub account declare the same two secret names and
  * share a step; two accounts do not, and each gets its own guarded step. The grouping is
- * by the literal secret names, so the emitted `secrets.<NAME>` references are static.
+ * by the literal secret names, so the emitted `secrets.<NAME>` references are static. A
+ * cloud login is grouped the same way over the declared identity fields, because two ECR
+ * accounts are two roles even though they are one registry.
  */
 function releaseLogins(images: readonly ReleaseImage[]): ReleaseLogin[] {
   const byKey = new Map<
@@ -596,7 +633,8 @@ function releaseLogins(images: readonly ReleaseImage[]): ReleaseLogin[] {
     }
   >();
   for (const image of images) {
-    const authKind: RegistryAuthKind = imageRegistry(image.registry)?.authKind ?? 'github-token';
+    const descriptor = imageRegistry(image.registry);
+    const authKind: RegistryAuthKind = descriptor?.authKind ?? 'github-token';
     const usernameSecret = authKind === 'secret-pair' ? image.usernameSecret : undefined;
     const tokenSecret = authKind === 'secret-pair' ? image.tokenSecret : undefined;
     if (authKind === 'secret-pair' && (usernameSecret === undefined || tokenSecret === undefined)) {
@@ -607,7 +645,24 @@ function releaseLogins(images: readonly ReleaseImage[]): ReleaseLogin[] {
         `release image ${image.registry}/${image.name} needs \`usernameSecret\` and \`tokenSecret\`; ${image.registry} authenticates with a secret pair`,
       );
     }
-    const key = [image.registry, authKind, usernameSecret ?? '', tokenSecret ?? ''].join('\u0000');
+    const loginFieldNames = descriptor?.loginFields;
+    const missing = (loginFieldNames ?? []).filter(
+      (field) => image.loginFields?.[field] === undefined,
+    );
+    if (missing.length > 0) {
+      // Same reason: a federated login with no role or provider emits `matrix.undefined`,
+      // which fails on the first tag instead of here.
+      throw new Error(
+        `release image ${image.registry}/${image.name} needs ${missing.map((field) => `\`${field}\``).join(', ')}; ${image.registry} authenticates per account`,
+      );
+    }
+    const key = [
+      image.registry,
+      authKind,
+      usernameSecret ?? '',
+      tokenSecret ?? '',
+      JSON.stringify(image.loginFields ?? {}),
+    ].join('\u0000');
     const existing = byKey.get(key);
     if (existing === undefined) {
       byKey.set(key, {
@@ -626,9 +681,17 @@ function releaseLogins(images: readonly ReleaseImage[]): ReleaseLogin[] {
 
 /** The `if:` that selects the matrix entries a guarded login serves. */
 function matrixCondition(login: ReleaseLogin): string {
-  // Selected by image, not by registry: two accounts on the same registry are two
-  // variants, and a registry-only guard would run both logins for both.
-  return login.images.map((image) => `matrix.image == '${image.name}'`).join(' || ');
+  // Selected by the entry's own values, not by registry: two accounts on the same registry
+  // are two variants, and a registry-only guard would run both logins for both.
+  return login.images
+    .map((image) => {
+      const clauses = [`matrix.registry == '${image.registry}'`, `matrix.image == '${image.name}'`];
+      if (image.loginServer !== undefined) {
+        clauses.push(`matrix.login == '${image.loginServer}'`);
+      }
+      return clauses.join(' && ');
+    })
+    .join(' || ');
 }
 
 /** The login step for one credential path, unguarded when it is the only one. */
@@ -643,6 +706,36 @@ function loginStep(login: ReleaseLogin, condition: string | undefined): string[]
       '          REGISTRY_TOKEN: ${{ github.token }}',
       '        # The password reaches docker on stdin, so it is not part of the process list.',
       '        run: echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" --username "$GITHUB_ACTOR" --password-stdin',
+    ];
+  }
+  if (login.authKind === 'aws-oidc') {
+    return [
+      '      - name: Assume the publish role',
+      ...guard,
+      `        uses: ${ACTION_PINS.configureAws}`,
+      '        with:',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
+      '          role-to-assume: ${{ matrix.roleArn }}',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
+      '          aws-region: ${{ matrix.region }}',
+      `      - name: Log in to ${login.registry}`,
+      '        # The action above exports AWS_REGION; the password reaches docker on stdin.',
+      '        run: aws ecr get-login-password --region "$AWS_REGION" | docker login "$REGISTRY" --username AWS --password-stdin',
+    ];
+  }
+  if (login.authKind === 'gcp-wif') {
+    return [
+      '      - name: Authenticate to Google Cloud',
+      ...guard,
+      `        uses: ${ACTION_PINS.googleAuth}`,
+      '        with:',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
+      '          workload_identity_provider: ${{ matrix.workloadIdentityProvider }}',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, emitted literally.
+      '          service_account: ${{ matrix.serviceAccount }}',
+      `      - name: Log in to ${login.registry}`,
+      '        # gcloud is preinstalled on the runner; the token reaches docker on stdin.',
+      '        run: gcloud auth print-access-token | docker login --username oauth2accesstoken --password-stdin "$REGISTRY"',
     ];
   }
   return [

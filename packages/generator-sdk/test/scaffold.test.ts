@@ -432,6 +432,95 @@ describe('scaffoldRelease', () => {
       ),
     ).toThrow(/needs `usernameSecret` and `tokenSecret`/);
   });
+
+  it('exchanges the run identity for an ECR credential instead of a stored key', () => {
+    const ecr = scaffoldRelease(
+      {
+        ...RELEASE_PROFILE,
+        images: [
+          {
+            registry: 'aws.ecr',
+            name: 'acme/support-copilot',
+            deploymentIds: ['api'],
+            loginServer: '123456789012.dkr.ecr.eu-west-1.amazonaws.com',
+            loginFields: {
+              region: 'eu-west-1',
+              roleArn: 'arn:aws:iam::123456789012:role/publisher',
+            },
+          },
+        ],
+      },
+      '0.1',
+    );
+
+    // The host is per-account, so it travels in the matrix rather than in the job.
+    expect(ecr.content).toContain(
+      '            login: 123456789012.dkr.ecr.eu-west-1.amazonaws.com',
+    );
+    expect(ecr.content).toContain('      REGISTRY: ${{ matrix.login }}');
+    expect(ecr.content).toContain('      - name: Assume the publish role');
+    expect(ecr.content).toContain('          role-to-assume: ${{ matrix.roleArn }}');
+    expect(ecr.content).toContain('          aws-region: ${{ matrix.region }}');
+    expect(ecr.content).toContain('aws ecr get-login-password');
+    // OIDC is its own scope; nothing is pushed with the workflow token.
+    expect(ecr.content).toContain('  id-token: write');
+    expect(ecr.content).not.toContain('packages: write');
+    // One login still applies to every entry, so no guard is emitted.
+    expect(ecr.content).not.toContain('        if: matrix.');
+  });
+
+  it('federates to Artifact Registry through Workload Identity', () => {
+    const artifact = scaffoldRelease(
+      {
+        ...RELEASE_PROFILE,
+        images: [
+          {
+            registry: 'gcp.artifact-registry',
+            name: 'acme-prod/acme/support-copilot',
+            deploymentIds: ['api'],
+            loginServer: 'europe-west1-docker.pkg.dev',
+            loginFields: {
+              region: 'europe-west1',
+              workloadIdentityProvider:
+                'projects/123456789/locations/global/workloadIdentityPools/gh/providers/main',
+              serviceAccount: 'publisher@acme-prod.iam.gserviceaccount.com',
+            },
+          },
+        ],
+      },
+      '0.1',
+    );
+
+    // The repository path already carries the project the host names.
+    expect(artifact.content).toContain('            image: acme-prod/acme/support-copilot');
+    expect(artifact.content).toContain(
+      'workload_identity_provider: ${{ matrix.workloadIdentityProvider }}',
+    );
+    expect(artifact.content).toContain('service_account: ${{ matrix.serviceAccount }}');
+    expect(artifact.content).toContain('gcloud auth print-access-token');
+    expect(artifact.content).toContain('  id-token: write');
+    expect(artifact.content).not.toContain('packages: write');
+  });
+
+  it('refuses a cloud login with no identity field to federate with', () => {
+    expect(() =>
+      scaffoldRelease(
+        {
+          ...RELEASE_PROFILE,
+          images: [
+            {
+              registry: 'aws.ecr',
+              name: 'acme/p',
+              deploymentIds: ['api'],
+              loginServer: '123456789012.dkr.ecr.eu-west-1.amazonaws.com',
+              loginFields: { region: 'eu-west-1' },
+            },
+          ],
+        },
+        '0.1',
+      ),
+    ).toThrow(/needs `roleArn`; aws\.ecr authenticates per account/);
+  });
 });
 
 describe('regenerating over the scaffold tier', () => {

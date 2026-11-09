@@ -913,18 +913,37 @@ export {
   IMAGE_CREDENTIAL_FIELDS,
   IMAGE_REGISTRIES,
   IMAGE_REGISTRY_DESCRIPTORS,
+  IMAGE_REGISTRY_FIELDS,
   type ImageCredentialField,
   type ImageRegistry,
+  type ImageRegistryField,
   imageRegistry,
   type RegistryAuthKind,
   type RegistryDescriptor,
+  type RegistryImageFields,
 } from '@aid-framework/spec';
 
 /** Where the image for a container deployment is published; there is one image per project. */
 export interface DeploymentImageShape {
   registry: ImageRegistry;
-  /** Repository path under the registry, without the host: `acme/support-copilot`. */
+  /**
+   * Repository path under the registry, without the host: `acme/support-copilot`. On a
+   * registry that nests images under a project, the project is already part of it.
+   */
   name: string;
+  /**
+   * The host `docker login` and `docker push` address, when it is not the registry id: an
+   * ECR host carries the account and the region. Absent when the two are the same, so a
+   * `ghcr.io` or `docker.io` image serializes exactly as it did before a cloud registry
+   * existed.
+   */
+  loginServer?: string;
+  /**
+   * The values the login step reads from the matrix, when the credential is per-account
+   * rather than per-workflow. A release publishing to two ECR accounts therefore carries
+   * a region and a role per matrix entry instead of one for the job.
+   */
+  loginFields?: Record<string, string>;
   /**
    * The repository secret holding the account name, for a `secret-pair` registry. Absent
    * on a `github-token` registry, which has no account to name.

@@ -53,6 +53,14 @@ original surface - and you raise it when you use a later construct:
 | `0.8` | The `decision` eval metric kind, which scores a prediction with a `score` decision. |
 | `0.9` | The `route` pipeline step, which runs the arm a `choice` decision's answer names. |
 | `0.10` | The `gemini` provider, which calls the Gemini API with an API key. |
+| `0.11` | A `guardrails` entry can name a managed Bedrock guardrail engine (`engine: bedrock-guardrail`). |
+| `0.12` | The `knowledgeBases` section, and the `retrievers[].knowledgeBase` binding that points at one. |
+| `0.13` | `deployments[].runtime` - the managed agent runtime a deployment runs on. |
+| `0.14` | A `guardrails` entry can name Vertex AI Model Armor (`engine: model-armor`). |
+| `0.15` | A `model-armor` guardrail can own its policy template (`guardrails[].modelArmor`). |
+| `0.16` | `deployments[].image.registry: docker.io`, whose login names two repository secrets. |
+| `0.17` | `deployments[].image.registry: aws.ecr`, which assumes a role with OIDC and derives its host from the account and region. |
+| `0.18` | `deployments[].image.registry: gcp.artifact-registry`, which federates through Workload Identity and prefixes the repository with the project. |
 
 A section or construct that needs a later version is reported as `spec/not-supported` with
 the version it needs, so you get told rather than silently ignored. Raise the value yourself;

@@ -1339,6 +1339,113 @@ describe('deployments', () => {
 });
 
 /**
+ * The two cloud registries, which differ from the others in a way a static enum would
+ * hide: their host is not their identity. `aws.ecr` and `gcp.artifact-registry` are fixed
+ * ids in the DSL, and the account, region and project decide which registry the workflow
+ * actually pushes to. The gate therefore checks the fields, not just the id, and the
+ * schema checks the shape of each one -- an account id that is not twelve digits would
+ * derive a host nothing can resolve.
+ */
+describe('a cloud registry', () => {
+  const at = (specVersion: string, extra: Record<string, unknown> = {}) => ({
+    specVersion,
+    project: { name: 'p' },
+    deployments: { prod: { target: 'container', secrets: [], ...extra } },
+  });
+  const ECR = {
+    registry: 'aws.ecr',
+    name: 'acme/support-copilot',
+    accountId: '123456789012',
+    region: 'eu-west-1',
+    roleArn: 'arn:aws:iam::123456789012:role/publisher',
+  };
+  const AR = {
+    registry: 'gcp.artifact-registry',
+    name: 'acme/support-copilot',
+    project: 'acme-prod',
+    region: 'europe-west1',
+    workloadIdentityProvider:
+      'projects/123456789/locations/global/workloadIdentityPools/gh/providers/main',
+    serviceAccount: 'publisher@acme-prod.iam.gserviceaccount.com',
+  };
+
+  it('accepts an ECR image from spec 0.17', () => {
+    expect(validateSpec(at('0.17', { image: ECR }))).toEqual([]);
+  });
+
+  it('tells a 0.16 document that ECR needs 0.17', () => {
+    const diagnostics = validateSpec(at('0.16', { image: ECR }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.image.registry']);
+    expect(diagnostics[0]?.message).toContain("'deployments.prod.image.registry: aws.ecr'");
+    expect(diagnostics[0]?.message).toContain('requires specVersion 0.17');
+  });
+
+  it('refuses an ECR image with no role to assume', () => {
+    const { roleArn: _roleArn, ...withoutRole } = ECR;
+    const diagnostics = validateSpec(at('0.17', { image: withoutRole }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.deploymentImageCredentials]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.image']);
+    expect(diagnostics[0]?.message).toContain('no `roleArn`');
+    expect(diagnostics[0]?.hint).toContain('`accountId`, `region` and `roleArn`');
+  });
+
+  it('refuses a Google field on an ECR image', () => {
+    const diagnostics = validateSpec(at('0.17', { image: { ...ECR, project: 'acme-prod' } }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.deploymentImageCredentials]);
+    expect(diagnostics[0]?.message).toContain('`project`');
+    expect(diagnostics[0]?.message).toContain('does not read');
+  });
+
+  it('refuses an Artifact Registry image before 0.18', () => {
+    const diagnostics = validateSpec(at('0.17', { image: AR }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(diagnostics[0]?.message).toContain('requires specVersion 0.18');
+  });
+
+  it('accepts an Artifact Registry image from spec 0.18', () => {
+    expect(validateSpec(at('0.18', { image: AR }))).toEqual([]);
+  });
+
+  it('refuses an Artifact Registry image with no service account', () => {
+    const { serviceAccount: _serviceAccount, ...withoutAccount } = AR;
+    const diagnostics = validateSpec(at('0.18', { image: withoutAccount }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.deploymentImageCredentials]);
+    expect(diagnostics[0]?.message).toContain('no `serviceAccount`');
+  });
+
+  it('refuses an account id a host cannot be derived from', () => {
+    const diagnostics = validateSpec(at('0.17', { image: { ...ECR, accountId: '1234' } }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.image.accountId']);
+  });
+
+  it('refuses a role that is not an IAM role ARN', () => {
+    const diagnostics = validateSpec(
+      at('0.17', { image: { ...ECR, roleArn: 'arn:aws:iam::123456789012:user/publisher' } }),
+    );
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.image.roleArn']);
+  });
+
+  it('refuses a Workload Identity provider that is not a full resource name', () => {
+    const diagnostics = validateSpec(
+      at('0.18', { image: { ...AR, workloadIdentityProvider: 'github' } }),
+    );
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.image.workloadIdentityProvider']);
+  });
+});
+
+/**
  * The batch surface: `trigger.manual` and `deployments[].pipeline`, which only make sense
  * together and only from spec 0.5.
  *
