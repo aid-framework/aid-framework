@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_INFRA,
   CAPABILITY_AXES,
+  CAPABILITY_FAMILIES,
   CLOUD_REFUSALS,
   CLOUD_SERVICES,
   REFUSALS,
@@ -251,5 +252,57 @@ describe('the features page data', () => {
     for (const entry of AI_INFRA) {
       expect(page).toContain(`| **${entry.title}** |`);
     }
+  });
+});
+
+/**
+ * The band is the homepage's claim that a service is already mostly written. It is
+ * generated, so the risk is not a stale count -- it is a family that quietly stops
+ * describing the inventory: an id that no registry declares, a registered capability no
+ * family sells, or a link to an anchor that no page has.
+ */
+describe('homepage capability band', () => {
+  const registered = [...SHIPPED_FEATURES, ...AI_INFRA];
+  const registeredIds = new Set(registered.map((entry) => entry.id));
+  const bandStart = homepage.indexOf('<!-- capability-band:start -->');
+  const bandEnd = homepage.indexOf('<!-- capability-band:end -->');
+  const band = homepage.slice(bandStart, bandEnd);
+
+  it('partitions the shipped inventory with no gap and no overlap', () => {
+    const claimed = CAPABILITY_FAMILIES.flatMap((family) => family.featureIds);
+    expect(new Set(claimed).size, 'a feature is claimed by two families').toBe(claimed.length);
+    for (const id of claimed) {
+      expect(registeredIds.has(id), `"${id}" is claimed but no registry declares it`).toBe(true);
+    }
+    for (const id of registeredIds) {
+      expect(claimed, `"${id}" shipped but no family sells it`).toContain(id);
+    }
+  });
+
+  it('renders a row per family with the count it can back', () => {
+    expect(bandStart, 'the generated band has no start marker').toBeGreaterThan(-1);
+    expect(bandEnd, 'the generated band has no end marker').toBeGreaterThan(bandStart);
+    for (const family of CAPABILITY_FAMILIES) {
+      const shipped = family.featureIds.filter((id) => registeredIds.has(id)).length;
+      expect(shipped, `"${family.id}" claims nothing that shipped`).toBeGreaterThan(0);
+      expect(band).toContain(`**[${family.title}](${family.href})**`);
+      expect(band).toContain(`| ${shipped} |`);
+    }
+  });
+
+  it('links each family at an anchor that exists', () => {
+    for (const family of CAPABILITY_FAMILIES) {
+      const [path = '', fragment = ''] = family.href.split('#');
+      expect(fragment, `"${family.id}" links to no anchor`).not.toBe('');
+      expect(
+        anchorIds(read(`docs/${path}`)).has(fragment),
+        `"${family.id}" links to ${family.href}, which has no such heading`,
+      ).toBe(true);
+    }
+  });
+
+  it('sits above the gates table it summarises', () => {
+    expect(bandStart).toBeLessThan(homepage.indexOf('## The gates are the product'));
+    expect(homepage).toContain('](features.md)');
   });
 });

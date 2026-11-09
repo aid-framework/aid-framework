@@ -63,6 +63,40 @@ pipelines:
 registry entry, a gateway with the model pinned and priced, the pipeline module and the
 guardrail engine — then refuses to overwrite a generated file you edited by hand.
 
+## What the compiler writes for you
+
+AID is not a prompt wrapper. Each family below is declared in the spec, then generated,
+priced and gated. The count is how much of that family has already shipped.
+
+<!-- capability-band:start -->
+
+| Capability | Declared by | What it covers | Shipped |
+| --- | --- | --- | --- |
+| **[Model routing and cost](./reference/spec.md#model)** | `models[]` | An alias resolves to one pinned id, a cost profile prices every call, and a target that cannot serve a declared capability is refused before code is written. | 5 |
+| **[Retrieval and memory](./reference/spec.md#retriever)** | `retrievers[], stores[]` | Retrieved items carry the path and offsets an answer cites, and a managed knowledge base or a local store is the same declaration. | 5 |
+| **[Guardrails and decisions](./reference/spec.md#guardrail)** | `guardrails[], decisions[]` | A policy names its stages and its failing action, the security gate refuses an unguarded POST route, and a judgement can be a checked decision rather than prose. | 6 |
+| **[Quality gates](./reference/spec.md#eval)** | `evals[]` | An eval declares a regression budget over a dataset, `aid eval` exits non-zero when it is exceeded, and a pipeline with no CI eval is a build error. | 2 |
+| **[Agents and tools](./reference/spec.md#agent)** | `agents[], tools[]` | A tool loop is generated from the spec while the tool bodies stay yours in `app/business/`, so the plumbing is owned and the logic is not. | 1 |
+| **[Deployment and infrastructure](./reference/targets.md#capability-matrix)** | `deployments[], aid infra` | The same spec emits a Dockerfile, OpenTofu for AWS or GCP, a CDK app, and the project CI that re-runs every gate — then stops owning any of it. | 7 |
+| **[Observability and cost](./reference/cli.md#trace)** | `traces[], aid cost` | A trace records what each step did and a cost metric reports what it spent, both read from the same priced profiles the budget gate enforces. | 2 |
+
+<!-- capability-band:end -->
+
+The point is what does not get written by hand. A service of this shape is normally a
+week of plumbing before the first useful line of logic:
+
+| You would otherwise write | The spec declares | What comes out |
+| --- | --- | --- |
+| A client per provider, the pinned model id, retries, and a price table that drifts | `models: { fast: … }` | A gateway that pins the id, prices each call and traces it |
+| A chunker, an index, and citation offsets threaded into the response | `retrievers: [{ kind: vertex-rag }]` | Retrieval wired to the managed store, with path and offsets on every hit |
+| The input/output policy and its failing action, once per route | `guardrails: [{ stages: …, onFail: … }]` | One policy engine, with the routes that skip it refused |
+| A Dockerfile, and `main.tf` for whichever cloud the customer named | `deployments: [{ target: container }]` | A Dockerfile, and OpenTofu under `infra/` for the cloud `aid infra --cloud` names |
+| An eval harness, a budget check, and app CI to run both | `evals: [{ dataset: …, budget: … }]` | A generated CI job that re-runs every gate and fails the build |
+
+[The features page](features.md) lists the same capabilities one by one, with the release
+that first shipped each and the refusal that proves it is enforced. Every row on the band
+links to the spec section that declares it.
+
 ## The gates are the product
 
 | Gate | What it catches | What breaks without it |
@@ -144,5 +178,7 @@ you. The app keeps booting because it never depended on a control plane.
   serves an app, and shows the two gates that will stop you on the way.
 - Want the mental model? [Concepts](guide/concepts.md) is the shortest path through the
   spec, the IR, the generator and the runtime.
+- Want to know how each capability is used? [Usage](usage.md) is one worked example per
+  family: the spec fragment, the files it generates, and the refusal that enforces it.
 - Want a worked example? [Support copilot](walkthroughs/support-copilot.md) walks a
   five-step pipeline with retrieval, an agent and two evals, line by line.

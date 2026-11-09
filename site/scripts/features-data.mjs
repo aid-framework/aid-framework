@@ -401,3 +401,105 @@ export const REFUSALS = [
     code: 'cli/infra-cloud-target-unsupported',
   },
 ];
+
+/**
+ * The capability families the homepage sells, each claiming a slice of
+ * `SHIPPED_FEATURES` by id.
+ *
+ * The homepage argues *why* the framework exists and `/features` enumerates *what* it
+ * gives you, so the band between them is a summary, not a second inventory. Deriving it
+ * from the registry is what keeps it a summary: the counts are computed, the rows are
+ * rendered, and a family that claims nothing stops the build instead of shipping an
+ * empty promise. The partition is asserted too -- every shipped feature belongs to
+ * exactly one family -- so a new feature cannot land in the inventory without a family
+ * on the page that sells it.
+ *
+ * @type {{
+ *   id: string, title: string, pitch: string, declaredBy: string,
+ *   href: string, featureIds: string[],
+ * }[]}
+ */
+export const CAPABILITY_FAMILIES = [
+  {
+    id: 'models',
+    title: 'Model routing and cost',
+    pitch:
+      'An alias resolves to one pinned id, a cost profile prices every call, and a target that cannot serve a declared capability is refused before code is written.',
+    declaredBy: 'models[]',
+    href: './reference/spec.md#model',
+    featureIds: [
+      'spec-versions',
+      'pinned-models',
+      'cost-profiles',
+      'capability-gate',
+      'provider-embeddings',
+    ],
+  },
+  {
+    id: 'retrieval',
+    title: 'Retrieval and memory',
+    pitch:
+      'Retrieved items carry the path and offsets an answer cites, and a managed knowledge base or a local store is the same declaration.',
+    declaredBy: 'retrievers[], stores[]',
+    href: './reference/spec.md#retriever',
+    featureIds: [
+      'retrieval-citations',
+      'memory',
+      'semantic-cache',
+      'bedrock-knowledge-base',
+      'vertex-rag',
+    ],
+  },
+  {
+    id: 'guardrails',
+    title: 'Guardrails and decisions',
+    pitch:
+      'A policy names its stages and its failing action, the security gate refuses an unguarded POST route, and a judgement can be a checked decision rather than prose.',
+    declaredBy: 'guardrails[], decisions[]',
+    href: './reference/spec.md#guardrail',
+    featureIds: [
+      'guardrails',
+      'security-gate',
+      'bedrock-guardrails',
+      'model-armor',
+      'decisions',
+      'guardrails-decision',
+    ],
+  },
+  {
+    id: 'quality',
+    title: 'Quality gates',
+    pitch:
+      'An eval declares a regression budget over a dataset, `aid eval` exits non-zero when it is exceeded, and a pipeline with no CI eval is a build error.',
+    declaredBy: 'evals[]',
+    href: './reference/spec.md#eval',
+    featureIds: ['eval-coverage', 'evals-decision'],
+  },
+  {
+    id: 'agents',
+    title: 'Agents and tools',
+    pitch:
+      'A tool loop is generated from the spec while the tool bodies stay yours in `app/business/`, so the plumbing is owned and the logic is not.',
+    declaredBy: 'agents[], tools[]',
+    href: './reference/spec.md#agent',
+    featureIds: ['agents'],
+  },
+  {
+    id: 'deploy',
+    title: 'Deployment and infrastructure',
+    pitch:
+      'The same spec emits a Dockerfile, OpenTofu for AWS or GCP, a CDK app, and the project CI that re-runs every gate — then stops owning any of it.',
+    declaredBy: 'deployments[], aid infra',
+    href: './reference/targets.md#capability-matrix',
+    featureIds: ['infra', 'cdk', 'aws-bedrock', 'gcp-vertex', 'generated-ci', 'image', 'eject'],
+  },
+  {
+    id: 'observability',
+    title: 'Observability and cost',
+    pitch:
+      'A trace records what each step did and a cost metric reports what it spent, both read from the same priced profiles the budget gate enforces.',
+    declaredBy: 'traces[], aid cost',
+    href: './reference/cli.md#trace',
+    featureIds: ['traces', 'cost-metric'],
+  },
+];
