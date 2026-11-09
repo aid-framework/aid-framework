@@ -331,7 +331,7 @@ is the secret the module creates.
 
 | Input | Why it cannot be derived |
 | --- | --- |
-| `image_uris` | `deployments[].image` is a `ghcr.io` registry, and Lambda cannot pull from it. |
+| `image_uris` | The spec names a repository, not a released tag, and the release chooses the tag. |
 | `secret_arns` | An ARN names one account, so it belongs to the environment, not the spec. |
 | `sizing` | Memory and timeout are a cost decision, not an inference from the pipeline. |
 | `container_sizing` | CPU units, memory and task count are a budget decision. |
@@ -373,9 +373,11 @@ listen on 8080 because that is the port the generated `Dockerfile` exposes, and 
 group probes `health_check_path` (default `/`) accepting any answer below 500: the generated
 app declares no health route, and a 404 still proves the task is serving.
 
-The module sets no registry credentials, so the tag in `image_uris` must be pullable without
-them: a public `ghcr.io` package, or the image copied to ECR. A private package needs a pull
-secret that belongs to your account, and the module will not invent one.
+The module sets no docker credentials of its own. The execution role carries
+`AmazonECSTaskExecutionRolePolicy`, which already includes ECR pull in the same account, so a
+tag in `image_uris` can name a private ECR repository the release workflow pushed to. A
+private package on any other registry needs a pull secret that belongs to your account, and
+the module will not invent one.
 
 The batch module runs each job on Fargate behind one managed compute environment and one job
 queue, with a job definition per `batch` deployment and a CloudWatch log group per job. The

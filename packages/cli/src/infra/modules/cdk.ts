@@ -174,8 +174,8 @@ function addServerless(scope, context, inputs) {
     const image = (inputs.images || {})[id];
     if (!image) {
       throw new Error(
-        'No images entry for "' + id + '". Name the container image this service runs; ' +
-          'deployments[].image is a ghcr.io registry, which Lambda cannot pull from.',
+        'No images entry for "' + id + '". Name the released tag this service runs; ' +
+          'the spec names a repository, not a tag.',
       );
     }
 
@@ -193,6 +193,10 @@ function addServerless(scope, context, inputs) {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
+        // A container-image function pulls from ECR with this role, and the repository a
+        // release pushes to is private by default. Mirrors the HCL module's ecr
+        // attachment; the managed policy is account-scoped by the token ECR returns.
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonEC2ContainerRegistryReadOnly'),
       ],
     });
 

@@ -116,6 +116,16 @@ resource "aws_iam_role_policy_attachment" "logs" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+# A container-image function pulls from ECR with its own role, and the repository a
+# release pushes to is private by default. The managed policy is account-scoped by the
+# token ECR returns, so it admits an image in this account and costs nothing to a public
+# image.
+resource "aws_iam_role_policy_attachment" "ecr" {
+  for_each   = local.serverless
+  role       = aws_iam_role.service[each.key].name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
 # Lambda resolves a dynamic secret reference with the function's own role, so a
 # declared secret is unusable without this. `for_each` over an empty map rather than
 # `count`, because a policy with no resource is invalid rather than merely empty.
@@ -289,7 +299,7 @@ resource "aws_lambda_function" "service" {
   lifecycle {
     precondition {
       condition     = contains(keys(var.image_uris), each.key)
-      error_message = "No image_uris entry for \"${each.key}\". Name the container image this service runs; deployments[].image is a ghcr.io registry, which Lambda cannot pull from."
+      error_message = "No image_uris entry for \"${each.key}\". Name the released tag this service runs; the spec names a repository, not a tag."
     }
 
     precondition {

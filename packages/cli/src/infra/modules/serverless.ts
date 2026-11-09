@@ -15,9 +15,9 @@
  * so the refusal arrives at `plan` with a sentence rather than as a 502 after deploy.
  *
  * Still business inputs, never derived here (design §12.2): region, account, memory,
- * timeout, tags, the image each service runs, and the ARN of each secret. The
- * `deployments[].image` registry is `ghcr.io`, which Lambda cannot pull from, so the image
- * a deployment runs is a separate, environment-specific choice.
+ * timeout, tags, the image each service runs, and the ARN of each secret. The spec names a
+ * repository, not a released tag, and the tag also depends on the registry the release
+ * pushed to, so the image a deployment runs stays an environment-specific choice.
  */
 
 import type { DeployPlan } from '@aid-framework/ir';
@@ -218,6 +218,16 @@ const MAIN_TF = hcl([
   '  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"',
   '}',
   '',
+  '# A container-image function pulls from ECR with its own role, and the repository a',
+  '# release pushes to is private by default. The managed policy is account-scoped by the',
+  '# token ECR returns, so it admits an image in this account and costs nothing to a public',
+  '# image.',
+  'resource "aws_iam_role_policy_attachment" "ecr" {',
+  '  for_each   = local.serverless',
+  '  role       = aws_iam_role.service[each.key].name',
+  '  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"',
+  '}',
+  '',
   "# Lambda resolves a dynamic secret reference with the function's own role, so a",
   '# declared secret is unusable without this. `for_each` over an empty map rather than',
   '# `count`, because a policy with no resource is invalid rather than merely empty.',
@@ -281,7 +291,7 @@ const MAIN_TF = hcl([
   '  lifecycle {',
   '    precondition {',
   '      condition     = contains(keys(var.image_uris), each.key)',
-  '      error_message = "No image_uris entry for \\"@{each.key}\\". Name the container image this service runs; deployments[].image is a ghcr.io registry, which Lambda cannot pull from."',
+  '      error_message = "No image_uris entry for \\"@{each.key}\\". Name the released tag this service runs; the spec names a repository, not a tag."',
   '    }',
   '',
   '    precondition {',
