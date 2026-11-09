@@ -115,7 +115,9 @@ export class VertexProvider implements Provider {
   }
 
   get capabilities(): ReadonlySet<Capability> {
-    return new Set<Capability>(['tool-calling', 'structured-output']);
+    // Embeddings ride `:predict` under the same project, location and bearer token,
+    // so this adapter carries the method rather than a second client re-deriving them.
+    return new Set<Capability>(['tool-calling', 'structured-output', 'embeddings']);
   }
 
   async complete(request: CompletionRequest, model: ModelSpec): Promise<CompletionResponse> {
@@ -123,6 +125,31 @@ export class VertexProvider implements Provider {
     const body = JSON.stringify(buildPayload(request, model));
     const text = await this.post(this.endpoint(model), body);
     return parseCompletion(text, model, this._name);
+  }
+
+  /**
+   * One `:predict` call, uninterpreted.
+   *
+   * Embedding is the same operation against the same identity: resolving the
+   * project, the location and the token anywhere else is three chances for the
+   * embedder to address a different deployment than the chat model.
+   */
+  async predict(modelId: string, payload: unknown): Promise<Record<string, unknown>> {
+    if (this._closed) throw new ProviderError(`${this._name} is closed`);
+    const location = this.location();
+    const base = stripTrailingSlashes(this._baseUrl ?? defaultVertexBaseUrl(location));
+    const url = `${base}/v1/projects/${this.project()}/locations/${location}/publishers/google/models/${modelId}:predict`;
+    const text = await this.post(url, JSON.stringify(payload));
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      throw new ProviderResponseError(`${this._name} returned a body that is not JSON`);
+    }
+    if (!isObject(body)) {
+      throw new ProviderResponseError(`${this._name} returned a JSON body that is not an object`);
+    }
+    return body;
   }
 
   async close(): Promise<void> {

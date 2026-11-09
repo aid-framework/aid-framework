@@ -187,7 +187,9 @@ export class BedrockProvider implements Provider {
   }
 
   get capabilities(): ReadonlySet<Capability> {
-    return new Set<Capability>(['tool-calling', 'structured-output']);
+    // Embeddings are served by InvokeModel on this same host and identity, so this
+    // adapter owns the method rather than spawning a second client.
+    return new Set<Capability>(['tool-calling', 'structured-output', 'embeddings']);
   }
 
   async complete(request: CompletionRequest, model: ModelSpec): Promise<CompletionResponse> {
@@ -199,6 +201,35 @@ export class BedrockProvider implements Provider {
     const headers = this.headers(url, body, region, credentials, this._now());
     const text = await this.post(url, headers, body);
     return this.parse(text, model);
+  }
+
+  /**
+   * One signed `InvokeModel` call, uninterpreted.
+   *
+   * Converse is the portable *chat* surface; embeddings are not on it. Titan answers
+   * on `/model/{id}/invoke` from the same host under the same identity, so reusing
+   * this adapter's region, credential chain, signature and retry is cheaper than a
+   * second client that could drift from them.
+   */
+  async invokeModel(modelId: string, payload: unknown): Promise<Record<string, unknown>> {
+    if (this._closed) throw new ProviderError(`${this._name} is closed`);
+    const body = JSON.stringify(payload);
+    const region = this.region();
+    const credentials = await this.credentials();
+    const base = this._baseUrl ?? defaultBedrockBaseUrl(region);
+    const url = `${base}/model/${rfc3986(modelId)}/invoke`;
+    const headers = this.headers(url, body, region, credentials, this._now());
+    const text = await this.post(url, headers, body);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new ProviderResponseError(`${this._name} returned a body that is not JSON`);
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new ProviderResponseError(`${this._name} returned a JSON body that is not an object`);
+    }
+    return parsed as Record<string, unknown>;
   }
 
   async close(): Promise<void> {

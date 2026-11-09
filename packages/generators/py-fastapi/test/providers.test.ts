@@ -192,14 +192,14 @@ describe('bedrock provider', () => {
     expect(pinned).not.toContain('Capability.STREAMING');
   });
 
-  it('refuses a bedrock model that declares embeddings', () => {
+  it('advertises the embeddings Titan serves over InvokeModel', () => {
     const spec = bedrockSpecText().replace(
       '    capabilities: [json-schema, tools, streaming]',
       '    capabilities: [json-schema, tools, embeddings]',
     );
 
-    expect(() => buildForSpecText(spec)).toThrow(/unsupported-capability/);
-    expect(() => buildForSpecText(spec)).toThrow(/no embeddings endpoint/);
+    const models = files(spec).get('app/generated/gateway/models.py') ?? '';
+    expect(aliasBlock(models, 'fast')).toContain('Capability.EMBEDDINGS');
   });
 });
 
@@ -258,14 +258,14 @@ describe('google provider', () => {
     expect(pinned).toContain('Capability.TOOL_CALLING');
   });
 
-  it('refuses a Vertex model that declares embeddings', () => {
+  it('advertises the embeddings Vertex serves over :predict', () => {
     const spec = vertexSpecText().replace(
       '    capabilities: [json-schema, tools, streaming]',
       '    capabilities: [json-schema, tools, embeddings]',
     );
 
-    expect(() => buildForSpecText(spec)).toThrow(/unsupported-capability/);
-    expect(() => buildForSpecText(spec)).toThrow(/no embeddings endpoint/);
+    const models = files(spec).get('app/generated/gateway/models.py') ?? '';
+    expect(aliasBlock(models, 'fast')).toContain('Capability.EMBEDDINGS');
   });
 });
 

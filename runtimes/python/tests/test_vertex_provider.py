@@ -160,10 +160,17 @@ async def test_posts_to_the_generate_content_endpoint_with_the_resolved_model() 
 
 
 @pytest.mark.asyncio
-async def test_advertises_streaming_and_the_negotiated_capabilities() -> None:
+async def test_advertises_streaming_embeddings_and_the_negotiated_capabilities() -> None:
+    # Embeddings are served by `:predict` on the same regional host and token, so
+    # the adapter carries the method rather than a second client.
     capabilities = _provider(Recorder()).capabilities
     assert capabilities == frozenset(
-        {Capability.STREAMING, Capability.STRUCTURED_OUTPUT, Capability.TOOL_CALLING}
+        {
+            Capability.STREAMING,
+            Capability.STRUCTURED_OUTPUT,
+            Capability.TOOL_CALLING,
+            Capability.EMBEDDINGS,
+        }
     )
 
 

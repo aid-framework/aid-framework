@@ -627,14 +627,16 @@ async def test_rejects_a_body_with_no_content_blocks() -> None:
         await _provider(recorder).complete(_ask("x"), model=_model())
 
 
-def test_claims_tool_calling_and_structured_output_but_not_embeddings_or_streaming() -> None:
-    # Converse has no embeddings endpoint, and /converse-stream is a binary event
-    # stream this adapter cannot read; claiming either would let a spec bind a
-    # model that can only fail when it is finally called.
+def test_claims_tool_calling_structured_output_and_embeddings_but_not_streaming() -> None:
+    # Converse serves chat; embeddings ride `POST /model/{id}/invoke` because that
+    # is where Titan lives, and `:predict`-style sizes are not involved. Streaming
+    # is still absent: /converse-stream is a binary event stream this adapter
+    # cannot read, and claiming it would let a spec bind a model that can only
+    # fail when it is finally called.
     subject = BedrockProvider()
     assert Capability.TOOL_CALLING in subject.capabilities
     assert Capability.STRUCTURED_OUTPUT in subject.capabilities
-    assert Capability.EMBEDDINGS not in subject.capabilities
+    assert Capability.EMBEDDINGS in subject.capabilities
     assert Capability.STREAMING not in subject.capabilities
 
 

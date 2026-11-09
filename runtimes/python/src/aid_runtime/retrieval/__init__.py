@@ -6,10 +6,12 @@ out through the store, optionally fusing, optionally reranking, and always attac
 citations.
 
 Every seam is a protocol with a deterministic implementation and, where the plan
-allows one, a hosted implementation. Phase 1 ships exactly one hosted adapter --
-:class:`OpenAICompatibleEmbedder` -- alongside :class:`FakeDeterministicEmbedder`,
-which is what lets a gate run offline. There is no hosted reranker: the only
-reranker is the deterministic :class:`LexicalReranker`.
+allows one, a hosted implementation. Embedding is the one seam with several hosted
+adapters -- :class:`OpenAICompatibleEmbedder`, :class:`GeminiEmbedder`,
+:class:`BedrockEmbedder` and :class:`VertexEmbedder` -- selected by the pinned
+provider, alongside :class:`FakeDeterministicEmbedder`, which is what lets a gate run
+offline. There is no hosted reranker: the only reranker is the deterministic
+:class:`LexicalReranker`.
 
 Import safety is deliberate. :class:`PgVectorStore` is exported from here, but the
 ``psycopg`` driver is imported inside its connect path, never at module scope, so
@@ -43,11 +45,13 @@ from aid_runtime.retrieval.connectors import (
     open_connector,
 )
 from aid_runtime.retrieval.embedding import (
+    BedrockEmbedder,
     Embedder,
     EmbeddingBatch,
     FakeDeterministicEmbedder,
     GeminiEmbedder,
     OpenAICompatibleEmbedder,
+    VertexEmbedder,
     embedder_for,
     estimate_tokens,
 )
@@ -127,6 +131,7 @@ from aid_runtime.retrieval.types import (
 __all__ = [
     "DEFAULT_CANDIDATE_FACTOR",
     "FIXTURE_ENV",
+    "BedrockEmbedder",
     "BedrockKnowledgeBaseClient",
     "Chunk",
     "Chunker",
@@ -190,6 +195,7 @@ __all__ = [
     "StoreRecord",
     "VectorStore",
     "VectorStoreSpec",
+    "VertexEmbedder",
     "VertexKnowledgeBaseClient",
     "assemble_context",
     "binding_from_managed_spec",

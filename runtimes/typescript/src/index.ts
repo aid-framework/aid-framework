@@ -203,12 +203,14 @@ export type { Connector } from './retrieval/connectors.js';
 export { FileConnector, openConnector, SourceDocument } from './retrieval/connectors.js';
 export type { Embedder } from './retrieval/embedding.js';
 export {
+  BedrockEmbedder,
   EmbeddingBatch,
   embedderFor,
   estimateTokens,
   FakeDeterministicEmbedder,
   GeminiEmbedder,
   OpenAICompatibleEmbedder,
+  VertexEmbedder,
 } from './retrieval/embedding.js';
 export { RetrievalGate } from './retrieval/gate.js';
 export {

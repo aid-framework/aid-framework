@@ -331,11 +331,13 @@ export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, ReadonlySet<
   AnthropicProvider: new Set<Capability>(['structured-output', 'tool-calling']),
   // Converse has no embeddings endpoint and /converse-stream is a binary event
   // stream the adapter does not decode.
-  BedrockProvider: new Set<Capability>(['structured-output', 'tool-calling']),
+  // Embeddings are served: Titan answers on `InvokeModel`, which this adapter signs
+  // with the same identity as Converse.
+  BedrockProvider: new Set<Capability>(['embeddings', 'structured-output', 'tool-calling']),
   // The TS provider seam is request/response only, so Vertex does not advertise
-  // streaming here even though the Python adapter does. No embeddings for the same
-  // reason as Converse: the adapter does not call the embeddings endpoint.
-  VertexProvider: new Set<Capability>(['structured-output', 'tool-calling']),
+  // streaming here even though the Python adapter does. Embeddings ride `:predict`
+  // under the same project, location and bearer token.
+  VertexProvider: new Set<Capability>(['embeddings', 'structured-output', 'tool-calling']),
   // The TS provider seam is request/response only, so Gemini does not advertise
   // streaming here even though the Python adapter does. No embeddings: a spec that
   // wants one pins `gemini-embedding-001`, which `embedderFor` routes separately.

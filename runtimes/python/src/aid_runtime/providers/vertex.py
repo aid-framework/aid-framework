@@ -21,6 +21,7 @@ import asyncio
 import json
 import os
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 import httpx
 
@@ -59,7 +60,12 @@ def default_vertex_base_url(location: str) -> str:
 
 
 class VertexProvider(GeminiWireClient):
-    """Gemini on Vertex AI over ``generateContent`` / ``streamGenerateContent``."""
+    """Gemini on Vertex AI over ``generateContent`` / ``streamGenerateContent``.
+
+    Embeddings ride the same adapter: ``:predict`` shares the regional host, the
+    project/location path and the bearer token, and only the request and response
+    envelopes differ.
+    """
 
     def __init__(
         self,
@@ -91,8 +97,15 @@ class VertexProvider(GeminiWireClient):
 
     @property
     def capabilities(self) -> frozenset[Capability]:
+        # Embeddings are served by `:predict` under the same project, location and
+        # bearer token, so this adapter carries the method instead of a second client.
         return frozenset(
-            {Capability.STREAMING, Capability.STRUCTURED_OUTPUT, Capability.TOOL_CALLING}
+            {
+                Capability.STREAMING,
+                Capability.STRUCTURED_OUTPUT,
+                Capability.TOOL_CALLING,
+                Capability.EMBEDDINGS,
+            }
         )
 
     async def complete(self, request: CompletionRequest, *, model: ModelSpec) -> CompletionResponse:
@@ -128,6 +141,30 @@ class VertexProvider(GeminiWireClient):
             f"{base}/v1/projects/{project}/locations/{location}"
             f"/publishers/google/models/{model.name}:{method}"
         )
+
+    def project(self) -> str:
+        """The project this adapter bills and addresses, resolved lazily."""
+        return self._resolve_project()
+
+    def location(self) -> str:
+        """The region this adapter addresses, resolved lazily."""
+        return self._resolve_location()
+
+    async def predict(self, model_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """One ``:predict`` call, uninterpreted.
+
+        Public because embedding is the same operation against the same identity:
+        re-resolving the project, the location and the token elsewhere is three
+        chances for the embedder to address a different deployment than the chat
+        model.
+        """
+        location = self._resolve_location()
+        base = (self._base_url or default_vertex_base_url(location)).rstrip("/")
+        url = (
+            f"{base}/v1/projects/{self._resolve_project()}/locations/{location}"
+            f"/publishers/google/models/{model_id}:predict"
+        )
+        return decode_body(await self._post(url, payload), self._name)
 
     async def _token(self) -> str:
         if self._access_token:
