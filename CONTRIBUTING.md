@@ -210,6 +210,19 @@ All four commands the script supports are usable locally; none of them needs net
 
 Bumping `.github/`-only, `docs/`-only, or root-markdown-only changes is pointless — they do not release.
 
+### Dependabot bumps stamp themselves
+
+A Dependabot bump edits a manifest, so it is a releasable change and must declare a version — but Dependabot
+cannot run `stamp`, which is why those PRs used to arrive with `release-plan` red. `dependabot-stamp.yml`
+does it instead, so never push a stamp onto a Dependabot branch by hand.
+
+The job runs as `pull_request_target` because a `pull_request` run from Dependabot gets a read-only token and
+could not push. That means it holds a write token while a stranger-authored branch is checked out, so it
+never executes that branch: only the **base** commit's `scripts/version.mjs` runs, the PR checkout is read and
+written as data, `release.config.json` must be byte-identical to the base one, and the stamp is rejected if it
+touches a path other than a version-declaring manifest. It exits without pushing when the base policy says the
+change set releases nothing.
+
 ## Reporting bugs
 
 Open a GitHub issue with a minimal reproduction (ideally a spec fragment), the expected vs. actual behavior,

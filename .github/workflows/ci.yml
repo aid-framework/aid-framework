@@ -365,7 +365,9 @@ jobs:
         run: |
           set -euo pipefail
           url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl -sSfL -o /tmp/actionlint.tar.gz "$url"
+          # GitHub's release-asset CDN intermittently answers 504; --retry-all-errors
+          # retries that class, which a plain -f would surface as a job failure.
+          curl --retry 5 --retry-delay 3 --retry-all-errors -sSfL -o /tmp/actionlint.tar.gz "$url"
           tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
           sudo install -m 0755 /tmp/actionlint /usr/local/bin/actionlint
           actionlint --version
@@ -401,7 +403,7 @@ jobs:
         run: |
           set -euo pipefail
           url="https://github.com/opentofu/opentofu/releases/download/v${OPENTOFU_VERSION}/tofu_${OPENTOFU_VERSION}_linux_amd64.zip"
-          curl -sSfL -o /tmp/tofu.zip "$url"
+          curl --retry 5 --retry-delay 3 --retry-all-errors -sSfL -o /tmp/tofu.zip "$url"
           sudo unzip -q -o /tmp/tofu.zip -d /usr/local/bin tofu
           tofu version
 
