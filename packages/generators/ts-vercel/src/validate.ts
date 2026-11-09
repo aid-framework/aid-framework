@@ -1005,6 +1005,19 @@ function checkGuardStep(
       ),
     );
   }
+  if (guardrail?.decision !== undefined) {
+    // A guard step is emitted as a synchronous check, and a decision-backed guardrail
+    // needs a network round trip, so the step would pass the payload on without ever
+    // asking. The agent loop asks asynchronously; a pipeline step cannot.
+    problems.push(
+      problem(
+        'guardrail-unsupported',
+        `${at}.guardrail`,
+        `guardrail '${guardrail.id}' is answered by decision '${guardrail.decision}', which a ` +
+          'pipeline step cannot ask: the step check is synchronous and the answer is a network call',
+      ),
+    );
+  }
   if (step.stage === 'tool-call') {
     problems.push(
       problem(
@@ -1158,17 +1171,19 @@ export function checkGuardrails(ir: IR): PlanProblem[] {
       );
       continue;
     }
-    if (guardrail.decision !== undefined) {
-      // Answering a guardrail with a decision means calling a decision model, and this
-      // target's engine is synchronous and has no client; the check would never run.
+    if (guardrail.decision !== undefined && guardrail.action === 'redact') {
+      // A decision answers with a verdict, not a masked payload, so there is nothing for
+      // `redact` to rewrite. The spec layer refuses this pair too; this is the target's
+      // own backstop, kept so the emitter never has to decide what a maskless redact means.
       problems.push(
         problem(
           'guardrail-unsupported',
-          `${at}.decision`,
-          `guardrail '${guardrail.id}' is answered by decision '${guardrail.decision}', which this target cannot ask; decision-backed guardrails are implemented by the Python target`,
+          `${at}.action`,
+          `'${guardrail.id}' is answered by a decision, which returns a verdict rather than a ` +
+            'masked payload, so action: redact has nothing to rewrite; map the decision with ' +
+            'onDecision and use block, flag or escalate',
         ),
       );
-      continue;
     }
     for (const policy of guardrail.policies) {
       if (IMPLEMENTED_POLICIES.has(policy)) continue;

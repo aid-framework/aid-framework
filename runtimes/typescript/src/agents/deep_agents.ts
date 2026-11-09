@@ -105,13 +105,13 @@ export interface DeepAgentsHost {
   ): Promise<Message[]>;
   checkpoint(frame: Frame, calls: readonly ToolCall[], memoryKey: string): AgentCheckpoint;
   /** The `input` stage, run once per frame. */
-  guardrailInput(frame: Frame, memoryKey: string): Outcome | undefined;
-  guardrailAnswer(frame: Frame, text: string, memoryKey: string): string | Outcome;
+  guardrailInput(frame: Frame, memoryKey: string): Promise<Outcome | undefined>;
+  guardrailAnswer(frame: Frame, text: string, memoryKey: string): Promise<string | Outcome>;
   guardrailToolCalls(
     frame: Frame,
     calls: readonly ToolCall[],
     memoryKey: string,
-  ): { calls: readonly ToolCall[]; paused: Outcome | undefined };
+  ): Promise<{ calls: readonly ToolCall[]; paused: Outcome | undefined }>;
   remember(agent: Frame['agent'], answer: string, memoryKey: string): Promise<void>;
   outcome(status: RunStatus, frame: Frame, answer?: string): Outcome;
 }
@@ -141,7 +141,7 @@ export class DeepAgentsEngine {
     checkEngine(agent);
     if (!frame.inputChecked) {
       frame.inputChecked = true;
-      const held = this.#host.guardrailInput(frame, memoryKey);
+      const held = await this.#host.guardrailInput(frame, memoryKey);
       if (held !== undefined) return held;
     }
 
@@ -414,7 +414,7 @@ export class DeepAgentsEngine {
 
   /** Apply the output guardrail, record memory, and report the answer. */
   async #complete(frame: Frame, result: HarnessResult, memoryKey: string): Promise<Outcome> {
-    const released = this.#host.guardrailAnswer(frame, answerOf(result), memoryKey);
+    const released = await this.#host.guardrailAnswer(frame, answerOf(result), memoryKey);
     if (typeof released !== 'string') return released;
     frame.messages.push(Message.assistant(released));
     await this.#host.remember(frame.agent, released, memoryKey);

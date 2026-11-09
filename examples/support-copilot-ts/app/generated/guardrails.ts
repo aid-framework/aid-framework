@@ -30,6 +30,9 @@ export const GUARDRAILS: readonly GuardrailDefinition[] = [
     message: 'The request was refused by a guardrail.',
     fallbackPrompt: undefined,
     log: true,
+    decision: undefined,
+    onDecision: {},
+    minConfidence: 0,
   },
 ];
 

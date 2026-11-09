@@ -16,6 +16,7 @@ import {
   AgentRuntime,
   type CompletionRequest,
   type CostLedger,
+  type DecisionAsker,
   FakeProvider,
   type MemoryStore,
   Message,
@@ -118,6 +119,9 @@ export function guardrailDef(
     readonly message?: string;
     readonly fallbackPrompt?: string;
     readonly log?: boolean;
+    readonly decision?: string;
+    readonly onDecision?: Readonly<Record<string, string>>;
+    readonly minConfidence?: number;
   } = {},
 ): JsonObject {
   const onFail: JsonObject = {
@@ -125,7 +129,7 @@ export function guardrailDef(
     log: options.log ?? true,
   };
   if (options.fallbackPrompt !== undefined) onFail.fallbackPrompt = options.fallbackPrompt;
-  return {
+  const definition: JsonObject = {
     id: guardrailId,
     stages: [...(options.stages ?? ['input'])],
     policies: [...(options.policies ?? ['prompt-injection'])],
@@ -135,6 +139,10 @@ export function guardrailDef(
     onFail,
     traits: [],
   };
+  if (options.decision !== undefined) definition.decision = options.decision;
+  if (options.onDecision !== undefined) definition.onDecision = { ...options.onDecision };
+  if (options.minConfidence !== undefined) definition.minConfidence = options.minConfidence;
+  return definition;
 }
 
 export function memoryDef(
@@ -211,6 +219,7 @@ export function document(init: {
   readonly tools?: readonly JsonObject[];
   readonly memory?: readonly JsonObject[];
   readonly guardrails?: readonly JsonObject[];
+  readonly decisions?: readonly JsonObject[];
 }): JsonObject {
   return {
     version: '0.2.0',
@@ -219,6 +228,7 @@ export function document(init: {
     tools: (init.tools ?? []).map((entry) => ({ ...entry })),
     memory: (init.memory ?? []).map((entry) => ({ ...entry })),
     guardrails: (init.guardrails ?? []).map((entry) => ({ ...entry })),
+    decisions: (init.decisions ?? []).map((entry) => ({ ...entry })),
     agents: init.agents.map((entry) => ({ ...entry })),
   };
 }
@@ -235,6 +245,7 @@ export interface SoloOptions {
   readonly toolSpecs?: readonly JsonObject[];
   readonly memory?: readonly JsonObject[];
   readonly guardrailSpecs?: readonly JsonObject[];
+  readonly decisions?: readonly JsonObject[];
   readonly models?: readonly JsonObject[];
   readonly tools?: readonly string[];
   readonly maxSteps?: number;
@@ -255,6 +266,7 @@ export function solo(options: SoloOptions = {}): JsonObject {
     tools: options.toolSpecs ?? [],
     memory: memorySpecs,
     guardrails: guardrailSpecs,
+    decisions: options.decisions ?? [],
     agents: [
       agentDef('solo', {
         model: options.alias ?? 'cheap',
@@ -368,6 +380,7 @@ export function build(
     readonly memoryStore?: MemoryStore;
     readonly ledger?: CostLedger;
     readonly provider?: FakeProvider;
+    readonly decisionClient?: () => DecisionAsker;
   } = {},
 ): Harness {
   const provider =
@@ -378,6 +391,7 @@ export function build(
     ...(options.stores === undefined ? {} : { stores: options.stores }),
     ...(options.memoryStore === undefined ? {} : { memoryStore: options.memoryStore }),
     ...(options.ledger === undefined ? {} : { ledger: options.ledger }),
+    ...(options.decisionClient === undefined ? {} : { decisionClient: options.decisionClient }),
   });
   return new Harness(runtime, provider);
 }

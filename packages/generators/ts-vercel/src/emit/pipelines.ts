@@ -697,15 +697,18 @@ function toolStepModule(
   // A `tool-call` declaration is enforced here rather than in the agent loop, because a
   // pipeline `tool` step is the one tool call no agent makes. The refusal has to happen
   // before `execute`, or a guardrail would annotate a call it already ran.
-  const check = `enforceGuardrail(ENGINE.checkToolCall(TOOL_CALL_GUARDRAILS, ${literal(
-    step.tool,
-  )}, call.arguments));`;
+  const asyncCall = stageNeedsAsync(ir, 'tool-call');
+  const check = `enforceGuardrail(${asyncCall ? 'await ' : ''}ENGINE.${
+    asyncCall ? 'checkToolCallAsync' : 'checkToolCall'
+  }(TOOL_CALL_GUARDRAILS, ${literal(step.tool)}, call.arguments));`;
   const checkLines = usesStage(ir, 'tool-call')
     ? `  ${check}`.length <= 100
       ? [`  ${check}`]
       : [
           '  enforceGuardrail(',
-          `    ENGINE.checkToolCall(TOOL_CALL_GUARDRAILS, ${literal(step.tool)}, call.arguments),`,
+          `    ${asyncCall ? 'await ' : ''}ENGINE.${
+            asyncCall ? 'checkToolCallAsync' : 'checkToolCall'
+          }(TOOL_CALL_GUARDRAILS, ${literal(step.tool)}, call.arguments),`,
           '  );',
         ]
     : [];
@@ -791,6 +794,8 @@ function generateStepModule(
   const outputConstantName = outputConstant(pipeline, step, path);
   const inputCheck = usesStage(ir, 'input');
   const outputCheck = usesStage(ir, 'output');
+  const inputAsync = stageNeedsAsync(ir, 'input');
+  const outputAsync = stageNeedsAsync(ir, 'output');
   return [
     `/** \`${step.as}\`: render \`${step.prompt}\` and run it through the gateway. */`,
     `export const ${constant}: Step = async (context) => {`,
@@ -800,7 +805,11 @@ function generateStepModule(
     ...bindings.map((binding) => `    ${binding},`),
     '  });',
     ...(inputCheck
-      ? ['  const verdict = enforceGuardrail(ENGINE.checkInput(INPUT_GUARDRAILS, rendered.text));']
+      ? [
+          `  const verdict = enforceGuardrail(${inputAsync ? 'await ' : ''}ENGINE.${
+            inputAsync ? 'checkInputAsync' : 'checkInput'
+          }(INPUT_GUARDRAILS, rendered.text));`,
+        ]
       : []),
     '  const call = async (text: string): Promise<string> => {',
     '    const result = await deps.gateway.generate(',
@@ -809,7 +818,11 @@ function generateStepModule(
     `      { fallbacks: FALLBACKS${memberAccess(step.model)} ?? [] },`,
     '    );',
     ...(outputCheck
-      ? ['    return enforceGuardrail(ENGINE.checkOutput(OUTPUT_GUARDRAILS, result.text)).text;']
+      ? [
+          `    return enforceGuardrail(${outputAsync ? 'await ' : ''}ENGINE.${
+            outputAsync ? 'checkOutputAsync' : 'checkOutput'
+          }(OUTPUT_GUARDRAILS, result.text)).text;`,
+        ]
       : ['    return result.text;']),
     '  };',
     `  const ${propertyKey(step.as)} = await runStructured(call, ${outputConstantName}, ${
@@ -826,6 +839,19 @@ const GUARD_METHODS = {
   output: 'checkOutput',
   retrieval: 'checkRetrieval',
 } as const;
+
+/**
+ * Whether a stage's check must be awaited.
+ *
+ * A decision is an HTTP round trip, so a stage that has one asks the asynchronous engine;
+ * the synchronous check would refuse the guardrail rather than skip it, and a caller that
+ * cannot await it has no way to enforce it at all.
+ */
+function stageNeedsAsync(ir: IR, stage: 'input' | 'output' | 'tool-call'): boolean {
+  return ir.guardrails.some(
+    (guardrail) => guardrail.decision !== undefined && guardrail.stages.includes(stage),
+  );
+}
 
 /** One step's address in the spec, which is what a plan finding points at. */
 function stepAt(pipeline: PipelineShape, path: StepPath): string {

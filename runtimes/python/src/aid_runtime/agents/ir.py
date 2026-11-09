@@ -248,6 +248,9 @@ class RuntimeSpec:
     tools: Mapping[str, ToolSpec]
     agents: Mapping[str, AgentDefinition]
     guardrails: Mapping[str, GuardrailDefinition] = field(default_factory=dict)
+    #: The decisions a guardrail's ``decision`` may name, keyed by id. Resolved here
+    #: so the loop's engine can answer one without reading the document again.
+    decisions: Mapping[str, DecisionDefinition] = field(default_factory=dict)
     #: The single concurrency cap, read from the IR's ``deployments[].concurrency``.
     #: ``None`` means unbounded: the runtime only shares a limiter when a deployment
     #: declares one, which keeps plain request/response usage free of surprises.
@@ -330,6 +333,11 @@ def from_ir(document: Mapping[str, Any]) -> RuntimeSpec:
         for guardrail_id, entry in _by_id(document.get("guardrails"), "guardrails").items()
     }
 
+    decisions = {
+        decision_id: _decision(decision_id, entry)
+        for decision_id, entry in _by_id(document.get("decisions"), "decisions").items()
+    }
+
     fallbacks: dict[str, tuple[str, ...]] = {}
     for model_id, entry in raw_models.items():
         fallbacks[model_id] = tuple(_str_list(entry.get("fallbacks"), f"model {model_id!r}"))
@@ -350,6 +358,7 @@ def from_ir(document: Mapping[str, Any]) -> RuntimeSpec:
         tools=tools,
         agents=agents,
         guardrails=guardrails,
+        decisions=decisions,
         concurrency=_concurrency(document.get("deployments")),
     )
 
@@ -414,6 +423,29 @@ def _agent(
     )
 
 
+def _decision(decision_id: str, entry: Mapping[str, Any]) -> DecisionDefinition:
+    """Resolve one IR decision: the model, the question, and the labels in order.
+
+    A ``choice`` decision's criteria is a label mapping in the emitter, and a ``score``
+    decision's is a list; both reduce to the ordered labels a runtime acts on. Sorted
+    keys match the TypeScript runtime, so the two never disagree about a label order.
+    """
+    where = f"decision {decision_id!r}"
+    criteria = entry.get("criteria")
+    if criteria is None:
+        labels: tuple[str, ...] = ()
+    elif isinstance(criteria, Mapping):
+        labels = tuple(sorted(str(label) for label in criteria))
+    else:
+        labels = tuple(_str_list(criteria, f"{where} criteria"))
+    return DecisionDefinition(
+        id=decision_id,
+        model=_required_str(entry, "model", where),
+        instructions=_required_str(entry, "instructions", where),
+        criteria=labels,
+    )
+
+
 def _guardrail(
     guardrail_id: str,
     entry: Mapping[str, Any],
@@ -475,6 +507,22 @@ def _guardrail(
     if missing:
         raise ConfigurationError(f"{where} names undeclared tools: {missing}")
 
+    # A decision guardrail asks a classifier instead of running detectors; without
+    # the mapping its labels mean nothing, so the two are parsed together.
+    decision = _str(entry.get("decision")) or None
+    on_decision: tuple[tuple[str, str], ...] = ()
+    min_confidence = 0.0
+    if decision is not None:
+        raw_map = entry.get("onDecision")
+        if raw_map is not None and not isinstance(raw_map, Mapping):
+            raise ConfigurationError(f"{where} onDecision must be a mapping of strings")
+        on_decision = tuple(
+            (label, outcome)
+            for label, outcome in (raw_map or {}).items()
+            if isinstance(label, str) and isinstance(outcome, str)
+        )
+        min_confidence = _optional_float(entry.get("minConfidence")) or 0.0
+
     on_fail = entry.get("onFail")
     if not isinstance(on_fail, Mapping):
         raise ConfigurationError(f"{where} needs an onFail object")
@@ -488,6 +536,9 @@ def _guardrail(
         message=_required_str(on_fail, "message", f"{where} onFail"),
         fallback_prompt=_str(on_fail.get("fallbackPrompt")),
         log=on_fail.get("log") is True,
+        decision=decision,
+        on_decision=on_decision,
+        min_confidence=min_confidence,
         engine=engine,
         bedrock=bedrock,
     )

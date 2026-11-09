@@ -114,7 +114,7 @@ class DeepAgentsEngine:
         check_engine(agent)
         if not frame.input_checked:
             frame.input_checked = True
-            paused = self._runtime._guardrail_text(
+            paused = await self._runtime._guardrail_text(
                 _GUARDRAIL_INPUT, frame, memory_key, span=span, rewrite=True
             )
             if paused is not None:
@@ -430,7 +430,7 @@ class DeepAgentsEngine:
         self, frame: _Frame, result: Any, *, memory_key: str, span: Span
     ) -> _Outcome:
         """Apply the output guardrail, record memory, and report the answer."""
-        released = self._runtime._guardrail_answer(
+        released = await self._runtime._guardrail_answer(
             frame, self._answer(result), memory_key, span=span
         )
         if isinstance(released, _Outcome):
@@ -536,7 +536,7 @@ class _Guardrails(AgentMiddleware):
             # branch only has to open the delegate's span.
             return await self._delegate_in_span(request, handler, call)
         runtime._authorize(self._frame.agent, call, self._principal)
-        guarded, halted = runtime._guardrail_tool_calls(
+        guarded, halted = await runtime._guardrail_tool_calls(
             self._frame, [call], self._memory_key, span=self._record_span
         )
         if halted is not None:

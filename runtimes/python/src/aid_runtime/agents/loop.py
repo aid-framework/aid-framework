@@ -201,7 +201,7 @@ class AgentRuntime:
             memory_store if memory_store is not None else InProcessMemoryStore()
         )
         self._tracer = tracer
-        self._guardrails = GuardrailEngine(spec.guardrails)
+        self._guardrails = GuardrailEngine(spec.guardrails, decisions=spec.decisions)
         self._tools_by_name: dict[str, ToolSpec] = {
             definition.name: definition for definition in spec.tools.values()
         }
@@ -451,7 +451,7 @@ class AgentRuntime:
 
             if not frame.input_checked:
                 frame.input_checked = True
-                paused = self._guardrail_text(
+                paused = await self._guardrail_text(
                     _GUARDRAIL_INPUT, frame, memory_key, span=span, rewrite=True
                 )
                 if paused is not None:
@@ -475,7 +475,7 @@ class AgentRuntime:
             response = generation.response
 
             if not response.tool_calls:
-                answer = self._guardrail_answer(frame, response.text, memory_key, span=span)
+                answer = await self._guardrail_answer(frame, response.text, memory_key, span=span)
                 if isinstance(answer, _Outcome):
                     return answer
                 frame.messages.append(Message.assistant(answer))
@@ -501,7 +501,7 @@ class AgentRuntime:
 
             record.kind = StepKind.TOOLS
             record.tool_names = tuple(call.name for call in response.tool_calls)
-            guarded, paused = self._guardrail_tool_calls(
+            guarded, paused = await self._guardrail_tool_calls(
                 frame, response.tool_calls, memory_key, span=span
             )
             if paused is not None:
@@ -528,7 +528,7 @@ class AgentRuntime:
 
             frame.messages.extend(await self._observe(agent, guarded, principal))
 
-    def _guardrail_text(
+    async def _guardrail_text(
         self,
         stage: str,
         frame: _Frame,
@@ -545,7 +545,9 @@ class AgentRuntime:
         """
         index = _last_user_index(frame.messages)
         text = "" if index is None else frame.messages[index].content
-        verdict = self._guardrails.check_input(frame.agent.stage_guardrails(stage), text)
+        verdict = await self._guardrails.check_input_async(
+            frame.agent.stage_guardrails(stage), text
+        )
         self._record_guardrails(frame, verdict, span)
         deciding = verdict.deciding
         if verdict.action == ACTION_BLOCK and deciding is not None:
@@ -556,7 +558,7 @@ class AgentRuntime:
             frame.messages[index] = Message.user(verdict.text)
         return None
 
-    def _guardrail_answer(
+    async def _guardrail_answer(
         self,
         frame: _Frame,
         text: str,
@@ -570,7 +572,7 @@ class AgentRuntime:
         the checkpoint carries the text, so approving it releases this exact answer
         without paying for a second generation.
         """
-        verdict = self._guardrails.check_output(
+        verdict = await self._guardrails.check_output_async(
             frame.agent.stage_guardrails(_GUARDRAIL_OUTPUT), text
         )
         self._record_guardrails(frame, verdict, span)
@@ -581,7 +583,7 @@ class AgentRuntime:
             return self._guardrail_pause(frame, verdict, memory_key, (), span=span, text=text)
         return verdict.text if verdict.action == ACTION_REDACT else text
 
-    def _guardrail_tool_calls(
+    async def _guardrail_tool_calls(
         self,
         frame: _Frame,
         calls: Sequence[ToolCall],
@@ -602,7 +604,7 @@ class AgentRuntime:
         for call in calls:
             definition = self._tools_by_name.get(call.name)
             tool_id = definition.id if definition is not None else call.name
-            verdict = self._guardrails.check_tool_call(
+            verdict = await self._guardrails.check_tool_call_async(
                 frame.agent.stage_guardrails(_GUARDRAIL_TOOL), tool_id, call.arguments
             )
             self._record_guardrails(frame, verdict, span)

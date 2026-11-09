@@ -16,6 +16,8 @@ import {
   ACTION_FLAG,
   ACTION_REDACT,
   ConfigurationError,
+  type DecisionAnswer,
+  type DecisionDefinition,
   detect,
   fired,
   GuardrailBlockedError,
@@ -47,6 +49,9 @@ function guardrail(
     message: options.message ?? `${id} fired`,
     fallbackPrompt: undefined,
     log: true,
+    decision: undefined,
+    onDecision: {},
+    minConfidence: 0,
   };
 }
 
@@ -232,5 +237,156 @@ describe('GuardrailEngine refuses to guess', () => {
 
     expect(engine.declared('pii')).toBe(declared);
     expect(engine.declared('absent')).toBeUndefined();
+  });
+});
+
+/** A `choice` decision as resolved IR carries it. */
+const TOPICAL: DecisionDefinition = {
+  id: 'topical',
+  model: 'jev-1.14.0',
+  instructions: 'Is this message about our product',
+  criteria: ['off_topic', 'product'],
+};
+
+/** The guardrail that asks it: no policies, so every verdict comes from the decision. */
+function decided(overrides: Partial<GuardrailDefinition> = {}): GuardrailDefinition {
+  return {
+    ...guardrail('relevance', { policies: [] }),
+    decision: 'topical',
+    onDecision: { product: 'allow', off_topic: 'block' },
+    ...overrides,
+  };
+}
+
+/**
+ * An engine over `TOPICAL` whose client answers with `answer`, or throws it when it is an
+ * error. `definition` may be undefined to observe an undeclared decision.
+ */
+function decisionEngine(
+  answer: DecisionAnswer | Error,
+  definition: DecisionDefinition | null = TOPICAL,
+): GuardrailEngine {
+  return new GuardrailEngine(new Map(), {
+    decisions: new Map(definition === null ? [] : [['topical', definition]]),
+    decisionClient: () => ({
+      decide: async (options) => {
+        if (answer instanceof Error) throw answer;
+        return { model: options.model, answers: { topical: answer } };
+      },
+    }),
+  });
+}
+
+describe('a guardrail answered by a decision', () => {
+  it('records the mapped outcome and the label it was answered with', async () => {
+    const engine = decisionEngine({ type: 'choice', choice: 'off_topic', confidence: 0.9 });
+    const verdict = await engine.checkInputAsync([decided()], 'what is the weather');
+
+    expect(verdict.action).toBe(ACTION_BLOCK);
+    expect(verdict.records).toEqual([
+      {
+        guardrail: 'relevance',
+        stage: 'input',
+        action: ACTION_BLOCK,
+        policies: [],
+        message: 'relevance fired',
+        decision: 'topical',
+        label: 'off_topic',
+        confidence: 0.9,
+      },
+    ]);
+  });
+
+  it('allows the payload without recording a verdict when the outcome is allow', async () => {
+    const engine = decisionEngine({ type: 'choice', choice: 'product', confidence: 0.95 });
+    const verdict = await engine.checkInputAsync([decided()], 'how do I reset a password');
+
+    expect(verdict.action).toBeUndefined();
+    expect(verdict.records).toEqual([]);
+    expect(verdict.text).toBe('how do I reset a password');
+  });
+
+  it('keeps a policy hit ahead of the decision, so the model is not asked', async () => {
+    let asked = false;
+    const engine = new GuardrailEngine(new Map(), {
+      decisions: new Map([['topical', TOPICAL]]),
+      decisionClient: () => ({
+        decide: async (options) => {
+          asked = true;
+          return {
+            model: options.model,
+            answers: { topical: { type: 'choice', choice: 'product' } },
+          };
+        },
+      }),
+    });
+    const verdict = await engine.checkInputAsync(
+      [decided({ policies: ['pii-detect'] })],
+      `mail me at ${ADDRESS}`,
+    );
+
+    expect(asked).toBe(false);
+    expect(verdict.records[0]?.policies).toEqual(['pii-detect']);
+  });
+
+  it('fails closed when the synchronous path meets a decision', () => {
+    const engine = decisionEngine({ type: 'choice', choice: 'product' });
+
+    expect(() => engine.checkInput([decided()], 'anything')).toThrow(GuardrailBlockedError);
+    expect(() => engine.checkInput([decided()], 'anything')).toThrow(/needs the async check/);
+  });
+
+  it('fails closed when the answer label is not mapped', async () => {
+    const engine = decisionEngine({ type: 'choice', choice: 'unexpected' });
+
+    await expect(engine.checkInputAsync([decided()], 'anything')).rejects.toThrow(/does not map/);
+  });
+
+  it('fails closed when the answer carries no choice at all', async () => {
+    const engine = decisionEngine({ type: 'choice' });
+
+    await expect(engine.checkInputAsync([decided()], 'anything')).rejects.toThrow(
+      /returned an answer with no choice/,
+    );
+  });
+
+  it('fails closed when a required confidence is missing', async () => {
+    const engine = decisionEngine({ type: 'choice', choice: 'product' });
+
+    await expect(
+      engine.checkInputAsync([decided({ minConfidence: 0.6 })], 'anything'),
+    ).rejects.toThrow(/answered without a confidence/);
+  });
+
+  it('fails closed when the answer is below the declared confidence', async () => {
+    const engine = decisionEngine({ type: 'choice', choice: 'product', confidence: 0.4 });
+
+    await expect(
+      engine.checkInputAsync([decided({ minConfidence: 0.6 })], 'anything'),
+    ).rejects.toThrow(/below the declared minimum/);
+  });
+
+  it('fails closed when the decision is not declared in the runtime', async () => {
+    const engine = decisionEngine({ type: 'choice', choice: 'product' }, null);
+
+    await expect(engine.checkInputAsync([decided()], 'anything')).rejects.toThrow(
+      /has no definition in this runtime/,
+    );
+  });
+
+  it('fails closed when the guardrail maps no label', async () => {
+    const engine = decisionEngine({ type: 'choice', choice: 'product' });
+
+    await expect(engine.checkInputAsync([decided({ onDecision: {} })], 'anything')).rejects.toThrow(
+      /maps no answer label/,
+    );
+  });
+
+  it('fails closed when the client cannot answer', async () => {
+    const engine = decisionEngine(new Error('connection refused'));
+
+    await expect(engine.checkInputAsync([decided()], 'anything')).rejects.toThrow(
+      /could not answer: connection refused/,
+    );
   });
 });

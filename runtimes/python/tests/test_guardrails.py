@@ -34,6 +34,7 @@ from aid_runtime.agents import (
     RuntimeSpec,
     detect,
 )
+from aid_runtime.agents import guardrails as guardrails_module
 from aid_runtime.agents.ir import from_ir
 from aid_runtime.decisions import DecisionAnswer, DecisionResponse
 from aid_runtime.errors import ConfigurationError
@@ -1064,3 +1065,47 @@ async def test_policies_run_before_the_decision_so_a_match_costs_no_tokens() -> 
     assert verdict.deciding is not None
     assert verdict.deciding.policies == ("prompt-injection",)
     assert client.calls == []
+
+
+# --- the decision seam inside the loop -------------------------------------------
+
+
+async def test_the_loop_asks_a_decision_and_refuses_before_the_model_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The loop, not just the generated pipeline, must consult a decision guardrail.
+
+    Regression pin: the loop used to build its engine without the document's
+    ``decisions`` and take the synchronous path, where a decision guardrail was
+    scheduled for a raise but never asked — an allow nobody declared.
+    """
+    client = FakeDecisionClient(label="off_topic")
+    monkeypatch.setattr(guardrails_module, "DecisionClient", lambda: client)
+
+    doc = solo(
+        guardrail_specs=[
+            guardrail_def(
+                "relevance",
+                policies=(),
+                decision="topical",
+                on_decision=(("product", "allow"), ("off_topic", "block")),
+                min_confidence=0.5,
+                message="This request is outside the assistant scope.",
+            )
+        ],
+        decisions=[
+            {
+                "id": "topical",
+                "model": "jev-1.14.0",
+                "instructions": "Is this message about our product",
+                "criteria": ["off_topic", "product"],
+            }
+        ],
+    )
+    harness = build(doc, script=[ScriptedTurn.answer("never reached")])
+
+    with pytest.raises(GuardrailBlockedError, match="outside the assistant scope"):
+        await harness.runtime.run("solo", CLEAN)
+
+    assert [call["state"] for call in client.calls] == [CLEAN]
+    assert harness.provider.calls == []

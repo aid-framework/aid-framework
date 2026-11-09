@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type AgentCheckpoint,
   ConfigurationError,
+  type DecisionAsker,
   GuardrailBlockedError,
   Principal,
   ScriptedTurn,
@@ -170,6 +171,49 @@ describe('guardrails inside the loop', () => {
     expect(error).toBeInstanceOf(GuardrailBlockedError);
     expect(error.message).toMatch(/guardrail 'walled' blocked the tool-call stage/);
     expect(recorder.calls).toBe(0);
+  });
+
+  it('asks a decision at the input stage and blocks on the label it maps', async () => {
+    const doc = solo({
+      guardrailSpecs: [
+        guardrailDef('relevance', {
+          policies: [],
+          decision: 'topical',
+          onDecision: { product: 'allow', off_topic: 'block' },
+          minConfidence: 0.5,
+          message: 'This request is outside the assistant scope.',
+        }),
+      ],
+      decisions: [
+        {
+          id: 'topical',
+          model: 'jev-1.14.0',
+          instructions: 'Is this message about our product',
+          criteria: ['off_topic', 'product'],
+        },
+      ],
+    });
+    const asked: unknown[] = [];
+    const asker: DecisionAsker = {
+      decide: async (request) => {
+        asked.push(request.state);
+        return {
+          model: 'jev-1.14.0',
+          answers: { topical: { type: 'choice', choice: 'off_topic', confidence: 0.9 } },
+        };
+      },
+    };
+    const harness = build(doc, {
+      script: [ScriptedTurn.answer('never reached')],
+      decisionClient: () => asker,
+    });
+
+    const error = await refusal(harness.runtime.run('solo', QUESTION, { principal: ADMIN }));
+
+    expect(error).toBeInstanceOf(GuardrailBlockedError);
+    expect(error.message).toMatch(/outside the assistant scope/);
+    expect(asked).toEqual([QUESTION]);
+    expect(harness.provider.calls).toHaveLength(0);
   });
 
   it('redacts the argument the handler receives', async () => {

@@ -79,6 +79,32 @@ export interface GuardrailDefinition {
   readonly message: string;
   readonly fallbackPrompt: string | undefined;
   readonly log: boolean;
+  /**
+   * The `choice` decision that answers this guardrail when no local policy fired, or
+   * `undefined` for a guardrail the detectors decide by themselves.
+   */
+  readonly decision: string | undefined;
+  /** What each answer label means: `allow`, `block`, `flag` or `escalate`. */
+  readonly onDecision: Readonly<Record<string, string>>;
+  /**
+   * The confidence below which an answer is refused, or `0` when the guardrail set no
+   * floor. A floor greater than zero over an answer that carries no confidence fails
+   * closed, because a missing confidence is not an opinion.
+   */
+  readonly minConfidence: number;
+}
+
+/**
+ * One decision a guardrail asks, resolved from the IR's `decisions` collection.
+ *
+ * Only what the question needs: a `choice` decision's labels are its criteria, so the
+ * ordered list is the whole vocabulary an `onDecision` map has to cover.
+ */
+export interface DecisionDefinition {
+  readonly id: string;
+  readonly model: string;
+  readonly instructions: string;
+  readonly criteria: readonly string[];
 }
 
 /** One IR `memory` entry, resolved for the scope rules in `agents/memory`. */
@@ -153,6 +179,8 @@ export class RuntimeSpec {
   readonly tools: ReadonlyMap<string, ToolSpec>;
   readonly agents: ReadonlyMap<string, AgentDefinition>;
   readonly guardrails: ReadonlyMap<string, GuardrailDefinition>;
+  /** The decisions a guardrail can ask, keyed by decision id. */
+  readonly decisions: ReadonlyMap<string, DecisionDefinition>;
   /**
    * The single concurrency cap, read from the IR's `deployments[].concurrency`. `undefined`
    * means unbounded: the runtime only shares a limiter when a deployment declares one,
@@ -167,6 +195,7 @@ export class RuntimeSpec {
     readonly tools: ReadonlyMap<string, ToolSpec>;
     readonly agents: ReadonlyMap<string, AgentDefinition>;
     readonly guardrails?: ReadonlyMap<string, GuardrailDefinition>;
+    readonly decisions?: ReadonlyMap<string, DecisionDefinition>;
     readonly concurrency?: number;
   }) {
     this.models = init.models;
@@ -175,6 +204,7 @@ export class RuntimeSpec {
     this.tools = init.tools;
     this.agents = init.agents;
     this.guardrails = init.guardrails ?? new Map();
+    this.decisions = init.decisions ?? new Map();
     this.concurrency = init.concurrency;
   }
 
@@ -280,6 +310,11 @@ export function fromIr(document: Record<string, unknown>): RuntimeSpec {
     guardrails.set(guardrailId, guardrailDefinition(guardrailId, entry, tools));
   }
 
+  const decisions = new Map<string, DecisionDefinition>();
+  for (const [decisionId, entry] of byId(document.decisions ?? [], 'decisions')) {
+    decisions.set(decisionId, decisionDefinition(decisionId, entry));
+  }
+
   const fallbacks = new Map<string, readonly string[]>();
   for (const [modelId, entry] of rawModels) {
     fallbacks.set(modelId, strList(entry.fallbacks, `model ${repr(modelId)}`));
@@ -310,6 +345,7 @@ export function fromIr(document: Record<string, unknown>): RuntimeSpec {
     tools,
     agents,
     guardrails,
+    decisions,
     concurrency: concurrencyCap(document.deployments),
   });
 }
@@ -434,6 +470,7 @@ function guardrailDefinition(
 
   const onFail = entry.onFail;
   if (!isObject(onFail)) throw new ConfigurationError(`${where} needs an onFail object`);
+  const decision = str(entry.decision) || undefined;
   return {
     id: guardrailId,
     stages,
@@ -444,6 +481,54 @@ function guardrailDefinition(
     message: requiredStr(onFail, 'message', `${where} onFail`),
     fallbackPrompt: str(onFail.fallbackPrompt) || undefined,
     log: onFail.log === true,
+    decision,
+    onDecision: decision === undefined ? {} : stringRecord(entry.onDecision, `${where} onDecision`),
+    minConfidence: decision === undefined ? 0 : numeric(entry.minConfidence),
+  };
+}
+
+function stringRecord(value: unknown, where: string): Record<string, string> {
+  if (value === undefined || value === null) return {};
+  if (!isObject(value)) throw new ConfigurationError(`${where} must be a mapping of strings`);
+  const record: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item !== 'string') {
+      throw new ConfigurationError(`${where}.${key} must be a string`);
+    }
+    record[key] = item;
+  }
+  return record;
+}
+
+/**
+ * One `choice` decision, with its labels.
+ *
+ * The IR writes a `choice` decision's criteria as a label-to-intent map and a `score`
+ * decision's as an ordered list. A guardrail only ever asks the former, so a mapping is
+ * read as its keys -- sorted, because a label set has no order and the IR's serializer
+ * sorted it the same way.
+ */
+function decisionDefinition(
+  decisionId: string,
+  entry: Record<string, unknown>,
+): DecisionDefinition {
+  const where = `decision ${repr(decisionId)}`;
+  const criteria = entry.criteria;
+  let labels: readonly string[];
+  if (criteria === undefined || criteria === null) {
+    labels = [];
+  } else if (Array.isArray(criteria)) {
+    labels = strList(criteria, `${where} criteria`);
+  } else if (isObject(criteria)) {
+    labels = sorted(Object.keys(criteria));
+  } else {
+    throw new ConfigurationError(`${where} criteria must be a list or a label mapping`);
+  }
+  return {
+    id: decisionId,
+    model: requiredStr(entry, 'model', where),
+    instructions: requiredStr(entry, 'instructions', where),
+    criteria: labels,
   };
 }
 

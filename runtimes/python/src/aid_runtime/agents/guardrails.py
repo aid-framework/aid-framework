@@ -588,6 +588,19 @@ class GuardrailEngine:
     ) -> GuardrailVerdict:
         return self._check("tool-call", guardrails, dict(arguments), tool_id=tool_id)
 
+    async def check_tool_call_async(
+        self,
+        guardrails: Sequence[GuardrailDefinition],
+        tool_id: str,
+        arguments: Mapping[str, Any],
+    ) -> GuardrailVerdict:
+        """The ``tool-call`` stage when a guardrail needs a round trip.
+
+        A managed engine can apply at this stage, and the loop always uses this
+        variant: awaiting when no guardrail needs it costs nothing.
+        """
+        return await self._check_async("tool-call", guardrails, dict(arguments), tool_id=tool_id)
+
     def _check(
         self,
         stage: GuardrailStage,
@@ -611,6 +624,14 @@ class GuardrailEngine:
                     guardrail.id,
                     stage,
                     f"guardrail uses engine {guardrail.engine!r}, which needs the async check",
+                )
+            if guardrail.decision is not None:
+                # Same rule as a managed engine: a synchronous caller cannot await the
+                # decision, and skipping it would be an allow nobody declared.
+                raise GuardrailBlockedError(
+                    guardrail.id,
+                    stage,
+                    f"guardrail asks decision {guardrail.decision!r}, which needs the async check",
                 )
             policies = _firing_policies(guardrail, stage, payload)
             if not policies:

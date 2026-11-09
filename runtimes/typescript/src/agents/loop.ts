@@ -30,6 +30,7 @@ import {
   ACTION_BLOCK,
   ACTION_ESCALATE,
   ACTION_REDACT,
+  type DecisionAsker,
   GuardrailEngine,
   type GuardrailEscalation,
   type GuardrailRecord,
@@ -211,6 +212,11 @@ export class AgentRuntime {
       readonly stores?: Readonly<Record<string, MemoryStore>> | ReadonlyMap<string, MemoryStore>;
       readonly memoryStore?: MemoryStore;
       readonly limiter?: ConcurrencyLimiter;
+      /**
+       * How a guardrail reaches the decision model. Omitted, the engine builds the
+       * HTTP client on first ask; tests and alternate transports pass one here.
+       */
+      readonly decisionClient?: () => DecisionAsker;
     } = {},
   ) {
     this.#spec = spec;
@@ -221,7 +227,10 @@ export class AgentRuntime {
         ? new Map(options.stores)
         : new Map(Object.entries(options.stores ?? {}));
     this.#defaultStore = options.memoryStore ?? new InProcessMemoryStore();
-    this.#guardrails = new GuardrailEngine(spec.guardrails);
+    this.#guardrails = new GuardrailEngine(spec.guardrails, {
+      decisions: spec.decisions,
+      ...(options.decisionClient === undefined ? {} : { decisionClient: options.decisionClient }),
+    });
     const byName = new Map<string, ToolSpec>();
     for (const definition of spec.tools.values()) byName.set(definition.name, definition);
     this.#toolsByName = byName;
@@ -244,6 +253,7 @@ export class AgentRuntime {
       readonly memoryStore?: MemoryStore;
       readonly ledger?: CostLedger;
       readonly budget?: Budget;
+      readonly decisionClient?: () => DecisionAsker;
     },
   ): AgentRuntime {
     const spec = fromIr(document);
@@ -261,6 +271,7 @@ export class AgentRuntime {
       ...(options.stores === undefined ? {} : { stores: options.stores }),
       ...(options.memoryStore === undefined ? {} : { memoryStore: options.memoryStore }),
       ...(limiter === undefined ? {} : { limiter }),
+      ...(options.decisionClient === undefined ? {} : { decisionClient: options.decisionClient }),
     });
   }
 
@@ -497,7 +508,7 @@ export class AgentRuntime {
 
       if (!frame.inputChecked) {
         frame.inputChecked = true;
-        const paused = this.#guardrailText('input', frame, memoryKey, true);
+        const paused = await this.#guardrailText('input', frame, memoryKey, true);
         if (paused !== undefined) return paused;
       }
 
@@ -521,7 +532,7 @@ export class AgentRuntime {
       const response = generation.response;
 
       if (response.toolCalls.length === 0) {
-        const guarded = this.#guardrailAnswer(frame, response.text, memoryKey);
+        const guarded = await this.#guardrailAnswer(frame, response.text, memoryKey);
         if (typeof guarded !== 'string') return guarded;
         frame.messages.push(Message.assistant(guarded));
         await this.#remember(agent, guarded, memoryKey);
@@ -541,7 +552,7 @@ export class AgentRuntime {
 
       record.kind = 'tools';
       record.toolNames = response.toolCalls.map((call) => call.name);
-      const guardResult = this.#guardrailToolCalls(frame, response.toolCalls, memoryKey);
+      const guardResult = await this.#guardrailToolCalls(frame, response.toolCalls, memoryKey);
       if (guardResult.paused !== undefined) return guardResult.paused;
       frame.messages.push(Message.assistantToolCalls(response.text, guardResult.calls));
       if (this.#needsApproval(agent, guardResult.calls, principal)) {
@@ -567,15 +578,18 @@ export class AgentRuntime {
    * text *in place*, so the model is called on the redacted turn rather than on the original
    * with a note attached.
    */
-  #guardrailText(
+  async #guardrailText(
     stage: string,
     frame: Frame,
     memoryKey: string,
     rewrite: boolean,
-  ): Outcome | undefined {
+  ): Promise<Outcome | undefined> {
     const index = lastUserIndex(frame.messages);
     const text = index === undefined ? '' : (frame.messages[index]?.content ?? '');
-    const verdict = this.#guardrails.checkInput(stageGuardrails(frame.agent, stage), text);
+    const verdict = await this.#guardrails.checkInputAsync(
+      stageGuardrails(frame.agent, stage),
+      text,
+    );
     this.#recordGuardrails(frame, verdict);
     const deciding = verdict.deciding;
     if (verdict.action === ACTION_BLOCK && deciding !== undefined) {
@@ -597,8 +611,8 @@ export class AgentRuntime {
    * carries the text, so approving it releases this exact answer without paying for a second
    * generation.
    */
-  #guardrailAnswer(frame: Frame, text: string, memoryKey: string): string | Outcome {
-    const verdict = this.#guardrails.checkOutput(
+  async #guardrailAnswer(frame: Frame, text: string, memoryKey: string): Promise<string | Outcome> {
+    const verdict = await this.#guardrails.checkOutputAsync(
       stageGuardrails(frame.agent, GUARDRAIL_OUTPUT),
       text,
     );
@@ -621,18 +635,18 @@ export class AgentRuntime {
    * key -- it will be refused later for a different reason, and mapping it to some other
    * tool's id would let a guardrail scoped to one tool decide about another.
    */
-  #guardrailToolCalls(
+  async #guardrailToolCalls(
     frame: Frame,
     calls: readonly ToolCall[],
     memoryKey: string,
-  ): { calls: readonly ToolCall[]; paused: Outcome | undefined } {
+  ): Promise<{ calls: readonly ToolCall[]; paused: Outcome | undefined }> {
     const guarded: ToolCall[] = [];
     let escalation: GuardrailVerdict | undefined;
     for (const original of calls) {
       let call = original;
       const definition = this.#toolsByName.get(call.name);
       const toolId = definition !== undefined ? definition.id : call.name;
-      const verdict = this.#guardrails.checkToolCall(
+      const verdict = await this.#guardrails.checkToolCallAsync(
         stageGuardrails(frame.agent, GUARDRAIL_TOOL),
         toolId,
         call.args,
