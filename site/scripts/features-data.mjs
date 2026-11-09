@@ -366,13 +366,6 @@ export const SHIPPED_FEATURES = [
  */
 export const REFUSALS = [
   {
-    id: 'ts-streaming',
-    title: 'Streaming on `ts-vercel`',
-    reason:
-      'The Vercel target declares no `streaming` capability, so a spec that needs SSE is refused rather than emitted with a buffered response.',
-    code: 'ir/capability-missing',
-  },
-  {
     id: 'jev-as-generation-model',
     title: 'Jev as a generation model',
     reason:

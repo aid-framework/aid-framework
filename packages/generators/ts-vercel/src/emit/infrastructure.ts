@@ -107,22 +107,24 @@ export function emitGatewayModels(ir: IR): EmittedFile {
   const adapters = new Set(
     ir.models.map((model) => providerAdapter(model.provider)).filter((adapter) => adapter),
   );
+  const needsKeyed = providers.some((line) => line.includes('keyedProvider('));
+  const needsKeyedAnthropic = providers.some((line) => line.includes('keyedAnthropicProvider('));
+  const needsKeyedGemini = providers.some((line) => line.includes('keyedGeminiProvider('));
+
   const imports: ImportName[] = [{ name: 'CostProfile', type: false }];
   if (adapters.has('AnthropicProvider')) imports.push({ name: 'AnthropicProvider', type: false });
   if (adapters.has('BedrockProvider')) imports.push({ name: 'BedrockProvider', type: false });
   if (adapters.has('GeminiProvider')) imports.push({ name: 'GeminiProvider', type: false });
   if (adapters.has('VertexProvider')) imports.push({ name: 'VertexProvider', type: false });
-  imports.push(
-    { name: 'FakeProvider', type: false },
-    { name: 'ModelSpec', type: false },
-    { name: 'OpenAICompatibleProvider', type: false },
-    { name: 'Provider', type: true },
-  );
+  if (adapters.has('FakeProvider')) imports.push({ name: 'FakeProvider', type: false });
+  // The `keyedProvider` helper below spells the class in its signature and body, so the
+  // emitted provider lines alone do not say whether the import is live.
+  if (needsKeyed || providers.some((line) => line.includes('new OpenAICompatibleProvider'))) {
+    imports.push({ name: 'OpenAICompatibleProvider', type: false });
+  }
+  imports.push({ name: 'ModelSpec', type: false }, { name: 'Provider', type: true });
   const header = importStatement(RUNTIME, imports);
 
-  const needsKeyed = providers.some((line) => line.includes('keyedProvider('));
-  const needsKeyedAnthropic = providers.some((line) => line.includes('keyedAnthropicProvider('));
-  const needsKeyedGemini = providers.some((line) => line.includes('keyedGeminiProvider('));
   const body = [
     ...(needsKeyed
       ? [
@@ -228,15 +230,19 @@ export function emitDeps(ir: IR): EmittedFile {
   const hasRetrieval = ir.retrievers.length > 0;
   const withAgents = hasAgents(ir);
   const runtimeImports: ImportName[] = [
-    { name: 'ConfigurationError', type: false },
     { name: 'ModelGateway', type: true },
     { name: 'PromptRegistry', type: true },
-    { name: 'Retriever', type: true },
     // The agent loop takes `Tool` objects, not the executor, so when this app declares an
     // agent the executor is built *from* the list rather than beside it: one adapter set
     // with two views, so an agent and a `tool` step cannot execute different objects.
     { name: 'ToolExecutor', type: !withAgents },
   ];
+  if (hasRetrieval) {
+    runtimeImports.push(
+      { name: 'ConfigurationError', type: false },
+      { name: 'Retriever', type: true },
+    );
+  }
   if (withAgents) runtimeImports.push({ name: 'Tool', type: true });
   const header = [
     importStatement(RUNTIME, runtimeImports),

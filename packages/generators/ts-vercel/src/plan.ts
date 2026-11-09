@@ -53,6 +53,7 @@ import {
   emitRetrievalIngestModules,
 } from './emit/retrieval.js';
 import { emitRequests, emitSchemas } from './emit/schemas.js';
+import { emitSse } from './emit/sse.js';
 import {
   emitContractModule,
   emitContractsIndex,
@@ -61,6 +62,7 @@ import {
 } from './emit/tools.js';
 import { TsVercelPlanError } from './errors.js';
 import { GENERATOR_VERSION, TS_VERCEL_MANIFEST } from './manifest.js';
+import { streams } from './streaming.js';
 import { checkPlan } from './validate.js';
 
 /**
@@ -149,13 +151,13 @@ function collect(ir: IR): EmittedFile[] {
   const files: EmittedFile[] = [];
 
   files.push(emitSchemas(ir));
-  const requests = emitRequests(ir);
-  if (requests !== undefined) files.push(requests);
+  files.push(emitRequests(ir));
 
   files.push(emitObservability(ir));
   files.push(emitDeps(ir));
   files.push(emitControl(ir));
   files.push(emitGuardrails(ir));
+  if (ir.pipelines.some((pipeline) => streams(ir, pipeline))) files.push(emitSse());
   const agents = emitAgents(ir);
   if (agents !== undefined) files.push(agents);
   files.push(emitGatewayModels(ir));

@@ -114,12 +114,116 @@ export function exampleSpecText(): string {
   return readFileSync(EXAMPLE_SPEC_PATH, 'utf8');
 }
 
+/**
+ * The smallest spec this target accepts that also streams.
+ *
+ * Written as spec text rather than as an IR mutation so it goes through the same spec
+ * checks and build gates a project would; a hand-built IR could declare a shape no real
+ * spec can reach. One generate-only pipeline with no tool and no retrieval, so compiling
+ * it exercises the emitter's zero-leading-step streaming branch and every empty-section
+ * module at once -- the branches the example, which has neither, never reaches.
+ *
+ * `structured` output and a declared `Reply` are not decoration: this target answers with
+ * a structured value only, so a `text` output would be refused.
+ */
+export const MINIMAL_STREAMING_SPEC = `specVersion: "0.9"
+
+project:
+  name: stream-min
+  namespace: aid.demo
+  targets:
+    - ts-vercel
+
+types:
+  Reply:
+    kind: struct
+    fields:
+      message:
+        type: string
+        required: true
+        description: One sentence greeting.
+
+models:
+  fast:
+    provider: fake
+    modelId: fake-deterministic-1
+    capabilities: [streaming, json-schema]
+    costProfile: openai-gpt-4o-mini
+
+guardrails:
+  inbound:
+    stages: [input]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The request was refused by a guardrail.
+      log: true
+
+prompts:
+  reply:
+    version: 1
+    model: fast
+    template: |
+      Say hello to the customer.
+    output:
+      kind: structured
+      schema: Reply
+
+pipelines:
+  chat:
+    description: One generate step, served over SSE.
+    trigger:
+      http:
+        method: post
+        path: /chat
+    steps:
+      - generate:
+          prompt: reply
+          as: answer
+
+deployments:
+  api:
+    target: container
+    secrets: []
+    streaming: true
+`;
+
 let exampleBuild: ExampleBuild | undefined;
 
 /** The example's spec, checked, lowered, gated and planned. Built at most once. */
 export function example(): ExampleBuild {
   exampleBuild ??= buildForSpecText(exampleSpecText());
   return exampleBuild;
+}
+
+/**
+ * The example rearranged so that streaming is allowed.
+ *
+ * Two edits, one per refusal the authored document earns: the `output` stage is dropped
+ * from every guardrail (and the `guard` steps that enforced it, which would otherwise be
+ * orphaned), and the `triage` pipeline is removed with the evals that target it. Triage
+ * generates and then branches, so no rearrangement of its steps makes it streamable --
+ * and one unstreamable HTTP pipeline is enough to refuse the whole document. Nothing else
+ * changes, so a pipeline emitted from this IR is still the shipped one.
+ *
+ * A fresh copy each call, because every caller mutates what it is given.
+ */
+export function streamableExampleIR(): IR {
+  const ir = structuredClone(example().ir);
+  for (const deployment of ir.deployments) deployment.streaming = true;
+  for (const guardrail of ir.guardrails) {
+    guardrail.stages = guardrail.stages.filter((stage) => stage !== 'output');
+  }
+  ir.pipelines = ir.pipelines.filter((pipeline) => pipeline.id !== 'triage');
+  for (const pipeline of ir.pipelines) {
+    pipeline.steps = (pipeline.steps ?? []).filter(
+      (step) => !(step.kind === 'guard' && step.stage === 'output'),
+    );
+  }
+  // A `target` is `pipeline:triage` once built, so the reference is matched textually
+  // rather than by reaching into the reference union for one fixture.
+  ir.evals = ir.evals.filter((evaluation) => !JSON.stringify(evaluation.target).includes('triage'));
+  return ir;
 }
 
 export function examplePlan(): Plan {

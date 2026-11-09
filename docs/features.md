@@ -308,12 +308,6 @@ An eval scores a decision on its own reply shape, so a guardrail change is measu
 
 An absent capability is stated once, here, with the diagnostic that enforces it, instead of being discovered during an apply or debugged in production.
 
-### Streaming on `ts-vercel`
-
-The Vercel target declares no `streaming` capability, so a spec that needs SSE is refused rather than emitted with a buffered response.
-
-- **Enforced by:** `ir/capability-missing`
-
 ### Jev as a generation model
 
 Jev answers a declared decision. It is not in `SERVED_PROVIDERS`, so a `models[]` entry naming it has no adapter and is refused.

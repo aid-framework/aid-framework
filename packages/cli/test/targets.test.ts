@@ -95,17 +95,16 @@ describe('the ts-vercel entry', () => {
     expect(declared['py-fastapi']).toEqual([...PY_FASTAPI_MANIFEST.capabilities].sort());
   });
 
-  it('drops `streaming` from ts-vercel and keeps it on py-fastapi, which emits a streaming route', () => {
-    // The claim is asymmetric, and that asymmetry is about the emitter, not the runtime:
-    // both runtimes implement `stream()`, and the py-fastapi generator emits the
-    // `Accept: text/event-stream` branch that calls it. The ts-vercel route answers with
-    // one buffered body, so declaring the capability there would fail open. One target
-    // may declare it and the other may not -- asserted on both, so neither side can
-    // pass by being unexamined.
-    expect(targetCapabilities()['ts-vercel']).not.toContain('streaming');
+  it('declares `streaming` on both targets, because both emit a streaming route', () => {
+    // The claim used to be asymmetric: both runtimes implemented `stream()`, but only
+    // `py-fastapi` emitted the `Accept: text/event-stream` branch that calls it. The
+    // ts-vercel route now negotiates the same media type and hands the gateway's frames
+    // to a `ReadableStream`, so the asymmetry is gone. Asserted on both sides, so neither
+    // target can pass by being unexamined.
+    expect(targetCapabilities()['ts-vercel']).toContain('streaming');
     expect(targetCapabilities()['py-fastapi']).toContain('streaming');
     expect(PY_FASTAPI_MANIFEST.capabilities).toContain('streaming');
-    expect([...TS_VERCEL_CAPABILITIES]).not.toContain('streaming');
+    expect([...TS_VERCEL_CAPABILITIES]).toContain('streaming');
   });
 });
 

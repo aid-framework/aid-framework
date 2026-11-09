@@ -20,7 +20,7 @@ A declared capability is a promise: there is an emitter for it, the target's run
 | `json-schema` | yes | yes |
 | `otel` | yes | yes |
 | `rerank` | yes | yes |
-| `streaming` | yes | no |
+| `streaming` | yes | yes |
 | `tool-calling` | yes | yes |
 
 ## Manifests
@@ -45,7 +45,7 @@ A declared capability is a promise: there is an emitter for it, the target's run
 | Package | `@aid-framework/generator-ts-vercel` |
 | Manifest version | `0.1.0` |
 | IR range | `^0.1.0` |
-| Capabilities | `http-trigger`, `json-schema`, `tool-calling`, `otel`, `embeddings`, `rerank`, `guardrails`, `agents`, `cursor-memory` |
+| Capabilities | `http-trigger`, `streaming`, `json-schema`, `tool-calling`, `otel`, `embeddings`, `rerank`, `guardrails`, `agents`, `cursor-memory` |
 | Emits against | `structuredOutput`: `zod`; `tracing`: `otel-genai` |
 | Output root | `app` |
 | Generated directory | `app/generated` |

@@ -101,6 +101,7 @@ describe('the declaration', () => {
         'json-schema',
         'otel',
         'rerank',
+        'streaming',
         'tool-calling',
       ],
       emitsAgainst: { structuredOutput: 'zod', tracing: 'otel-genai' },
@@ -168,9 +169,13 @@ describe('emitsAgainst', () => {
     expect(TS_VERCEL_MANIFEST.capabilities).not.toContain('orchestration');
   });
 
-  it('declares no streaming capability, because the runtime defers it', () => {
-    expect(TS_VERCEL_MANIFEST.capabilities).not.toContain('streaming');
-    expect(TS_VERCEL_CAPABILITIES).not.toContain('streaming');
+  it('declares streaming, which the emitted route negotiates', () => {
+    // The declaration is a promise about the route, and `emitRouteModule` keeps it: the
+    // `Accept` branch exists only where `../streaming.ts` says the pipeline can carry a
+    // stream, and `../validate.ts` refuses a document that asks for one it cannot. A
+    // capability declared without that emitter is the fail-open case this pins against.
+    expect(TS_VERCEL_MANIFEST.capabilities).toContain('streaming');
+    expect(TS_VERCEL_CAPABILITIES).toContain('streaming');
   });
 });
 
@@ -188,6 +193,7 @@ describe('the capability discipline', () => {
       'json-schema',
       'otel',
       'rerank',
+      'streaming',
       'tool-calling',
     ]);
   });
@@ -252,10 +258,10 @@ describe('the IR contract', () => {
     expect(offenders).toEqual([
       "src/emit/business.ts:341: importStatement('node:fs', [",
       "src/emit/eval-driver.ts:49: \"const modules = process.env.AID_EVAL_MODULES ?? join(root, 'dist', 'app', 'generated');\",",
-      "src/emit/infrastructure.ts:135: '  const apiKey = process.env[apiKeyEnv];',",
-      "src/emit/infrastructure.ts:145: '  const apiKey = process.env[apiKeyEnv];',",
-      "src/emit/infrastructure.ts:155: '  const apiKey = process.env[apiKeyEnv];',",
-      "src/emit/retrieval.ts:212: importStatement('node:fs', [{ name: 'existsSync', type: false }]),",
+      "src/emit/infrastructure.ts:137: '  const apiKey = process.env[apiKeyEnv];',",
+      "src/emit/infrastructure.ts:147: '  const apiKey = process.env[apiKeyEnv];',",
+      "src/emit/infrastructure.ts:157: '  const apiKey = process.env[apiKeyEnv];',",
+      "src/emit/retrieval.ts:223: importStatement('node:fs', [{ name: 'existsSync', type: false }]),",
     ]);
 
     expect(sources.map(([path]) => path)).toContain('index.ts');
