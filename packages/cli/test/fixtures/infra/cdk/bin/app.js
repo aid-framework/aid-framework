@@ -18,13 +18,17 @@ const path = require('node:path');
 
 const cdk = require('aws-cdk-lib');
 const apigwv2 = require('aws-cdk-lib/aws-apigatewayv2');
+const batch = require('aws-cdk-lib/aws-batch');
 const bedrock = require('aws-cdk-lib/aws-bedrock');
+const cloudfront = require('aws-cdk-lib/aws-cloudfront');
 const lambda = require('aws-cdk-lib/aws-lambda');
 const aoss = require('aws-cdk-lib/aws-opensearchserverless');
 
 const ecs = require('aws-cdk-lib/aws-ecs');
 const elbv2 = require('aws-cdk-lib/aws-elasticloadbalancingv2');
+const { addBatch } = require('../../generated/cdk/batch.cjs');
 const { addContainer } = require('../../generated/cdk/container.cjs');
+const { addEdge } = require('../../generated/cdk/edge.cjs');
 const { addKnowledgeBase } = require('../../generated/cdk/knowledge-base.cjs');
 const { addServerless } = require('../../generated/cdk/serverless.cjs');
 
@@ -46,13 +50,29 @@ const edge = addContainer(stack, context, business);
 assert.ok(edge.endpoint.startsWith('http://'), 'expected the load balancer endpoint');
 assert.ok(edge.services.worker, 'expected the container service to be created');
 
+const jobs = addBatch(stack, context, business);
+assert.ok(jobs.jobDefinitions.nightly, 'expected the batch job definition to be created');
+const edgeApp = addEdge(stack, context, inputs);
+assert.ok(edgeApp.distribution, 'expected the edge distribution to be created');
+assert.ok(edgeApp.functions.edge, 'expected the Lambda@Edge version to be created');
+
 const nodes = stack.node.findAll();
 const functions = nodes.filter((node) => node instanceof lambda.CfnFunction);
 const routes = nodes.filter((node) => node instanceof apigwv2.CfnRoute);
 const guardrails = nodes.filter((node) => node instanceof bedrock.CfnGuardrail);
 const versions = nodes.filter((node) => node instanceof bedrock.CfnGuardrailVersion);
 
-assert.strictEqual(functions.length, 1, 'expected one Lambda function');
+// The serverless construct deploys an image; Lambda@Edge takes a zip. Counting both
+// together would hide a construct that emitted neither.
+const imageFunctions = functions.filter((fn) => fn.packageType === 'Image');
+const zipFunctions = functions.filter((fn) => fn.packageType !== 'Image');
+assert.strictEqual(imageFunctions.length, 1, 'expected one container-image Lambda function');
+assert.strictEqual(zipFunctions.length, 1, 'expected one Lambda@Edge zip function');
+assert.strictEqual(
+  zipFunctions[0].handler,
+  'app.generated.edge.handler',
+  'expected the edge handler',
+);
 assert.strictEqual(routes.length, 1, 'expected one HTTP API route');
 assert.strictEqual(routes[0].routeKey, 'GET /ping', 'expected the spec route key');
 
@@ -67,17 +87,17 @@ assert.strictEqual(entity.action, 'BLOCK', 'expected the spec PII action');
 // The app reads the guardrail from its environment, the same two names the HCL module
 // injects, so the Python runtime's managed client finds it either way.
 assert.ok(
-  functions[0].environment.variables.BEDROCK_GUARDRAIL_ID,
+  imageFunctions[0].environment.variables.BEDROCK_GUARDRAIL_ID,
   'expected the guardrail id in the function environment',
 );
 assert.ok(
-  functions[0].environment.variables.BEDROCK_GUARDRAIL_VERSION,
+  imageFunctions[0].environment.variables.BEDROCK_GUARDRAIL_VERSION,
   'expected the guardrail version in the function environment',
 );
 
 // The spec binds the `docs` retriever to the one Bedrock base, so the app learns that
 // base's id under the name the runtime computes, and its role may call `Retrieve`.
-const baseVars = functions[0].environment.variables;
+const baseVars = imageFunctions[0].environment.variables;
 assert.ok(
   baseVars.BEDROCK_KNOWLEDGE_BASE_HANDBOOK,
   'expected the knowledge base id in the function environment',
@@ -153,3 +173,35 @@ assert.deepStrictEqual(
   ['/chat', '/chat/*'],
   'expected the declared paths',
 );
+
+// The batch construct renders one Fargate compute environment and queue for the project,
+// and one job definition per deployment whose command names the deployment pipeline.
+const jobDefinitions = nodes.filter((node) => node instanceof batch.CfnJobDefinition);
+const queues = nodes.filter((node) => node instanceof batch.CfnJobQueue);
+const computeEnvironments = nodes.filter((node) => node instanceof batch.CfnComputeEnvironment);
+
+assert.strictEqual(computeEnvironments.length, 1, 'expected one batch compute environment');
+assert.strictEqual(queues.length, 1, 'expected one batch queue');
+assert.strictEqual(jobDefinitions.length, 1, 'expected one batch job definition');
+
+const job = jobDefinitions[0].containerProperties;
+assert.deepStrictEqual(
+  job.command,
+  ['python', '-m', 'app.generated.batch', 'ping'],
+  'expected the deployment pipeline in the job command',
+);
+assert.ok(job.jobRoleArn, 'expected the task role on the job definition');
+assert.ok(job.executionRoleArn, 'expected the execution role on the job definition');
+assert.strictEqual(job.networkConfiguration.assignPublicIp, 'DISABLED', 'expected a private job');
+assert.strictEqual(job.resourceRequirements[0].value, '2', 'expected the sizing VCPU');
+assert.strictEqual(job.resourceRequirements[1].value, '4096', 'expected the sizing memory');
+
+// The edge construct attaches a published, numbered version to the distribution; a
+// distribution with no association would deploy a function nothing calls.
+const distributions = nodes.filter((node) => node instanceof cloudfront.CfnDistribution);
+assert.strictEqual(distributions.length, 1, 'expected one CloudFront distribution');
+const associations =
+  distributions[0].distributionConfig.defaultCacheBehavior.lambdaFunctionAssociations;
+assert.strictEqual(associations.length, 1, 'expected one Lambda@Edge association');
+assert.strictEqual(associations[0].eventType, 'origin-request', 'expected an origin request');
+assert.strictEqual(associations[0].includeBody, true, 'expected the request body');

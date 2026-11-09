@@ -1,7 +1,8 @@
 {
   "images": {
     "api": "111111111111.dkr.ecr.us-east-1.amazonaws.com/aid-ping:latest",
-    "worker": "111111111111.dkr.ecr.us-east-1.amazonaws.com/aid-ping:worker"
+    "worker": "111111111111.dkr.ecr.us-east-1.amazonaws.com/aid-ping:worker",
+    "nightly": "111111111111.dkr.ecr.us-east-1.amazonaws.com/aid-ping:nightly"
   },
   "secretArns": {
     "OPENAI_API_KEY": "arn:aws:secretsmanager:us-east-1:111111111111:secret:openai"
@@ -10,6 +11,16 @@
     "api": { "memoryMb": 512, "timeoutSeconds": 15 },
     "worker": { "cpu": 1024, "memoryMb": 2048, "desiredCount": 2 }
   },
+  "batchSizing": {
+    "nightly": { "vcpus": 2, "memoryMb": 4096, "attempts": 2, "timeoutSeconds": 1800 }
+  },
+  "edgeSizing": {
+    "edge": { "memoryMb": 1024, "timeoutSeconds": 10 }
+  },
+  "edgeZipPath": "edge.zip",
+  "subnetIds": ["subnet-0a1b2c3d", "subnet-0e4f5a6b"],
+  "securityGroupIds": ["sg-0123456789abcdef0"],
+  "maxVcpus": 32,
   "vpcCidr": "10.42.0.0/16",
   "logRetentionDays": 14,
   "tags": {

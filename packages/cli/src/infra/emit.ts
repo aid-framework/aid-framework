@@ -557,7 +557,12 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
             : '| `modules/knowledge-base/` | The OpenSearch Serverless collection + Bedrock knowledge base a `knowledgeBases:` entry deploys into. |',
         ]
       : []),
-    ...((modules.serverless || modules.container || modules.knowledgeBase) && cloud === 'aws'
+    ...((modules.serverless ||
+      modules.container ||
+      modules.batch ||
+      modules.edge ||
+      modules.knowledgeBase) &&
+    cloud === 'aws'
       ? [
           ...(modules.serverless
             ? [
@@ -567,6 +572,16 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
           ...(modules.container
             ? [
                 '| `cdk/container.cjs` | The CDK construct a `container` service is added to: ECS Fargate behind one load balancer (AWS only). |',
+              ]
+            : []),
+          ...(modules.batch
+            ? [
+                '| `cdk/batch.cjs` | The CDK construct a `batch` deployment runs in: Fargate compute environment, queue and job definition (AWS only). |',
+              ]
+            : []),
+          ...(modules.edge
+            ? [
+                '| `cdk/edge.cjs` | The CDK construct an `edge` deployment deploys into: a published Lambda@Edge function behind CloudFront (AWS only). |',
               ]
             : []),
           ...(modules.knowledgeBase
@@ -787,6 +802,24 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
                 '  `{ endpoint, services, cluster }`, and `endpoint` is the URL the plan records.',
               ]
             : []),
+          ...(modules.batch
+            ? [
+                '- `generated/cdk/batch.cjs` exports',
+                '  `addBatch(scope, context, inputs)`: one Fargate compute environment and queue,',
+                '  and one job definition per `batch` deployment, whose command names the',
+                '  deployment pipeline. It needs `inputs.images` and `inputs.subnetIds`, and returns',
+                '  `{ queue, jobDefinitions, logGroups }`.',
+              ]
+            : []),
+          ...(modules.edge
+            ? [
+                '- `generated/cdk/edge.cjs` exports',
+                '  `addEdge(scope, context, inputs)`: a published Lambda@Edge function and the',
+                '  CloudFront distribution that answers every request from it. Call it from a stack',
+                '  in `us-east-1`; it refuses any other region, because CloudFront associates only',
+                '  versions that exist there. It needs `inputs.edgeZipPath`.',
+              ]
+            : []),
           ...(modules.knowledgeBase
             ? [
                 '- `generated/cdk/knowledge-base.cjs` exports',
@@ -800,8 +833,9 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
           '',
           ...(!modules.serverless
             ? [
-                'A plan with no `serverless` service emits no `serverless.cjs`: the constructs',
-                'are emitted per target, so nothing appears that the plan cannot use.',
+                'Constructs are emitted per target, so nothing appears that the plan cannot use:',
+                'a plan with no `serverless` service emits no `serverless.cjs`, and one with no',
+                '`batch` deployment emits no `batch.cjs`.',
                 '',
               ]
             : []),

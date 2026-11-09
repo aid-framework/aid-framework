@@ -1,9 +1,9 @@
 /**
  * The provider modules `aid infra gen` can emit, and the env root that calls them.
  *
- * One entry per (cloud, deployment target) that has a module. Adding `batch` or `edge`
- * means a new file here and one line in `emitProviderModules`; nothing in `emit.ts`
- * changes, which is the point of the seam.
+ * One entry per (cloud, deployment target) that has a module. Adding a target to the
+ * contract means a new file here and one line in `emitProviderModules`; nothing in
+ * `emit.ts` changes, which is the point of the seam.
  */
 
 import type { DeployPlan } from '@aid-framework/ir';
@@ -14,8 +14,10 @@ import type { ModuleFile } from './hcl.js';
 export { AGENT_RUNTIME_MODULE_DIR, emitAgentRuntimeModule } from './agent-runtime.js';
 export { BATCH_MODULE_DIR, emitBatchModule } from './batch.js';
 export {
+  CDK_BATCH_MODULE,
   CDK_CONTAINER_MODULE,
   CDK_DIR,
+  CDK_EDGE_MODULE,
   CDK_KNOWLEDGE_BASE_MODULE,
   CDK_SERVERLESS_MODULE,
   emitCdkModules,

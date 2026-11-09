@@ -19,8 +19,10 @@ import { emitInfra } from '../src/infra/emit.js';
 import {
   AGENT_RUNTIME_MODULE_DIR,
   BATCH_MODULE_DIR,
+  CDK_BATCH_MODULE,
   CDK_CONTAINER_MODULE,
   CDK_DIR,
+  CDK_EDGE_MODULE,
   CDK_KNOWLEDGE_BASE_MODULE,
   CDK_SERVERLESS_MODULE,
   CLOUDRUN_MODULE_DIR,
@@ -1154,8 +1156,8 @@ describe('modulesOf, the seam emit.ts reads', () => {
     );
     expect(all).toContain(`${BATCH_MODULE_DIR}/main.tf`);
     expect(all).toContain(`${EDGE_MODULE_DIR}/main.tf`);
-    // Four provider modules (16 files) plus the two CDK constructs.
-    expect(all).toHaveLength(18);
+    // Four provider modules (16 files) plus one construct for each of the four targets.
+    expect(all).toHaveLength(20);
   });
 
   it('emits only the Cloud Run module for a GCP plan with no job', () => {
@@ -1397,6 +1399,26 @@ describe('the validate fixture', () => {
     expect(fixture).toBe(container.contents);
   });
 
+  it('matches the emitted batch construct byte for byte', () => {
+    const files = emitCdkModules(planOf('batch'), 'aws');
+    const construct = files.find((file) => file.path === CDK_BATCH_MODULE);
+    if (construct === undefined) {
+      throw new Error('the batch construct was not emitted');
+    }
+    const fixture = readFileSync(join(FIXTURE, 'generated', 'cdk', 'batch.cjs'), 'utf8');
+    expect(fixture).toBe(construct.contents);
+  });
+
+  it('matches the emitted edge construct byte for byte', () => {
+    const files = emitCdkModules(planOf('edge'), 'aws');
+    const construct = files.find((file) => file.path === CDK_EDGE_MODULE);
+    if (construct === undefined) {
+      throw new Error('the edge construct was not emitted');
+    }
+    const fixture = readFileSync(join(FIXTURE, 'generated', 'cdk', 'edge.cjs'), 'utf8');
+    expect(fixture).toBe(construct.contents);
+  });
+
   it('refuses what the container module refuses, in the same words', () => {
     // A long sentence is split across two JS literals for line width, so the source has
     // `' +` between its halves; joining those back gives the words a caller would read.
@@ -1452,10 +1474,111 @@ describe('the validate fixture', () => {
     }
   });
 
+  it('refuses what the batch module refuses, in the same words', () => {
+    // A long sentence is split across two JS literals for line width, so the source has
+    // `' +` between its halves; joining those back gives the words a caller would read.
+    const construct = cdkModule(planOf('batch'), 'aws', CDK_BATCH_MODULE).contents.replace(
+      /' \+\r?\n\s*'/g,
+      '',
+    );
+    const module = emitBatchModule(planOf('batch'))
+      .map((file) => file.contents)
+      .join('\n');
+
+    for (const sentence of [
+      'Fargate has nowhere to run a task without at least one subnet; name the subnets this job may use.',
+      'A job definition must name the image it runs.',
+      'targets batch but names no pipeline. Set deployments.',
+      'Add name -> ARN for every secret it declares.',
+    ]) {
+      expect(construct, sentence).toContain(sentence);
+      expect(module, sentence).toContain(sentence);
+    }
+
+    // The map names differ because one backend reads HCL variables and the other JSON.
+    expect(construct).toContain('No subnetIds were supplied.');
+    expect(module).toContain('No subnet_ids were supplied.');
+    expect(construct).toContain('No images entry for');
+    expect(module).toContain('No image_uris entry for');
+    expect(construct).toContain('references a secret with no secretArns entry.');
+    expect(module).toContain('references a secret with no secret_arns entry.');
+  });
+
+  it('mirrors every batch resource the HCL module renders', () => {
+    const contents = cdkModule(planOf('batch'), 'aws', CDK_BATCH_MODULE).contents;
+    for (const kind of [
+      'CfnComputeEnvironment', // aws_batch_compute_environment
+      'CfnJobQueue', // aws_batch_job_queue
+      'CfnJobDefinition', // aws_batch_job_definition
+      'CfnLogGroup', // aws_cloudwatch_log_group
+      'Role', // aws_iam_role, service and execution and task
+      'PolicyStatement', // aws_iam_role_policy
+      'CfnGuardrail', // aws_bedrock_guardrail
+      'CfnGuardrailVersion', // aws_bedrock_guardrail_version
+    ]) {
+      expect(contents, kind).toContain(kind);
+    }
+
+    // The execution role pulls the image and resolves secrets; the task role is what the
+    // job assumes. A job definition with only one of them deploys a task with no image
+    // credentials or no Bedrock grant.
+    expect(contents).toContain('jobRoleArn: taskRole.roleArn');
+    expect(contents).toContain('executionRoleArn: executionRole.roleArn');
+  });
+
+  it('refuses what the edge module refuses, in the same words', () => {
+    const construct = cdkModule(planOf('edge'), 'aws', CDK_EDGE_MODULE).contents.replace(
+      /' \+\r?\n\s*'/g,
+      '',
+    );
+    const module = emitEdgeModule(planOf('edge'))
+      .map((file) => file.contents)
+      .join('\n');
+
+    for (const sentence of [
+      'one CloudFront distribution serves the app, so keep one edge deployment and let it own every HTTP route.',
+      'Build the app into that file before planning; the function deploys that archive.',
+      'declares streaming, which a CloudFront response cannot deliver. Serve it from a container target.',
+      'Lambda@Edge allows at most 30 seconds for a request; deployment ',
+      'Lambda@Edge accepts 128 to 3008 MB; deployment ',
+    ]) {
+      expect(construct, sentence).toContain(sentence);
+      expect(module, sentence).toContain(sentence);
+    }
+
+    // The map names differ because one backend reads HCL variables and the other JSON.
+    expect(construct).toContain('edgeZipPath');
+    expect(module).toContain('edge_zip_path');
+  });
+
+  it('mirrors every edge resource the HCL module renders', () => {
+    const contents = cdkModule(planOf('edge'), 'aws', CDK_EDGE_MODULE).contents;
+    for (const kind of [
+      'Function', // aws_lambda_function
+      'addPermission', // aws_lambda_permission
+      'CfnSecret', // aws_secretsmanager_secret
+      'Distribution', // aws_cloudfront_distribution
+      'Role', // aws_iam_role
+      'PolicyStatement', // aws_iam_role_policy
+      'CompositePrincipal', // the edgelambda.amazonaws.com trust too
+    ]) {
+      expect(contents, kind).toContain(kind);
+    }
+
+    // CloudFront associates a numbered version, never $LATEST, and the caching and origin
+    // request policies are the CachingDisabled and AllViewer ids the HCL module pins.
+    expect(contents).toContain('fn.currentVersion');
+    expect(contents).toContain('cloudfront.CachePolicy.CACHING_DISABLED');
+    expect(contents).toContain('cloudfront.OriginRequestPolicy.ALL_VIEWER');
+    expect(contents).toContain('includeBody: true');
+  });
+
   it('wires the CDK app to the construct it synthesises', () => {
     const app = readFileSync(join(FIXTURE, 'cdk', 'bin', 'app.js'), 'utf8');
     expect(app).toContain("require('../../generated/cdk/serverless.cjs')");
     expect(app).toContain("require('../../generated/cdk/container.cjs')");
+    expect(app).toContain("require('../../generated/cdk/batch.cjs')");
+    expect(app).toContain("require('../../generated/cdk/edge.cjs')");
     expect(app).toContain("require('../../generated/cdk/knowledge-base.cjs')");
     expect(app).toContain("path.join(here, 'context.json')");
   });
@@ -1476,8 +1599,15 @@ describe('the validate fixture', () => {
   it('synthesises the serverless app, not an empty stack', () => {
     const app = readFileSync(join(FIXTURE, 'cdk', 'bin', 'app.js'), 'utf8');
     // `cdk synth` exits 0 for an empty stack, so the fixture asserts the shape itself.
-    expect(app).toContain('expected one Lambda function');
+    expect(app).toContain('expected one container-image Lambda function');
     expect(app).toContain('expected one HTTP API route');
+    // The batch and edge constructs are in the same stack; asserting their resources
+    // separately catches a construct that returns an object but renders nothing.
+    expect(app).toContain('expected one batch job definition');
+    expect(app).toContain('expected one batch compute environment');
+    expect(app).toContain('expected one Lambda@Edge zip function');
+    expect(app).toContain('expected one CloudFront distribution');
+    expect(app).toContain('expected the execution role on the job definition');
   });
 });
 
@@ -1511,9 +1641,24 @@ describe('the CDK construct', () => {
     expect(cdkModule(planOf('serverless', 'serverless')).contents).toBe(file.contents);
   });
 
-  it('is not emitted for GCP or for a plan with no runnable service', () => {
-    expect(emitCdkModules(planOf('serverless'), 'gcp')).toEqual([]);
-    expect(emitCdkModules(planOf('batch', 'edge'), 'aws')).toEqual([]);
+  it('is not emitted on GCP', () => {
+    expect(emitCdkModules(planOf('serverless', 'container', 'batch', 'edge'), 'gcp')).toEqual([]);
+  });
+
+  it('is not emitted for a plan with no deployment and no Bedrock base', () => {
+    expect(emitCdkModules(planOf(), 'aws')).toEqual([]);
+  });
+
+  it('adds a batch and an edge construct for the deployments that use them', () => {
+    expect(emitCdkModules(planOf('batch'), 'aws').map((file) => file.path)).toEqual([
+      CDK_BATCH_MODULE,
+    ]);
+    expect(emitCdkModules(planOf('edge'), 'aws').map((file) => file.path)).toEqual([
+      CDK_EDGE_MODULE,
+    ]);
+    expect(
+      emitCdkModules(planOf('edge', 'batch', 'serverless'), 'aws').map((file) => file.path),
+    ).toEqual([CDK_SERVERLESS_MODULE, CDK_BATCH_MODULE, CDK_EDGE_MODULE]);
   });
 
   it('adds the container construct beside the serverless one', () => {
@@ -1528,8 +1673,12 @@ describe('the CDK construct', () => {
   });
 
   it('keeps one order however the plan lists its services', () => {
-    const forward = emitCdkModules(planOf('serverless', 'container'), 'aws').map((f) => f.path);
-    const reverse = emitCdkModules(planOf('container', 'serverless'), 'aws').map((f) => f.path);
+    const forward = emitCdkModules(planOf('serverless', 'container', 'batch', 'edge'), 'aws').map(
+      (f) => f.path,
+    );
+    const reverse = emitCdkModules(planOf('edge', 'batch', 'container', 'serverless'), 'aws').map(
+      (f) => f.path,
+    );
     expect(reverse).toEqual(forward);
   });
 

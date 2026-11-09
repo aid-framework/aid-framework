@@ -479,6 +479,18 @@ describe('infra gen', () => {
     );
   });
 
+  it('gives a batch job both roles, since only one of them can pull the image', () => {
+    const made = scratchSpec(BATCH_SPEC);
+    expect(aid(made, ['infra', 'gen', '--json']).code).toBe(0);
+
+    const job = made.read(`${GENERATED}/modules/batch/main.tf`);
+    // The task role is what the job's code runs as; the execution role is what Fargate
+    // uses to pull the image, write logs and resolve `secrets`. Without the second, the
+    // job never starts -- so a job definition that names only the first is not enough.
+    expect(job).toContain('taskRoleArn = aws_iam_role.task[0].arn');
+    expect(job).toContain('executionRoleArn = aws_iam_role.execution[0].arn');
+  });
+
   it('provisions nothing when the spec names the engine but leaves the policy to its operator', () => {
     // `engine: bedrock` without a `bedrock:` block is the "I already own a guardrail"
     // form. The app still calls Bedrock, but the deployment must not create a second one.
@@ -1209,7 +1221,7 @@ pipelines:
 });
 
 describe('infra with cdk', () => {
-  /** `batch` and `edge` have tofu modules but no construct; this is the shape that names them. */
+  /** One edge service, the smallest plan that still needs a construct. */
   const EDGE_SPEC = `specVersion: "0.5"
 project:
   name: ping
@@ -1407,22 +1419,18 @@ deployments:
     expect(spawn.calls).toHaveLength(0);
   });
 
-  // A construct exists for serverless, container and managed knowledge bases only. The
-  // alternative to these refusals is an app that synths cleanly and deploys part of the
-  // project, which is the one outcome a deploy tool must never produce.
+  // Every target now has a construct, so the gate admits each one and emits the module
+  // that renders it. A `gen` that exits 0 while omitting the module would deploy a
+  // partial app, so assert the file rather than the exit code alone.
   it.each([
-    ['batch', BATCH_SPEC, 'nightly', 'batch'],
-    ['edge', EDGE_SPEC, 'ping', 'edge'],
-  ])('refuses a %s deployment instead of emitting a partial app', (_label, spec, id, target) => {
+    ['batch', BATCH_SPEC, 'batch.cjs'],
+    ['edge', EDGE_SPEC, 'edge.cjs'],
+  ])('emits the %s construct rather than refusing the plan', (_label, spec, file) => {
     const made = scratchSpec(spec);
     const run = aid(made, ['infra', 'gen', '--iac', 'cdk', '--json']);
 
-    expect(run.code).toBe(2);
-    const [diagnostic] = diagnosticsOf(run);
-    expect(diagnostic?.code).toBe('cli/infra-cloud-backend-unsupported');
-    expect(diagnostic?.message).toContain(`"${id}"`);
-    expect(diagnostic?.message).toContain(`\`${target}\``);
-    expect(made.walk()).not.toContain(TFVARS);
+    expect(run.code).toBe(0);
+    expect(made.walk()).toContain(`${GENERATED}/cdk/${file}`);
   });
 
   it('refuses a managed agent runtime, which has no construct either', () => {
@@ -1437,8 +1445,8 @@ deployments:
 
   // `plan` and `apply` read the emitted plan, not the spec, so a `gen` run without
   // `--iac cdk` would otherwise let a partial app be driven.
-  it('refuses a saved batch plan before spawning cdk', () => {
-    const made = scratchSpec(BATCH_SPEC);
+  it('refuses a saved plan the gate cannot express before spawning cdk', () => {
+    const made = scratchSpec(RUNTIME_SPEC);
     expect(aid(made, ['infra', 'gen']).code).toBe(0);
     made.write('infra/cdk/dev/.keep', '');
     const spawn = recordingSpawn({ status: 0 });
@@ -1446,7 +1454,7 @@ deployments:
 
     expect(run.code).toBe(2);
     expect(diagnosticsOf(run).map((d) => d.code)).toEqual(['cli/infra-cloud-backend-unsupported']);
-    expect(diagnosticsOf(run)[0]?.message).toContain('"nightly"');
+    expect(diagnosticsOf(run)[0]?.message).toContain('managed agent runtime');
     expect(spawn.calls).toHaveLength(0);
   });
 });
