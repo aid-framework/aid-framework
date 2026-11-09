@@ -27,6 +27,16 @@
   background-color: var(--vp-c-bg);
 }
 
+/**
+ * A resource path or an ARN has no break opportunity of its own, so at a narrow
+ * width it pushes the prose past the viewport. `break-word` supplies one only
+ * when the token cannot fit on a line by itself, so ordinary identifiers stay
+ * whole.
+ */
+.vp-doc :not(pre) > code {
+  overflow-wrap: break-word;
+}
+
 @media (max-width: 639px) {
   .vp-doc table {
     display: block;

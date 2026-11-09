@@ -5,15 +5,29 @@
  * pinned to, answer once. Everything interesting -- aliases, capability checks,
  * fallback, budgets, tracing -- lives in the gateway, so adding a provider cannot
  * change what a run costs or which model was called.
+ *
+ * `stream` is optional, and the two facts are kept honest by the gateway: a provider
+ * that advertises `streaming` must implement it, and one that does not advertise it is
+ * never asked. That is why `stream` is optional rather than a method every adapter has
+ * to stub with a refusal -- a stub would turn a capability negotiation into a runtime
+ * surprise.
  */
 
-import type { Capability, CompletionRequest, CompletionResponse, ModelSpec } from '../types.js';
+import type {
+  Capability,
+  CompletionRequest,
+  CompletionResponse,
+  ModelSpec,
+  StreamChunk,
+} from '../types.js';
 
 /** One model vendor. `close` must be idempotent. */
 export interface Provider {
   readonly name: string;
   readonly capabilities: ReadonlySet<Capability>;
   complete(request: CompletionRequest, model: ModelSpec): Promise<CompletionResponse>;
+  /** Required whenever `capabilities` contains `streaming`. */
+  stream?(request: CompletionRequest, model: ModelSpec): AsyncIterable<StreamChunk>;
   close(): Promise<void>;
 }
 

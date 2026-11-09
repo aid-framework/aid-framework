@@ -814,38 +814,9 @@ function supportPage() {
 }
 
 /**
- * Escape a value so it is safe inside an HTML attribute.
- *
- * @param {string} text
- * @returns {string}
- */
-function attribute(text) {
-  return text
-    .replace(/`/g, '')
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-/**
- * A dash that says why the cell is empty.
- *
- * A bare em dash reads as missing work. An absent cell is always either a refusal
- * the compiler enforces or a provider fact, and the tooltip carries that reason
- * without turning the table into paragraphs.
- *
- * @param {string} reason
- * @returns {string}
- */
-function absent(reason) {
-  return `<span title="${attribute(reason)}">—</span>`;
-}
-
-/**
  * The marketing surface: what ships, which cloud runs it, and what is refused.
  *
- * The provider and cloud matrices come from `loadSupportData()`, so they cannot
+ * The provider and cloud lists come from `loadSupportData()`, so they cannot
  * disagree with the gates. The registries in `features-data.mjs` supply the part
  * no declaration states (the service behind a target, the release that first
  * shipped a feature), and `features-page.test.mjs` holds them to the tree.
@@ -859,67 +830,74 @@ function featuresPage() {
   lines.push('# Features');
   lines.push('');
   lines.push(
-    `The provider and cloud matrices are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each row. The spec language is at \`${data.latestSpecVersion}\`.`,
+    `The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at \`${data.latestSpecVersion}\`.`,
   );
   lines.push('');
 
   lines.push('## Deployment targets');
   lines.push('');
   lines.push(
-    'A deployment names one target, and the generated infrastructure runs it on one cloud. A cell names the managed service the emitted OpenTofu configures. A dash is a refusal with a named diagnostic, not a target that is still to come.',
+    'A deployment names one target, and the generated infrastructure runs it on one cloud. Each bullet names the managed service the emitted OpenTofu configures. A cloud that cannot run the target is a refusal with a named diagnostic, not a target that is still to come.',
   );
   lines.push('');
-  lines.push(`| Target | ${pageClouds.map((cloud) => `\`${cloud}\``).join(' | ')} |`);
-  lines.push(`| --- | ${pageClouds.map(() => '---').join(' | ')} |`);
   for (const target of targets) {
-    const cells = pageClouds.map((cloud) => {
+    lines.push(`### \`${target}\``);
+    lines.push('');
+    for (const cloud of pageClouds) {
       const service = CLOUD_SERVICES[cloud]?.[target];
-      if (service !== undefined) return cell(service);
+      if (service !== undefined) {
+        lines.push(`- **\`${cloud}\`:** ${cell(service)}`);
+        continue;
+      }
       const refusal = CLOUD_REFUSALS.find(
         (entry) => entry.cloud === cloud && entry.target === target,
       );
-      return absent(refusal?.reason ?? `\`${target}\` has no module on ${cloud}.`);
-    });
-    lines.push(`| \`${target}\` | ${cells.join(' | ')} |`);
-  }
-  lines.push('');
-  for (const refusal of CLOUD_REFUSALS) {
-    lines.push(
-      `\`${refusal.target}\` on \`${refusal.cloud}\` is refused with \`${refusal.code}\`: ${refusal.reason}`,
-    );
+      lines.push(
+        refusal === undefined
+          ? `- **\`${cloud}\`:** no module — \`${target}\` has no module on ${cloud}.`
+          : `- **\`${cloud}\`:** refused with \`${refusal.code}\` — ${cell(refusal.reason)}`,
+      );
+    }
     lines.push('');
   }
 
   lines.push('## Model providers');
   lines.push('');
   lines.push(
-    "Every provider in `SERVED_PROVIDERS` is a row. A check means the generated adapter advertises the capability the spec's `capabilities` enum names; a dash means a spec that declares it is refused with `ir/model-capability-missing`, because the provider's API has no such endpoint.",
+    "Every provider in `SERVED_PROVIDERS` has a section. The capabilities it advertises are the ones the spec's `capabilities` enum may declare; a spec that names one the adapter does not advertise is refused with `ir/model-capability-missing`, because the provider's API has no such endpoint.",
   );
   lines.push('');
-  lines.push(
-    `| Provider | Adapter | ${CAPABILITY_AXES.map((axis) => axis.label).join(' | ')} | Catalog |`,
-  );
-  lines.push(`| --- | --- | ${CAPABILITY_AXES.map(() => '---').join(' | ')} | --- |`);
   for (const provider of data.providers) {
     const adapter = data.providerAdapters[provider] ?? '';
     const advertised = data.adapterCapabilities[adapter] ?? [];
-    const cells = CAPABILITY_AXES.map((axis) =>
-      advertised.includes(axis.member)
-        ? 'yes'
-        : absent(`\`${adapter}\` does not advertise \`${axis.member}\`.`),
-    );
+    const yes = CAPABILITY_AXES.filter((axis) => advertised.includes(axis.member));
+    const no = CAPABILITY_AXES.filter((axis) => !advertised.includes(axis.member));
     const catalog = data.providerCatalog[provider];
-    const catalogCell =
-      catalog === undefined
-        ? absent(
-            'No pinned model or cost profile is published for this provider, so the spec must give an explicit `modelId` and the call prices as unknown.',
-          )
-        : `${catalog.models} model${catalog.models === 1 ? '' : 's'}, ${catalog.priced} priced`;
+    lines.push(`### \`${provider}\``);
+    lines.push('');
     lines.push(
-      `| \`${provider}\` | ${adapter === '' ? absent('No adapter is generated.') : `\`${adapter}\``} | ${cells.join(' | ')} | ${catalogCell} |`,
+      `- **Adapter:** ${adapter === '' ? 'none — no adapter is generated.' : `\`${adapter}\``}`,
     );
+    lines.push(
+      `- **Advertises:** ${yes.length === 0 ? 'none' : yes.map((axis) => axis.label.toLowerCase()).join(', ')}`,
+    );
+    if (no.length > 0) {
+      lines.push(
+        `- **Refuses:** ${no
+          .map(
+            (axis) =>
+              `${axis.label.toLowerCase()} (\`${adapter}\` does not advertise \`${axis.member}\`)`,
+          )
+          .join(', ')}.`,
+      );
+    }
+    lines.push(
+      catalog === undefined
+        ? '- **Catalog:** none — no pinned model or cost profile is published for this provider, so the spec must give an explicit `modelId` and the call prices as unknown.'
+        : `- **Catalog:** ${catalog.models} model${catalog.models === 1 ? '' : 's'}, ${catalog.priced} priced`,
+    );
+    lines.push('');
   }
-  lines.push('');
 
   lines.push('## Cloud AI infrastructure');
   lines.push('');
@@ -927,31 +905,34 @@ function featuresPage() {
     'The generated infrastructure does not only run the service; it grants the service the cloud identity it needs to call a managed model. Where a cloud needs extra configuration to reach its model platform, the module sets that too.',
   );
   lines.push('');
-  lines.push('| Managed service | Declared by | Emitted | Runtime credential | Since |');
-  lines.push('| --- | --- | --- | --- | --- |');
   for (const entry of AI_INFRA) {
-    lines.push(
-      `| **${entry.title}** | \`${entry.declares}\` | ${cell(entry.emits)} | ${cell(entry.credential)} | \`${entry.since}\` |`,
-    );
+    lines.push(`### ${entry.title}`);
+    lines.push('');
+    lines.push(`- **Declared by:** \`${entry.declares}\``);
+    lines.push(`- **Emitted:** ${cell(entry.emits)}`);
+    lines.push(`- **Runtime credential:** ${cell(entry.credential)}`);
+    lines.push(`- **Since:** \`${entry.since}\``);
+    lines.push('');
   }
-  lines.push('');
 
   lines.push('## Out of the box');
   lines.push('');
   lines.push(
-    'Each row is behaviour the generator writes for you, the spec key or command that turns it on, and the release that first shipped it. A construct that needs a later spec version is refused by name rather than ignored.',
+    'Each section is behaviour the generator writes for you, the spec key or command that turns it on, and the release that first shipped it. A construct that needs a later spec version is refused by name rather than ignored.',
   );
   lines.push('');
-  lines.push('| Feature | What it does | Turned on by | Reference | Since |');
-  lines.push('| --- | --- | --- | --- | --- |');
   for (const feature of SHIPPED_FEATURES) {
     const section =
       feature.href.split('#')[0]?.split('/').pop()?.replace(/\.md$/, '') ?? 'reference';
-    lines.push(
-      `| **${feature.title}** | ${cell(feature.detail)} | \`${feature.declaredBy}\` | [${section}](${feature.href}) | \`${feature.since}\` |`,
-    );
+    lines.push(`### ${feature.title}`);
+    lines.push('');
+    lines.push(cell(feature.detail));
+    lines.push('');
+    lines.push(`- **Turned on by:** \`${feature.declaredBy}\``);
+    lines.push(`- **Reference:** [${section}](${feature.href})`);
+    lines.push(`- **Since:** \`${feature.since}\``);
+    lines.push('');
   }
-  lines.push('');
 
   lines.push('## Refused, on purpose');
   lines.push('');
@@ -959,12 +940,14 @@ function featuresPage() {
     'An absent capability is stated once, here, with the diagnostic that enforces it, instead of being discovered during an apply or debugged in production.',
   );
   lines.push('');
-  lines.push('| Not supported | Why | Enforced by |');
-  lines.push('| --- | --- | --- |');
   for (const refusal of REFUSALS) {
-    lines.push(`| ${refusal.title} | ${cell(refusal.reason)} | \`${refusal.code}\` |`);
+    lines.push(`### ${refusal.title}`);
+    lines.push('');
+    lines.push(cell(refusal.reason));
+    lines.push('');
+    lines.push(`- **Enforced by:** \`${refusal.code}\``);
+    lines.push('');
   }
-  lines.push('');
   lines.push('---');
   lines.push('');
   lines.push(

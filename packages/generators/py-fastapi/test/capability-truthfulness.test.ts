@@ -258,12 +258,11 @@ const CLAIMS: readonly Claim[] = [
       marker: 'export function emitSse',
     },
     pyRuntime: { path: 'runtimes/python/src/aid_runtime/gateway.py', marker: 'async def stream' },
-    // The TS counterpart exists and defers: the marker is the raise, which is the honest
-    // description of that runtime's `stream()` today (ratified to L6). Pointing at it is
-    // what makes the deferral a pinned fact rather than a note in a comment.
+    // The TS counterpart now streams too, so the marker is the implementation rather
+    // than the raise that used to stand for the deferral (ratified to L6, closed later).
     tsRuntime: {
       path: 'runtimes/typescript/src/gateway.ts',
-      marker: 'FeatureDeferredError',
+      marker: 'async *stream(',
     },
     behaviour: {
       path: 'examples/support-copilot/tests/test_app.py',
@@ -510,11 +509,12 @@ describe('the closure of `streaming` (defects D-1 and D-1b)', () => {
     );
   });
 
-  it('streams in the Python runtime, while the TypeScript runtime still raises', () => {
+  it('streams in both runtimes, so the declaration is backed by an implementation', () => {
     // The runtime half of D-1 closed in L5: `ModelGateway.stream()` produces SSE bytes,
-    // so the Python gateway no longer raises `FeatureDeferredError`. This layer is the
-    // generator half. The TypeScript runtime still defers streaming, ratified to L6, and
-    // that is why `ts-vercel` still rejects the capability this one declares.
+    // so the Python gateway no longer raises `FeatureDeferredError`. The TypeScript
+    // gateway closed the same gap later; `ts-vercel` still withholds the capability
+    // because its emitted route answers with one buffered body, and that generator-level
+    // refusal is covered by the ts-vercel suite rather than asserted from here.
     const python = realIO().read('runtimes/python/src/aid_runtime/gateway.py');
     expect(python).toBeDefined();
     expect(python).toContain('async def stream');
@@ -522,8 +522,8 @@ describe('the closure of `streaming` (defects D-1 and D-1b)', () => {
 
     const typescript = realIO().read('runtimes/typescript/src/gateway.ts');
     expect(typescript).toBeDefined();
-    expect(typescript).toContain('FeatureDeferredError');
-    expect(typescript).toContain('stream');
+    expect(typescript).toContain('async *stream(');
+    expect(typescript).not.toContain('FeatureDeferredError');
   });
 
   it('still requires a deployment to ask for it, rather than streaming by default (D-1b)', () => {

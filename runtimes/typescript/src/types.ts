@@ -434,6 +434,32 @@ export class CompletionResponse {
 }
 
 /**
+ * One increment of a streamed completion.
+ *
+ * `delta` is the new text since the previous chunk. The terminal chunk carries the
+ * finish reason and the usage so the gateway can account for a streamed call exactly
+ * as it accounts for a request/response one. `usage` is optional because most
+ * providers only report it once, on the last frame they send.
+ */
+export class StreamChunk {
+  readonly delta: string;
+  readonly finishReason: FinishReason | undefined;
+  readonly usage: TokenUsage | undefined;
+
+  constructor(
+    init: {
+      readonly delta?: string;
+      readonly finishReason?: FinishReason;
+      readonly usage?: TokenUsage;
+    } = {},
+  ) {
+    this.delta = init.delta ?? '';
+    this.finishReason = init.finishReason;
+    this.usage = init.usage;
+  }
+}
+
+/**
  * A gateway result, including the alias chain that produced it.
  *
  * `fellBack` is derived rather than stored: it is exactly "more than one candidate

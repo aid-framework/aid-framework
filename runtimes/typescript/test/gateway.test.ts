@@ -8,23 +8,26 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { LedgerEntry } from '../src/index.js';
+import type { Capability, LedgerEntry, Provider } from '../src/index.js';
 import {
   Budget,
   BudgetExceededError,
   CapabilityMismatchError,
   CompletionRequest,
   CompletionResponse,
+  ConcurrencyLimiter,
+  ConfigurationError,
   CostLedger,
   CostProfile,
   estimateUsage,
   FakeProvider,
-  FeatureDeferredError,
   GenerationResult,
   ModelGateway,
   ModelSpec,
   PinnedModel,
   ProviderError,
+  ScriptedTurn,
+  StreamChunk,
   TokenUsage,
   UnknownModelAliasError,
 } from '../src/index.js';
@@ -264,11 +267,6 @@ describe('ModelGateway.generate', () => {
     expect(provider.calls).toHaveLength(0);
   });
 
-  it('refuses to stream rather than returning a non-streaming stream', async () => {
-    await expect(gateway().stream(SMALL_ALIAS, ask())).rejects.toThrow(FeatureDeferredError);
-    await expect(gateway().stream(SMALL_ALIAS, ask())).rejects.toThrow(/not an implemented one/);
-  });
-
   it('closes every provider, tolerating a repeat', async () => {
     const provider = new FakeProvider();
     const client = new ModelGateway({
@@ -278,6 +276,229 @@ describe('ModelGateway.generate', () => {
 
     await client.close();
     await client.close();
+  });
+});
+
+describe('ModelGateway.stream', () => {
+  const TEXT = 'hello streaming world';
+  const STREAM_ALIAS = 'stream';
+
+  function streamingSpec(
+    capabilities: readonly Capability[] = ['streaming'],
+    name = 'fake-stream-1',
+  ): ModelSpec {
+    return new ModelSpec({
+      name,
+      provider: FAKE_PROVIDER,
+      cost: new CostProfile({ inputPer1kUsd: 0.15, outputPer1kUsd: 0.6 }),
+      contextWindow: 128_000,
+      maxOutputTokens: 4096,
+      capabilities,
+    });
+  }
+
+  function streamingGateway(
+    options: {
+      readonly spec?: ModelSpec;
+      readonly provider?: Provider;
+      readonly limiter?: ConcurrencyLimiter;
+      readonly budget?: Budget;
+    } = {},
+  ): ModelGateway {
+    return new ModelGateway({
+      providers: {
+        [FAKE_PROVIDER]:
+          options.provider ??
+          new FakeProvider({ accuracy: 1.0, script: [ScriptedTurn.answer(TEXT)] }),
+      },
+      aliases: { [STREAM_ALIAS]: options.spec ?? streamingSpec() },
+      ...(options.limiter === undefined ? {} : { limiter: options.limiter }),
+      ...(options.budget === undefined ? {} : { budget: options.budget }),
+    });
+  }
+
+  async function collect(stream: AsyncIterable<string>): Promise<string[]> {
+    const frames: string[] = [];
+    for await (const frame of stream) frames.push(frame);
+    return frames;
+  }
+
+  /** Decode one SSE `data` frame into its JSON payload. */
+  function payload(frame: string): Record<string, unknown> {
+    if (!frame.startsWith('data: ') || !frame.endsWith('\n\n')) {
+      throw new Error(`not an SSE frame: ${JSON.stringify(frame)}`);
+    }
+    return JSON.parse(frame.slice('data: '.length, -2)) as Record<string, unknown>;
+  }
+
+  /** Holds a delta back so a consumer can abandon the stream mid-flight. */
+  class SlowStreamProvider implements Provider {
+    readonly name = FAKE_PROVIDER;
+    readonly capabilities: ReadonlySet<Capability> = new Set<Capability>(['streaming']);
+    closed = false;
+
+    async complete(): Promise<CompletionResponse> {
+      throw new Error('this fixture only streams');
+    }
+
+    async close(): Promise<void> {}
+
+    async *stream(): AsyncGenerator<StreamChunk, void, undefined> {
+      try {
+        for (let start = 0; start < TEXT.length; start += 4) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          yield new StreamChunk({ delta: TEXT.slice(start, start + 4) });
+        }
+        yield new StreamChunk({
+          finishReason: 'stop',
+          usage: new TokenUsage({ inputTokens: 1, outputTokens: 1 }),
+        });
+      } finally {
+        this.closed = true;
+      }
+    }
+  }
+
+  /** Streams deltas but reports no usage, as some endpoints do. */
+  class NoUsageProvider implements Provider {
+    readonly name = FAKE_PROVIDER;
+    readonly capabilities: ReadonlySet<Capability> = new Set<Capability>(['streaming']);
+
+    async complete(): Promise<CompletionResponse> {
+      throw new Error('this fixture only streams');
+    }
+
+    async close(): Promise<void> {}
+
+    async *stream(): AsyncGenerator<StreamChunk, void, undefined> {
+      yield new StreamChunk({ delta: 'abcdefgh' });
+      yield new StreamChunk({ finishReason: 'length' });
+    }
+  }
+
+  it('emits one SSE frame per delta and a terminal frame', async () => {
+    const frames = await collect(streamingGateway().stream(STREAM_ALIAS, ask('hi')));
+
+    expect(frames.length).toBeGreaterThan(1);
+    expect(payload(at(frames, 0))).toEqual({ delta: TEXT.slice(0, 4) });
+    expect(payload(at(frames, frames.length - 1))).toEqual({
+      done: true,
+      finish_reason: 'stop',
+      model: 'fake-stream-1',
+      provider: FAKE_PROVIDER,
+    });
+  });
+
+  it('delivers every delta in order', async () => {
+    const frames = await collect(streamingGateway().stream(STREAM_ALIAS, ask('hi')));
+    const deltas = frames.slice(0, -1).map((frame) => payload(frame).delta as string);
+
+    expect(deltas.join('')).toBe(TEXT);
+  });
+
+  it('charges a streamed call exactly what generate would have charged', async () => {
+    const spec = streamingSpec();
+    const generated = await new ModelGateway({
+      providers: {
+        [FAKE_PROVIDER]: new FakeProvider({ script: [ScriptedTurn.answer(TEXT)] }),
+      },
+      aliases: { [STREAM_ALIAS]: spec },
+    }).generate(STREAM_ALIAS, ask('hi'));
+
+    const client = streamingGateway({ spec });
+    await collect(client.stream(STREAM_ALIAS, ask('hi')));
+
+    const entry = at(client.ledger.entries, 0);
+    expect(client.ledger.summary().calls).toBe(1);
+    expect(entry.alias).toBe(STREAM_ALIAS);
+    expect(entry.model).toBe(spec.name);
+    expect(entry.usage.toJSON()).toEqual(generated.usage.toJSON());
+    expect(entry.costUsd).toBe(spec.cost.costUsd(entry.usage));
+    expect(entry.costUsd).toBe(generated.costUsd);
+  });
+
+  it('estimates usage only when the endpoint reports none', async () => {
+    const client = streamingGateway({ provider: new NoUsageProvider() });
+    const frames = await collect(client.stream(STREAM_ALIAS, ask('hi')));
+
+    // 'hi' is one token at four characters per token; eight served characters are two.
+    expect(at(client.ledger.entries, 0).usage.toJSON()).toEqual({
+      inputTokens: 1,
+      outputTokens: 2,
+    });
+    expect(payload(at(frames, frames.length - 1)).finish_reason).toBe('length');
+  });
+
+  it('refuses a model without the streaming capability, before calling it', async () => {
+    const provider = new FakeProvider({ script: [ScriptedTurn.answer(TEXT)] });
+    const client = streamingGateway({ spec: streamingSpec([]), provider });
+
+    await expect(collect(client.stream(STREAM_ALIAS, ask('hi')))).rejects.toThrow(
+      CapabilityMismatchError,
+    );
+    expect(provider.calls).toHaveLength(0);
+  });
+
+  it('refuses an adapter that advertises streaming without implementing it', async () => {
+    const client = streamingGateway({ provider: new DeclaredProvider(['streaming']) });
+
+    await expect(collect(client.stream(STREAM_ALIAS, ask('hi')))).rejects.toThrow(
+      ConfigurationError,
+    );
+  });
+
+  it('refuses a prompt that alone breaches the budget, before calling it', async () => {
+    const provider = new FakeProvider({ script: [ScriptedTurn.answer(TEXT)] });
+    const client = streamingGateway({
+      provider,
+      budget: new Budget({ maxUsd: 0.0000001 }),
+    });
+
+    await expect(collect(client.stream(STREAM_ALIAS, ask('hi')))).rejects.toThrow(
+      BudgetExceededError,
+    );
+    expect(provider.calls).toHaveLength(0);
+  });
+
+  it('propagates a mid-stream failure without charging the ledger', async () => {
+    class FailingProvider implements Provider {
+      readonly name = FAKE_PROVIDER;
+      readonly capabilities: ReadonlySet<Capability> = new Set<Capability>(['streaming']);
+
+      async complete(): Promise<CompletionResponse> {
+        throw new Error('this fixture only streams');
+      }
+
+      async close(): Promise<void> {}
+
+      async *stream(): AsyncGenerator<StreamChunk, void, undefined> {
+        yield new StreamChunk({ delta: 'partial' });
+        throw new ProviderError('connection reset');
+      }
+    }
+
+    const client = streamingGateway({ provider: new FailingProvider() });
+
+    await expect(collect(client.stream(STREAM_ALIAS, ask('hi')))).rejects.toThrow(
+      /connection reset/,
+    );
+    expect(client.ledger.summary().calls).toBe(0);
+  });
+
+  it('releases the concurrency slot when the consumer abandons the stream', async () => {
+    const limiter = new ConcurrencyLimiter(1);
+    const provider = new SlowStreamProvider();
+    const frames = streamingGateway({ provider, limiter }).stream(STREAM_ALIAS, ask('hi'));
+    const iterator = frames[Symbol.asyncIterator]();
+
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(limiter.inFlight).toBe(1);
+
+    await iterator.return?.();
+
+    expect(limiter.inFlight).toBe(0);
+    expect(provider.closed).toBe(true);
   });
 });
 

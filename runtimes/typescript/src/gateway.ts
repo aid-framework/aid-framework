@@ -20,7 +20,6 @@ import {
   BudgetExceededError,
   CapabilityMismatchError,
   ConfigurationError,
-  FeatureDeferredError,
   ProviderError,
   UnknownModelAliasError,
 } from './errors.js';
@@ -28,6 +27,7 @@ import type { Provider } from './providers/base.js';
 import {
   ATTRIBUTES,
   type LlmSpanOptions,
+  llmSpan,
   recordCost,
   recordUsage,
   withLlmSpan,
@@ -36,6 +36,7 @@ import {
   type Capability,
   type CompletionRequest,
   type CompletionResponse,
+  type FinishReason,
   GenerationResult,
   type ModelSpec,
   PinnedModel,
@@ -188,12 +189,99 @@ export class ModelGateway {
     throw new ProviderError(`no candidate produced a response: ${errors.join('; ')}`);
   }
 
-  /** Declared but not implemented; see the module docstring. */
-  async stream(_alias: string, _request: CompletionRequest): Promise<never> {
-    throw new FeatureDeferredError(
-      'streaming is a declared capability, not an implemented one; ' +
-        'Phase 0 serves request/response only',
-    );
+  /**
+   * Stream one call as Server-Sent Event `data` frames, accounting exactly like
+   * {@link generate}.
+   *
+   * Each frame is `data: <json>\n\n`: one frame per non-empty text delta, so the first
+   * bytes reach the wire before the call completes, then a terminal frame carrying
+   * `done`, the finish reason, and the served model and provider. Only a model *and*
+   * an adapter advertising `streaming` is served; anything else raises a
+   * {@link CapabilityMismatchError} rather than silently buffering.
+   *
+   * There is no fallback chain: a stream that has already emitted a delta cannot be
+   * replayed on another model, so a provider failure propagates to the consumer.
+   * Abandoning the iteration closes the provider stream and releases the concurrency
+   * slot, and an interrupted call is not charged -- the ledger charges once, on
+   * completion, with the same `costUsd` {@link generate} would have recorded.
+   */
+  async *stream(
+    alias: string,
+    request: CompletionRequest,
+    options: { readonly budget?: Budget } = {},
+  ): AsyncGenerator<string, void, undefined> {
+    const pinned = this.require(alias, ['streaming']);
+    const spec = pinned.model;
+    const provider = this._providers.get(spec.provider);
+    if (provider === undefined) throw new UnknownModelAliasError(alias, this.aliases);
+    const open = provider.stream;
+    if (open === undefined) {
+      // `require` proved the adapter advertises the capability; advertising it without
+      // an implementation is an adapter bug, not a negotiation failure.
+      throw new ConfigurationError(
+        `provider ${JSON.stringify(provider.name)} advertises streaming but implements no stream`,
+      );
+    }
+
+    const budget = options.budget ?? this._budget;
+    if (budget !== undefined) {
+      this._ledger.check(budget);
+      this.preflight(pinned, request, budget);
+    }
+
+    const spanOptions: LlmSpanOptions = {
+      model: spec.name,
+      system: spec.provider,
+      alias: pinned.alias,
+      requestTemperature: request.temperature,
+      requestMaxTokens: request.maxOutputTokens,
+      tracerName: this._tracerName,
+    };
+    const span = llmSpan(spanOptions);
+    const parts: string[] = [];
+    let usage = new TokenUsage();
+    let finishReason: FinishReason = 'stop';
+
+    try {
+      for await (const chunk of this.streamed(() => open.call(provider, request, spec))) {
+        if (chunk.delta.length > 0) {
+          parts.push(chunk.delta);
+          yield sseFrame({ delta: chunk.delta });
+        }
+        if (chunk.usage !== undefined) usage = chunk.usage;
+        if (chunk.finishReason !== undefined) finishReason = chunk.finishReason;
+      }
+
+      const text = parts.join('');
+      if (usage.totalTokens === 0) usage = estimateStreamUsage(request, text);
+      const cost = spec.cost.costUsd(usage);
+      span.recordUsage(usage.inputTokens, usage.outputTokens);
+      span.recordCost(cost);
+      span.span.setAttribute(ATTRIBUTES.responseModel, spec.name);
+      span.span.setAttribute(ATTRIBUTES.responseFinishReasons, [finishReason]);
+
+      const entry = {
+        alias: pinned.alias,
+        model: spec.name,
+        provider: spec.provider,
+        usage,
+        costUsd: cost,
+      };
+      this._ledger.charge(budget, entry);
+      for (const hook of this._hooks) hook(entry);
+    } catch (error) {
+      span.recordException(error);
+      throw error;
+    } finally {
+      span.end();
+    }
+
+    yield sseFrame({
+      done: true,
+      finish_reason: finishReason,
+      model: spec.name,
+      provider: spec.provider,
+    });
   }
 
   async close(): Promise<void> {
@@ -303,6 +391,17 @@ export class ModelGateway {
   }
 
   /**
+   * Hold the concurrency slot for a whole stream rather than for one await.
+   *
+   * The slot must span every delta, so the stream owns it from first read to
+   * exhaustion, error, or abandonment.
+   */
+  private streamed<T>(body: () => AsyncIterable<T>): AsyncIterable<T> {
+    if (this._limiter === undefined) return body();
+    return this._limiter.runStream(body);
+  }
+
+  /**
    * Refuse a call whose *prompt* alone already breaches the budget.
    *
    * Only the prompt is priced, and deliberately over-estimated, because the response
@@ -328,3 +427,34 @@ export function estimateUsage(texts: string | readonly string[]): TokenUsage {
 
 /** Re-exported so callers naming a response type do not reach across modules. */
 export type { CompletionResponse };
+
+/**
+ * One Server-Sent Event frame.
+ *
+ * `ensure_ascii` escaping matches Python's `json.dumps`, so a delta containing
+ * non-ASCII text produces the same bytes on both runtimes.
+ */
+function sseFrame(payload: Record<string, unknown>): string {
+  const raw = JSON.stringify(payload);
+  let escaped = '';
+  for (let index = 0; index < raw.length; index += 1) {
+    const code = raw.charCodeAt(index);
+    escaped +=
+      code >= 0x20 && code <= 0x7e ? raw.charAt(index) : `\\u${code.toString(16).padStart(4, '0')}`;
+  }
+  return `data: ${escaped}\n\n`;
+}
+
+/**
+ * Token estimate for a stream whose provider reported no usage.
+ *
+ * Same four-characters-per-token rule as {@link estimateUsage}, with the output
+ * counted from the deltas actually served.
+ */
+function estimateStreamUsage(request: CompletionRequest, text: string): TokenUsage {
+  const prompt = estimateUsage(request.messages.map((message) => message.content));
+  return new TokenUsage({
+    inputTokens: prompt.inputTokens,
+    outputTokens: (text.length + 3) >> 2,
+  });
+}

@@ -19,6 +19,7 @@ import {
   CompletionResponse,
   type FinishReason,
   type ModelSpec,
+  StreamChunk,
   TokenUsage,
   ToolCall,
 } from '../types.js';
@@ -52,6 +53,8 @@ export type FetchLike = (
   readonly ok: boolean;
   readonly status: number;
   text(): Promise<string>;
+  /** Present on streaming responses; the SSE frames are read from it. */
+  readonly body?: ReadableStream<Uint8Array> | null;
 }>;
 
 export interface OpenAICompatibleOptions {
@@ -113,13 +116,72 @@ export class OpenAICompatibleProvider implements Provider {
   }
 
   get capabilities(): ReadonlySet<Capability> {
-    return new Set<Capability>(['tool-calling', 'structured-output']);
+    return new Set<Capability>(['tool-calling', 'structured-output', 'streaming']);
   }
 
   async complete(request: CompletionRequest, model: ModelSpec): Promise<CompletionResponse> {
     if (this._closed) throw new ProviderError(`${this._name} is closed`);
     const body = await this.post(this.payload(request, model));
     return this.parse(body, model);
+  }
+
+  /**
+   * Stream a completion as deltas, reading the endpoint's Server-Sent Events.
+   *
+   * Exactly one attempt is made. The retry loop in {@link complete} is safe because a
+   * failed request produced nothing; reissuing a stream that has already emitted a
+   * delta would replay those tokens to the consumer.
+   */
+  async *stream(
+    request: CompletionRequest,
+    model: ModelSpec,
+  ): AsyncGenerator<StreamChunk, void, undefined> {
+    if (this._closed) throw new ProviderError(`${this._name} is closed`);
+    const payload = this.payload(request, model);
+    payload.stream = true;
+    payload.stream_options = { include_usage: true };
+
+    const response = await this._fetch(`${this._baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(this._timeoutSeconds * 1000),
+    });
+    if (!response.ok) {
+      throw new ProviderError(
+        `${this._name} returned ${response.status}: ${await response.text()}`,
+      );
+    }
+    const stream = response.body;
+    if (stream === undefined || stream === null) {
+      throw new ProviderResponseError(`${this._name} returned no body to stream`);
+    }
+
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // Frames are newline-delimited; a chunk boundary can split one in half.
+        let newline = buffer.indexOf('\n');
+        while (newline !== -1) {
+          const chunk = this.parseChunk(buffer.slice(0, newline).replace(/\r$/, ''));
+          buffer = buffer.slice(newline + 1);
+          if (chunk !== undefined) yield chunk;
+          newline = buffer.indexOf('\n');
+        }
+      }
+      const tail = buffer + decoder.decode();
+      if (tail.trim().length > 0) {
+        const chunk = this.parseChunk(tail);
+        if (chunk !== undefined) yield chunk;
+      }
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
   }
 
   async close(): Promise<void> {
@@ -206,6 +268,49 @@ export class OpenAICompatibleProvider implements Provider {
       }
     }
     throw new ProviderError(`${this._name} failed after ${this._maxAttempts} attempt(s): ${last}`);
+  }
+
+  /**
+   * One SSE frame, or `undefined` for a keep-alive, a non-data line, or `[DONE]`.
+   *
+   * Only a string `delta.content` and a non-empty `finish_reason` are honoured, and
+   * usage is attached only when the frame actually carries a usage object -- the
+   * terminal usage frame of an OpenAI stream has an empty `choices` array.
+   */
+  private parseChunk(line: string): StreamChunk | undefined {
+    if (!line.startsWith('data:')) return undefined;
+    const data = line.slice('data:'.length).trim();
+    if (data === '[DONE]') return undefined;
+
+    let body: unknown;
+    try {
+      body = JSON.parse(data);
+    } catch {
+      throw new ProviderResponseError(`${this._name} streamed a frame that is not JSON`);
+    }
+    if (!isObject(body)) {
+      throw new ProviderResponseError(`${this._name} streamed a frame that is not an object`);
+    }
+
+    let delta = '';
+    let finishReason: FinishReason | undefined;
+    const choices = body.choices;
+    if (Array.isArray(choices) && choices.length > 0) {
+      const first = choices[0];
+      if (isObject(first)) {
+        const part = first.delta;
+        if (isObject(part) && typeof part.content === 'string') delta = part.content;
+        if (typeof first.finish_reason === 'string' && first.finish_reason.length > 0) {
+          finishReason = this.finishReason(first.finish_reason);
+        }
+      }
+    }
+
+    return new StreamChunk({
+      delta,
+      ...(finishReason === undefined ? {} : { finishReason }),
+      ...(isObject(body.usage) ? { usage: this.usage({}, body) } : {}),
+    });
   }
 
   private parse(body: unknown, model: ModelSpec): CompletionResponse {

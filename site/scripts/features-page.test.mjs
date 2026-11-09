@@ -125,13 +125,20 @@ function schemaVocabulary() {
 
 describe('the features page data', () => {
   it('renders every provider row the normalize gate accepts', () => {
-    for (const provider of data.providers) {
-      expect(page).toContain(`| \`${provider}\` |`);
-    }
-    const rendered = [...page.matchAll(/^\| `([a-z-]+)` \| `[A-Za-z]+Provider` \|/gm)].map(
-      (match) => match[1],
+    const section = page.slice(
+      page.indexOf('## Model providers'),
+      page.indexOf('## Cloud AI infrastructure'),
     );
+    expect(section, 'the model provider section is missing').not.toBe('');
+    const rendered = [...section.matchAll(/^### `([a-z-]+)`$/gm)].map((match) => match[1]);
     expect(rendered.sort()).toEqual([...data.providers].sort());
+    for (const provider of data.providers) {
+      const adapter = data.providerAdapters[provider] ?? '';
+      if (adapter === '') continue;
+      expect(section, `\`${provider}\` does not name the adapter it is generated from`).toContain(
+        `- **Adapter:** \`${adapter}\``,
+      );
+    }
   });
 
   it('names a service for every target a cloud has, and a refusal for every target it lacks', () => {
@@ -246,11 +253,13 @@ describe('the features page data', () => {
   it('ships every registry row onto the page', () => {
     for (const entry of SHIPPED_FEATURES) {
       expect(page, `"${entry.title}" is registered but not rendered`).toContain(
-        `| **${entry.title}** |`,
+        `### ${entry.title}`,
       );
     }
     for (const entry of AI_INFRA) {
-      expect(page).toContain(`| **${entry.title}** |`);
+      expect(page, `"${entry.title}" is registered but not rendered`).toContain(
+        `### ${entry.title}`,
+      );
     }
   });
 });

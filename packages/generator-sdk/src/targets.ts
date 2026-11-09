@@ -10,11 +10,13 @@
  * Two facts are recorded here rather than hidden in prose:
  *
  * - `streaming` is declared since layer P7a. It was absent while both gateways raised
- *   `FeatureDeferredError`; the Python runtime now streams and the generator emits a
- *   route that negotiates `Accept: text/event-stream`, so the declaration is backed by
- *   an emitter, a runtime and a committed example. The TypeScript runtime still defers
- *   streaming (ratified to L6), which is why `@aid-framework/ir`'s derivation and this list are
- *   kept separate concerns.
+ *   `FeatureDeferredError`. Both runtimes now stream, and `py-fastapi` emits a route that
+ *   negotiates `Accept: text/event-stream`, so the declaration is backed by an emitter, a
+ *   runtime and a committed example. `ts-vercel` still withholds the capability: the
+ *   TypeScript runtime's `ModelGateway.stream` serves SSE, but the emitted route answers
+ *   with one buffered body, so the declaration would be unbacked by an emitter. That is
+ *   why `@aid-framework/ir`'s derivation and each generator's manifest are kept separate
+ *   concerns.
  * - `agents` and `cursor-memory` are declared since layer P7b, and they are two
  *   declarations rather than one because the IR derives two: `agents` from an `agents`
  *   collection, `cursor-memory` from a `memory` collection (there is no `memory`
