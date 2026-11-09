@@ -58,7 +58,7 @@ _ON_BUDGET_EXHAUSTED = frozenset({"fail", "degrade"})
 #: rejects it again rather than trusting that every document came through a gate.
 _GUARDRAIL_STAGES = frozenset({"input", "output", "retrieval", "tool-call"})
 _GUARDRAIL_ACTIONS = frozenset({"block", "redact", "flag", "escalate"})
-_GUARDRAIL_ENGINES = frozenset({"builtin", "bedrock"})
+_GUARDRAIL_ENGINES = frozenset({"builtin", "bedrock", "model-armor"})
 _BEDROCK_CONTENT_FILTERS = frozenset(
     {"sexual", "violence", "hate", "insults", "misconduct", "prompt-attack"}
 )
@@ -152,8 +152,11 @@ class GuardrailDefinition:
     outcome that produces no record; the rest are guardrail actions. The trailing
     defaults keep every keyword call site written before decisions existed valid.
 
-    ``engine`` is ``builtin`` (this process runs the detectors) or ``bedrock`` (the
-    managed service evaluates ``bedrock`` instead, and ``policies`` stays empty).
+    ``engine`` is ``builtin`` (this process runs the detectors) or a managed engine:
+    ``bedrock`` (the deployment's guardrail evaluates ``bedrock``) or ``model-armor``
+    (a Vertex AI Model Armor template named by ``MODEL_ARMOR_TEMPLATE`` holds the
+    policy). A managed engine leaves ``policies`` empty and refuses ``redact`` where
+    the service cannot rewrite text.
     """
 
     id: str
@@ -457,6 +460,16 @@ def _guardrail(
         # The managed service rewrites the one field it is given, so a managed
         # redaction is always over the prompt text.
         redact = ("text",)
+    if action == "redact" and engine == "model-armor":
+        # Refused for the same reason the gate refuses it: the template's filters
+        # inspect and report unless it names an advanced DLP de-identify template,
+        # which this process cannot see. A redaction that may not happen is worse
+        # than a refused build.
+        raise ConfigurationError(
+            f"{where} uses action 'redact' with engine 'model-armor'; Model Armor "
+            "reports what it matched, and only an advanced DLP de-identify template "
+            "rewrites text"
+        )
     tool_ids = tuple(_str_list(entry.get("tools"), f"{where} tools"))
     missing = sorted(set(tool_ids) - set(tools))
     if missing:

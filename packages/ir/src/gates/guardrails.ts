@@ -67,7 +67,7 @@ export function guardrailPolicyGate(ir: IR, options: GateOptions): GateResult {
   const report = reporter(options);
   const tools = new Set(ir.tools.map((tool) => tool.id));
   const prompts = new Set(ir.prompts.map((prompt) => prompt.id));
-  const managed = ir.guardrails.filter((guardrail) => guardrail.engine === 'bedrock');
+  const managed = ir.guardrails.filter((guardrail) => guardrail.engine !== 'builtin');
 
   for (const guardrail of ir.guardrails) {
     if (guardrail.stages.length === 0) {
@@ -152,6 +152,68 @@ export function guardrailPolicyGate(ir: IR, options: GateOptions): GateResult {
             }),
           );
         }
+      }
+      continue;
+    }
+
+    if (guardrail.engine === 'model-armor') {
+      // Model Armor's `sanitizeUserPrompt` and `sanitizeModelResponse` take text and
+      // answer with a verdict, so it carries exactly the restrictions a Bedrock
+      // guardrail does: the policy lives in the template, not in this declaration.
+      if (guardrail.policies.length > 0) {
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+            message: `the guardrails gate rejected "${guardrail.id}": engine "model-armor" is evaluated by the managed service, so it cannot also name local policies (${guardrail.policies.join(', ')})`,
+            path: ['guardrails', guardrail.id, 'policies'],
+            hint: 'configure the rule in the Model Armor template and name it with MODEL_ARMOR_TEMPLATE, or set engine: builtin',
+          }),
+        );
+      }
+      if (guardrail.decision !== undefined) {
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+            message: `the guardrails gate rejected "${guardrail.id}": engine "model-armor" cannot ask decision "${guardrail.decision}"; the template evaluates its own policy`,
+            path: ['guardrails', guardrail.id, 'decision'],
+            hint: 'split the check: a builtin guardrail asks the decision, a model-armor guardrail owns the managed policy',
+          }),
+        );
+      }
+      for (const [index, stage] of guardrail.stages.entries()) {
+        if (stage === 'input' || stage === 'output') continue;
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+            message: `the guardrails gate rejected "${guardrail.id}": the "${stage}" stage has no prompt text, and Model Armor only evaluates text`,
+            path: ['guardrails', guardrail.id, 'stages', index],
+            hint: 'a model-armor guardrail runs at input and output; use a builtin guardrail for retrieval and tool-call',
+          }),
+        );
+      }
+      if (guardrail.action === 'escalate') {
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+            message: `the guardrails gate rejected "${guardrail.id}": a managed guardrail cannot escalate to a human, and a pipeline route has no checkpoint to resume from`,
+            path: ['guardrails', guardrail.id, 'action'],
+            hint: 'use block, redact or flag',
+          }),
+        );
+      }
+      if (guardrail.action === 'redact') {
+        // Model Armor's basic sensitive-data filter inspects and reports. Only a
+        // template whose SDP settings name an advanced DLP de-identify template
+        // returns rewritten text, and an operator-owned template cannot be inspected
+        // from here, so the promise "this guardrail anonymises" is unverifiable.
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
+            message: `the guardrails gate rejected "${guardrail.id}": action "redact" cannot be promised by engine "model-armor", whose prompt and response filters inspect and report`,
+            path: ['guardrails', guardrail.id, 'action'],
+            hint: 'use block or flag, or keep the builtin engine, which redacts locally',
+          }),
+        );
       }
       continue;
     }
@@ -261,15 +323,17 @@ export function guardrailPolicyGate(ir: IR, options: GateOptions): GateResult {
   }
 
   // One deployment owns one managed guardrail, addressed by one pair of environment
-  // names (`BEDROCK_GUARDRAIL_ID`, `BEDROCK_GUARDRAIL_VERSION`). A second declaration
-  // would either overwrite the first's wiring or need a naming scheme the generated
-  // runtime does not have, so it is refused rather than silently collapsed onto one
-  // resource. Two stages one policy covers belong on the same declaration.
+  // names (`BEDROCK_GUARDRAIL_ID`/`BEDROCK_GUARDRAIL_VERSION`, or
+  // `MODEL_ARMOR_TEMPLATE`). A second declaration would either overwrite the first's
+  // wiring or need a naming scheme the generated runtime does not have, so it is
+  // refused rather than silently collapsed onto one resource -- including a Bedrock
+  // declaration beside a Model Armor one, since the runtime wires a single managed
+  // client. Two stages one policy covers belong on the same declaration.
   for (const guardrail of managed.slice(1)) {
     diagnostics.push(
       report.error({
         code: IR_DIAGNOSTIC_CODES.guardrailPolicy,
-        message: `the guardrails gate rejected "${guardrail.id}": the document already declares a managed guardrail ("${managed[0]?.id}"), and a deployment wires one managed guardrail through one pair of environment variables`,
+        message: `the guardrails gate rejected "${guardrail.id}": the document already declares a managed guardrail ("${managed[0]?.id}"), and a deployment wires one managed guardrail through one set of environment variables`,
         path: ['guardrails', guardrail.id, 'engine'],
         hint: 'list every stage the managed policy covers on that one declaration, or make this one engine: builtin',
       }),

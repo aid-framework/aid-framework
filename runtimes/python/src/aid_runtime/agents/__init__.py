@@ -39,11 +39,15 @@ from aid_runtime.agents.ir import (
 )
 from aid_runtime.agents.loop import AgentRuntime
 from aid_runtime.agents.managed import (
+    MODEL_ARMOR_TEMPLATE_ENV,
     BedrockGuardrailClient,
     GuardrailClient,
     GuardrailOutcome,
     ManagedGuardrailSettings,
+    ModelArmorGuardrailClient,
+    ModelArmorGuardrailSettings,
     managed_guardrail_settings,
+    model_armor_settings,
 )
 from aid_runtime.agents.memory import (
     IMPLEMENTED_MEMORY_KINDS,
@@ -72,6 +76,7 @@ __all__ = [
     "GUARDRAIL_STAGES",
     "IMPLEMENTED_MEMORY_KINDS",
     "MEMORY_SCOPES",
+    "MODEL_ARMOR_TEMPLATE_ENV",
     "AgentCheckpoint",
     "AgentDefinition",
     "AgentRuntime",
@@ -94,6 +99,8 @@ __all__ = [
     "ManagedGuardrailSettings",
     "MemoryDefinition",
     "MemoryStore",
+    "ModelArmorGuardrailClient",
+    "ModelArmorGuardrailSettings",
     "PendingApproval",
     "Principal",
     "RunResult",
@@ -107,6 +114,7 @@ __all__ = [
     "detect",
     "evaluate_policy",
     "managed_guardrail_settings",
+    "model_armor_settings",
     "policy_source",
     "render_context",
 ]

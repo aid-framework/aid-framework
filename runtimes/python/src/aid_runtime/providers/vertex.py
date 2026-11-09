@@ -143,6 +143,15 @@ class VertexProvider(GeminiWireClient):
         self._cached_token = (token, asyncio.get_running_loop().time() + expires_in)
         return token
 
+    async def access_token(self) -> str:
+        """The bearer token this provider would send.
+
+        Public so a second Google API a deployment calls -- Model Armor is one --
+        reuses the same environment override, metadata mint and refresh window
+        instead of growing a second token cache with its own expiry bug.
+        """
+        return await self._token()
+
     async def _mint_token(self) -> tuple[str, float]:
         if self._token_provider is not None:
             return await self._token_provider(), 300.0

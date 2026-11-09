@@ -50,7 +50,7 @@ from typing import Any, Literal, Protocol, cast
 from pydantic import BaseModel, ConfigDict
 
 from aid_runtime.agents.ir import DecisionDefinition, GuardrailDefinition
-from aid_runtime.agents.managed import BedrockGuardrailClient, GuardrailClient
+from aid_runtime.agents.managed import GuardrailClient, managed_client_for
 from aid_runtime.decisions import DecisionClient, DecisionQuestion, DecisionResponse
 from aid_runtime.errors import ConfigurationError, GuardrailBlockedError
 
@@ -78,8 +78,14 @@ ACTION_REDACT: GuardrailAction = "redact"
 ACTION_FLAG: GuardrailAction = "flag"
 ACTION_ESCALATE: GuardrailAction = "escalate"
 
-#: The one managed engine. ``builtin`` is the default and needs no name here.
+#: The managed engines. ``builtin`` is the default and needs no name here.
 ENGINE_BEDROCK = "bedrock"
+ENGINE_MODEL_ARMOR = "model-armor"
+
+#: Engines whose policy lives in a cloud service rather than in this process. The IR
+#: gate allows at most one of them per deployment, because the engine below builds a
+#: single client whose destination the environment names.
+ENGINE_MANAGED: frozenset[str] = frozenset({ENGINE_BEDROCK, ENGINE_MODEL_ARMOR})
 
 GUARDRAIL_STAGES: tuple[GuardrailStage, ...] = ("input", "retrieval", "tool-call", "output")
 GUARDRAIL_ACTIONS: tuple[GuardrailAction, ...] = (
@@ -335,17 +341,27 @@ class GuardrailEngine:
         #: boot when no request reaches a decision-backed guardrail.
         self._client_factory = client_factory or DecisionClient
         self._client: DecisionAsker | None = None
-        #: Same rule for a managed engine: a document with no ``engine: bedrock``
-        #: guardrail must never require Bedrock credentials to start.
-        self._guardrail_client_factory = guardrail_client_factory or BedrockGuardrailClient
+        #: Same rule for a managed engine: a document with no managed-engine guardrail
+        #: must never require cloud credentials to start.
+        self._guardrail_client_factory = guardrail_client_factory
         self._guardrail_client: GuardrailClient | None = None
 
     def declared(self, guardrail_id: str) -> GuardrailDefinition | None:
         return self._declared.get(guardrail_id)
 
-    def _managed(self) -> GuardrailClient:
+    def _managed(self, engine: str) -> GuardrailClient:
+        """The client for ``engine``, built on first use.
+
+        An injected factory wins, because a test or an embedding app does not need
+        the engine it named -- it needs the outcome it expects. Otherwise the engine
+        picks its own client, so ``engine: model-armor`` never constructs a Bedrock
+        client that would then read the wrong environment names.
+        """
         if self._guardrail_client is None:
-            self._guardrail_client = self._guardrail_client_factory()
+            factory = self._guardrail_client_factory
+            self._guardrail_client = (
+                factory() if factory is not None else managed_client_for(engine)
+            )
         return self._guardrail_client
 
     def check_input(
@@ -413,8 +429,8 @@ class GuardrailEngine:
                     policies=policies,
                     message=guardrail.message,
                 )
-            elif guardrail.engine == ENGINE_BEDROCK:
-                outcome = await self._managed().apply(
+            elif guardrail.engine in ENGINE_MANAGED:
+                outcome = await self._managed(guardrail.engine).apply(
                     source="INPUT" if stage == "input" else "OUTPUT",
                     text=text,
                 )

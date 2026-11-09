@@ -480,7 +480,7 @@ function guardrailCheck(
   // synchronous `check_input` would skip it and let the payload through unexamined.
   const needsAsync = stageGuardrails(ir, stage).some(
     (guardrail) =>
-      guardrail.engine === 'bedrock' || (stage === 'input' && guardrail.decision !== undefined),
+      guardrail.engine !== 'builtin' || (stage === 'input' && guardrail.decision !== undefined),
   );
   if (needsAsync) {
     return `enforce_guardrail(await ENGINE.check_${stage}_async(${table}, ${value}))`;
@@ -796,7 +796,7 @@ function emitGuardStep(
     ? undefined
     : GUARD_METHODS[guard.stage], 'an emitter for a guard step at the tool-call stage');
   const managed = (ir.guardrails ?? []).some(
-    (guardrail) => guardrail.id === guard.guardrail && guardrail.engine === 'bedrock',
+    (guardrail) => guardrail.id === guard.guardrail && guardrail.engine !== 'builtin',
   );
   const method = managed ? `${baseMethod}_async` : baseMethod;
   const fn = bodyName ?? stepFunctionName(step);

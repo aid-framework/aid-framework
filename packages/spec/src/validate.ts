@@ -60,6 +60,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.11',
   '0.12',
   '0.13',
+  '0.14',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -171,6 +172,17 @@ export const GEMINI_PROVIDER_MIN_VERSION: SpecVersion = '0.10';
  * which version it needs rather than having the key dropped.
  */
 export const BEDROCK_GUARDRAIL_MIN_VERSION: SpecVersion = '0.11';
+
+/**
+ * The first spec version that lets a guardrail name Vertex AI Model Armor.
+ *
+ * Model Armor is the Google Cloud counterpart to a managed Bedrock guardrail: the
+ * template holds the policy and `sanitizeUserPrompt`/`sanitizeModelResponse` take text
+ * and answer with a verdict. It is a separate version rather than part of 0.11 because
+ * it carries its own engine name, and a 0.13 document that names it is told which
+ * version it needs instead of having the key dropped.
+ */
+export const MODEL_ARMOR_GUARDRAIL_MIN_VERSION: SpecVersion = '0.14';
 
 /**
  * The first spec version that lets a retriever bind to a managed knowledge base.
@@ -570,17 +582,26 @@ function guardrailDecisionDiagnostics(
     const guardrail = asRecord(raw);
     const decision = typeof guardrail.decision === 'string' ? guardrail.decision : undefined;
     const hasPolicies = Array.isArray(guardrail.policies) && guardrail.policies.length > 0;
-    const engine = guardrail.engine === 'bedrock' ? 'bedrock' : 'builtin';
+    const engine =
+      guardrail.engine === 'bedrock' || guardrail.engine === 'model-armor'
+        ? guardrail.engine
+        : 'builtin';
     const managed = guardrail.bedrock !== undefined;
+    const engineMinVersion =
+      engine === 'model-armor' ? MODEL_ARMOR_GUARDRAIL_MIN_VERSION : BEDROCK_GUARDRAIL_MIN_VERSION;
 
-    if ((engine === 'bedrock' || managed) && declared !== undefined && known) {
-      if (!specVersionAtLeast(declared, BEDROCK_GUARDRAIL_MIN_VERSION)) {
+    if (
+      (engine === 'bedrock' || managed || engine === 'model-armor') &&
+      declared !== undefined &&
+      known
+    ) {
+      if (!specVersionAtLeast(declared, engineMinVersion)) {
         diagnostics.push(
           errorDiagnostic({
             code: DIAGNOSTIC_CODES.notSupported,
-            message: `'guardrails.${name}.engine' requires specVersion ${BEDROCK_GUARDRAIL_MIN_VERSION}, but this specification declares version ${declared}`,
+            message: `'guardrails.${name}.engine' requires specVersion ${engineMinVersion}, but this specification declares version ${declared}`,
             path: ['guardrails', name, 'engine'],
-            hint: `set specVersion: "${BEDROCK_GUARDRAIL_MIN_VERSION}"; documents whose guardrails all use the builtin engine are unchanged`,
+            hint: `set specVersion: "${engineMinVersion}"; documents whose guardrails all use the builtin engine are unchanged`,
           }),
         );
         reported.add(JSON.stringify(['guardrails', name, 'engine']));
@@ -613,6 +634,26 @@ function guardrailDecisionDiagnostics(
             message: `guardrail '${name}' sets action 'redact' but its bedrock policy declares no 'pii' entity to anonymise`,
             path: ['guardrails', name, 'action'],
             hint: "name the entities under 'bedrock.pii', or use action 'block'",
+          }),
+        );
+      }
+      continue;
+    }
+
+    if (engine === 'model-armor') {
+      // Model Armor's sanitize call reports a match and, on a template whose SDP
+      // settings carry an advanced DLP de-identify template, returns rewritten text.
+      // AID cannot see the operator's template, so it cannot promise that rewrite.
+      // Refusing `redact` here is the same fail-closed rule the Bedrock branch follows
+      // one line up: a guardrail either refuses text or anonymises it, never both by
+      // accident.
+      if (guardrail.action === 'redact') {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.schemaViolation,
+            message: `guardrail '${name}' sets action 'redact', but Model Armor's prompt and response filters inspect and report; only an advanced DLP de-identify template rewrites text, and the runtime cannot assume one`,
+            path: ['guardrails', name, 'action'],
+            hint: "use action 'block' or 'flag' with 'engine: model-armor', or keep the builtin engine, which redacts locally",
           }),
         );
       }
