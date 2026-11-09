@@ -286,7 +286,7 @@ export const SHIPPED_FEATURES = [
     title: 'A CDK backend',
     detail:
       'The same deployment plan can emit a CDK app instead, for a team already deploying with it.',
-    declaredBy: 'aid infra --backend cdk',
+    declaredBy: 'aid infra --iac cdk',
     href: './reference/cli.md#infra',
     since: '0.1.57',
   },

@@ -105,7 +105,7 @@ Generated **code** is deterministic (byte-stable, golden-file tested). Model **b
                                 ▼
 ┌───────────────────────────────────────────────────────────────────────┐
 │  3. GENERATOR PLUGINS  (one per target)                               │
-│     py-fastapi · ts-vercel · dotnet-semantickernel · java-spring-ai   │
+│     py-fastapi · ts-vercel · dotnet-semantickernel* · java-spring-ai*  │
 │     (emits against LangGraph / LlamaIndex / Pydantic AI / Vercel AI)  │
 └───────────────────────────────┬───────────────────────────────────────┘
                                 │  imports
@@ -118,9 +118,12 @@ Generated **code** is deterministic (byte-stable, golden-file tested). Model **b
                                 │  driven by
                                 ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│  5. CLI   init · gen · dev · ingest · eval · trace · migrate · eject  │
+│  5. CLI   init · gen · dev · ingest · eval · trace · migrate · …      │
 └───────────────────────────────────────────────────────────────────────┘
 ```
+
+\* planned. The repository ships `py-fastapi` and `ts-vercel`; the other two are in the
+roadmap (§14) and a spec naming them fails the capability gate rather than generating code.
 
 ### Why an IR (unchanged logic, new stakes)
 
@@ -204,13 +207,13 @@ tools:
 # ── Retrieval: ingestion is a pipeline with its own boilerplate ──
 retrievers:
   kb:
-    source: { kind: s3, uri: "s3://acme-kb/*.md" }
+    source: { kind: file, uri: ./kb, glob: "**/*.md" }
     chunking: { strategy: recursive, size: 800, overlap: 120, keepMetadata: [title, url] }
     embedModel: embed
     store: pgvector
     topK: 8
     rerank: { model: bge-reranker-v2, topN: 4 }
-    refresh: { mode: incremental, schedule: "0 */6 * * *" }
+    refresh: { mode: full }
 
 # ── Agents: instructions + tools + memory + budgets + guardrails ──
 agents:

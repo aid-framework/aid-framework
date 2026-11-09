@@ -187,7 +187,7 @@ A generated service varies between runs — the model is not deterministic, and 
 that are either always red or measuring nothing. `aid eval` therefore samples and compares distributions:
 
 ```sh
-npx aid eval --record     # record a baseline from the current behaviour
+npx aid eval --baseline   # record a baseline from the current behaviour
 npx aid eval              # gate the current behaviour against it
 ```
 
