@@ -212,9 +212,9 @@ export const SHIPPED_FEATURES = [
   },
   {
     id: 'provider-embeddings',
-    title: 'Embeddings on Bedrock and Vertex AI',
+    title: 'Embeddings on Bedrock, Vertex AI and the Gemini API',
     detail:
-      'A pinned embedding is routed by its provider, so Titan on Bedrock is signed with SigV4 and Gemini on Vertex AI is sent under the project and bearer token instead of the OpenAI-compatible shape.',
+      'A pinned embedding is routed by its provider, so Titan on Bedrock is signed with SigV4, `google` on Vertex AI is sent under the project and bearer token, and `gemini` is sent to the AI Studio `:batchEmbedContents` endpoint with `x-goog-api-key` — each instead of the OpenAI-compatible shape.',
     declaredBy: 'models[].capabilities',
     href: './reference/spec.md#model',
     since: '0.1.109',
@@ -383,7 +383,7 @@ export const REFUSALS = [
     id: 'embeddings-without-endpoint',
     title: 'Embeddings on a provider with no embeddings endpoint',
     reason:
-      'The Anthropic Messages API serves chat only, so its adapter does not advertise `embeddings` and a spec that declares it is refused; Bedrock and Vertex AI do advertise it, because each serves an embedding model over `invoke` and `:predict`.',
+      'The Anthropic Messages API serves chat only, so its adapter does not advertise `embeddings` and a spec that declares it is refused; Bedrock, Vertex AI and the Gemini API do advertise it, because each serves an embedding model over `invoke`, `:predict` and `:batchEmbedContents`.',
     code: 'ir/model-capability-missing',
   },
   {

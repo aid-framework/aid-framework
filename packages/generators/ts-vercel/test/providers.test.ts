@@ -214,13 +214,16 @@ describe('adapter capabilities', () => {
     expect(() => buildForSpecText(spec)).toThrow(/GeminiProvider/u);
   });
 
-  it('refuses gemini embeddings, which the adapter does not call', () => {
+  it('advertises gemini embeddings, which :batchEmbedContents serves', () => {
+    // `GeminiEmbedder` answers on `:batchEmbedContents` with the same key the chat
+    // adapter uses, so the capability is real even though `GeminiProvider` itself
+    // never issues the call.
     const spec = geminiSpecText().replace(
       'capabilities: [json-schema, tools]',
       'capabilities: [json-schema, tools, embeddings]',
     );
 
-    expect(() => buildForSpecText(spec)).toThrow(/model-capability-unsupported/u);
+    expect(models(spec)).toMatch(/capabilities: \[[^\]]*'embeddings'/u);
   });
 });
 

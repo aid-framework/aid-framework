@@ -321,14 +321,26 @@ describe('gemini provider', () => {
     expect(pinned).toContain('Capability.TOOL_CALLING');
   });
 
-  it('refuses a Gemini model that declares embeddings', () => {
-    const spec = geminiSpecText().replace(
-      '    capabilities: [json-schema, tools, streaming]',
-      '    capabilities: [json-schema, tools, embeddings]',
-    );
+  it('serves embeddings through the Gemini embedding endpoint', () => {
+    const spec = geminiSpecText()
+      .replace(
+        '    provider: fake\n    modelId: text-embedding-3-small\n    capabilities: [embeddings]',
+        [
+          '    provider: gemini',
+          '    modelId: gemini-embedding-001',
+          '    apiKeyEnv: GEMINI_API_KEY',
+          '    capabilities: [embeddings]',
+          '    costProfile: gemini-gemini-embedding-001',
+        ].join('\n'),
+      )
+      .replace('    dimensions: 1536', '    dimensions: 3072');
 
-    expect(() => buildForSpecText(spec)).toThrow(/unsupported-capability/);
-    expect(() => buildForSpecText(spec)).toThrow(/no embeddings endpoint/);
+    const models = files(spec).get('app/generated/gateway/models.py') ?? '';
+    expect(aliasBlock(models, 'embed')).toContain('Capability.EMBEDDINGS');
+
+    const bindings = files(spec).get('app/generated/retrieval/bindings.py') ?? '';
+    expect(bindings).toContain('gemini-embedding-001');
+    expect(bindings).toContain('3072');
   });
 });
 

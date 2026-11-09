@@ -339,9 +339,10 @@ export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, ReadonlySet<
   // under the same project, location and bearer token.
   VertexProvider: new Set<Capability>(['embeddings', 'structured-output', 'tool-calling']),
   // The TS provider seam is request/response only, so Gemini does not advertise
-  // streaming here even though the Python adapter does. No embeddings: a spec that
-  // wants one pins `gemini-embedding-001`, which `embedderFor` routes separately.
-  GeminiProvider: new Set<Capability>(['structured-output', 'tool-calling']),
+  // streaming here even though the Python adapter does. Embeddings are served, but
+  // not by this adapter: `embedderFor` routes a gemini pin to `GeminiEmbedder`, which
+  // calls `:batchEmbedContents` with the same key.
+  GeminiProvider: new Set<Capability>(['embeddings', 'structured-output', 'tool-calling']),
 };
 
 /**
