@@ -44,7 +44,7 @@
     "@langchain/langgraph-sdk": "1.12.9",
     "deepagents": "1.16.2",
     "langchain": "1.6.0",
-    "langsmith": "0.11.6"
+    "langsmith": "0.11.7"
   },
   "peerDependenciesMeta": {
     "@langchain/core": {
@@ -76,6 +76,6 @@
     "@langchain/langgraph-sdk": "1.12.9",
     "deepagents": "1.16.2",
     "langchain": "1.6.0",
-    "langsmith": "0.11.6"
+    "langsmith": "0.11.7"
   }
 }
