@@ -239,7 +239,7 @@ These are refused explicitly rather than approximated — each raises `FeatureDe
 
 - `ModelGateway.stream` — the transport is request/response only, and no provider advertises
   `Capability.STREAMING`.
-- Retrieval: non-file sources, `semantic` chunking, `incremental` refresh, retriever `filters`, a hosted
+- Retrieval: non-file sources, `semantic` chunking, retriever `filters`, a hosted
   reranker, and the `qdrant` / `pinecone` / `weaviate` / `custom` store kinds.
 - Escalation routing and third-party orchestration frameworks.
 

@@ -22,7 +22,7 @@
  */
 
 import { type Budget, type CostLedger, LedgerEntry } from '../cost.js';
-import { ConfigurationError, FeatureDeferredError } from '../errors.js';
+import { ConfigurationError } from '../errors.js';
 import { repr } from '../internal/json.js';
 import { TokenUsage } from '../types.js';
 import { chunkerFor } from './chunking.js';
@@ -52,6 +52,12 @@ const BATCH_SIZE = 64;
  * of identical input compare equal without depending on the order the filesystem
  * happened to yield. `costUsd` is what *this* ingest charged, not the ledger's
  * running total, so ingesting twice reads as two separate spends.
+ *
+ * `written` counts chunks upserted and `reused` counts chunks an incremental ingest
+ * found already stored and therefore did not embed; `written + reused` is `chunks`.
+ * `removed` counts chunks deleted because their document no longer yields them. All
+ * three are zero-or-more, and all but `written` are zero for a `full` refresh, which
+ * never reads the index and never deletes from it.
  */
 export class IngestReport {
   readonly retriever: string;
@@ -61,6 +67,8 @@ export class IngestReport {
   readonly tokens: number;
   readonly costUsd: number;
   readonly chunkIds: readonly string[];
+  readonly reused: number;
+  readonly removed: number;
 
   constructor(init: {
     readonly retriever: string;
@@ -70,6 +78,8 @@ export class IngestReport {
     readonly tokens: number;
     readonly costUsd: number;
     readonly chunkIds: readonly string[];
+    readonly reused?: number;
+    readonly removed?: number;
   }) {
     this.retriever = init.retriever;
     this.documents = init.documents;
@@ -78,6 +88,8 @@ export class IngestReport {
     this.tokens = init.tokens;
     this.costUsd = init.costUsd;
     this.chunkIds = [...init.chunkIds];
+    this.reused = init.reused ?? 0;
+    this.removed = init.removed ?? 0;
   }
 
   get isEmpty(): boolean {
@@ -115,11 +127,12 @@ export class Retriever {
   private _closed = false;
 
   constructor(binding: RetrieverBinding, options: RetrieverOptions = {}) {
-    if (binding.refreshMode !== 'full') {
-      throw new FeatureDeferredError(
-        `refresh mode ${repr(binding.refreshMode)} is declared but not implemented: ` +
-          'spec v0.1 reindexes the whole source, and incremental refresh needs change ' +
-          'detection the runtime does not have',
+    // The IR type admits two modes, but a hand-built IR can carry anything. Treating an
+    // unknown value as `full` would be a silent difference between what was declared and
+    // what ran, which is the failure the runtime exists to avoid.
+    if (binding.refreshMode !== 'full' && binding.refreshMode !== 'incremental') {
+      throw new ConfigurationError(
+        `refresh mode ${repr(binding.refreshMode)} is not one this runtime implements`,
       );
     }
     const candidateFactor = options.candidateFactor ?? DEFAULT_CANDIDATE_FACTOR;
@@ -156,8 +169,21 @@ export class Retriever {
    * Idempotent by construction: chunk ids are content hashes and the store upserts on
    * them, so ingesting the same input twice replaces rather than duplicates.
    * Re-ingesting is therefore a legitimate way to refresh a corpus.
+   *
+   * `refresh.mode` decides what the second run redoes. `full` -- the default -- embeds
+   * and upserts every chunk and never reads or deletes from the index, so dropping a
+   * document from the source leaves its vectors behind. `incremental` instead
+   * reconciles the index with the source: a chunk the store already holds keeps its
+   * vector, a stored chunk the source no longer yields is deleted, and only new chunks
+   * are embedded.
+   *
+   * Incremental therefore treats what it is given as the *whole* corpus, whether that
+   * came from the connector or from an explicit `documents` argument. Passing a subset
+   * of the corpus in incremental mode deletes the rest, exactly as narrowing the
+   * source glob would; the mode is a reconciliation, not a merge.
    */
   async ingest(documents?: readonly SourceDocument[] | null): Promise<IngestReport> {
+    const incremental = this._binding.refreshMode === 'incremental';
     const sourceDocuments = documents != null ? [...documents] : await this._readSource();
     const chunker = chunkerFor(this._binding.chunking);
     const chunks: Chunk[] = [];
@@ -167,11 +193,23 @@ export class Retriever {
       }
     }
 
+    let toEmbed = chunks;
+    let removed = 0;
+    if (incremental) {
+      const stored = new Set(await this._store.chunkIds());
+      const current = new Set(chunks.map((chunk) => chunk.chunkId));
+      const stale = [...stored].filter((chunkId) => !current.has(chunkId)).sort();
+      if (stale.length > 0) {
+        removed = await this._store.delete(stale);
+      }
+      toEmbed = chunks.filter((chunk) => !stored.has(chunk.chunkId));
+    }
+
     const records: StoreRecord[] = [];
     let tokens = 0;
     let cost = 0.0;
-    for (let start = 0; start < chunks.length; start += BATCH_SIZE) {
-      const batch = chunks.slice(start, start + BATCH_SIZE);
+    for (let start = 0; start < toEmbed.length; start += BATCH_SIZE) {
+      const batch = toEmbed.slice(start, start + BATCH_SIZE);
       const embedded = await this._embed(batch.map((chunk) => chunk.text));
       tokens += embedded.batch.usage.inputTokens;
       cost += embedded.costUsd;
@@ -192,6 +230,8 @@ export class Retriever {
       documents: sourceDocuments.length,
       chunks: chunks.length,
       written,
+      reused: chunks.length - toEmbed.length,
+      removed,
       tokens,
       costUsd: cost,
       chunkIds: chunks.map((chunk) => chunk.chunkId).sort((left, right) => (left < right ? -1 : 1)),

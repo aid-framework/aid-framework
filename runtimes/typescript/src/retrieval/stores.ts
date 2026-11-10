@@ -108,6 +108,21 @@ export interface VectorStore {
    * contents after re-ingest.
    */
   corpus(): Promise<readonly StoreRecord[]>;
+  /**
+   * Every stored chunk id, sorted.
+   *
+   * Separate from `corpus` because an incremental ingest needs only identity: it
+   * compares this set with the ids the source currently yields, and fetching every
+   * vector to learn a key would cost what the mode exists to save.
+   */
+  chunkIds(): Promise<readonly string[]>;
+  /**
+   * Remove records by `chunkId`. Returns the number actually removed.
+   *
+   * Deleting an absent id is not an error -- a caller reconciling an index with a
+   * source may name a chunk another run already removed.
+   */
+  delete(chunkIds: readonly string[]): Promise<number>;
   close(): Promise<void>;
 }
 
@@ -163,6 +178,20 @@ export class InMemoryVectorStore implements VectorStore {
     return [...this._records.keys()]
       .sort((left, right) => (left < right ? -1 : 1))
       .map((chunkId) => this._records.get(chunkId) as StoreRecord);
+  }
+
+  async chunkIds(): Promise<readonly string[]> {
+    return [...this._records.keys()].sort((left, right) => (left < right ? -1 : 1));
+  }
+
+  async delete(chunkIds: readonly string[]): Promise<number> {
+    let removed = 0;
+    for (const chunkId of chunkIds) {
+      if (this._records.delete(chunkId)) {
+        removed += 1;
+      }
+    }
+    return removed;
   }
 
   async close(): Promise<void> {

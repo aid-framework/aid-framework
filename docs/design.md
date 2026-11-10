@@ -340,7 +340,7 @@ a generic schema failure:
 | --- | --- |
 | `source.kind` other than `file` (`s3`, `http`, `db`, `mcp`) | reserved; only a local file source is implemented |
 | `chunking.strategy: semantic` | needs an embedder-driven splitter, which is ingestion runtime |
-| `refresh.mode: incremental` and any `schedule` | needs change detection and a scheduled ingest loop |
+| `refresh.schedule` | needs a scheduler the compiler does not emit; `incremental` mode itself ships in 0.19 |
 | rich `filters` expressions | needs a filter IR plus per-store translation |
 
 `stores.kind` is `memory` or `pgvector`. `memory` is the only kind a required gate may depend on:

@@ -40,7 +40,13 @@ export type ChunkingStrategy = 'fixed' | 'recursive' | 'semantic' | 'code';
 /** `vectorStore.kind`. */
 export type StoreKind = 'memory' | 'pgvector' | 'qdrant' | 'pinecone' | 'weaviate' | 'custom';
 
-/** `retriever.refresh.mode`. Only `full` is implemented. */
+/**
+ * `retriever.refresh.mode`.
+ *
+ * `full` re-embeds the whole source every run. `incremental` reconciles the index with
+ * the source: unchanged chunks keep their vectors, stale ones are deleted, and only new
+ * ones are embedded.
+ */
 export type RefreshMode = 'full' | 'incremental';
 
 function requireNonEmpty(value: string, label: string): string {

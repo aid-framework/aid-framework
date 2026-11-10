@@ -83,7 +83,7 @@ export default defineConfig({
         'runtimes/typescript/src/retrieval/pgvector.ts': {
           // The adapter resolves its driver lazily and ships without a database, so its
           // SQL path is deliberately unreachable in CI (D2) and this floor is the lowest
-          // in the repo. It still has to hold: measured 73/77/71/73.
+          // in the repo. It still has to hold: measured 71/75/71/72.
           statements: 68,
           branches: 70,
           functions: 66,

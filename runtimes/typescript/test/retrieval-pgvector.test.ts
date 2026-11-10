@@ -213,6 +213,24 @@ describe('PgVectorStore guards before connecting', () => {
     await expect(store.corpus()).rejects.toThrow(/needs its driver/);
   });
 
+  it('names the driver for a chunk enumeration', async () => {
+    const store = new PgVectorStore({ uri: 'postgres://localhost/aid' });
+
+    await expect(store.chunkIds()).rejects.toThrow(/needs its driver/);
+  });
+
+  it('names the driver for a delete', async () => {
+    const store = new PgVectorStore({ uri: 'postgres://localhost/aid' });
+
+    await expect(store.delete(['a'])).rejects.toThrow(/needs its driver/);
+  });
+
+  it('deletes nothing and opens nothing for an empty batch', async () => {
+    const store = new PgVectorStore({ uri: 'postgres://localhost/aid' });
+
+    await expect(store.delete([])).resolves.toBe(0);
+  });
+
   it('refuses any use after close', async () => {
     const store = new PgVectorStore({ uri: 'postgres://localhost/aid' });
     await store.close();
@@ -224,6 +242,8 @@ describe('PgVectorStore guards before connecting', () => {
       'this store has been closed',
     );
     await expect(store.upsert([record(2)])).rejects.toThrow('this store has been closed');
+    await expect(store.chunkIds()).rejects.toThrow('this store has been closed');
+    await expect(store.delete(['a'])).rejects.toThrow('this store has been closed');
   });
 
   it('closes without complaint, twice, and without ever connecting', async () => {

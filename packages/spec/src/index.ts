@@ -57,6 +57,7 @@ export {
   MAX_STEP_DEPTH,
   MODEL_CACHE_MIN_VERSION,
   RETIRED_STEP_KINDS,
+  RETRIEVAL_INCREMENTAL_MIN_VERSION,
   ROUTE_MIN_VERSION,
   RUNTIME_MIN_VERSION,
   SECTION_MIN_VERSION,
@@ -83,7 +84,7 @@ import { validateSpec } from './validate.js';
 export const SPEC_VERSION = '0.1';
 
 /** The newest version this build reads. Sections above this are rejected, not ignored. */
-export const SPEC_VERSION_LATEST: SpecVersion = '0.18';
+export const SPEC_VERSION_LATEST: SpecVersion = '0.19';
 
 export interface SpecCheckResult {
   /** True when no diagnostic has `error` severity. Warnings do not fail a check. */

@@ -119,7 +119,12 @@ class StoreKind(StrEnum):
 
 
 class RefreshMode(StrEnum):
-    """``retriever.refresh.mode``. Only ``FULL`` is implemented."""
+    """``retriever.refresh.mode``.
+
+    ``FULL`` re-embeds the whole source every run. ``INCREMENTAL`` reconciles the index
+    with the source: unchanged chunks keep their vectors, stale ones are deleted, and
+    only new ones are embedded.
+    """
 
     FULL = "full"
     INCREMENTAL = "incremental"

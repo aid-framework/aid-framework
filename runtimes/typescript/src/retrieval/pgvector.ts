@@ -71,6 +71,12 @@ const COLUMNS =
 
 const CORPUS = `SELECT ${COLUMNS} FROM aid_chunks ORDER BY chunk_id`;
 
+const CHUNK_IDS = 'SELECT chunk_id FROM aid_chunks ORDER BY chunk_id';
+
+// `= ANY($1)` binds the whole array as one parameter, so reconciling an index that
+// names thousands of stale chunks still sends one statement rather than one per id.
+const DELETE = 'DELETE FROM aid_chunks WHERE chunk_id = ANY($1)';
+
 // `<=>` is cosine distance, `<#>` is negative inner product and `<->` is L2 distance.
 // Each is rewritten into "higher is better" so callers see one orientation, matching
 // `stores.similarity`. The tie-break on `chunk_id` matches the in-memory adapter too:
@@ -93,7 +99,10 @@ const SEARCH: Readonly<Record<string, string>> = {
 
 /** The slice of the driver this adapter uses. */
 interface PgClient {
-  query(text: string, values?: readonly unknown[]): Promise<{ rows: readonly unknown[][] }>;
+  query(
+    text: string,
+    values?: readonly unknown[],
+  ): Promise<{ rows: readonly unknown[][]; rowCount?: number | null }>;
   end(): Promise<void>;
 }
 
@@ -239,6 +248,19 @@ export class PgVectorStore {
     const connection = await this.connect();
     const { rows } = await connection.query(CORPUS);
     return rows.map((row) => this.record(row));
+  }
+
+  async chunkIds(): Promise<readonly string[]> {
+    const connection = await this.connect();
+    const { rows } = await connection.query(CHUNK_IDS);
+    return rows.map((row) => String(row[0]));
+  }
+
+  async delete(chunkIds: readonly string[]): Promise<number> {
+    if (chunkIds.length === 0) return 0;
+    const connection = await this.connect();
+    const { rowCount } = await connection.query(DELETE, [chunkIds]);
+    return rowCount ?? 0;
   }
 
   async close(): Promise<void> {
