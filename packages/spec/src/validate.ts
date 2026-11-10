@@ -33,6 +33,7 @@ export const SUPPORTED_SECTIONS = [
   'knowledgeBases',
   'gateways',
   'agents',
+  'state',
   'guardrails',
   'decisions',
   'memory',
@@ -76,6 +77,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.23',
   '0.24',
   '0.25',
+  '0.26',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -96,6 +98,7 @@ export const SECTION_MIN_VERSION: Partial<
   knowledgeBases: '0.12',
   gateways: '0.24',
   profile: '0.25',
+  state: '0.26',
 };
 
 /**
@@ -159,6 +162,23 @@ export const DEPLOYMENT_IMAGE_MIN_VERSION: SpecVersion = '0.4';
  * instead of having the key silently ignored by a runtime that never read it.
  */
 export const DEPLOYMENT_PLACEMENT_MIN_VERSION: SpecVersion = '0.25';
+
+/**
+ * The first spec version that accepts the enterprise control keys on a deployment:
+ * `identity`, `network` and `approvals`. Gated together, like the placement keys, because
+ * they are one decision -- who may call this deployment, where it sits, and who must
+ * approve a change to it -- and a 0.25 document that declares one was written against a
+ * vocabulary its version did not offer.
+ */
+export const DEPLOYMENT_CONTROL_MIN_VERSION: SpecVersion = '0.26';
+
+/**
+ * The first spec version that accepts a durable run store: the top-level `state` section,
+ * the `agents[].state` override, and `requiresApproval` on a pipeline tool step. The
+ * section half is gated by `SECTION_MIN_VERSION`; the nested half is not, so the two
+ * constructs that live inside existing sections carry their own rule below.
+ */
+export const RUN_STATE_MIN_VERSION: SpecVersion = '0.26';
 
 /**
  * The first spec version that accepts the batch surface: `pipelines[].trigger.manual` and
@@ -614,6 +634,7 @@ function scopeDiagnostics(
   guardrailDecisionDiagnostics(spec, diagnostics, reported);
   deploymentImageDiagnostics(spec, diagnostics, reported);
   deploymentPlacementDiagnostics(spec, diagnostics, reported);
+  deliveryControlDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
   routeDiagnostics(spec, diagnostics, reported);
@@ -965,6 +986,84 @@ function deploymentPlacementDiagnostics(
       );
       reported.add(JSON.stringify(['deployments', id, key]));
     }
+  }
+}
+
+/**
+ * Nested version gating for the 0.26 constructs that live inside sections whose own
+ * versions predate them: the enterprise controls on a deployment, an agent's run state
+ * override, and a pipeline step's `requiresApproval`.
+ *
+ * Without this rule the schema would accept the keys in an older document and the
+ * generated output would read none of them, which is the silent drop this layer exists to
+ * prevent -- the same reason `deployments[].image` and `models[].cache` have their own
+ * gates. The top-level `state` section needs no rule here; `SECTION_MIN_VERSION` covers it.
+ */
+function deliveryControlDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  // An unrecognised version is already a schema error at `specVersion`; naming a required
+  // version against it would bury the root cause.
+  if (declared === undefined || !known) return;
+
+  const refuse = (
+    version: SpecVersion,
+    label: string,
+    path: (string | number)[],
+    hint: string,
+  ): void => {
+    if (specVersionAtLeast(declared, version)) return;
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.notSupported,
+        message: `'${label}' requires specVersion ${version}, but this specification declares version ${declared}`,
+        path,
+        hint,
+      }),
+    );
+    reported.add(JSON.stringify(path));
+  };
+
+  for (const [id, raw] of Object.entries(asRecord(spec.deployments))) {
+    const deployment = asRecord(raw);
+    for (const key of ['identity', 'network', 'approvals'] as const) {
+      if (deployment[key] === undefined) continue;
+      refuse(
+        DEPLOYMENT_CONTROL_MIN_VERSION,
+        `deployments.${id}.${key}`,
+        ['deployments', id, key],
+        `set specVersion: "${DEPLOYMENT_CONTROL_MIN_VERSION}"; a document that declares no identity, network or approval policy is unchanged`,
+      );
+    }
+  }
+
+  for (const [id, raw] of Object.entries(asRecord(spec.agents))) {
+    if (asRecord(raw).state === undefined) continue;
+    refuse(
+      RUN_STATE_MIN_VERSION,
+      `agents.${id}.state`,
+      ['agents', id, 'state'],
+      `set specVersion: "${RUN_STATE_MIN_VERSION}"; an agent with no state is unchanged`,
+    );
+  }
+
+  for (const [id, raw] of Object.entries(asRecord(spec.pipelines))) {
+    const steps = asRecord(raw).steps;
+    if (!Array.isArray(steps)) continue;
+    steps.forEach((step, index) => {
+      if (asRecord(asRecord(step).tool).requiresApproval === undefined) return;
+      refuse(
+        RUN_STATE_MIN_VERSION,
+        `pipelines.${id}.steps[${index}].tool.requiresApproval`,
+        ['pipelines', id, 'steps', index, 'tool', 'requiresApproval'],
+        `set specVersion: "${RUN_STATE_MIN_VERSION}"; a step that sets no requiresApproval is unchanged`,
+      );
+    });
   }
 }
 

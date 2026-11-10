@@ -35,11 +35,12 @@
         "0.22",
         "0.23",
         "0.24",
-        "0.25"
+        "0.25",
+        "0.26"
       ]
     },
     "profile": {
-      "description": "The operating profile: a named bundle of defaults and required controls, not a mode. `standard` is the default and is what an absent `profile` means, so every spec written before 0.25 keeps exactly the behaviour it had. `enterprise` requires the controls a regulated deployment cannot go without, and the profile gate refuses a spec that declares it and then omits them: a region pin on every deployment, an audit sink on every deployment, and at least one guardrail that runs on output. A requirement that a spec could not satisfy is never added to a profile, so `enterprise` is always passable. Declarable from spec v0.25.",
+      "description": "The operating profile: a named bundle of defaults and required controls, not a mode. `standard` is the default and is what an absent `profile` means, so every spec written before 0.25 keeps exactly the behaviour it had. `enterprise` requires the controls a regulated deployment cannot go without, and the profile gate refuses a spec that declares it and then omits them: a region pin, an audit sink, a declared identity provider, private networking and an approval policy on every deployment, plus at least one guardrail that runs on output. A requirement that a spec could not satisfy is never added to a profile, so `enterprise` is always passable. Declarable from spec v0.25; the identity, network and approval requirements are enforced from 0.26.",
       "enum": ["standard", "enterprise"]
     },
     "project": { "$ref": "#/$defs/project" },
@@ -103,6 +104,10 @@
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/name" },
       "additionalProperties": { "$ref": "#/$defs/agent" }
+    },
+    "state": {
+      "description": "The durable run store for the project, shared by every agent and by every pipeline step that pauses for approval. Declarable from spec v0.26. One app has one process and one run history, so the store is declared once rather than per agent; an agent may still override it with `agents.<id>.state` when its runs need their own retention. Absent means runs are held in the process, which is why an agent that can call a side-effecting tool is refused without it (`ir/agents-state-store`): a run that pauses for a human decision cannot survive a restart if nothing wrote it down.",
+      "$ref": "#/$defs/agentState"
     },
     "guardrails": {
       "description": "Guardrails: the stages a check runs at, the policies it evaluates, and what happens when one fails. Declarable from spec v0.2. The runtime evaluates them and both targets (`py-fastapi` and `ts-vercel`) emit the wiring; a guardrail declared here applies to every pipeline route of the document, not to the one that named it.",
@@ -1151,7 +1156,11 @@
               "properties": {
                 "tool": { "$ref": "#/$defs/name" },
                 "input": { "$ref": "#/$defs/stepInput" },
-                "as": { "$ref": "#/$defs/binding" }
+                "as": { "$ref": "#/$defs/binding" },
+                "requiresApproval": {
+                  "description": "Pause the run before this call and wait for a recorded decision. Spec 0.26. Only a tool whose `sideEffects` is `write` or `destructive` may set it (`ir/approval-step-tool`): approving a read adds a run record and a delay for no control. A pause needs somewhere to be written, so a pipeline that declares one requires a durable `state`.",
+                  "type": "boolean"
+                }
               }
             }
           }
@@ -1464,6 +1473,10 @@
             },
             "channel": { "type": "string", "minLength": 1 }
           }
+        },
+        "state": {
+          "description": "A durable run store for this agent, overriding the project-level `state`. Spec 0.26. Required when the agent can call a tool with side effects, because a run that pauses for a human decision cannot outlive the process without one.",
+          "$ref": "#/$defs/agentState"
         }
       }
     },
@@ -1809,6 +1822,18 @@
           "description": "Where this deployment's audit record lands. Spec 0.25. The sink names a service the customer already owns; AID emits the log group or sink, never its contents. `enterprise` requires one on every deployment.",
           "$ref": "#/$defs/audit"
         },
+        "identity": {
+          "description": "The identity provider this deployment trusts. Spec 0.26. A reference to an IdP the customer already runs -- an issuer URL and an audience -- never a secret and never a credential. AID compiles it into the generated app's token enforcement: a request whose token names another issuer or audience is refused, and the token's role and scope claims become the runtime `Principal` that every `auth` policy is evaluated against. Signature verification stays a `business/` function, because the verification keys belong to the customer's IdP. `enterprise` requires one on every deployment.",
+          "$ref": "#/$defs/identity"
+        },
+        "network": {
+          "description": "Where this deployment's compute sits on the network. Spec 0.26. `private: true` places the workload in private subnets with no public address and emits the egress path its declared dependencies need; a cloud with no private-placement module is refused (`ir/network-target`) rather than emitted as a resource that could not apply. `enterprise` requires `private: true` on every deployment.",
+          "$ref": "#/$defs/network"
+        },
+        "approvals": {
+          "description": "Change control for this deployment, which is a review policy and not runtime human-in-the-loop. Spec 0.26. Compiled into `infra/approvals.json` and into the generated plan workflow's `environment` binding, so the policy is a file the customer's GitHub organisation applies reviewers from; AID neither reads nor sets repository settings. `enterprise` requires it on every deployment.",
+          "$ref": "#/$defs/approvals"
+        },
         "image": {
           "description": "Where the image is published. Spec 0.4, and only on a `target: container` deployment: another target builds no image to publish.",
           "$ref": "#/$defs/image"
@@ -1888,6 +1913,100 @@
         },
         "retentionDays": {
           "description": "How long the record is kept, in days. Omitted means the sink's own default, which is the honest answer: AID does not invent a retention policy for an operator's log store, and no lifecycle rule is emitted at all rather than one guessed. When the document does name one, every sink honours it, each in its own provider's terms: a CloudWatch log group via `retention_in_days`, an S3 archive via a lifecycle expiration, a GCS bucket via a lifecycle rule, and a partitioned BigQuery dataset via a partition expiration. Two deployments naming the same sink with different retention are different destinations, and `ir/audit-conflict` refuses them.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "identity": {
+      "description": "The identity provider a deployment trusts, as a reference: an issuer URL a reader can fetch and an audience name. No field accepts a credential, and the generated enforcement pins the issuer literally, so moving to another IdP is a spec change that regenerates rather than an environment variable nobody reviews.",
+      "type": "object",
+      "required": ["kind", "issuer"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "`oidc` is a JWT issuer the app validates tokens from. `saml` is declared for an organisation whose SSO asserts identity before the gateway forwards it; the generated enforcement is the same claim check, and the assertion is the provider's business.",
+          "enum": ["oidc", "saml"]
+        },
+        "issuer": {
+          "description": "The issuer URL the token's `iss` claim must equal exactly.",
+          "type": "string",
+          "pattern": "^https://[^\\s]+$"
+        },
+        "audience": {
+          "description": "The `aud` claim the token must carry. Omitted means the project id, which is what a generated app registers as its client.",
+          "type": "string",
+          "minLength": 1
+        },
+        "rolesClaim": {
+          "description": "Which claim holds the token's roles, mapped onto the runtime `Principal` that `auth` policies read. Omitted means `roles`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "scopesClaim": {
+          "description": "Which claim holds the token's scopes. Omitted means `scp`, which is what OIDC providers issue.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "network": {
+      "description": "Private placement for a deployment. `private: true` is the only value that satisfies the `enterprise` profile; a deployment may declare `private: false` explicitly, which behaves like omitting the key and is what lets the profile gate's refusal say what was declared rather than what was missing.",
+      "type": "object",
+      "required": ["private"],
+      "additionalProperties": false,
+      "properties": {
+        "private": { "type": "boolean" },
+        "egress": {
+          "description": "What the workload may reach outbound. `declared-only` (the default) routes egress through the endpoints the generated module creates for the declared dependencies and creates no path to the internet; `open` adds a NAT path, which is accepted and is documented as the weaker placement.",
+          "enum": ["declared-only", "open"]
+        }
+      }
+    },
+    "approvals": {
+      "description": "Change control for a deployment: the reviewers a credentialed infrastructure plan needs before it applies. Named as teams or logins the customer's repository already knows, because AID generates the policy file and the workflow binding while the repository's environment protection rules are what enforce the reviewers.",
+      "type": "object",
+      "required": ["require", "minApprovers"],
+      "additionalProperties": false,
+      "properties": {
+        "require": {
+          "description": "The teams or logins that must approve. At least one, because a policy that names nobody approves everything.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "minApprovers": {
+          "description": "How many of `require` must approve. Never more than the number named, which the profile gate refuses rather than emitting a policy that can never be satisfied.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "environments": {
+          "description": "Which environments this policy covers. Omitted means the deployment it is declared on.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "agentState": {
+      "description": "A durable run store, so a paused or long-running run outlives the process that started it. `urlEnv` is the *name* of an environment variable holding the connection string, following the `models.*.apiKeyEnv` precedent: the value stays in the platform and never enters the spec. Deliberately not `stores`, which is a vector store whose `dimensions` the normalize gate compares against the embedding model's width; run state is neither embedded nor a width, so putting it there would force a meaningless `dimensions`.",
+      "type": "object",
+      "required": ["kind", "urlEnv"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "`postgres` is a database the customer runs and names through `urlEnv`; `sqlite` is a file, which survives a restart only on a mounted volume and is therefore refused for `target: container` without one.",
+          "enum": ["postgres", "sqlite"]
+        },
+        "urlEnv": {
+          "description": "The environment variable holding the connection string or file path. A name, never a value.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "ttlHours": {
+          "description": "How long a saved run is kept before the store may delete it. Omitted means no expiry, which is accepted and documented rather than defaulted.",
           "type": "integer",
           "minimum": 1
         }
