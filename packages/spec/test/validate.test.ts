@@ -282,6 +282,10 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
     code: DIAGNOSTIC_CODES.notSupported,
     path: ['retrievers', 'knowledge', 'chunking', 'strategy'],
   },
+  'retriever-semantic-below-version.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['retrievers', 'knowledge', 'chunking', 'strategy'],
+  },
   'retriever-source-remote.spec.yaml': {
     code: DIAGNOSTIC_CODES.notSupported,
     path: ['retrievers', 'knowledge', 'source', 'kind'],
@@ -450,6 +454,32 @@ describe('remote retriever sources', () => {
       'http://handbook.example.com',
     );
     expect(checkSpecText(text).diagnostics).toEqual([]);
+  });
+});
+
+describe('semantic chunking', () => {
+  it('accepts semantic at 0.22', () => {
+    expect(
+      checkSpecText(readFixture('valid/v22-retriever-semantic.spec.yaml')).diagnostics,
+    ).toEqual([]);
+  });
+
+  it('names the version semantic chunking needs when the document predates it', () => {
+    const result = checkSpecText(readFixture('invalid/retriever-semantic-below-version.spec.yaml'));
+    const [diagnostic] = result.diagnostics;
+    expect(diagnostic?.message).toContain('requires specVersion 0.22');
+    expect(diagnostic?.message).toContain('declares version 0.21');
+    expect(diagnostic?.hint).toContain('set specVersion: "0.22"');
+  });
+
+  it('keeps refusing semantic for a 0.1 document, which is below every gate', () => {
+    // The older fixture predates the 0.22 versions list entirely. It must still fail,
+    // through the same gate, rather than becoming an unknown-strategy schema error.
+    const result = checkSpecText(readFixture('invalid/retriever-semantic-chunking.spec.yaml'));
+    const [diagnostic] = result.diagnostics;
+    expect(diagnostic?.code).toBe(DIAGNOSTIC_CODES.notSupported);
+    expect(diagnostic?.message).toContain('requires specVersion 0.22');
+    expect(diagnostic?.hint).toContain('chunks by size');
   });
 });
 

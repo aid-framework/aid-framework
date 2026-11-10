@@ -35,8 +35,17 @@ The emitted infrastructure is OpenTofu. A plan targets one cloud at a time, beca
 
 ## Spec language
 
-The current spec language version is `0.21`.
+The current spec language version is `0.22`.
 A construct that needs a later version is reported as `spec/not-supported`, naming the version it needs, instead of being ignored.
+
+Retriever chunking strategies are all implemented in both runtimes:
+
+| `chunking.strategy` | Python | TypeScript | Since |
+| --- | --- | --- | --- |
+| `fixed` | yes | yes | 0.1 |
+| `recursive` | yes | yes | 0.1 |
+| `code` | yes | yes | 0.1 |
+| `semantic` | yes | yes | 0.22 |
 
 ## Conformance
 

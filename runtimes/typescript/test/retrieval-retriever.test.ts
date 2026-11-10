@@ -9,10 +9,13 @@ import {
   ConfigurationError,
   CostLedger,
   DEFAULT_CANDIDATE_FACTOR,
+  type Embedder,
+  type EmbeddingBatch,
   FakeDeterministicEmbedder,
   IngestReport,
   InMemoryVectorStore,
   LedgerEntry,
+  type PinnedEmbedding,
   RerankSpec,
   Retriever,
   RetrieverBinding,
@@ -198,6 +201,78 @@ describe('Retriever ingest', () => {
     const report = await bound.ingest(CORPUS);
 
     expect(report.costUsd).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Two paragraphs about different subjects, so the semantic boundary pass finds a
+ * similarity valley to cut at, each repeated past the chunk `size`.
+ */
+const SEMANTIC_TEXT =
+  'The compiler lowers the abstract syntax tree into bytecode. '.repeat(4) +
+  '\n\n' +
+  'Sourdough needs a warm kitchen and a patient baker. '.repeat(4);
+
+const SEMANTIC_ALPHA = document('alpha.md', SEMANTIC_TEXT);
+const SEMANTIC_BETA = document('beta.md', SEMANTIC_TEXT);
+
+/** Wraps the fake embedder and keeps every batch it reported. */
+class RecordingEmbedder implements Embedder {
+  readonly name = 'recording-embedder';
+  readonly batches: TokenUsage[] = [];
+  private readonly inner = new FakeDeterministicEmbedder();
+
+  async embed(
+    texts: readonly string[],
+    init: { readonly model: PinnedEmbedding },
+  ): Promise<EmbeddingBatch> {
+    const batch = await this.inner.embed(texts, init);
+    this.batches.push(batch.usage);
+    return batch;
+  }
+
+  async close(): Promise<void> {
+    await this.inner.close();
+  }
+}
+
+function semanticRetriever(embedder: Embedder): Retriever {
+  return new Retriever(binding({ chunking: chunkingSpec({ strategy: 'semantic', size: 120 }) }), {
+    embedder,
+    store: new InMemoryVectorStore(),
+  });
+}
+
+describe('Retriever ingest, semantic chunking', () => {
+  it('reports the boundary pass alongside the chunk pass', async () => {
+    const embedder = new RecordingEmbedder();
+
+    const report = await semanticRetriever(embedder).ingest([SEMANTIC_ALPHA]);
+
+    const boundary = at(embedder.batches, 0).inputTokens;
+    expect(boundary).toBeGreaterThan(0);
+    expect(report.tokens).toBe(embedder.batches.reduce((total, u) => total + u.inputTokens, 0));
+    expect(report.tokens).toBeGreaterThan(boundary);
+    expect(report.costUsd).toBeGreaterThan(0);
+  });
+
+  it('sums the boundary pass of every document', async () => {
+    // The chunker reports one document's boundary work and resets per document, so the
+    // retriever has to sum. Unsummed this would report the last document alone — and a
+    // one-document test would still pass.
+    const single = await semanticRetriever(new FakeDeterministicEmbedder()).ingest([
+      SEMANTIC_ALPHA,
+    ]);
+    const both = await semanticRetriever(new FakeDeterministicEmbedder()).ingest([
+      SEMANTIC_ALPHA,
+      SEMANTIC_BETA,
+    ]);
+
+    expect(both.tokens).toBe(single.tokens * 2);
+    expect(both.tokens).toBeGreaterThan(single.tokens);
+    // Strict rather than equal: each charge is rounded, so one corpus ingest and two
+    // single ingests do not land on the same figure.
+    expect(both.costUsd).toBeGreaterThan(single.costUsd);
   });
 });
 

@@ -229,6 +229,37 @@ The `s3` loader signs its requests with SigV4 from `AWS_ACCESS_KEY_ID`,
 than a silent default. `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL` points it at a
 compatible endpoint, using path-style addressing.
 
+### How a document is chunked
+
+`chunking.strategy` names the rule that picks where one chunk ends and the next begins, and
+`size` is the ceiling every rule fills to. The four strategies differ only in where a
+boundary is *allowed* to fall:
+
+| `strategy` | A boundary may fall | Calls the embedder |
+| --- | --- | --- |
+| `fixed` | anywhere, mid-word included: the window always fills to `size` | no |
+| `recursive` | at the last paragraph break, else line break, else sentence end, else word break inside the window | no |
+| `code` | at the last blank line, else line break, else statement end inside the window | no |
+| `semantic` | where the embeddings of adjacent units stop agreeing (spec 0.22) | yes, once per document |
+
+`semantic` is the only one that costs more than it looks. Finding a topic change means
+embedding every atomic unit of a document before any chunk exists, so such a document is
+embedded twice - once for the boundaries, once for the chunks. `aid ingest` reports both
+passes in its token and cost totals rather than hiding the first behind the second.
+
+```yaml
+retrievers:
+  handbook:
+    chunking:
+      strategy: semantic
+      size: 800
+      overlap: 100
+```
+
+A spec below 0.22 that declares `semantic` is refused with the version it needs. Silently
+chunking by size would answer a question the spec did not ask, and the ingest bill would be
+the only place the difference showed.
+
 ## `guardrails`
 
 ```yaml

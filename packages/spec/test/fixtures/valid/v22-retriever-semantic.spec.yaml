@@ -1,0 +1,37 @@
+specVersion: "0.22"
+
+project:
+  name: semantic-knowledge
+  namespace: aid.examples.semantic
+  description: Cuts chunks where embedding similarity dips instead of at a fixed size.
+  targets:
+    - py-fastapi
+
+models:
+  embed:
+    provider: fake
+    modelId: text-embedding-3-small
+    capabilities: [embeddings]
+
+stores:
+  docs:
+    kind: memory
+    dimensions: 1536
+
+retrievers:
+  knowledge:
+    source:
+      kind: file
+      uri: ./docs
+      glob: "**/*.md"
+    chunking:
+      strategy: semantic
+      size: 800
+      overlap: 100
+    embedModel: embed
+    store: docs
+    index:
+      metric: cosine
+    topK: 5
+    refresh:
+      mode: full

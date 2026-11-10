@@ -102,7 +102,9 @@ function planBlock(): string {
       'The document and chunk counts a run would write, without building a store. ' +
         'That is what makes a dry run cheap and offline: the chunking is applied, so ' +
         'the counts are the ones a real run would report, but no embedder is called ' +
-        'and no store is opened.',
+        'and no store is opened. A semantic strategy is refused rather than counted ' +
+        'wrong: choosing its boundaries embeds the whole source, which is exactly the ' +
+        'work a dry run exists to avoid.',
       INDENT,
     ),
     `${INDENT}binding = build_binding(retriever_id)`,
@@ -110,13 +112,21 @@ function planBlock(): string {
     `${INDENT}${INDENT}raise ConfigurationError(`,
     `${INDENT}${INDENT}${INDENT}f"retriever {retriever_id!r} ingests inside its knowledge base, not here"`,
     `${INDENT}${INDENT})`,
+    `${INDENT}if binding.chunking.strategy is ChunkingStrategy.SEMANTIC:`,
+    `${INDENT}${INDENT}raise ConfigurationError(`,
+    `${INDENT}${INDENT}${INDENT}"a dry run cannot count semantic chunks: choosing the boundaries embeds the "`,
+    `${INDENT}${INDENT}${INDENT}"whole source, which is the work --dry-run exists to avoid; run the ingest"`,
+    `${INDENT}${INDENT})`,
     `${INDENT}connector = open_connector(binding.source, base_dir=APP_ROOT)`,
     `${INDENT}try:`,
     `${INDENT}${INDENT}documents = await connector.documents()`,
     `${INDENT}finally:`,
     `${INDENT}${INDENT}await connector.aclose()`,
     `${INDENT}chunker = chunker_for(binding.chunking)`,
-    `${INDENT}return len(documents), sum(len(chunker.chunk(document)) for document in documents)`,
+    `${INDENT}chunks = 0`,
+    `${INDENT}for document in documents:`,
+    `${INDENT}${INDENT}chunks += len(await chunker.chunk(document))`,
+    `${INDENT}return len(documents), chunks`,
   ].join('\n');
 }
 
@@ -179,6 +189,7 @@ function emitIngest(retriever: LocalRetrieverShape): EmittedFile {
         ['import argparse', 'import asyncio', 'import sys'],
         [
           importFrom('aid_runtime', [
+            'ChunkingStrategy',
             'ConfigurationError',
             'CostLedger',
             'FeatureDeferredError',

@@ -59,6 +59,10 @@ const BATCH_SIZE = 64;
  * `removed` counts chunks deleted because their document no longer yields them. All
  * three are zero-or-more, and all but `written` are zero for a `full` refresh, which
  * never reads the index and never deletes from it.
+ *
+ * `tokens` and `costUsd` include the semantic chunker's boundary pass. That pass
+ * embeds every unit before a chunk exists, so reporting only the chunk embeddings
+ * would undercount what the ingest actually spent.
  */
 export class IngestReport {
   readonly retriever: string;
@@ -189,12 +193,21 @@ export class Retriever {
   async ingest(documents?: readonly SourceDocument[] | null): Promise<IngestReport> {
     const incremental = this._binding.refreshMode === 'incremental';
     const sourceDocuments = documents != null ? [...documents] : await this._readSource();
-    const chunker = chunkerFor(this._binding.chunking);
+    const chunker = chunkerFor(this._binding.chunking, {
+      embedder: this._embedder,
+      model: this._binding.embedding,
+    });
     const chunks: Chunk[] = [];
+    // A chunker reports one document's boundary work, so a corpus has to be summed
+    // here: reading `chunker.usage` after the loop would report only the last
+    // document.
+    let boundaryInput = 0;
+    let boundaryOutput = 0;
     for (const document of sourceDocuments) {
-      for (const chunk of chunker.chunk(document)) {
-        chunks.push(chunk);
-      }
+      const documentChunks = await chunker.chunk(document);
+      boundaryInput += chunker.usage.inputTokens;
+      boundaryOutput += chunker.usage.outputTokens;
+      chunks.push(...documentChunks);
     }
 
     let toEmbed = chunks;
@@ -210,8 +223,14 @@ export class Retriever {
     }
 
     const records: StoreRecord[] = [];
-    let tokens = 0;
-    let cost = 0.0;
+    // A semantic chunker embeds every unit before it can cut, so its boundary pass is
+    // work this ingest caused and must report. The size chunkers report zero.
+    const boundaryUsage = new TokenUsage({
+      inputTokens: boundaryInput,
+      outputTokens: boundaryOutput,
+    });
+    let tokens = boundaryUsage.inputTokens;
+    let cost = boundaryUsage.totalTokens > 0 ? this._chargeEmbedding(boundaryUsage) : 0.0;
     for (let start = 0; start < toEmbed.length; start += BATCH_SIZE) {
       const batch = toEmbed.slice(start, start + BATCH_SIZE);
       const embedded = await this._embed(batch.map((chunk) => chunk.text));
@@ -300,9 +319,14 @@ export class Retriever {
     texts: readonly string[],
   ): Promise<{ readonly batch: EmbeddingBatch; readonly costUsd: number }> {
     const batch = await this._embedder.embed(texts, { model: this._binding.embedding });
+    return { batch, costUsd: this._chargeEmbedding(batch.usage) };
+  }
+
+  /** Price one embedding pass through the pinned profile and charge the ledger. */
+  private _chargeEmbedding(batchUsage: TokenUsage): number {
     const usage = new TokenUsage({
-      inputTokens: batch.usage.inputTokens,
-      outputTokens: batch.usage.outputTokens,
+      inputTokens: batchUsage.inputTokens,
+      outputTokens: batchUsage.outputTokens,
     });
     // Priced through CostProfile rather than a ModelSpec: a ModelSpec requires a
     // context window and an output ceiling, and fabricating those to reuse a pricing
@@ -320,7 +344,7 @@ export class Retriever {
         }),
       );
     }
-    return { batch, costUsd };
+    return costUsd;
   }
 
   /**

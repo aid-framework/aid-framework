@@ -69,6 +69,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.19',
   '0.20',
   '0.21',
+  '0.22',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -250,6 +251,15 @@ export const RETRIEVAL_FILTERS_MIN_VERSION: SpecVersion = '0.20';
  * the shipped remote kinds is told the version it needs.
  */
 export const RETRIEVAL_REMOTE_SOURCE_MIN_VERSION: SpecVersion = '0.21';
+
+/**
+ * The first spec version whose runtimes implement `retrievers[].chunking.strategy: semantic`.
+ *
+ * Before 0.22 it was refused outright, because a strategy that no runtime honours would
+ * fall back to size chunking while the spec read as if the index were semantic. A 0.21
+ * document that declares it is told the version it needs.
+ */
+export const RETRIEVAL_SEMANTIC_CHUNKING_MIN_VERSION: SpecVersion = '0.22';
 
 /** The version gate for every provider id that arrived after the spec that introduced it. */
 const PROVIDER_MIN_VERSIONS: Readonly<Record<string, SpecVersion>> = {
@@ -2362,13 +2372,18 @@ function retrievalDiagnostics(spec: Record<string, unknown>, diagnostics: Diagno
       }
     }
 
-    if (asRecord(retriever.chunking).strategy === 'semantic') {
+    if (
+      asRecord(retriever.chunking).strategy === 'semantic' &&
+      declared !== undefined &&
+      known &&
+      !specVersionAtLeast(declared, RETRIEVAL_SEMANTIC_CHUNKING_MIN_VERSION)
+    ) {
       diagnostics.push(
         errorDiagnostic({
           code: DIAGNOSTIC_CODES.notSupported,
-          message: `'retrievers.${name}.chunking.strategy: semantic' is defined by the AID design but is not implemented in spec v0.1`,
+          message: `'retrievers.${name}.chunking.strategy: semantic' requires specVersion ${RETRIEVAL_SEMANTIC_CHUNKING_MIN_VERSION}, but this specification declares version ${declared}`,
           path: at('chunking', 'strategy'),
-          hint: 'semantic chunking needs an embedding pass over the whole source at ingest; spec v0.1 chunks by size (fixed, recursive, code)',
+          hint: `set specVersion: "${RETRIEVAL_SEMANTIC_CHUNKING_MIN_VERSION}"; a retriever that chunks by size is unchanged`,
         }),
       );
     }

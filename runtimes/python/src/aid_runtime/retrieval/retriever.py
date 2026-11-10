@@ -85,6 +85,10 @@ class IngestReport(BaseModel):
     ``chunks``. ``removed`` counts chunks deleted because their document no longer
     yields them. All three are zero-or-more, and all but ``written`` are zero for a
     ``full`` refresh, which never reads the index and never deletes from it.
+
+    ``tokens`` and ``cost_usd`` include the semantic chunker's boundary pass. That pass
+    embeds every unit before a chunk exists, so reporting only the chunk embeddings
+    would undercount what the ingest actually spent.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -216,8 +220,20 @@ class Retriever:
         local = self._local
         incremental = local.refresh_mode is RefreshMode.INCREMENTAL
         source_documents = tuple(documents) if documents is not None else await self._read_source()
-        chunker = chunker_for(local.chunking)
-        chunks = [chunk for document in source_documents for chunk in chunker.chunk(document)]
+        chunker = chunker_for(
+            local.chunking, embedder=self._embedder, model=local.embedding
+        )
+        chunks: list[Chunk] = []
+        # A chunker reports one document's boundary work, so a corpus has to be summed
+        # here: reading `chunker.usage` after the loop would report only the last
+        # document.
+        boundary_input = 0
+        boundary_output = 0
+        for document in source_documents:
+            document_chunks = await chunker.chunk(document)
+            boundary_input += chunker.usage.input_tokens
+            boundary_output += chunker.usage.output_tokens
+            chunks.extend(document_chunks)
 
         to_embed = chunks
         removed = 0
@@ -229,8 +245,11 @@ class Retriever:
             to_embed = [chunk for chunk in chunks if chunk.chunk_id not in stored]
 
         records: list[StoreRecord] = []
-        tokens = 0
-        cost = 0.0
+        # A semantic chunker embeds every unit before it can cut, so its boundary pass
+        # is work this ingest caused and must report. The size chunkers report zero.
+        boundary_usage = TokenUsage(input_tokens=boundary_input, output_tokens=boundary_output)
+        tokens = boundary_usage.input_tokens
+        cost = self._charge_embedding(boundary_usage) if boundary_usage.total_tokens else 0.0
         for start in range(0, len(to_embed), _BATCH_SIZE):
             batch = to_embed[start : start + _BATCH_SIZE]
             embedded, batch_cost = await self._embed(tuple(chunk.text for chunk in batch))
@@ -429,10 +448,11 @@ class Retriever:
             raise AssertionError("_embed called without an embedder")
         local = self._local
         embedded = await embedder.embed(texts, model=local.embedding)
-        usage = TokenUsage(
-            input_tokens=embedded.usage.input_tokens,
-            output_tokens=embedded.usage.output_tokens,
-        )
+        return embedded, self._charge_embedding(embedded.usage)
+
+    def _charge_embedding(self, usage: TokenUsage) -> float:
+        """Price one embedding pass through the pinned profile and charge the ledger."""
+        local = self._local
         # Priced through CostProfile rather than a ModelSpec: a ModelSpec requires a
         # context window and an output ceiling, and fabricating those to reuse a
         # pricing helper would put invented numbers in a generated artifact.
@@ -448,7 +468,7 @@ class Retriever:
                     cost_usd=cost,
                 ),
             )
-        return embedded, cost
+        return cost
 
     async def _search_vector(
         self,

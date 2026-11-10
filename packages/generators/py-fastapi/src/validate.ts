@@ -1137,13 +1137,6 @@ function checkRetrieverDeclaration(
         'remain part of the design but unimplemented',
     );
   }
-  if (retriever.chunking.strategy === 'semantic') {
-    refuse(
-      `retriever '${retriever.id}' chunks with 'semantic', which the runtime does not ` +
-        'implement: it needs an embedding pass over the whole source at ingest, and Phase 1 ' +
-        'chunks by size (fixed, recursive, code)',
-    );
-  }
   const store = ir.stores.find((entry) => entry.id === retriever.store);
   if (store === undefined) {
     problems.push(

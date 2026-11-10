@@ -312,6 +312,14 @@ A retriever indexes an `s3://` prefix or one `http(s)://` document instead of a 
 - **Reference:** [spec](./reference/spec.md#retriever)
 - **Since:** `0.1.134`
 
+### Semantic chunking
+
+A retriever cuts a document where its topic changes, measured as a dip in the embedding similarity of adjacent units, instead of at a fixed size boundary.
+
+- **Turned on by:** `retrievers[].chunking.strategy: semantic`
+- **Reference:** [spec](./reference/spec.md#retrieverchunking)
+- **Since:** `0.1.135`
+
 ## Refused, on purpose
 
 An absent capability is stated once, here, with the diagnostic that enforces it, instead of being discovered during an apply or debugged in production.
