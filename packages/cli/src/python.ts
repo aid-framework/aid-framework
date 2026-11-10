@@ -9,6 +9,11 @@
  *
  * The contract is deliberately narrow: the caller names the module, and this file only
  * decides which program runs it and from where. It knows nothing about evals or ingest.
+ *
+ * There is a second question in here for `aid package edge`: which interpreter can run a
+ * helper that needs only the standard library. It is a different question -- it asks for
+ * an interpreter that will *not* import the project, and it needs a newer minimum version
+ * -- so it gets its own discovery rather than a flag on the first one.
  */
 
 import type { CliContext, SpawnResult } from './context.js';
@@ -32,6 +37,20 @@ const RUNTIME_PROBE = 'import aid_runtime.evals';
 /** `uv run python` is a different argv shape from `python`, so it is not a rename. */
 export function interpreterCommand(interpreter: string): readonly string[] {
   return interpreter === 'uv' ? ['uv', 'run', 'python'] : [interpreter];
+}
+
+/**
+ * The argv for a helper that needs nothing but the standard library.
+ *
+ * `aid eval`, `aid ingest` and `aid dev` want the *project's* Python and so use
+ * {@link interpreterCommand}. A helper that imports only stdlib must not: `uv run` inside
+ * the app root syncs the project first, and that sync is the install `aid package edge`
+ * is deliberately performing for a different platform. It would also fail whenever the
+ * app's dependencies have no wheel for the machine doing the packaging, which is exactly
+ * the case the packager exists to serve.
+ */
+export function stdlibCommand(interpreter: string): readonly string[] {
+  return interpreter === 'uv' ? ['uv', 'run', '--no-project', 'python'] : [interpreter];
 }
 
 /**
@@ -62,6 +81,27 @@ export function discoverInterpreter(
 ): string | undefined {
   for (const interpreter of INTERPRETERS) {
     const attempt = invoke(context, [...interpreterCommand(interpreter), '-c', probe]);
+    if (attempt !== undefined && attempt.status === 0) return interpreter;
+  }
+  return undefined;
+}
+
+/**
+ * What a stdlib-only helper needs: `tomllib`, which entered the standard library in 3.11.
+ *
+ * That minimum is why discovery asks at all: a 3.10 `python3` exists and looks usable, and
+ * would then fail the packager's first helper with an `ImportError` instead of falling
+ * through to an interpreter that works.
+ */
+export const STDLIB_PROBE = 'import tomllib, zipfile';
+
+/** The first interpreter that can run a stdlib-only helper, or `undefined` when none can. */
+export function discoverStdlibInterpreter(
+  context: CliContext,
+  probe: string = STDLIB_PROBE,
+): string | undefined {
+  for (const interpreter of INTERPRETERS) {
+    const attempt = invoke(context, [...stdlibCommand(interpreter), '-c', probe]);
     if (attempt !== undefined && attempt.status === 0) return interpreter;
   }
   return undefined;
