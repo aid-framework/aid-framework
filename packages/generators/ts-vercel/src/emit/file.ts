@@ -86,6 +86,10 @@ export function retrievalIngestModulePath(retriever: string): string {
   return `${GENERATED_ROOT}/retrieval/ingest/${retriever}.ts`;
 }
 
+export function retrievalSyncModulePath(retriever: string): string {
+  return `${GENERATED_ROOT}/retrieval/sync/${retriever}.ts`;
+}
+
 export function evalModulePath(evalId: string): string {
   return `${GENERATED_ROOT}/evals/${evalId}.ts`;
 }

@@ -30,6 +30,7 @@ import {
   MANIFEST_PATH,
   paths,
   retrievalIngestModulePath,
+  retrievalSyncModulePath,
 } from './emit/file.js';
 import { TS_VERCEL_MANIFEST } from './manifest.js';
 import { planTsVercel } from './plan.js';
@@ -59,6 +60,7 @@ export {
   MANIFEST_PATH,
   paths,
   retrievalIngestModulePath,
+  retrievalSyncModulePath,
 };
 
 /** The plan, unchanged. `plan` already holds the bytes; `emit` only hands them over. */

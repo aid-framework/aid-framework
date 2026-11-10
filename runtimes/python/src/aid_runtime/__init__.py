@@ -178,6 +178,7 @@ from aid_runtime.providers import (
 )
 from aid_runtime.retrieval import (
     DEFAULT_CANDIDATE_FACTOR,
+    DEFAULT_SYNC_TIMEOUT_SECONDS,
     Chunk,
     Chunker,
     ChunkingSpec,
@@ -234,6 +235,8 @@ from aid_runtime.retrieval import (
     SourceSpec,
     StoreKind,
     StoreRecord,
+    SyncResult,
+    SyncSupport,
     VectorStore,
     VectorStoreSpec,
     assemble_context,
@@ -248,6 +251,7 @@ from aid_runtime.retrieval import (
     embedder_for,
     estimate_tokens,
     fuse,
+    knowledge_base_client_for,
     lexical_ranking,
     lexical_score,
     open_connector,
@@ -257,6 +261,7 @@ from aid_runtime.retrieval import (
     retrieval_metrics,
     rrf_score,
     similarity,
+    sync_support,
     tokenize,
 )
 from aid_runtime.steps import (
@@ -310,7 +315,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.137"
+__version__ = "0.1.138"
 
 __all__ = [
     "ANTHROPIC_VERSION",
@@ -320,6 +325,7 @@ __all__ = [
     "DEFAULT_BASE_URL",
     "DEFAULT_CANDIDATE_FACTOR",
     "DEFAULT_GEMINI_BASE_URL",
+    "DEFAULT_SYNC_TIMEOUT_SECONDS",
     "DEFAULT_TYPESAFE_BASE_URL",
     "DEFAULT_VERTEX_LOCATION",
     "DEPTH_KEY",
@@ -496,6 +502,8 @@ __all__ = [
     "StoreRecord",
     "StreamChunk",
     "StructuredOutputError",
+    "SyncResult",
+    "SyncSupport",
     "ThreadMemory",
     "Threshold",
     "TokenUsage",
@@ -547,6 +555,7 @@ __all__ = [
     "generate_step",
     "get_tracer",
     "is_reproducible_model",
+    "knowledge_base_client_for",
     "lexical_ranking",
     "lexical_score",
     "llm_span",
@@ -575,6 +584,7 @@ __all__ = [
     "run_evaluation",
     "run_structured",
     "similarity",
+    "sync_support",
     "tokenize",
     "tool_step",
     "z_critical",
