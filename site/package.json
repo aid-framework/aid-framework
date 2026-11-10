@@ -10,11 +10,14 @@
     "check:links": "node scripts/check-links.mjs",
     "check:head": "node scripts/check-head.mjs",
     "check:a11y": "node scripts/check-a11y.mjs",
+    "check:browser": "node scripts/check-browser-a11y.mjs",
     "dev": "node scripts/gen-reference.mjs && vitepress dev",
     "build": "node scripts/gen-reference.mjs && vitepress build",
     "preview": "vitepress preview"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "playwright": "1.65.0",
     "vitepress": "1.6.4",
     "vue": "3.5.44"
   }
