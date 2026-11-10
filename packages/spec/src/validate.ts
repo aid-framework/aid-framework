@@ -67,6 +67,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.17',
   '0.18',
   '0.19',
+  '0.20',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -229,6 +230,15 @@ export const RUNTIME_MIN_VERSION: SpecVersion = '0.13';
  * is told the version it needs instead of being silently rebuilt from scratch.
  */
 export const RETRIEVAL_INCREMENTAL_MIN_VERSION: SpecVersion = '0.19';
+
+/**
+ * The first spec version whose runtimes evaluate `retrievers[].filters`.
+ *
+ * Before 0.20 the key was refused outright, because a filter that no runtime applies is
+ * worse than no filter at all: it reads as a tenant selector and narrows nothing. A 0.19
+ * document that declares one is told the version it needs.
+ */
+export const RETRIEVAL_FILTERS_MIN_VERSION: SpecVersion = '0.20';
 
 /** The version gate for every provider id that arrived after the spec that introduced it. */
 const PROVIDER_MIN_VERSIONS: Readonly<Record<string, SpecVersion>> = {
@@ -2244,6 +2254,31 @@ function assertMetricDiagnostics(spec: Record<string, unknown>, diagnostics: Dia
  * against the final spelling today and be told which phase serves it, instead of having
  * the key silently ignored.
  */
+
+/**
+ * The filter grammar both runtimes implement, restated here for a fast failure.
+ *
+ * The runtimes remain the authority -- generated code is reachable without this
+ * validator -- but a document with `tenant = acme` should be rejected before anything
+ * is generated, not on the first query after a deploy. Kept deliberately identical to
+ * `runtimes/{typescript,python}/.../filters` and the IR's `filters` reference.
+ */
+const FILTER_EXPRESSION = /^\s*[A-Za-z0-9_.-]+\s*(?:==|!=|\^=|\$=|\*=)\s*([\s\S]*)$/;
+
+/** The operators, in the order a hint lists them. */
+const FILTER_OPERATORS_HINT = '==, !=, ^=, $=, *=';
+
+function isFilterExpression(value: string): boolean {
+  const match = FILTER_EXPRESSION.exec(value);
+  if (match === null) return false;
+  const raw = (match[1] ?? '').trim();
+  const first = raw.slice(0, 1);
+  if (first === '"' || first === "'") {
+    return raw.length >= 2 && raw.slice(-1) === first && raw.length > 2;
+  }
+  return raw.length > 0;
+}
+
 function retrievalDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnostic[]): void {
   const retrievers = asRecord(spec.retrievers);
   const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
@@ -2310,15 +2345,35 @@ function retrievalDiagnostics(spec: Record<string, unknown>, diagnostics: Diagno
       );
     }
 
-    if (retriever.filters !== undefined) {
-      diagnostics.push(
-        errorDiagnostic({
-          code: DIAGNOSTIC_CODES.notSupported,
-          message: `'retrievers.${name}.filters' is defined by the AID design but is not implemented in spec v0.1`,
-          path: at('filters'),
-          hint: 'spec v0.1 ranks the whole index; filter expressions belong to a later phase',
-        }),
-      );
+    if (Array.isArray(retriever.filters) && retriever.filters.length > 0) {
+      if (
+        declared !== undefined &&
+        known &&
+        !specVersionAtLeast(declared, RETRIEVAL_FILTERS_MIN_VERSION)
+      ) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.notSupported,
+            message: `'retrievers.${name}.filters' requires specVersion ${RETRIEVAL_FILTERS_MIN_VERSION}, but this specification declares version ${declared}`,
+            path: at('filters'),
+            hint: `set specVersion: "${RETRIEVAL_FILTERS_MIN_VERSION}"; documents that retrieve without filters are unchanged`,
+          }),
+        );
+      }
+      // Reported at every version: a filter with unreadable syntax would otherwise be
+      // accepted here and refused on the first query after a deploy.
+      retriever.filters.forEach((expression, index) => {
+        if (typeof expression === 'string' && !isFilterExpression(expression)) {
+          diagnostics.push(
+            errorDiagnostic({
+              code: DIAGNOSTIC_CODES.filterExpression,
+              message: `'retrievers.${name}.filters[${index}]' is not a filter expression: ${JSON.stringify(expression)}`,
+              path: at('filters', index),
+              hint: `write '<field> <operator> <value>'; the operators are ${FILTER_OPERATORS_HINT}. Quote a value that contains spaces`,
+            }),
+          );
+        }
+      });
     }
   }
 }

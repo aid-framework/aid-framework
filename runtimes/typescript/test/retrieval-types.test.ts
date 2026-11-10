@@ -9,7 +9,6 @@ import {
   DISTANCE_METRICS,
   EmbeddingCostProfile,
   EmbeddingSpec,
-  FeatureDeferredError,
   IndexSpec,
   PinnedEmbedding,
   pinnedEmbedding,
@@ -266,22 +265,50 @@ describe('bindingFromSpec', () => {
     ).toThrow(/is declared 64-dimensional but retriever 'docs' pins 32 dimensions/);
   });
 
-  it('defers filters rather than pushing them into some adapters only', () => {
-    const withFilters = new RetrieverSpec({
-      id: 'docs',
-      source: new SourceSpec({ kind: 'file', uri: './docs' }),
-      chunking: chunkingSpec(),
-      embedModel: EMBED_ID,
-      store: 'docs',
-      index: new IndexSpec({ metric: 'cosine', hybrid: false }),
-      topK: 4,
-      filters: ['lang=en'],
-      refresh: new RefreshSpec({ mode: 'full' }),
+  it('carries filters and keeps the metadata they read', () => {
+    // A chunk carries only the metadata `keepMetadata` names, so a filter on a key
+    // that is not kept would silently match nothing. Declaring the filter must be
+    // enough -- the same key should not have to be listed twice.
+    const built = bindingFromSpec(
+      retrieverSpec({ filters: ['tenant == "acme"', 'tier ^= gold'] }),
+      { embedding: storeSpecFreeEmbedding(), store: storeSpec() },
+    );
+
+    expect(built.filters).toEqual(['tenant == "acme"', 'tier ^= gold']);
+    expect(built.chunking.keepMetadata).toEqual(['tenant', 'tier']);
+  });
+
+  it('adds filter metadata without disturbing declared keys', () => {
+    const built = bindingFromSpec(
+      retrieverSpec({
+        chunking: chunkingSpec({ keepMetadata: ['source', 'tenant'] }),
+        filters: ['tenant == acme'],
+      }),
+      { embedding: storeSpecFreeEmbedding(), store: storeSpec() },
+    );
+
+    expect(built.chunking.keepMetadata).toEqual(['source', 'tenant']);
+  });
+
+  it('does not add a reserved filter field to keepMetadata', () => {
+    const built = bindingFromSpec(retrieverSpec({ filters: ['doc_id == a.md'] }), {
+      embedding: storeSpecFreeEmbedding(),
+      store: storeSpec(),
     });
 
+    expect(built.chunking.keepMetadata).toEqual([]);
+  });
+
+  it('refuses a malformed filter when the retriever binds', () => {
+    // Generated code is reachable without the spec validator having run, so the
+    // runtime refuses a grammar it cannot evaluate rather than ignoring it, which
+    // would return passages the caller asked to exclude.
     expect(() =>
-      bindingFromSpec(withFilters, { embedding: storeSpecFreeEmbedding(), store: storeSpec() }),
-    ).toThrow(FeatureDeferredError);
+      bindingFromSpec(retrieverSpec({ filters: ['lang:en'] }), {
+        embedding: storeSpecFreeEmbedding(),
+        store: storeSpec(),
+      }),
+    ).toThrow(/operators are/);
   });
 
   it('does not defer an empty filter list', () => {

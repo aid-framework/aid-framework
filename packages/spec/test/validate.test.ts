@@ -262,7 +262,11 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
     code: DIAGNOSTIC_CODES.notSupported,
     path: ['models', 'cached', 'cache'],
   },
-  'retriever-filters.spec.yaml': {
+  'retriever-filter-grammar.spec.yaml': {
+    code: DIAGNOSTIC_CODES.filterExpression,
+    path: ['retrievers', 'knowledge', 'filters', 0],
+  },
+  'retriever-filters-below-version.spec.yaml': {
     code: DIAGNOSTIC_CODES.notSupported,
     path: ['retrievers', 'knowledge', 'filters'],
   },

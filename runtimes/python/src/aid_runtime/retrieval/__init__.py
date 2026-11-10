@@ -55,6 +55,14 @@ from aid_runtime.retrieval.embedding import (
     embedder_for,
     estimate_tokens,
 )
+from aid_runtime.retrieval.filters import (
+    FILTER_OPERATORS,
+    Filter,
+    compile_filters,
+    matches,
+    matches_all,
+    parse_filter,
+)
 from aid_runtime.retrieval.gate import RetrievalGate
 from aid_runtime.retrieval.hybrid import (
     RankedId,
@@ -130,6 +138,7 @@ from aid_runtime.retrieval.types import (
 
 __all__ = [
     "DEFAULT_CANDIDATE_FACTOR",
+    "FILTER_OPERATORS",
     "FIXTURE_ENV",
     "BedrockEmbedder",
     "BedrockKnowledgeBaseClient",
@@ -148,6 +157,7 @@ __all__ = [
     "EmbeddingSpec",
     "FakeDeterministicEmbedder",
     "FileConnector",
+    "Filter",
     "FixedChunker",
     "FixtureKnowledgeBaseClient",
     "GeminiEmbedder",
@@ -205,6 +215,7 @@ __all__ = [
     "chunk_id_for",
     "chunker_for",
     "cite",
+    "compile_filters",
     "create_store",
     "embedder_for",
     "estimate_tokens",
@@ -213,7 +224,10 @@ __all__ = [
     "knowledge_base_env_id",
     "lexical_ranking",
     "lexical_score",
+    "matches",
+    "matches_all",
     "open_connector",
+    "parse_filter",
     "pinned_embedding",
     "reranker_for",
     "resolve_uri",

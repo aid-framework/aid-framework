@@ -80,7 +80,6 @@ export type PlanProblemCode =
   | 'retriever-knowledge-base-unsupported'
   | 'retriever-source-unsupported'
   | 'retriever-embedding-unresolved'
-  | 'retriever-filters-unsupported'
   | 'eval-target-unresolved'
   | 'eval-target-unsupported'
   | 'eval-metric-unsupported'
@@ -581,15 +580,6 @@ export function checkRetrievers(ir: IR): PlanProblem[] {
           'retriever-source-unsupported',
           at,
           `source kind ${retriever.source.kind} is not wired; the runtime ships a file connector only`,
-        ),
-      );
-    }
-    if (retriever.filters !== undefined && retriever.filters.length > 0) {
-      problems.push(
-        problem(
-          'retriever-filters-unsupported',
-          at,
-          'filters would have to be pushed into every store adapter, which spec v0.1 does not do',
         ),
       );
     }

@@ -29,6 +29,7 @@ import { chunkerFor } from './chunking.js';
 import { cite, RetrievalResult, RetrievedItem } from './citations.js';
 import { type Connector, openConnector, type SourceDocument } from './connectors.js';
 import { type Embedder, type EmbeddingBatch, embedderFor } from './embedding.js';
+import { compileFilters, type Filter, matchesAll } from './filters.js';
 import { fuse, lexicalRanking } from './hybrid.js';
 import { type Reranker, rerankerFor } from './rerank.js';
 import { createStore, type SearchHit, StoreRecord, type VectorStore } from './stores.js';
@@ -124,6 +125,7 @@ export class Retriever {
   private readonly _ledger: CostLedger | undefined;
   private readonly _budget: Budget | undefined;
   private readonly _candidateFactor: number;
+  private readonly _filters: readonly Filter[];
   private _closed = false;
 
   constructor(binding: RetrieverBinding, options: RetrieverOptions = {}) {
@@ -153,6 +155,8 @@ export class Retriever {
     this._ledger = options.ledger;
     this._budget = options.budget;
     this._candidateFactor = candidateFactor;
+    // Compiled once: a malformed selector is a construction fault, not a per-query one.
+    this._filters = compileFilters(binding.filters);
   }
 
   get binding(): RetrieverBinding {
@@ -254,11 +258,8 @@ export class Retriever {
       throw new ConfigurationError('the embedder returned no vector for the query');
     }
     const candidates = wanted * this._candidateFactor;
-    const hits = await this._store.search(vector, {
-      topK: candidates,
-      metric: this._binding.index.metric,
-    });
-    const ranked = await this._rank(query, hits, candidates);
+    const hits = await this._searchVector(vector, candidates);
+    const ranked = await this._rank(query, hits, candidates, this._filters);
     let items: readonly RetrievedItem[] = toItems(ranked);
     if (this._reranker !== null) {
       const topN = this._binding.rerank?.topN ?? wanted;
@@ -323,22 +324,57 @@ export class Retriever {
   }
 
   /**
+   * Vector search, widened until `wanted` passages survive the filters.
+   *
+   * A store can only apply `topK`, so a selective filter has to be satisfied by
+   * looking deeper. The limit doubles until enough passages match or the store returns
+   * fewer rows than were asked for -- the latter is the only signal that the corpus is
+   * exhausted. With no filters this is one search at the historical candidate width,
+   * so the unfiltered path is unchanged.
+   */
+  private async _searchVector(
+    vector: readonly number[],
+    width: number,
+  ): Promise<readonly SearchHit[]> {
+    let limit = Math.max(width, 1);
+    for (;;) {
+      const hits = await this._store.search(vector, {
+        topK: limit,
+        metric: this._binding.index.metric,
+      });
+      const kept = hits.filter((hit) => matchesAll(hit.record.chunk, this._filters));
+      if (kept.length >= width || hits.length < limit) {
+        return kept;
+      }
+      limit *= 2;
+    }
+  }
+
+  /**
    * The candidate ranking: vector only, or fused with a lexical ranking.
    *
    * Fusion is skipped when `index.hybrid` is false, and that is the whole meaning of
    * the flag -- not "use a different metric", but "do not consult the lexical ranking
    * at all".
+   *
+   * The lexical half reads the stored corpus rather than the vector hits, so it is
+   * filtered too. Ranking the whole corpus and filtering afterwards would let a
+   * passage outside the selector re-enter through BM25, which is the one way a filter
+   * could silently match more than it says.
    */
   private async _rank(
     query: string,
     hits: readonly SearchHit[],
     candidates: number,
+    filters: readonly Filter[] = [],
   ): Promise<readonly ScoredChunk[]> {
     if (!this._binding.index.hybrid) {
       return hits.map((hit) => new ScoredChunk({ chunk: hit.record.chunk, score: hit.score }));
     }
 
-    const corpus = await this._store.corpus();
+    const stored = await this._store.corpus();
+    const corpus =
+      filters.length === 0 ? stored : stored.filter((record) => matchesAll(record.chunk, filters));
     const byId = new Map<string, StoreRecord>();
     for (const record of corpus) {
       byId.set(record.chunk.chunkId, record);

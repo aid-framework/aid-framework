@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from aid_runtime import Capability, ConfigurationError, FeatureDeferredError, TokenUsage
+from aid_runtime import Capability, ConfigurationError, TokenUsage
 from aid_runtime.retrieval import (
     ChunkingStrategy,
     DistanceMetric,
@@ -197,11 +197,45 @@ def test_a_store_with_no_declared_width_is_accepted() -> None:
     assert pinned_binding.embedding.dimensions == DIMENSIONS
 
 
-def test_a_binding_defers_filters_instead_of_ignoring_them() -> None:
-    # The spec validator refuses filters too; this refuses them again because
-    # generated code is reachable without the validator having run, and silently
-    # ignoring a filter would return passages the caller asked to exclude.
-    with pytest.raises(FeatureDeferredError, match="filters"):
+def test_a_binding_carries_filters_and_keeps_the_metadata_they_read() -> None:
+    # A chunk carries only the metadata `keepMetadata` names, so a filter on a key
+    # that is not kept would silently match nothing. Declaring the filter must be
+    # enough -- the same key should not have to be listed twice.
+    bound = binding_from_spec(
+        retriever_spec(filters=('tenant == "acme"', "tier ^= gold")),
+        embedding=embedding_spec(),
+        store=store_spec(),
+    )
+
+    assert bound.filters == ('tenant == "acme"', "tier ^= gold")
+    assert bound.chunking.keep_metadata == ("tenant", "tier")
+
+
+def test_filter_metadata_is_added_without_disturbing_declared_keys() -> None:
+    bound = binding_from_spec(
+        retriever_spec(filters=("tenant == acme",), keep_metadata=("source", "tenant")),
+        embedding=embedding_spec(),
+        store=store_spec(),
+    )
+
+    assert bound.chunking.keep_metadata == ("source", "tenant")
+
+
+def test_a_reserved_filter_field_is_not_added_to_keep_metadata() -> None:
+    bound = binding_from_spec(
+        retriever_spec(filters=("doc_id == a.md",)),
+        embedding=embedding_spec(),
+        store=store_spec(),
+    )
+
+    assert bound.chunking.keep_metadata == ()
+
+
+def test_a_malformed_filter_is_refused_when_the_retriever_binds() -> None:
+    # Generated code is reachable without the spec validator having run, so the
+    # runtime refuses a grammar it cannot evaluate rather than ignoring it, which
+    # would return passages the caller asked to exclude.
+    with pytest.raises(ConfigurationError, match="operators are"):
         binding_from_spec(
             retriever_spec(filters=("lang:en",)),
             embedding=embedding_spec(),
