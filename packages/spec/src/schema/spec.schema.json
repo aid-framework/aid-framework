@@ -36,7 +36,8 @@
         "0.23",
         "0.24",
         "0.25",
-        "0.26"
+        "0.26",
+        "0.27"
       ]
     },
     "profile": {
@@ -143,6 +144,7 @@
       "propertyNames": { "$ref": "#/$defs/name" },
       "additionalProperties": { "$ref": "#/$defs/eval" }
     },
+    "observability": { "$ref": "#/$defs/observability" },
     "pipelines": {
       "type": "object",
       "minProperties": 1,
@@ -885,9 +887,9 @@
       "additionalProperties": false,
       "properties": {
         "target": {
-          "description": "Only pipelines are evaluable in Phase 0.",
+          "description": "What the eval scores. `pipeline:<id>` scores a pipeline's HTTP response through its declared route; `agent:<id>` (0.27) scores an agent run's trajectory rather than its text output, which is what `tool-trace`, `cost` and `latency` measure. `prompt:<id>` scores a prompt in isolation.",
           "type": "string",
-          "pattern": "^pipeline:[a-z][a-z0-9_]{0,63}$"
+          "pattern": "^(pipeline|agent):[a-z][a-z0-9_]{0,63}$"
         },
         "dataset": {
           "type": "object",
@@ -2011,6 +2013,42 @@
           "minimum": 1
         }
       }
+    },
+    "observability": {
+      "description": "How much the generated app records about a run, and where it goes. Omitted entirely, tracing is on with the sensitive fields the security gate derives redacted and nothing exported, which is the behaviour every document before 0.27 already had. `export: otlp` declares intent rather than a transport: the generated app reports the destination and reads the address from the environment, and installing an exporter stays a host decision, because a runtime library that installed one would decide telemetry for every application embedding it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trace": {
+          "description": "Whether spans are recorded at all. Defaults to true. Turning it off under `profile: enterprise` is refused, and turning it off while declaring `export: otlp` is refused as a contradiction rather than resolved in either direction.",
+          "type": "boolean"
+        },
+        "redact": {
+          "description": "The fields to strip from a span before it leaves the process. Omitted, this defaults to every field the security gate derives as sensitive, and the security gate still refuses a declared set that drops one. Naming a field the IR does not mark sensitive is accepted: a spec may be stricter than the derived set, never looser.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "export": {
+          "description": "`none` records spans in-process only, which is what every document before 0.27 did. `otlp` declares that they should leave for an OTLP collector, and requires `endpointEnv`, because an export with no destination is a promise to nobody. Refused under `profile: enterprise` with `none`: an enterprise deployment that keeps no trace cannot answer the audit question the profile promises.",
+          "enum": ["otlp", "none"]
+        },
+        "endpointEnv": {
+          "description": "The environment variable holding the collector's address. A name, never a URL: following `models.*.apiKeyEnv`, the address stays in the platform so a spec can move between environments without edit. Only meaningful with `export: otlp`, which the schema requires rather than defaulting.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "export": { "const": "otlp" } }, "required": ["export"] },
+          "then": { "required": ["endpointEnv"], "properties": { "endpointEnv": true } }
+        },
+        {
+          "if": { "required": ["endpointEnv"] },
+          "then": { "required": ["export"], "properties": { "export": true } }
+        }
+      ]
     },
     "image": {
       "description": "Where the image for a `target: container` deployment is published. `ghcr.io` needs no credential: a generated release workflow pushes there with the `GITHUB_TOKEN` it already has. Every other registry declares the fields its login reads -- `docker.io` (spec 0.16) the *names* of two repository secrets, `aws.ecr` (spec 0.17) the account, region and role the workflow federates with, and `gcp.artifact-registry` (spec 0.18) the project, region and Workload Identity pair. No credential value is ever written into the spec.",

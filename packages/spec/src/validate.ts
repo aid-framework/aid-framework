@@ -39,6 +39,7 @@ export const SUPPORTED_SECTIONS = [
   'memory',
   'deployments',
   'evals',
+  'observability',
   'pipelines',
 ] as const;
 
@@ -78,6 +79,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.24',
   '0.25',
   '0.26',
+  '0.27',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -99,6 +101,7 @@ export const SECTION_MIN_VERSION: Partial<
   gateways: '0.24',
   profile: '0.25',
   state: '0.26',
+  observability: '0.27',
 };
 
 /**
@@ -179,6 +182,26 @@ export const DEPLOYMENT_CONTROL_MIN_VERSION: SpecVersion = '0.26';
  * constructs that live inside existing sections carry their own rule below.
  */
 export const RUN_STATE_MIN_VERSION: SpecVersion = '0.26';
+
+/**
+ * The first spec version that lets an eval target an agent. The `evals` section exists
+ * from 0.1, so this is a *nested* construct like `models[].cache`, and the schema alone
+ * would accept it in an older document whose generators then had no trajectory to score.
+ *
+ * 0.27 widens the `target` alternation; it does not change what an existing value means,
+ * so no 0.26 document becomes invalid. It is still a version bump because the vocabulary
+ * grew: a document that writes `agent:` was written against a version that offered it.
+ */
+export const AGENT_EVAL_TARGET_MIN_VERSION: SpecVersion = '0.27';
+
+/**
+ * The eval metric kinds that score a *trajectory* rather than a text response: which
+ * tools were called, in what order, what the run cost, and how long it took. They are
+ * declarable from 0.27 only on an `agent:` target, because a pipeline's HTTP response
+ * carries no tool calls to score -- and they are still refused at generation, which is
+ * why the IR refuses them with a diagnostic rather than letting codegen fail later.
+ */
+export const TRAJECTORY_METRIC_KINDS: readonly string[] = ['tool-trace', 'cost', 'latency'];
 
 /**
  * The first spec version that accepts the batch surface: `pipelines[].trigger.manual` and
@@ -635,6 +658,7 @@ function scopeDiagnostics(
   deploymentImageDiagnostics(spec, diagnostics, reported);
   deploymentPlacementDiagnostics(spec, diagnostics, reported);
   deliveryControlDiagnostics(spec, diagnostics, reported);
+  agentEvalTargetDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
   routeDiagnostics(spec, diagnostics, reported);
@@ -1064,6 +1088,41 @@ function deliveryControlDiagnostics(
         `set specVersion: "${RUN_STATE_MIN_VERSION}"; a step that sets no requiresApproval is unchanged`,
       );
     });
+  }
+}
+
+/**
+ * Nested version gating for an `evals[].target` that names an agent.
+ *
+ * The schema pattern admits `agent:` from 0.1 because a JSON Schema cannot say "this
+ * alternative arrived in 0.27" -- an alternation has one version, not one per branch. So
+ * the version is stated here, where it can name the version the document needs, for the
+ * same reason `models[].cache` and `deployments[].image` have their own gates: a key the
+ * document's version did not offer must be refused, never silently read as absent.
+ */
+function agentEvalTargetDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) return;
+  if (specVersionAtLeast(declared, AGENT_EVAL_TARGET_MIN_VERSION)) return;
+
+  for (const [id, raw] of Object.entries(asRecord(spec.evals))) {
+    const target = asRecord(raw).target;
+    if (typeof target !== 'string' || !target.startsWith('agent:')) continue;
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.notSupported,
+        message: `'evals.${id}.target' names an agent, which requires specVersion ${AGENT_EVAL_TARGET_MIN_VERSION}, but this specification declares version ${declared}`,
+        path: ['evals', id, 'target'],
+        hint: `set specVersion: "${AGENT_EVAL_TARGET_MIN_VERSION}"; an eval that targets a pipeline is unchanged`,
+      }),
+    );
+    reported.add(JSON.stringify(['evals', id, 'target']));
   }
 }
 
