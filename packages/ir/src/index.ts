@@ -60,6 +60,7 @@ export {
 } from './catalog/index.js';
 export type {
   DeployAlarm,
+  DeployAudit,
   DeployEndpoint,
   DeployEnvVar,
   DeployGateway,

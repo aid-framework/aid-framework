@@ -41,6 +41,7 @@ import { buildFixture, byId } from './helpers.js';
 const TOP_LEVEL_KEYS = [
   'irVersion',
   'specVersion',
+  'profile',
   'project',
   'types',
   'models',

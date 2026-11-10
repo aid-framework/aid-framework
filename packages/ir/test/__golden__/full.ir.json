@@ -47,7 +47,7 @@
   ],
   "gateways": [],
   "guardrails": [],
-  "irVersion": "0.1.0",
+  "irVersion": "0.2.0",
   "knowledgeBases": [],
   "memory": [],
   "models": [
@@ -187,6 +187,7 @@
       }
     }
   ],
+  "profile": "standard",
   "project": {
     "description": "Ticket triage and refund handling.",
     "name": "support-desk",

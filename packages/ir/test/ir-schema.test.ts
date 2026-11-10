@@ -48,7 +48,7 @@ function firstStep(ir: IR): { kind: string } {
 describe('ir.schema.json', () => {
   it('is a draft 2020-12 schema with a stable identity', () => {
     expect(SCHEMA.$schema).toBe('https://json-schema.org/draft/2020-12/schema');
-    expect(SCHEMA.$id).toBe('https://aid-framework.dev/schema/ir-0.1.json');
+    expect(SCHEMA.$id).toBe('https://aid-framework.dev/schema/ir-0.2.json');
   });
 
   it('accepts every well-formed IR the builder produces', () => {
@@ -131,5 +131,34 @@ describe('ir.schema.json', () => {
 
   it('rejects a misversioned IR', () => {
     expect(validate({ ...base, irVersion: '0.1' })).toBe(false);
+  });
+
+  it('rejects a profile outside the vocabulary', () => {
+    expect(validate({ ...base, profile: 'regulated' })).toBe(false);
+    expect(validate({ ...base, profile: 'standard' })).toBe(true);
+    expect(validate({ ...base, profile: 'enterprise' })).toBe(true);
+  });
+
+  it('rejects a placement or audit sink outside the vocabulary', () => {
+    // `full.yaml` declares no deployment, so the anchor is spelled out rather than
+    // borrowed — otherwise every case would fail for a missing `id` and prove nothing.
+    const deployment = {
+      id: 'api',
+      target: 'serverless',
+      streaming: false,
+      secrets: [],
+      env: [],
+      traits: [],
+    };
+    const placed = (extra: Record<string, unknown>): boolean =>
+      validate({ ...base, deployments: [{ ...deployment, ...extra }] });
+
+    expect(validate({ ...base, deployments: [deployment] })).toBe(true);
+    expect(placed({ cloud: 'azure' })).toBe(false);
+    expect(placed({ cloud: 'gcp' })).toBe(true);
+    expect(placed({ audit: { sink: 'splunk' } })).toBe(false);
+    expect(placed({ audit: {} })).toBe(false);
+    expect(placed({ audit: { sink: 'cloudwatch', retentionDays: 0 } })).toBe(false);
+    expect(placed({ audit: { sink: 'cloudwatch', retentionDays: 30 } })).toBe(true);
   });
 });
