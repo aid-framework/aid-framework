@@ -1819,7 +1819,7 @@
       }
     },
     "runtime": {
-      "description": "A managed agent runtime: a service that stops being a container the operator keeps warm and becomes an agent the platform schedules, isolates and addresses. `aws-agentcore` is Amazon Bedrock AgentCore Runtime, one microVM per session with up to 8 hours; `gcp-agent-platform` is the Gemini Enterprise Agent Platform (formerly Vertex AI Agent Engine, still `google_vertex_ai_reasoning_engine` in Terraform), a managed per-session runtime. Both accept the image `target: container` already builds, which is what makes this a deployment destination rather than a second generation path. AgentCore Memory is the only memory resource with a Terraform representation in v1, so `memory` is refused on the Google platform rather than silently dropped. `session.ttlMinutes` defaults to 480, the AgentCore microVM ceiling; the Google platform accepts up to 20160 (14 days).",
+      "description": "A managed agent runtime: a service that stops being a container the operator keeps warm and becomes an agent the platform schedules, isolates and addresses. `aws-agentcore` is Amazon Bedrock AgentCore Runtime, one microVM per session with up to 8 hours; `gcp-agent-platform` is the Gemini Enterprise Agent Platform (formerly Vertex AI Agent Engine, still `google_vertex_ai_reasoning_engine` in Terraform), a managed per-session runtime. Both accept the image `target: container` already builds, which is what makes this a deployment destination rather than a second generation path. `memory.shortTerm` maps to AgentCore Memory on `aws-agentcore` and to a Vertex AI Memory Bank on `gcp-agent-platform`, where it is configured on the reasoning engine through `context_spec.memory_bank_config`. `session.ttlMinutes` defaults to 480, the AgentCore microVM ceiling; the Google platform accepts up to 20160 (14 days).",
       "type": "object",
       "required": ["platform"],
       "additionalProperties": false,
@@ -1829,12 +1829,12 @@
           "enum": ["aws-agentcore", "gcp-agent-platform"]
         },
         "memory": {
-          "description": "AgentCore Memory. Short-term events are the session transcript; long-term memory is deliberately absent until the spec has a construct that names what is stored and who may read it.",
+          "description": "Managed short-term memory. On `aws-agentcore` it is AgentCore Memory; on `gcp-agent-platform` it is a Vertex AI Memory Bank on the reasoning engine. Short-term events are the session transcript; long-term memory is deliberately absent until the spec has a construct that names what is stored and who may read it.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "shortTerm": {
-              "description": "Store the session transcript in AgentCore Memory. `aws-agentcore` only; the Google platform has no Terraform resource for a memory bank in v1.",
+              "description": "Store the session transcript in managed memory: AgentCore Memory on `aws-agentcore`, a Vertex AI Memory Bank on `gcp-agent-platform`. The backend forgets an event after 30 days.",
               "type": "boolean"
             }
           }

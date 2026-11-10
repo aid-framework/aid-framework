@@ -35,6 +35,11 @@ locals {
     id => substr("aid-${replace(lower(id), "/[^a-z0-9-]/", "-")}", 0, 30)
   }
 
+  # A Memory Bank takes model ids, not URIs, so the project and region are prefixed
+  # here. The defaults are the models the provider documents in its own example.
+  memory_generation_model_uri = "projects/${var.project_id}/locations/${var.region}/publishers/google/models/${var.memory_generation_model}"
+  memory_embedding_model_uri  = "projects/${var.project_id}/locations/${var.region}/publishers/google/models/${var.memory_embedding_model}"
+
   literal_env = {
     for id, service in local.managed : id => merge(
       {
@@ -174,6 +179,26 @@ resource "google_vertex_ai_reasoning_engine" "managed" {
     service_account = google_service_account.runtime[each.key].email
   }
 
+  # Memory Bank is part of the engine, not a resource beside it: the provider sends this
+  # as `contextSpec`, so there is no memory id to project into an env var the way AWS
+  # projects `BEDROCK_AGENTCORE_MEMORY_ID`. An empty `for_each` renders no block at all.
+  dynamic "context_spec" {
+    for_each = each.value.runtime.memory_short_term ? [1] : []
+    content {
+      memory_bank_config {
+        generation_config {
+          model = local.memory_generation_model_uri
+        }
+        similarity_search_config {
+          embedding_model = local.memory_embedding_model_uri
+        }
+        ttl_config {
+          default_ttl = "2592000s"
+        }
+      }
+    }
+  }
+
   lifecycle {
     precondition {
       condition     = contains(keys(var.image_uris), each.key)
@@ -183,13 +208,6 @@ resource "google_vertex_ai_reasoning_engine" "managed" {
     precondition {
       condition     = alltrue([for variable in each.value.env : !variable.secret || contains(keys(var.secret_ids), variable.name)])
       error_message = "Service \"${each.key}\" references a secret with no secret_ids entry. Add name -> secret id for every secret it declares."
-    }
-
-    # v1 gap, said out loud: the provider has no Memory Bank resource. The spec refuses
-    # `memory` on this platform, so a plan that reaches here cannot have asked for it.
-    precondition {
-      condition     = !each.value.runtime.memory_short_term
-      error_message = "Service \"${each.key}\" asks for managed memory, which the Google provider has no resource for yet. Remove memory from this deployment or deploy it on aws-agentcore."
     }
 
     precondition {

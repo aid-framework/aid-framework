@@ -718,22 +718,22 @@ Responsible-AI categories the template filters, category -> the lowest confidenc
 
 ## `runtime`
 
-A managed agent runtime: a service that stops being a container the operator keeps warm and becomes an agent the platform schedules, isolates and addresses. `aws-agentcore` is Amazon Bedrock AgentCore Runtime, one microVM per session with up to 8 hours; `gcp-agent-platform` is the Gemini Enterprise Agent Platform (formerly Vertex AI Agent Engine, still `google_vertex_ai_reasoning_engine` in Terraform), a managed per-session runtime. Both accept the image `target: container` already builds, which is what makes this a deployment destination rather than a second generation path. AgentCore Memory is the only memory resource with a Terraform representation in v1, so `memory` is refused on the Google platform rather than silently dropped. `session.ttlMinutes` defaults to 480, the AgentCore microVM ceiling; the Google platform accepts up to 20160 (14 days).
+A managed agent runtime: a service that stops being a container the operator keeps warm and becomes an agent the platform schedules, isolates and addresses. `aws-agentcore` is Amazon Bedrock AgentCore Runtime, one microVM per session with up to 8 hours; `gcp-agent-platform` is the Gemini Enterprise Agent Platform (formerly Vertex AI Agent Engine, still `google_vertex_ai_reasoning_engine` in Terraform), a managed per-session runtime. Both accept the image `target: container` already builds, which is what makes this a deployment destination rather than a second generation path. `memory.shortTerm` maps to AgentCore Memory on `aws-agentcore` and to a Vertex AI Memory Bank on `gcp-agent-platform`, where it is configured on the reasoning engine through `context_spec.memory_bank_config`. `session.ttlMinutes` defaults to 480, the AgentCore microVM ceiling; the Google platform accepts up to 20160 (14 days).
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `platform` | `aws-agentcore`, `gcp-agent-platform` | yes | The platform that runs the process. The platform's credentials are the deploy's credentials, so a platform and `--cloud` that disagree are refused instead of deployed unreachable. |
-| `memory` | object (fields below) | no | AgentCore Memory. Short-term events are the session transcript; long-term memory is deliberately absent until the spec has a construct that names what is stored and who may read it. |
+| `memory` | object (fields below) | no | Managed short-term memory. On `aws-agentcore` it is AgentCore Memory; on `gcp-agent-platform` it is a Vertex AI Memory Bank on the reasoning engine. Short-term events are the session transcript; long-term memory is deliberately absent until the spec has a construct that names what is stored and who may read it. |
 | `session` | object (fields below) | no | How long one session may live. Defaults to 480 minutes, the AgentCore microVM ceiling. |
 | `gateway` | `name` | no | Name of a `gateways` entry this runtime reaches over MCP. Spec 0.24, `aws-agentcore` only: the gateway is an AgentCore resource and the Google platform has no counterpart. Presence does two things and nothing else: the emitted module exports the gateway URL into the runtime's environment and grants the runtime role `bedrock-agentcore:InvokeGateway` on exactly that gateway. The app keeps its own tool list -- a gateway adds tools it does not own, it does not replace one it does. |
 
 ### `runtime.memory`
 
-AgentCore Memory. Short-term events are the session transcript; long-term memory is deliberately absent until the spec has a construct that names what is stored and who may read it.
+Managed short-term memory. On `aws-agentcore` it is AgentCore Memory; on `gcp-agent-platform` it is a Vertex AI Memory Bank on the reasoning engine. Short-term events are the session transcript; long-term memory is deliberately absent until the spec has a construct that names what is stored and who may read it.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `shortTerm` | `boolean` | no | Store the session transcript in AgentCore Memory. `aws-agentcore` only; the Google platform has no Terraform resource for a memory bank in v1. |
+| `shortTerm` | `boolean` | no | Store the session transcript in managed memory: AgentCore Memory on `aws-agentcore`, a Vertex AI Memory Bank on `gcp-agent-platform`. The backend forgets an event after 30 days. |
 
 ### `runtime.session`
 

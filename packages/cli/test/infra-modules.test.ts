@@ -1079,6 +1079,41 @@ describe('emitEdgeModule', () => {
   });
 });
 
+describe('emitAgentRuntimeModule', () => {
+  const gcp = emitAgentRuntimeModule(GCP_RUNTIME, 'gcp');
+  const gcpMain = mainOf(gcp);
+
+  it('configures managed memory on the GCP engine through context_spec', () => {
+    expect(gcpMain).toContain('dynamic "context_spec"');
+    expect(gcpMain).toContain('memory_bank_config');
+    expect(gcpMain).toContain('local.memory_generation_model_uri');
+    expect(gcpMain).toContain('local.memory_embedding_model_uri');
+    expect(gcpMain).toContain('"2592000s"');
+    // The GA provider sends `contextSpec` as a top-level sibling of `spec`, so the block
+    // is indented to the resource, not nested inside the engine's `spec`.
+    expect(gcpMain).toContain('\n  dynamic "context_spec" {');
+    expect(gcpMain).toContain('for_each = each.value.runtime.memory_short_term ? [1] : []');
+  });
+
+  it('no longer refuses managed memory on the GCP engine', () => {
+    expect(gcpMain).not.toContain('asks for managed memory');
+    expect(gcpMain).not.toContain('!each.value.runtime.memory_short_term');
+  });
+
+  it('defaults the Memory Bank models to the ones the provider documents', () => {
+    const variables = variableOf(gcp);
+    expect(variables).toContain('default     = "gemini-3.5-flash"');
+    expect(variables).toContain('default     = "text-embedding-005"');
+  });
+
+  it('keeps AgentCore Memory a resource of its own on AWS', () => {
+    const aws = emitAgentRuntimeModule(AWS_RUNTIME, 'aws');
+    expect(mainOf(aws)).toContain('aws_bedrockagentcore_memory');
+    expect(mainOf(aws)).toContain('BEDROCK_AGENTCORE_MEMORY_ID');
+    expect(variableOf(aws)).not.toContain('memory_generation_model');
+  });
+});
+
 describe('modulesOf, the seam emit.ts reads', () => {
   it('reports the platforms a plan targets', () => {
     expect(modulesOf(planOf())).toEqual({

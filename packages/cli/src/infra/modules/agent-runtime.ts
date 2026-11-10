@@ -3,10 +3,10 @@
  *
  * A runtime is a *destination* under `target: container`, not a target of its own: the
  * same image, the same environment, and the same HTTP contract the container module
- * wires, but the platform owns the process, the session and (on AWS) the memory around
- * it. So this module replaces the compute module for those services rather than sitting
- * beside it -- emitting both would pay for an idle service and give one agent two front
- * doors with two sets of logs and two addresses a client could pin.
+ * wires, but the platform owns the process, the session and, on AWS, a separate memory
+ * resource around it. So this module replaces the compute module for those services
+ * rather than sitting beside it -- emitting both would pay for an idle service and give
+ * one agent two front doors with two sets of logs and two addresses a client could pin.
  *
  * Two platforms, one file, because they are the same decision expressed with two
  * providers: Bedrock AgentCore on AWS and the Gemini Enterprise Agent Platform (still
@@ -24,8 +24,10 @@
  *   returned by its API, so passing a value there would publish it and write it to state.
  *   The GCP side supports `secret_env`, and uses it.
  *
- * Memory is AWS-only in v1: the `google` provider has no Memory Bank resource, and the
- * spec refuses `memory` on `gcp-agent-platform` rather than dropping it silently.
+ * Managed short-term memory exists on both platforms: AgentCore Memory is a resource
+ * created beside the runtime on AWS, and on GCP a Memory Bank is configured on the
+ * reasoning engine itself through `context_spec.memory_bank_config`, so there is no
+ * separate resource and no id to hand the app.
  */
 
 import type { DeployPlan } from '@aid-framework/ir';
@@ -435,6 +437,18 @@ const GCP_VARIABLES_TF = hcl([
   '  default     = {}',
   '}',
   '',
+  'variable "memory_generation_model" {',
+  '  description = "Business input: the model a Memory Bank uses to summarize events. Defaults to the model the provider documents; override it when the project cannot call that one."',
+  '  type        = string',
+  '  default     = "gemini-3.5-flash"',
+  '}',
+  '',
+  'variable "memory_embedding_model" {',
+  '  description = "Business input: the embedding model a Memory Bank indexes events with. Defaults to the model the provider documents; override it when the project cannot call that one."',
+  '  type        = string',
+  '  default     = "text-embedding-005"',
+  '}',
+  '',
   'variable "tags" {',
   '  type    = map(string)',
   '  default = {}',
@@ -479,6 +493,11 @@ const GCP_MAIN_TF = hcl([
   '    for id, service in local.managed :',
   '    id => substr("aid-@{replace(lower(id), "/[^a-z0-9-]/", "-")}", 0, 30)',
   '  }',
+  '',
+  '  # A Memory Bank takes model ids, not URIs, so the project and region are prefixed',
+  '  # here. The defaults are the models the provider documents in its own example.',
+  '  memory_generation_model_uri = "projects/@{var.project_id}/locations/@{var.region}/publishers/google/models/@{var.memory_generation_model}"',
+  '  memory_embedding_model_uri  = "projects/@{var.project_id}/locations/@{var.region}/publishers/google/models/@{var.memory_embedding_model}"',
   '',
   '  literal_env = {',
   '    for id, service in local.managed : id => merge(',
@@ -612,6 +631,26 @@ const GCP_MAIN_TF = hcl([
   '    service_account = google_service_account.runtime[each.key].email',
   '  }',
   '',
+  '  # Memory Bank is part of the engine, not a resource beside it: the provider sends this',
+  '  # as `contextSpec`, so there is no memory id to project into an env var the way AWS',
+  '  # projects `BEDROCK_AGENTCORE_MEMORY_ID`. An empty `for_each` renders no block at all.',
+  '  dynamic "context_spec" {',
+  '    for_each = each.value.runtime.memory_short_term ? [1] : []',
+  '    content {',
+  '      memory_bank_config {',
+  '        generation_config {',
+  '          model = local.memory_generation_model_uri',
+  '        }',
+  '        similarity_search_config {',
+  '          embedding_model = local.memory_embedding_model_uri',
+  '        }',
+  '        ttl_config {',
+  '          default_ttl = "2592000s"',
+  '        }',
+  '      }',
+  '    }',
+  '  }',
+  '',
   '  lifecycle {',
   '    precondition {',
   '      condition     = contains(keys(var.image_uris), each.key)',
@@ -621,13 +660,6 @@ const GCP_MAIN_TF = hcl([
   '    precondition {',
   '      condition     = alltrue([for variable in each.value.env : !variable.secret || contains(keys(var.secret_ids), variable.name)])',
   '      error_message = "Service \\"@{each.key}\\" references a secret with no secret_ids entry. Add name -> secret id for every secret it declares."',
-  '    }',
-  '',
-  '    # v1 gap, said out loud: the provider has no Memory Bank resource. The spec refuses',
-  '    # `memory` on this platform, so a plan that reaches here cannot have asked for it.',
-  '    precondition {',
-  '      condition     = !each.value.runtime.memory_short_term',
-  '      error_message = "Service \\"@{each.key}\\" asks for managed memory, which the Google provider has no resource for yet. Remove memory from this deployment or deploy it on aws-agentcore."',
   '    }',
   '',
   '    precondition {',

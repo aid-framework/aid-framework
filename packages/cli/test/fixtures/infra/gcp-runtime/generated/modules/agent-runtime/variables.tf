@@ -58,6 +58,18 @@ variable "secret_ids" {
   default     = {}
 }
 
+variable "memory_generation_model" {
+  description = "Business input: the model a Memory Bank uses to summarize events. Defaults to the model the provider documents; override it when the project cannot call that one."
+  type        = string
+  default     = "gemini-3.5-flash"
+}
+
+variable "memory_embedding_model" {
+  description = "Business input: the embedding model a Memory Bank indexes events with. Defaults to the model the provider documents; override it when the project cannot call that one."
+  type        = string
+  default     = "text-embedding-005"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

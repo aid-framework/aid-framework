@@ -1498,9 +1498,10 @@ function buildDeploymentRuntime(
   const ttl = asNumber(session?.ttlMinutes);
   const built: DeploymentRuntimeShape = {
     platform: typed,
-    // AgentCore Memory is the only managed memory this module creates; a platform that
-    // cannot create one projects `false` rather than a memory the plan would silently drop.
-    memory: { shortTerm: typed === 'aws-agentcore' && (asBoolean(memory?.shortTerm) ?? false) },
+    // Managed short-term memory has a Terraform representation on both platforms: a
+    // memory resource beside the runtime on AWS, a Memory Bank on the reasoning engine on
+    // GCP. The flag is carried as the document asked rather than filtered by platform.
+    memory: { shortTerm: asBoolean(memory?.shortTerm) ?? false },
     session: { ttlMinutes: ttl ?? 480 },
   };
   // The validator refuses a gateway on any other platform and refuses one no `gateways`

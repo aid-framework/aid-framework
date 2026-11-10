@@ -1926,13 +1926,12 @@ describe('managed agent runtimes', () => {
     expect(diagnostics[0]?.message).toContain('481-minute session');
   });
 
-  it('refuses managed memory on GCP, which has no resource to create it', () => {
-    const diagnostics = validateSpec(
-      runtimeDoc({ platform: 'gcp-agent-platform', memory: { shortTerm: true } }),
-    );
-    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.runtimeMemoryOnPlatform]);
-    expect(paths(diagnostics)).toEqual(['deployments.api.runtime.memory']);
-    expect(diagnostics[0]?.hint).toContain('drop `memory`');
+  it('accepts managed memory on GCP, where the engine carries a Memory Bank', () => {
+    expect(
+      validateSpec(
+        runtimeDoc({ platform: 'gcp-agent-platform', memory: { shortTerm: true } }, '0.24'),
+      ),
+    ).toEqual([]);
   });
 
   it('allows memory on AgentCore, where the module creates the bank', () => {
