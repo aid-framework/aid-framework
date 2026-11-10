@@ -21,6 +21,8 @@ import {
   commandsNamed,
   exactPins,
   headingSlugs,
+  isProposalPage,
+  proposalStatus,
   slugifyHeading,
   targetTokens,
 } from './docs-claims.mjs';
@@ -304,6 +306,42 @@ describe('the real documents', () => {
 
   it('carry headings, so a fragment check has something to resolve against', () => {
     expect(headingSlugs(read('docs/reference/spec.md')).size).toBeGreaterThan(0);
+  });
+});
+
+describe('isProposalPage', () => {
+  it('claims only the directory RFCs live in', () => {
+    expect(isProposalPage('docs/rfcs/0001-agents-at-scale.md')).toBe(true);
+    expect(isProposalPage('docs/rfcs\\0001-agents-at-scale.md')).toBe(true);
+    expect(isProposalPage('docs/guide/writing-a-spec.md')).toBe(false);
+    expect(isProposalPage('docs/rfcs.md')).toBe(false);
+    expect(isProposalPage('packages/cli/README.md')).toBe(false);
+  });
+
+  it('does not exempt a guide that merely mentions an rfc', () => {
+    expect(isProposalPage('docs/guide/rfcs/0001.md')).toBe(false);
+  });
+});
+
+describe('proposalStatus', () => {
+  it('reads the status a proposal declares', () => {
+    expect(proposalStatus('| Field | Value |\n| --- | --- |\n| Status | **Draft** |\n')).toBe(
+      '**Draft**',
+    );
+  });
+
+  it('is undefined for a page that declares none, which is what the guard refuses', () => {
+    expect(proposalStatus('# An RFC\n\n| Command | Purpose |\n| --- | --- |\n')).toBeUndefined();
+  });
+
+  it('is undefined for a status written as prose rather than a row', () => {
+    expect(proposalStatus('Status: draft\n')).toBeUndefined();
+  });
+
+  it('finds a status the real RFCs declare', () => {
+    const proposals = walkMarkdown().filter((file) => isProposalPage(file));
+    expect(proposals.length).toBeGreaterThan(0);
+    for (const file of proposals) expect(proposalStatus(read(file))).toBeDefined();
   });
 });
 

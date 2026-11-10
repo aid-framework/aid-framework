@@ -23,6 +23,8 @@ import {
   commandsNamed,
   exactPins,
   headingSlugs,
+  isProposalPage,
+  proposalStatus,
   targetTokens,
 } from './docs-claims.mjs';
 
@@ -551,11 +553,17 @@ const documents = markdownFiles();
  *
  * A guide that documents a command the CLI does not have is a promise the tool
  * cannot keep, and it is the shape of drift that a green build hides.
+ *
+ * A design proposal under `docs/rfcs/` is the one document whose job is to name commands that do
+ * not exist yet, so it is exempt from this comparison and from the flag one below -- and held to
+ * a different one instead: it must declare its own status, so no reader mistakes it for a
+ * description of the shipped CLI.
  */
 if (COMMANDS !== undefined) {
   for (const file of documents) {
     const text = read(file);
     if (text === undefined) continue;
+    if (isProposalPage(file)) continue;
     for (const claim of commandsNamed(text)) {
       claimsChecked += 1;
       if (!COMMANDS.includes(claim.command)) {
@@ -575,12 +583,31 @@ if (FLAGS !== undefined) {
   for (const file of documents) {
     const text = read(file);
     if (text === undefined) continue;
+    if (isProposalPage(file)) continue;
     for (const claim of aidFlags(text)) {
       claimsChecked += 1;
       if (!FLAGS.includes(claim.flag)) {
         fail(file, claim.line, `passes \`--${claim.flag}\`, which the CLI does not define`);
       }
     }
+  }
+}
+
+/**
+ * Every proposal page states its status.
+ *
+ * This is what pays for the two exemptions above. A page is exempt from naming commands the CLI
+ * implements only because it says, in its own front table, that it is a draft rather than a
+ * description of what ships. Without that row the exemption would be a silent hole, and a
+ * proposal read as a promise is exactly the drift the rest of this script exists to catch.
+ */
+for (const file of documents) {
+  if (!isProposalPage(file)) continue;
+  const text = read(file);
+  if (text === undefined) continue;
+  claimsChecked += 1;
+  if (proposalStatus(text) === undefined) {
+    fail(file, 1, 'is under docs/rfcs/ but declares no `| Status | <draft or proposal> |` row');
   }
 }
 

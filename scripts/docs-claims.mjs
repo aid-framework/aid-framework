@@ -238,3 +238,36 @@ export function capabilityClaims(text, isTarget, knownCapabilities) {
   });
   return found;
 }
+
+/**
+ * Whether a document is a design proposal rather than a description of what ships.
+ *
+ * An RFC exists to name commands, flags and constructs that do not exist yet -- that is what
+ * proposing means -- so holding one to "every command it names is in `COMMANDS`" would force
+ * every proposal to be vague about its own deliverables. The caller skips only the two
+ * *existence* comparisons for these files; links, target names and pins are still checked,
+ * because a broken link or an unregistered generator is wrong in a proposal too.
+ *
+ * The exclusion is not a hole: `proposalStatus` below requires the document to declare its own
+ * status, so a file cannot land under `docs/rfcs/` and be read as a promise. A page whose status
+ * says it is implemented has no business being an RFC.
+ *
+ * @param {string} file repository-relative path
+ * @returns {boolean}
+ */
+export function isProposalPage(file) {
+  return file.replace(/\\/g, '/').startsWith('docs/rfcs/');
+}
+
+/** The status a proposal page declares in its front table, or `undefined`. */
+const STATUS_ROW = /^\|\s*Status\s*\|\s*(.+?)\s*\|\s*$/m;
+
+/**
+ * The stated status of a proposal page, or `undefined` when it declares none.
+ *
+ * @param {string} text
+ * @returns {string | undefined}
+ */
+export function proposalStatus(text) {
+  return text.match(STATUS_ROW)?.[1];
+}
