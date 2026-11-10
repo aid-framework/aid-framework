@@ -23,6 +23,7 @@ import {
   CDK_CONTAINER_MODULE,
   CDK_DIR,
   CDK_EDGE_MODULE,
+  CDK_GATEWAY_MODULE,
   CDK_KNOWLEDGE_BASE_MODULE,
   CDK_SERVERLESS_MODULE,
   CLOUDRUN_MODULE_DIR,
@@ -36,11 +37,13 @@ import {
   emitCloudRunModule,
   emitContainerModule,
   emitEdgeModule,
+  emitGatewayModule,
   emitKnowledgeBaseModule,
   emitProviderModules,
   emitServerlessModule,
   emitVertexRagModule,
   envRoot,
+  GATEWAY_MODULE_DIR,
   KNOWLEDGE_BASE_MODULE_DIR,
   modulesOf,
   SERVERLESS_MODULE_DIR,
@@ -69,6 +72,7 @@ const BOTH = envRoot({
   batch: true,
   edge: true,
   agentRuntime: true,
+  gateway: true,
 });
 
 /** The GCP env root the fixture commits: Cloud Run and a Cloud Run job. */
@@ -102,11 +106,47 @@ function managedPlan(engine: 'aws-bedrock' | 'vertex-rag'): DeployPlan {
         preventDestroy: true,
       },
     ],
+    gateways: [],
   } as unknown as DeployPlan;
 }
 
 const AWS_KB = managedPlan('aws-bedrock');
 const GCP_KB = managedPlan('vertex-rag');
+
+/**
+ * One gateway with both target kinds, so the module is exercised with the JWT authorizer
+ * block and with each branch of the `Mcp` target union. The group also uses a gateway the
+ * way a spec would: a snake_case spec name the module has to reduce to a legal CFN name.
+ */
+const GW = {
+  project: { name: 'gw', namespace: 'aid.test' },
+  services: [{ id: 'api', target: 'serverless' }],
+  knowledgeBases: [],
+  gateways: [
+    {
+      id: 'tools',
+      description: 'Federated tools',
+      authorizer: {
+        kind: 'jwt',
+        discoveryUrl: 'https://issuer.example.com/.well-known/openid-configuration',
+        audience: ['aid-gateway'],
+      },
+      targets: [
+        {
+          id: 'orders',
+          source: {
+            kind: 'openApiSchema',
+            schema: { uri: 's3://aid-gw/orders.json', bucketOwnerAccountId: '123456789012' },
+          },
+        },
+        { id: 'search', source: { kind: 'mcpServer', endpoint: 'https://mcp.example.com/mcp' } },
+      ],
+      envName: 'AID_GATEWAY_TOOLS_URL',
+      runtimes: [],
+      cloud: 'aws',
+    },
+  ],
+} as unknown as DeployPlan;
 
 /** The env roots that carry a managed base, so the base modules are validated too. */
 const AWS_KB_ROOT = envRoot({
@@ -151,6 +191,7 @@ function runtimePlan(cloud: 'aws' | 'gcp'): DeployPlan {
     tasks: [],
     alarms: [],
     knowledgeBases: [],
+    gateways: [],
   } as unknown as DeployPlan;
 }
 
@@ -171,6 +212,7 @@ function planOf(...targets: string[]): DeployPlan {
   return {
     services: targets.map((target, index) => ({ id: `svc${index}`, target })),
     knowledgeBases: [],
+    gateways: [],
   } as unknown as DeployPlan;
 }
 
@@ -196,6 +238,7 @@ const SERVING = {
   tasks: [],
   alarms: [],
   knowledgeBases: [],
+  gateways: [],
 } as unknown as DeployPlan;
 
 const SERVERLESS = `specVersion: "0.2"
@@ -806,7 +849,14 @@ describe('envRoot', () => {
 
   it('is pure: the same module set yields the same bytes', () => {
     expect(
-      envRoot({ serverless: true, container: true, batch: true, edge: true, agentRuntime: true }),
+      envRoot({
+        serverless: true,
+        container: true,
+        batch: true,
+        edge: true,
+        agentRuntime: true,
+        gateway: true,
+      }),
     ).toEqual(BOTH);
   });
 
@@ -1038,6 +1088,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      gateway: false,
       modelArmor: false,
     });
     expect(modulesOf(planOf('serverless', 'container'))).toEqual({
@@ -1047,6 +1098,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      gateway: false,
       modelArmor: false,
     });
     expect(modulesOf(planOf('batch'))).toEqual({
@@ -1056,6 +1108,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      gateway: false,
       modelArmor: false,
     });
     expect(modulesOf(planOf('edge'))).toEqual({
@@ -1065,6 +1118,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: true,
       agentRuntime: false,
       knowledgeBase: false,
+      gateway: false,
       modelArmor: false,
     });
     // A runtime service belongs to the runtime module, not the compute module: the flag
@@ -1076,6 +1130,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: true,
       knowledgeBase: false,
+      gateway: false,
       modelArmor: false,
     });
   });
@@ -1092,6 +1147,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      gateway: false,
       modelArmor: false,
     });
     expect(modulesOf(planOf('serverless'), 'gcp')).toEqual({
@@ -1101,6 +1157,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      gateway: false,
       modelArmor: false,
     });
     expect(modulesOf(planOf('batch'), 'gcp')).toEqual({
@@ -1110,6 +1167,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      gateway: false,
       modelArmor: false,
     });
     expect(modulesOf(planOf('edge'), 'gcp')).toEqual({
@@ -1119,6 +1177,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      gateway: false,
       modelArmor: false,
     });
     // The runtime's cloud decides, not the target it happens to share with Cloud Run.
@@ -1132,6 +1191,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       edge: false,
       agentRuntime: false,
       knowledgeBase: false,
+      gateway: false,
       modelArmor: false,
     });
   });
@@ -1143,6 +1203,24 @@ describe('modulesOf, the seam emit.ts reads', () => {
     expect(modulesOf(AWS_KB, 'gcp').knowledgeBase).toBe(false);
     expect(modulesOf(GCP_KB, 'gcp').knowledgeBase).toBe(true);
     expect(modulesOf(GCP_KB).knowledgeBase).toBe(false);
+  });
+
+  it('reports a gateway only on the cloud that hosts one', () => {
+    // AgentCore Gateway has no GCP counterpart at any layer, so the flag follows the cloud
+    // alone: a plan can declare a gateway, but only an AWS deploy can create one.
+    expect(modulesOf(GW).gateway).toBe(true);
+    expect(modulesOf(GW, 'gcp').gateway).toBe(false);
+    expect(modulesOf(planOf('serverless')).gateway).toBe(false);
+  });
+
+  it('emits the gateway module and no GCP module for it', () => {
+    const aws = emitProviderModules(GW).map((file) => file.path);
+    expect(aws).toContain(`${GATEWAY_MODULE_DIR}/main.tf`);
+    expect(aws).toContain(CDK_GATEWAY_MODULE);
+
+    const gcp = emitProviderModules(GW, 'gcp').map((file) => file.path);
+    expect(gcp).not.toContain(`${GATEWAY_MODULE_DIR}/main.tf`);
+    expect(gcp).not.toContain(CDK_GATEWAY_MODULE);
   });
 
   it('emits the base module the plan names and nothing for the other cloud', () => {
@@ -1291,6 +1369,7 @@ describe('the validate fixture', () => {
       { dir: EDGE_MODULE_DIR, files: emitEdgeModule(planOf('edge')) },
       { dir: KNOWLEDGE_BASE_MODULE_DIR, files: emitKnowledgeBaseModule(AWS_KB) },
       { dir: VERTEX_RAG_MODULE_DIR, files: emitVertexRagModule(GCP_KB) },
+      { dir: GATEWAY_MODULE_DIR, files: emitGatewayModule(GW) },
       { dir: AGENT_RUNTIME_MODULE_DIR, files: emitAgentRuntimeModule(AWS_RUNTIME, 'aws') },
       {
         dir: AGENT_RUNTIME_MODULE_DIR,
@@ -1382,6 +1461,22 @@ describe('the validate fixture', () => {
     expect(gcp).toContain('knowledge_bases = var.knowledge_bases');
   });
 
+  it('wires the gateway module into the AWS root and nowhere on GCP', () => {
+    // `tofu validate` reaches the gateway only through the root that calls it, so the dev
+    // root is where its module is validated. A GCP root must not name it at all: nothing
+    // would provision it, and validating a module the deploy cannot create is noise.
+    const aws = readFileSync(join(FIXTURE, 'envs', 'dev', 'main.tf'), 'utf8');
+    expect(aws).toContain('source = "../../generated/modules/gateway"');
+    expect(aws).toContain('gateways = var.gateways');
+    expect(aws).toContain('gateways        = module.gateway.gateways');
+    expect(aws).toContain('output "gateway_urls"');
+
+    for (const env of ['gcp-dev', 'gcp-kb'] as const) {
+      const main = readFileSync(join(FIXTURE, 'envs', env, 'main.tf'), 'utf8');
+      expect(main, env).not.toContain('modules/gateway');
+    }
+  });
+
   it('matches the emitted CDK construct byte for byte', () => {
     // CI runs `cdk synth` here, so this file must be exactly what `aid infra gen` writes.
     const [construct] = emitCdkModules(planOf('serverless'), 'aws');
@@ -1400,6 +1495,18 @@ describe('the validate fixture', () => {
     }
     const fixture = readFileSync(join(FIXTURE, 'generated', 'cdk', 'knowledge-base.cjs'), 'utf8');
     expect(fixture).toBe(base.contents);
+  });
+
+  it('matches the emitted gateway construct byte for byte', () => {
+    // A gateway is emitted for the CDK backend only when the plan has no runtime, so this
+    // construct creates the endpoint and its targets and stops there.
+    const files = emitCdkModules(GW, 'aws');
+    const gateway = files.find((file) => file.path === CDK_GATEWAY_MODULE);
+    if (gateway === undefined) {
+      throw new Error('the gateway construct was not emitted');
+    }
+    const fixture = readFileSync(join(FIXTURE, 'generated', 'cdk', 'gateway.cjs'), 'utf8');
+    expect(fixture).toBe(gateway.contents);
   });
 
   it('matches the emitted container construct byte for byte', () => {

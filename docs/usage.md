@@ -301,9 +301,64 @@ What is refused:
 - An agent declaring `humanInTheLoop` where a pipeline step runs it, because a step has no
   checkpoint to hand back.
 
+A gateway federates tools that already exist behind one managed MCP endpoint: the platform
+hosts the endpoint, each target keeps owning its own tool list, and the app reaches a single
+URL instead of bundling every tool (spec `0.24`, AWS only).
+
+```yaml
+gateways:
+  partner_tools:
+    description: Partner order and search APIs
+    authorizer:
+      kind: jwt
+      discoveryUrl: https://auth.partner.example/.well-known/openid-configuration
+      audience: [acme-gateway]
+    targets:
+      - name: orders
+        kind: openApiSchema
+        openApiSchema:
+          uri: s3://acme-tools/orders.openapi.json
+      - name: search
+        kind: mcpServer
+        mcpServer:
+          endpoint: https://search.partner.example/mcp
+```
+
+Every target kind is one target under the gateway's `Mcp` configuration, which is why `kind`
+selects which of the two sources is required instead of naming two resource shapes: a target
+carrying both, or neither, is refused. `authorizer` is either `awsIam`, which signs with
+SigV4, or `jwt`, which reads an OIDC discovery document and accepts one of the listed
+audiences.
+
+A runtime on `aws-agentcore` names the gateway it reaches; its own fields are unchanged,
+aside from the platform and this one name:
+
+```yaml
+      platform: aws-agentcore
+      gateway: partner_tools
+```
+
+What comes out:
+
+- `infra/modules/gateway/`, one AgentCore Gateway with one `GatewayTarget` per entry, and its
+  URL as an output.
+- `AID_GATEWAY_PARTNER_TOOLS_URL` in that runtime's environment, read from the gateway's
+  `GatewayUrl`, plus an `InvokeGateway` grant on the runtime role — emitted only for a runtime
+  that names the gateway.
+- Nothing in the tool registry: `tools:` is untouched, because a gateway is a tool the app
+  does not run and reaches through an MCP client.
+
+What is refused:
+
+- `gateways` on `--cloud gcp`, and `deployments[].runtime.gateway` on `gcp-agent-platform`,
+  because an AgentCore Gateway is an AWS resource with no Google Cloud counterpart.
+- A `runtime.gateway` naming a gateway the document does not declare.
+- One gateway declaring the same target name twice, which would collide at apply time.
+
 Covers:
 
 - **Agents and handoffs**
+- **Tools federated behind a managed MCP endpoint**
 
 ## Deployment and infrastructure
 

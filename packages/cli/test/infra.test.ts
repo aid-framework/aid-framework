@@ -419,6 +419,93 @@ const GCP_KNOWLEDGE_BASE_SPEC = KNOWLEDGE_BASE_SPEC.replace(
     modelId: text-embedding-005`,
   );
 
+/**
+ * A federated gateway and the managed runtime that reaches it.
+ *
+ * The target is an MCP server rather than an OpenAPI document so the fixture needs no
+ * bucket: the endpoint is the only thing the plan carries.
+ */
+const GATEWAY_SPEC = `specVersion: "0.24"
+project:
+  name: federated
+  namespace: aid.test.federated
+  targets: [py-fastapi]
+models:
+  fast:
+    provider: fake
+    modelId: fake-deterministic-1
+    capabilities: [json-schema]
+prompts:
+  reply:
+    version: 1
+    model: fast
+    template: "Hello."
+    output:
+      kind: text
+gateways:
+  partner_tools:
+    authorizer:
+      kind: awsIam
+    targets:
+      - name: search
+        kind: mcpServer
+        description: Product search behind MCP
+        mcpServer:
+          endpoint: https://search.partner.example/mcp
+guardrails:
+  inbound:
+    stages: [input]
+    policies: [prompt-injection]
+    action: block
+    onFail:
+      message: rejected.
+      log: true
+pipelines:
+  chat:
+    trigger:
+      http:
+        method: post
+        path: /chat
+    steps:
+      - generate:
+          prompt: reply
+          as: reply
+evals:
+  chat_quality:
+    target: pipeline:chat
+    dataset:
+      source: file
+      uri: datasets/chat.jsonl
+    metrics:
+      - kind: contains
+        field: reply
+        value: Hello
+    gate:
+      ci: true
+      maxRegression: 0.05
+      samples: 3
+deployments:
+  api:
+    target: container
+    secrets: []
+    runtime:
+      platform: aws-agentcore
+      gateway: partner_tools
+`;
+
+/**
+ * The same gateway with no managed runtime, which is what the cloud refusal is about: a
+ * runtime on `aws-agentcore` is already refused on GCP for its own reason, so the plan
+ * that reaches the gateway check is one that declares the gateway alone.
+ */
+const GATEWAY_ONLY_SPEC = GATEWAY_SPEC.replace(
+  `    runtime:
+      platform: aws-agentcore
+      gateway: partner_tools
+`,
+  '',
+);
+
 /** Everything a derived file must never contain, because the spec does not say it. */
 function assertDerivedOnly(files: Record<string, string>): void {
   for (const [path, text] of Object.entries(files)) {
@@ -698,6 +785,56 @@ describe('infra gen', () => {
 
     // The runtime reads this name, so the plan must spell it the way the client does.
     expect(made.read(TFVARS)).toContain('VERTEX_RAG_CORPUS_HANDBOOK');
+  });
+
+  it('refuses a gateway on GCP, which has no AgentCore', () => {
+    // Refused rather than dropped: a `--cloud gcp` run cannot render an AWS gateway, and
+    // omitting it would deploy a runtime pointed at an endpoint that does not exist.
+    const made = scratchSpec(GATEWAY_ONLY_SPEC);
+    const run = aid(made, ['infra', 'gen', '--cloud', 'gcp', '--json']);
+    expect(run.code).not.toBe(0);
+    expect(diagnosticsOf(run).map((d) => d.code)).toContain('cli/infra-gateway-unsupported');
+    expect(
+      diagnosticsOf(run)
+        .map((d) => d.message)
+        .join(' '),
+    ).toContain('gcp');
+    expect(made.walk()).not.toContain(`${GENERATED}/modules/gateway/main.tf`);
+  });
+
+  it('emits the gateway and hands its URL to the runtime that names it', () => {
+    const made = scratchSpec(GATEWAY_SPEC);
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+
+    const gateway = made.read(`${GENERATED}/modules/gateway/main.tf`);
+    expect(gateway).toContain('resource "aws_bedrockagentcore_gateway"');
+    expect(gateway).toContain('resource "aws_bedrockagentcore_gateway_target"');
+    // Both platform authorizers are reachable, and the constant is chosen from the spec:
+    // the module carries no third option to fall back to.
+    expect(gateway).toContain('"CUSTOM_JWT"');
+    expect(gateway).toContain('"AWS_IAM"');
+    // Every target kind lives under the gateway's `mcp` block, so a schema-backed target
+    // and a server-backed one are the same resource with a different nested configuration.
+    expect(gateway).toContain('target_configuration {');
+    expect(gateway).toContain('dynamic "mcp_server"');
+    expect(gateway).toContain('dynamic "open_api_schema"');
+    // A target description the schema accepts reaches the target resource rather than
+    // being dropped on the way: the tfvars carry the value and the module reads the field.
+    expect(made.read(TFVARS)).toContain('Product search behind MCP');
+    expect(gateway).toContain('each.value.description');
+
+    // The URL is injected under the name the runtime client reads, and the grant is
+    // narrowed to the gateway rather than granting the whole service.
+    expect(made.read(TFVARS)).toContain('AID_GATEWAY_PARTNER_TOOLS_URL');
+    const runtime = made.read(`${GENERATED}/modules/agent-runtime/main.tf`);
+    expect(runtime).toContain('bedrock-agentcore:InvokeGateway');
+    expect(runtime).toContain('local.gateway_env');
+  });
+
+  it('leaves the gateway module out of a plan that declares none', () => {
+    const made = scratch();
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+    expect(made.walk()).not.toContain(`${GENERATED}/modules/gateway/main.tf`);
   });
 
   it('emits derived shape only', () => {

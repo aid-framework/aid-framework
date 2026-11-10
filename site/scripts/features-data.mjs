@@ -380,6 +380,15 @@ export const SHIPPED_FEATURES = [
     href: './reference/spec.md#retriever',
     since: '0.1.136',
   },
+  {
+    id: 'agentcore-gateway',
+    title: 'Tools federated behind a managed MCP endpoint',
+    detail:
+      'A `gateways` entry names an Amazon Bedrock AgentCore Gateway, its authorizer and the OpenAPI or MCP-server targets behind it, so a runtime reaches federated tools over one MCP endpoint instead of bundling every tool; an `aws-agentcore` runtime that names a gateway is handed its URL and the permission to invoke it.',
+    declaredBy: 'gateways[], deployments[].runtime.gateway',
+    href: './reference/spec.md#gateway',
+    since: '0.1.139',
+  },
 ];
 
 /**
@@ -519,7 +528,7 @@ export const CAPABILITY_FAMILIES = [
       'A tool loop is generated from the spec while the tool bodies stay yours in `app/business/`, so the plumbing is owned and the logic is not.',
     declaredBy: 'agents[], tools[]',
     href: './reference/spec.md#agent',
-    featureIds: ['agents'],
+    featureIds: ['agents', 'agentcore-gateway'],
   },
   {
     id: 'deploy',

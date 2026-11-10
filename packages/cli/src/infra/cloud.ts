@@ -93,3 +93,19 @@ export function unsupportedRuntimes(
       cloud: service.runtime.cloud,
     }));
 }
+
+/**
+ * The gateways in the plan this cloud has no resource for.
+ *
+ * An AgentCore Gateway is an AWS MCP endpoint, and the runtime that reaches it is the
+ * AgentCore one, so there is no GCP counterpart at any layer. Declaring a gateway for a
+ * GCP environment would emit no resource and still succeed, leaving the tool federation
+ * the spec describes absent from the deployed project.
+ */
+export function unsupportedGateways(
+  plan: { gateways: readonly { id: string }[] },
+  cloud: Cloud,
+): { id: string }[] {
+  if (cloud === 'aws') return [];
+  return plan.gateways.map((gateway) => ({ id: gateway.id }));
+}

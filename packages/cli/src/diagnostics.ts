@@ -63,6 +63,7 @@ export const CLI_DIAGNOSTIC_CODES = {
   infraGuardrailUnsupported: 'cli/infra-guardrail-unsupported',
   infraKnowledgeBaseUnsupported: 'cli/infra-knowledge-base-unsupported',
   infraRuntimeUnsupported: 'cli/infra-runtime-unsupported',
+  infraGatewayUnsupported: 'cli/infra-gateway-unsupported',
   infraKnowledgeBaseDestroy: 'cli/infra-knowledge-base-destroy',
   infraGeneratedOutdated: 'cli/infra-generated-outdated',
   infraNotGenerated: 'cli/infra-not-generated',

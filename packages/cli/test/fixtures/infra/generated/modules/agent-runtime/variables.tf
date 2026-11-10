@@ -20,6 +20,8 @@ variable "services" {
       cloud             = string
       memory_short_term = bool
       ttl_minutes       = number
+      # The gateway this deployment federates its tools through, absent when none.
+      gateway = optional(string)
     })
     routes = list(object({
       pipeline = string
@@ -74,6 +76,18 @@ variable "knowledge_bases" {
     # regex-lower-case-UPPER pipeline that would match the Python spelling exactly.
     env_name   = string
     retrievers = list(string)
+  }))
+  default = {}
+}
+
+variable "gateways" {
+  description = "Gateways this module may reach, with the URL and ARN the env root resolved."
+  type = map(object({
+    # Empty until the gateway exists. The environment and the grant skip it while it is.
+    arn = optional(string, "")
+    url = optional(string, "")
+    # The variable the runtime reads the URL from. Computed by the CLI, not here.
+    env_name = string
   }))
   default = {}
 }

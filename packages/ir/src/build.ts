@@ -50,6 +50,9 @@ import {
   type ErrorPolicy,
   type EvalShape,
   type EvalTarget,
+  type GatewayAuthorizerShape,
+  type GatewayShape,
+  type GatewayTargetShape,
   type GenerateStep,
   GUARDRAIL_DECISION_ACTIONS,
   type GuardrailDecisionAction,
@@ -172,6 +175,7 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
   const stores = buildStores(root.stores);
   const retrievers = buildRetrievers(root.retrievers);
   const knowledgeBases = buildKnowledgeBases(root.knowledgeBases);
+  const gateways = buildGateways(root.gateways);
   const memory = buildMemory(root.memory);
   const guardrails = buildGuardrails(root.guardrails);
   const decisions = buildDecisions(root.decisions);
@@ -194,6 +198,7 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
     tools,
     retrievers,
     knowledgeBases,
+    gateways,
     embeddings,
     stores,
     memory,
@@ -571,6 +576,69 @@ function asDataSourceKind(
 function asManagedChunkStrategy(raw: unknown): KnowledgeBaseShape['chunking']['strategy'] {
   const value = asString(raw);
   return value === 'recursive' || value === 'code' ? value : 'fixed';
+}
+
+function buildGateways(raw: unknown): GatewayShape[] {
+  const record = asRecord(raw) ?? {};
+  return sortedKeys(record).map((id) => {
+    const entry = asRecord(record[id]) ?? {};
+    const declared = Array.isArray(entry.targets) ? entry.targets : [];
+    const gateway: GatewayShape = {
+      id,
+      authorizer: asGatewayAuthorizer(asRecord(entry.authorizer) ?? {}),
+      // A target with no `name` is already a schema error; dropping it here keeps the IR
+      // from carrying an unnamed resource the emitters would have to manufacture a name for.
+      targets: declared.flatMap((target) => {
+        const built = buildGatewayTarget(asRecord(target) ?? {});
+        return built === undefined ? [] : [built];
+      }),
+    };
+    const description = asString(entry.description);
+    if (description !== undefined) gateway.description = description;
+    return gateway;
+  });
+}
+
+function asGatewayAuthorizer(raw: Record<string, unknown>): GatewayAuthorizerShape {
+  if (raw.kind !== 'jwt') return { kind: 'awsIam' };
+  return {
+    kind: 'jwt',
+    discoveryUrl: asString(raw.discoveryUrl) ?? '',
+    audience: asStringArray(raw.audience),
+  };
+}
+
+function buildGatewayTarget(entry: Record<string, unknown>): GatewayTargetShape | undefined {
+  const id = asString(entry.name);
+  if (id === undefined) return undefined;
+  const description = asString(entry.description);
+  const described = (shape: GatewayTargetShape): GatewayTargetShape =>
+    description === undefined ? shape : { ...shape, description };
+
+  if (entry.kind === 'mcpServer') {
+    const mcpServer = asRecord(entry.mcpServer) ?? {};
+    return described({
+      id,
+      source: { kind: 'mcpServer', endpoint: asString(mcpServer.endpoint) ?? '' },
+    });
+  }
+
+  const openApiSchema = asRecord(entry.openApiSchema) ?? {};
+  const inline = asString(openApiSchema.inline);
+  // The schema already makes `uri` and `inline` exclusive, so the first one present wins
+  // and the module never has to choose between two sources at apply time.
+  if (inline !== undefined) {
+    return described({ id, source: { kind: 'openApiSchema', schema: { inline } } });
+  }
+  const uri = asString(openApiSchema.uri) ?? '';
+  const bucketOwnerAccountId = asString(openApiSchema.bucketOwnerAccountId);
+  return described({
+    id,
+    source: {
+      kind: 'openApiSchema',
+      schema: bucketOwnerAccountId === undefined ? { uri } : { uri, bucketOwnerAccountId },
+    },
+  });
 }
 
 function buildRetrievers(raw: unknown): RetrieverShape[] {
@@ -1428,13 +1496,19 @@ function buildDeploymentRuntime(
   const memory = asRecord(runtime.memory);
   const session = asRecord(runtime.session);
   const ttl = asNumber(session?.ttlMinutes);
-  return {
+  const built: DeploymentRuntimeShape = {
     platform: typed,
     // AgentCore Memory is the only managed memory this module creates; a platform that
     // cannot create one projects `false` rather than a memory the plan would silently drop.
     memory: { shortTerm: typed === 'aws-agentcore' && (asBoolean(memory?.shortTerm) ?? false) },
     session: { ttlMinutes: ttl ?? 480 },
   };
+  // The validator refuses a gateway on any other platform and refuses one no `gateways`
+  // entry declares, so reaching here with an unreachable pairing means the document
+  // bypassed validation. The field is carried only where it can be honoured.
+  const gateway = asString(runtime.gateway);
+  if (gateway !== undefined && typed === 'aws-agentcore') built.gateway = gateway;
+  return built;
 }
 
 function buildDeploymentEnv(raw: unknown): DeploymentShape['env'] {
