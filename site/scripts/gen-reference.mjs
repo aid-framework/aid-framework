@@ -532,6 +532,16 @@ function cliPage() {
     lines.push('');
   }
 
+  lines.push('## Maturity and versioning');
+  lines.push('');
+  lines.push(
+    'The framework is pre-1.0: a minor release may still change an interface. The spec language is versioned separately, and `specVersion` decides which constructs a spec may use — asking for a construct newer than the declared version is refused with `spec/not-supported`, naming the version that introduced it.',
+  );
+  lines.push('');
+  lines.push(
+    'A command, flag or construct that is specified but not built is recorded here as not built rather than implied to work. This page is generated from the `COMMANDS` table and the [features page](../features.md) from the source, so neither can list a capability the compiler does not generate, test and gate.',
+  );
+  lines.push('');
   lines.push('## Exit codes');
   lines.push('');
   lines.push(

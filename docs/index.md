@@ -158,8 +158,6 @@ purpose with the diagnostic that enforces the refusal.
   approximated, and the generated matrix says which pairs exist today.
 - **Not a no-code builder.** Prompts, tool bodies and business rules are yours. The
   framework removes the plumbing, not the engineering.
-- **Pre-1.0.** A minor release may still change an interface, and a command that is
-  specified but not built is listed as such in the CLI reference rather than implied to work.
 
 ## Keep the app
 
