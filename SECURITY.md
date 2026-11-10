@@ -51,6 +51,24 @@ positives here, and are dismissed with that reason instead of by changing code t
 A code-scanning alert is a prompt to read the path, not a verdict. Do not restructure working code to
 silence one before confirming it is wrong.
 
+## Dependency advisories
+
+Dependabot opens grouped upgrade pull requests daily, and `pnpm audit` must report no known
+vulnerabilities before a release. A transitive dependency with a published advisory but no in-range fix is
+handled with a scoped override in `pnpm-workspace.yaml` rather than by widening a parent's range blindly:
+
+```yaml
+overrides:
+  parent>child: <patched version>
+```
+
+Scoping matters. A bare override of a package name re-resolves it for every dependent, including ones whose
+own major version expects the old API. A `parent>child` entry moves exactly one edge in the graph, and each
+entry carries a comment naming the advisory class it closes and the parent that forces it. An override is
+debt: remove it once the parent itself resolves a patched version, and let the dependabot sweep be the
+reminder. The build that consumes it is what proves it safe — for the docs toolchain that is `docs:build`,
+which CI runs.
+
 ## Reporting a vulnerability
 
 **Please do not open a public issue for a security problem.**

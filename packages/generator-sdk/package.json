@@ -1,6 +1,6 @@
 {
   "name": "@aid-framework/generator-sdk",
-  "version": "0.1.130",
+  "version": "0.1.131",
   "description": "The AID Framework generator plugin interface: the manifest contract, the drift/ownership algorithm, and the determinism helpers every target generator emits through.",
   "license": "Apache-2.0",
   "repository": {

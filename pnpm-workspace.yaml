@@ -1,4 +1,4 @@
-packages:
+﻿packages:
   - 'packages/*'
   - 'packages/generators/*'
   - 'runtimes/typescript'
@@ -16,3 +16,23 @@ allowBuilds:
   # VitePress bundles the site with esbuild, which fetches its platform binary
   # from a postinstall script. Without this the docs build cannot run.
   esbuild: true
+
+# Security fixes that our direct dependencies have not widened their ranges for.
+# Each entry is scoped to the parent that pins it, so an unrelated package is
+# never silently downgraded or held back. Re-checked on every dependabot sweep:
+# remove an entry once the parent itself resolves the patched version.
+overrides:
+  # markdownlint pins re2js. 2.8.7 fixes a quadratic-time lookbehind DoS; lint
+  # input is our own markdown, but the fix is a patch bump with no API change.
+  markdownlint>re2js: 2.9.1
+  # micromark-extension-math pins katex to 0.16, whose trust check can be
+  # bypassed by prototype pollution. 0.19 is the patched line.
+  micromark-extension-math>katex: 0.19.1
+  # vitepress 1.6 is the latest release and still pins vite ^5, which has no
+  # patched 5.x. vite 6.4.4 fixed the launch-editor and `server.fs` advisories
+  # but gained a new one with no fix, so this pins 7.3.7: the first line clear
+  # of every published vite advisory. It also moves esbuild past 0.21 (the
+  # dev-server request-forwarding advisory). The docs job builds with it, which
+  # is what CI verifies.
+  vitepress>vite: 7.3.7
+
