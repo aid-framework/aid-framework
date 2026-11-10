@@ -286,6 +286,22 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
     code: DIAGNOSTIC_CODES.notSupported,
     path: ['retrievers', 'knowledge', 'source', 'kind'],
   },
+  'retriever-s3-below-version.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['retrievers', 'knowledge', 'source', 'kind'],
+  },
+  'retriever-db-reserved.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['retrievers', 'knowledge', 'source', 'kind'],
+  },
+  'retriever-http-glob.spec.yaml': {
+    code: DIAGNOSTIC_CODES.invalidValue,
+    path: ['retrievers', 'knowledge', 'source', 'glob'],
+  },
+  'retriever-source-scheme.spec.yaml': {
+    code: DIAGNOSTIC_CODES.invalidValue,
+    path: ['retrievers', 'knowledge', 'source', 'uri'],
+  },
   'retriever-without-store.spec.yaml': {
     code: DIAGNOSTIC_CODES.schemaViolation,
     path: ['retrievers', 'knowledge', 'store'],
@@ -383,6 +399,57 @@ describe('invalid fixtures', () => {
     if (!diagnostic?.line) throw new Error('expected a diagnostic carrying a line number');
 
     expect(text.split('\n')[diagnostic.line - 1]).toContain('agents:');
+  });
+});
+
+describe('remote retriever sources', () => {
+  it('accepts s3 and http at 0.21', () => {
+    expect(checkSpecText(readFixture('valid/v21-retriever-s3.spec.yaml')).diagnostics).toEqual([]);
+    expect(checkSpecText(readFixture('valid/v21-retriever-http.spec.yaml')).diagnostics).toEqual(
+      [],
+    );
+  });
+
+  it('names the version an s3 source needs when the document predates it', () => {
+    const result = checkSpecText(readFixture('invalid/retriever-s3-below-version.spec.yaml'));
+    const [diagnostic] = result.diagnostics;
+    expect(diagnostic?.message).toContain('requires specVersion 0.21');
+    expect(diagnostic?.hint).toContain('set specVersion: "0.21"');
+  });
+
+  it('says the s3 and http loaders shipped, and that db and mcp did not', () => {
+    // Both halves matter: a hint that named only the shipped kinds would read as "all
+    // four remote kinds work now", and one that named only the reserved ones would not
+    // tell a reader that their s3 source has a spelling that works.
+    const result = checkSpecText(readFixture('invalid/retriever-db-reserved.spec.yaml'));
+    const [diagnostic] = result.diagnostics;
+    expect(diagnostic?.hint).toContain('s3 and http');
+    expect(diagnostic?.hint).toContain('db and mcp');
+    expect(diagnostic?.hint).toContain('0.21');
+  });
+
+  it('refuses a glob on an http source, because it describes a set', () => {
+    const result = checkSpecText(readFixture('invalid/retriever-http-glob.spec.yaml'));
+    const [diagnostic] = result.diagnostics;
+    expect(diagnostic?.message).toContain('glob');
+    expect(diagnostic?.message).toContain('http');
+    expect(diagnostic?.hint).toContain('one document');
+  });
+
+  it('refuses a uri whose scheme does not match the kind', () => {
+    const result = checkSpecText(readFixture('invalid/retriever-source-scheme.spec.yaml'));
+    const [diagnostic] = result.diagnostics;
+    expect(diagnostic?.message).toContain('does not match source.kind: s3');
+    expect(diagnostic?.hint).toContain('s3://<bucket>');
+  });
+
+  it('accepts an http url over http and over https', () => {
+    // The scheme check is a prefix test, so it must not accidentally require https.
+    const text = readFixture('valid/v21-retriever-http.spec.yaml').replace(
+      'https://handbook.example.com',
+      'http://handbook.example.com',
+    );
+    expect(checkSpecText(text).diagnostics).toEqual([]);
   });
 });
 

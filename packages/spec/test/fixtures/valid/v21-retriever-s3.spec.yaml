@@ -1,0 +1,37 @@
+specVersion: "0.21"
+
+project:
+  name: s3-knowledge
+  namespace: aid.examples.s3
+  description: Indexes a bucket prefix instead of a directory.
+  targets:
+    - py-fastapi
+
+models:
+  embed:
+    provider: fake
+    modelId: text-embedding-3-small
+    capabilities: [embeddings]
+
+stores:
+  docs:
+    kind: memory
+    dimensions: 1536
+
+retrievers:
+  knowledge:
+    source:
+      kind: s3
+      uri: s3://acme-handbook/guides
+      glob: "**/*.md"
+    chunking:
+      strategy: recursive
+      size: 800
+      overlap: 100
+    embedModel: embed
+    store: docs
+    index:
+      metric: cosine
+    topK: 5
+    refresh:
+      mode: full

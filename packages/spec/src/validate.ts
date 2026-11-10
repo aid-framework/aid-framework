@@ -68,6 +68,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.18',
   '0.19',
   '0.20',
+  '0.21',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -239,6 +240,16 @@ export const RETRIEVAL_INCREMENTAL_MIN_VERSION: SpecVersion = '0.19';
  * document that declares one is told the version it needs.
  */
 export const RETRIEVAL_FILTERS_MIN_VERSION: SpecVersion = '0.20';
+
+/**
+ * The first spec version whose runtimes load `retrievers[].source.kind: s3` and `http`.
+ *
+ * Before 0.21 both were refused outright, because a remote source that no loader fetches
+ * indexes nothing: the retriever would answer from an empty index while the spec read as
+ * if it named a corpus. `db` and `mcp` stay refused. A 0.20 document that declares one of
+ * the shipped remote kinds is told the version it needs.
+ */
+export const RETRIEVAL_REMOTE_SOURCE_MIN_VERSION: SpecVersion = '0.21';
 
 /** The version gate for every provider id that arrived after the spec that introduced it. */
 const PROVIDER_MIN_VERSIONS: Readonly<Record<string, SpecVersion>> = {
@@ -2296,15 +2307,59 @@ function retrievalDiagnostics(spec: Record<string, unknown>, diagnostics: Diagno
     if (retriever.knowledgeBase !== undefined) continue;
 
     const source = asRecord(retriever.source);
-    if (typeof source.kind === 'string' && source.kind !== 'file') {
+    const sourceKind = typeof source.kind === 'string' ? source.kind : undefined;
+    const remote = sourceKind === 's3' || sourceKind === 'http';
+    if (sourceKind !== undefined && sourceKind !== 'file' && !remote) {
       diagnostics.push(
         errorDiagnostic({
           code: DIAGNOSTIC_CODES.notSupported,
-          message: `'retrievers.${name}.source.kind: ${source.kind}' is defined by the AID design but is not implemented in spec v0.1`,
+          message: `'retrievers.${name}.source.kind: ${sourceKind}' is defined by the AID design but is not implemented in spec v0.1`,
           path: at('source', 'kind'),
-          hint: 'spec v0.1 indexes a local `file` source; the remote loaders (s3, http, db, mcp) belong to the phase that ships them',
+          hint: 'the s3 and http remote loaders shipped in spec 0.21; db and mcp remain reserved by the design',
         }),
       );
+    } else if (remote) {
+      if (
+        declared !== undefined &&
+        known &&
+        !specVersionAtLeast(declared, RETRIEVAL_REMOTE_SOURCE_MIN_VERSION)
+      ) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.notSupported,
+            message: `'retrievers.${name}.source.kind: ${sourceKind}' requires specVersion ${RETRIEVAL_REMOTE_SOURCE_MIN_VERSION}, but this specification declares version ${declared}`,
+            path: at('source', 'kind'),
+            hint: `set specVersion: "${RETRIEVAL_REMOTE_SOURCE_MIN_VERSION}"; a local \`file\` source is unchanged`,
+          }),
+        );
+      } else {
+        const uri = typeof source.uri === 'string' ? source.uri : '';
+        const schemes = sourceKind === 's3' ? ['s3://'] : ['http://', 'https://'];
+        const schemeMatches = schemes.some((scheme) => uri.toLowerCase().startsWith(scheme));
+        if (uri !== '' && !schemeMatches) {
+          diagnostics.push(
+            errorDiagnostic({
+              code: DIAGNOSTIC_CODES.invalidValue,
+              message: `'retrievers.${name}.source.uri: ${uri}' does not match source.kind: ${sourceKind}`,
+              path: at('source', 'uri'),
+              hint:
+                sourceKind === 's3'
+                  ? 'an s3 source takes an `s3://<bucket>[/<prefix>]` uri'
+                  : 'an http source takes one absolute `http://` or `https://` url',
+            }),
+          );
+        }
+        if (sourceKind === 'http' && typeof source.glob === 'string') {
+          diagnostics.push(
+            errorDiagnostic({
+              code: DIAGNOSTIC_CODES.invalidValue,
+              message: `'retrievers.${name}.source.glob' is not allowed with source.kind: http`,
+              path: at('source', 'glob'),
+              hint: 'an http source is exactly one document and a `glob` describes a set; use `file` or `s3` for a set',
+            }),
+          );
+        }
+      }
     }
 
     if (asRecord(retriever.chunking).strategy === 'semantic') {

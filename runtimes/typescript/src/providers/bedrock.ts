@@ -22,9 +22,8 @@
  * refuses a spec that asks for it instead of failing mid-run.
  */
 
-import { createHash, createHmac } from 'node:crypto';
-
 import { ProviderError, ProviderResponseError } from '../errors.js';
+import { rfc3986, sigv4Headers } from '../internal/sigv4.js';
 import { stripTrailingSlashes } from '../internal/text.js';
 import {
   type Capability,
@@ -112,31 +111,10 @@ function delay(seconds: number): Promise<void> {
 /**
  * Percent-encode one path segment the way SigV4 defines it.
  *
- * `encodeURIComponent` leaves `!*'()` alone, and AWS does not: a signature over a
- * path the server decodes differently fails with `SignatureDoesNotMatch`.
+ * Re-exported from the shared signer so this module keeps the surface it has always
+ * had: the model id in a Converse path is encoded here, and tests assert on it.
  */
-export function rfc3986(value: string): string {
-  return encodeURIComponent(value).replace(
-    /[!'()*]/g,
-    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
-}
-
-function sha256Hex(value: string): string {
-  return createHash('sha256').update(value, 'utf8').digest('hex');
-}
-
-function hmac(key: Buffer | string, value: string): Buffer {
-  return createHmac('sha256', key).update(value, 'utf8').digest();
-}
-
-/** `20261102T051711Z`, the format SigV4 signs. */
-function amzDate(date: Date): string {
-  return date
-    .toISOString()
-    .replace(/[-:]/g, '')
-    .replace(/\.\d{3}/, '');
-}
+export { rfc3986 };
 
 /** One entry in the wire `messages` array. */
 interface WireMessage {
@@ -342,43 +320,15 @@ export class BedrockProvider implements Provider {
     credentials: Credentials,
     now: Date,
   ): Record<string, string> {
-    const date = now.toISOString().slice(0, 10).replace(/-/g, '');
-    const stamp = amzDate(now);
-    const host = new URL(url).host;
-    const canonicalHeaders: [string, string][] = [
-      ['content-type', 'application/json'],
-      ['host', host],
-      ['x-amz-date', stamp],
-    ];
-    if (credentials.sessionToken !== undefined) {
-      canonicalHeaders.push(['x-amz-security-token', credentials.sessionToken]);
-    }
-    const signedHeaders = canonicalHeaders.map(([name]) => name).join(';');
-    const canonicalRequest = [
-      'POST',
-      new URL(url).pathname,
-      '',
-      canonicalHeaders.map(([name, value]) => `${name}:${value}\n`).join(''),
-      signedHeaders,
-      sha256Hex(body),
-    ].join('\n');
-    const scope = `${date}/${region}/${BEDROCK_SERVICE}/aws4_request`;
-    const stringToSign = ['AWS4-HMAC-SHA256', stamp, scope, sha256Hex(canonicalRequest)].join('\n');
-    const signingKey = hmac(
-      hmac(hmac(hmac(`AWS4${credentials.secretAccessKey}`, date), region), BEDROCK_SERVICE),
-      'aws4_request',
-    );
-    const signature = createHmac('sha256', signingKey).update(stringToSign, 'utf8').digest('hex');
-    const headers: Record<string, string> = {
-      'content-type': 'application/json',
-      'x-amz-date': stamp,
-      authorization: `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
-      ...this._extraHeaders,
-    };
-    if (credentials.sessionToken !== undefined) {
-      headers['x-amz-security-token'] = credentials.sessionToken;
-    }
-    return headers;
+    const signed = sigv4Headers({
+      url,
+      body,
+      region,
+      service: BEDROCK_SERVICE,
+      credentials,
+      now,
+    });
+    return { ...signed, ...this._extraHeaders };
   }
 
   private payload(request: CompletionRequest, model: ModelSpec): Record<string, unknown> {

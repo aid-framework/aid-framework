@@ -30,8 +30,9 @@ export const DISTANCE_METRICS: readonly DistanceMetric[] = ['cosine', 'dot', 'l2
 /**
  * `retriever.source.kind`.
  *
- * `file` is the only kind the Phase 1 connector implements; the rest are part of
- * the IR contract and fail loudly rather than silently indexing nothing.
+ * `file`, `s3` and `http` have loaders -- the remote two since spec 0.21 and only at
+ * that version or later. `db` and `mcp` are part of the IR contract and fail loudly
+ * rather than silently indexing nothing.
  */
 export type SourceKind = 'file' | 's3' | 'http' | 'db' | 'mcp';
 

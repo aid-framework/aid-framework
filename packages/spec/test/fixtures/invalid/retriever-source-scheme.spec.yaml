@@ -1,0 +1,21 @@
+specVersion: "0.21"
+
+project:
+  name: probe
+
+retrievers:
+  knowledge:
+    source:
+      kind: s3
+      uri: https://acme-handbook/guides
+    chunking:
+      strategy: recursive
+      size: 800
+      overlap: 100
+    embedModel: embed
+    store: docs
+    index:
+      metric: cosine
+    topK: 5
+    refresh:
+      mode: full

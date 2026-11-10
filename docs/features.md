@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.20`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.21`.
 
 ## Deployment targets
 
@@ -303,6 +303,14 @@ An eval scores a decision on its own reply shape, so a guardrail change is measu
 - **Turned on by:** `evals[].metrics[].kind: decision`
 - **Reference:** [spec](./reference/spec.md#kind-decision)
 - **Since:** `0.1.91`
+
+### S3 and HTTP corpus sources
+
+A retriever indexes an `s3://` prefix or one `http(s)://` document instead of a local directory, under the same glob grammar, with document ids relative to the prefix.
+
+- **Turned on by:** `retrievers[].source.kind`
+- **Reference:** [spec](./reference/spec.md#retriever)
+- **Since:** `0.1.134`
 
 ## Refused, on purpose
 

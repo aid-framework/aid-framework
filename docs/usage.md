@@ -112,10 +112,32 @@ What is refused:
 - A retriever whose store and embedding disagree on width, because a vector resolved at run
   time would let a later run compare two incomparable vectors.
 - A managed knowledge base on a cloud whose module does not exist for it.
+- A `glob` on an `http` source, because a `glob` describes a set and an `http` source is one
+  document; and a `uri` whose scheme does not match its `kind`.
+
+A corpus does not have to be a directory. `source.kind: s3` reads an `s3://bucket/prefix`,
+matching object keys against the same `glob` grammar a file source uses, and
+`source.kind: http` reads one absolute url as exactly one document. Both need
+`specVersion: "0.21"`; `db` and `mcp` remain reserved.
+
+```yaml
+retrievers:
+  handbook:
+    source:
+      kind: s3
+      uri: s3://acme-handbook/guides
+      glob: "**/*.md"
+```
+
+A document's id stays relative to the source - the key with the prefix stripped - so an
+eval's `expectDocs` and a citation name the same thing whichever kind indexed it. The `s3`
+loader signs with SigV4 from the AWS environment variables and refuses a missing region by
+name rather than defaulting one.
 
 Covers:
 
 - **Retrieval with citations**
+- **S3 and HTTP corpus sources**
 - **Memory tiers**
 - **Semantic cache**
 - **Bedrock knowledge bases**
