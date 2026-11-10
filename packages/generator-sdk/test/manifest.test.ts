@@ -1,3 +1,4 @@
+import { IR_VERSION } from '@aid-framework/ir';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -262,7 +263,7 @@ describe('checkIRSupport', () => {
   });
 
   it('exposes a boolean form', () => {
-    expect(supportsIR(PY_FASTAPI_MANIFEST, '0.1.0')).toBe(true);
+    expect(supportsIR(PY_FASTAPI_MANIFEST, IR_VERSION)).toBe(true);
     expect(supportsIR(PY_FASTAPI_MANIFEST, '1.0.0')).toBe(false);
   });
 });
