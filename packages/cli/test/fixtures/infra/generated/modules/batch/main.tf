@@ -75,6 +75,42 @@ locals {
     id => ["python", "-m", "app.generated.batch", coalesce(service.pipeline, "")]
   }
 
+  # A task that carries a schedule is a retriever this build ingests itself: a managed
+  # knowledge base ingests inside its engine, so `refresh` never reaches a task for one.
+  refresh = {
+    for task in var.tasks : task.id => task
+    if try(task.schedule, null) != null && try(task.schedule, "") != ""
+  }
+
+  # EventBridge Scheduler takes `cron(minutes hours day-of-month month day-of-week
+  # year)`, with day-of-week 1-7 and 1 = Sunday, and exactly one of the two day fields
+  # `?`. `schedule_aws` is that spelling; the fields of the spec spelling are kept
+  # beside it because the translation can no longer tell them apart.
+  refresh_fields = {
+    for id, task in local.refresh : id => split(" ", trimspace(try(task.schedule, "")))
+  }
+
+  # A standard five-field cron ORs the two day fields when both are named, and
+  # EventBridge Scheduler cannot express that: it refuses an expression that names
+  # both. A schedule of that shape is refused rather than collapsed to one field.
+  refresh_dual_day = {
+    for id, fields in local.refresh_fields : id => fields
+    if try(fields[2], "*") != "*" && try(fields[4], "*") != "*"
+  }
+
+  # A refresh runs the retriever ingest module, not the pipeline entrypoint: a pipeline
+  # is a manual run someone asks for, and a schedule is not that request.
+  refresh_command = {
+    for id, task in local.refresh : id => ["python", "-m", try(task.module, "")]
+  }
+
+  # Job definition names are capped at 50 characters, so the suffix is appended after
+  # the truncation rather than being cut off by it.
+  refresh_name = {
+    for id, task in local.refresh :
+    id => "${substr(replace("${var.project.namespace}-${var.project.name}-${id}", "/[^A-Za-z0-9-_]/", "-"), 0, 43)}-refresh"
+  }
+
   # A service the module runs, whose spec asks Bedrock to run the policy, owns one.
   managed_guardrails = {
     for id, guardrail in var.guardrails : id => guardrail
@@ -121,7 +157,8 @@ resource "aws_iam_role_policy_attachment" "service" {
 }
 
 resource "aws_iam_role" "execution" {
-  count = length(local.batch) > 0 ? 1 : 0
+  # A scheduled refresh is a job definition too, so the roles exist for either runner.
+  count = length(local.batch) + length(local.refresh) > 0 ? 1 : 0
   name  = "${substr(replace("${var.project.namespace}-${var.project.name}", "/[^A-Za-z0-9-_]/", "-"), 0, 42)}-batch-execution"
   tags  = var.tags
 
@@ -136,7 +173,7 @@ resource "aws_iam_role" "execution" {
 }
 
 resource "aws_iam_role_policy_attachment" "execution" {
-  count      = length(local.batch) > 0 ? 1 : 0
+  count      = length(local.batch) + length(local.refresh) > 0 ? 1 : 0
   role       = aws_iam_role.execution[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
@@ -145,7 +182,7 @@ resource "aws_iam_role_policy_attachment" "execution" {
 # call would fail with an auth error while every other secret still resolved. The role
 # exists for every batch job; the grant below only exists when a job names Bedrock.
 resource "aws_iam_role" "task" {
-  count = length(local.batch) > 0 ? 1 : 0
+  count = length(local.batch) + length(local.refresh) > 0 ? 1 : 0
   name  = "${substr(replace("${var.project.namespace}-${var.project.name}", "/[^A-Za-z0-9-_]/", "-"), 0, 46)}-batch-task"
   tags  = var.tags
 
@@ -432,6 +469,181 @@ resource "aws_batch_job_definition" "job" {
         if variable.secret
       ])
       error_message = "Deployment \"${each.key}\" references a secret with no secret_arns entry. Add name -> ARN for every secret it declares."
+    }
+  }
+}
+
+# The scheduler submits the job, so it needs what Batch asks of any submitter: permission
+# on the queue and on the job definition, plus `iam:PassRole` for the roles that job
+# definition names. It exists only when something is scheduled.
+resource "aws_iam_role" "scheduler" {
+  count = length(local.refresh) > 0 ? 1 : 0
+  name  = "${substr(replace("${var.project.namespace}-${var.project.name}", "/[^A-Za-z0-9-_]/", "-"), 0, 43)}-batch-scheduler"
+  tags  = var.tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "scheduler.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "scheduler" {
+  count = length(local.refresh) > 0 ? 1 : 0
+  name  = "batch-scheduler"
+  role  = aws_iam_role.scheduler[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = "batch:SubmitJob"
+      # `compact` drops the queue ARN when the plan names no batch deployment, so this
+      # policy stays valid and the schedule below is what reports the real problem.
+      Resource = compact(concat(
+        [try(aws_batch_job_queue.queue[0].arn, "")],
+        [for definition in aws_batch_job_definition.refresh : definition.arn],
+      ))
+    }, {
+      Effect   = "Allow"
+      Action   = "iam:PassRole"
+      Resource = [aws_iam_role.task[0].arn, aws_iam_role.execution[0].arn]
+    }]
+  })
+}
+
+# A refresh job definition is per retriever, because a job definition is what names the
+# command: `python -m <ingest module>`. It borrows the deployment it ingests for its
+# image, sizing, environment and secrets, so a build publishes one image and declares a
+# secret once.
+resource "aws_cloudwatch_log_group" "refresh" {
+  for_each = local.refresh
+
+  name              = "/aws/batch/${local.refresh_name[each.key]}"
+  retention_in_days = var.log_retention_days
+  tags              = var.tags
+}
+
+resource "aws_batch_job_definition" "refresh" {
+  for_each = local.refresh
+
+  name = local.refresh_name[each.key]
+  type = "container"
+  tags = var.tags
+
+  platform_capabilities = ["FARGATE"]
+
+  container_properties = jsonencode({
+    image   = try(var.image_uris[try(each.value.deployment, "")], "")
+    command = local.refresh_command[each.key]
+
+    taskRoleArn      = aws_iam_role.task[0].arn
+    executionRoleArn = aws_iam_role.execution[0].arn
+
+    resourceRequirements = [
+      {
+        type  = "VCPU"
+        value = tostring(try(var.batch_sizing[try(each.value.deployment, "")].vcpus, 1))
+      },
+      {
+        type  = "MEMORY"
+        value = tostring(try(var.batch_sizing[try(each.value.deployment, "")].memory_mb, 2048))
+      },
+    ]
+
+    environment = try(local.literal_env[try(each.value.deployment, "")], [])
+    secrets     = try(local.secret_env[try(each.value.deployment, "")], [])
+
+    networkConfiguration = {
+      assignPublicIp = var.assign_public_ip ? "ENABLED" : "DISABLED"
+    }
+
+    fargatePlatformConfiguration = {
+      platformVersion = "LATEST"
+    }
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.refresh[each.key].name
+        "awslogs-region"        = data.aws_region.current.region
+        "awslogs-stream-prefix" = "refresh"
+      }
+    }
+  })
+
+  retry_strategy {
+    attempts = try(var.batch_sizing[try(each.value.deployment, "")].attempts, 1)
+  }
+
+  timeout {
+    attempt_duration_seconds = try(var.batch_sizing[try(each.value.deployment, "")].timeout_seconds, 3600)
+  }
+
+  lifecycle {
+    precondition {
+      condition     = try(each.value.module, "") != ""
+      error_message = "Retriever \"${each.value.source}\" has a refresh.schedule but no generated ingest module to run. Regenerate the app, then the schedule."
+    }
+
+    precondition {
+      condition     = contains(keys(local.batch), try(each.value.deployment, ""))
+      error_message = "Retriever \"${each.value.source}\" has a refresh.schedule but no `target: batch` deployment ingests it. Add one, or drop the schedule: nothing would run it."
+    }
+
+    precondition {
+      condition     = try(var.image_uris[try(each.value.deployment, "")], "") != ""
+      error_message = "No image_uris entry for deployment \"${try(each.value.deployment, "")}\". A refresh job definition must name the image it runs."
+    }
+  }
+}
+
+# EventBridge Scheduler rather than a Batch resource, because that is the resource AWS
+# provides: the target is the queue submission API, so a scheduled refresh is an ordinary
+# job that Batch meters, retries and logs like any other. The expression is read as UTC,
+# which is what the spec means and what the docs say, and `schedule_aws` is the same
+# expression in this provider dialect.
+resource "aws_scheduler_schedule" "refresh" {
+  for_each = local.refresh
+
+  name                         = local.refresh_name[each.key]
+  schedule_expression          = try(each.value.schedule_aws, "")
+  schedule_expression_timezone = "UTC"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    arn      = "arn:${data.aws_partition.current.partition}:scheduler:::aws-sdk:batch:submitJob"
+    role_arn = aws_iam_role.scheduler[0].arn
+
+    # A static job name is safe here: `SubmitJob` requires a name but not a unique one,
+    # and the queue records the submission either way.
+    input = jsonencode({
+      jobName       = local.refresh_name[each.key]
+      jobQueue      = try(aws_batch_job_queue.queue[0].arn, "")
+      jobDefinition = try(aws_batch_job_definition.refresh[each.key].arn, "")
+    })
+  }
+
+  lifecycle {
+    precondition {
+      condition     = try(each.value.schedule_aws, "") != ""
+      error_message = "Retriever \"${each.value.source}\" has a refresh.schedule this module cannot spell for EventBridge Scheduler. Check that it is the five fields minute hour day-of-month month day-of-week."
+    }
+
+    precondition {
+      condition     = !contains(keys(local.refresh_dual_day), each.key)
+      error_message = "Retriever \"${each.value.source}\" schedules both day-of-month and day-of-week. A five-field cron ORs those two fields, and EventBridge Scheduler refuses an expression that names both: name one and use `*` for the other."
+    }
+
+    precondition {
+      condition     = contains(keys(local.batch), try(each.value.deployment, ""))
+      error_message = "Retriever \"${each.value.source}\" has a refresh.schedule but no `target: batch` deployment ingests it. Add one, or drop the schedule: nothing would run it."
     }
   }
 }

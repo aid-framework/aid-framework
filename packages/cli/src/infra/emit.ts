@@ -18,14 +18,17 @@ import type {
   BedrockPiiEntity,
   DeployManagedGuardrail,
   DeployPlan,
+  DeployTask,
   ModelArmorConfidence,
   ModelArmorGuardrailPolicy,
   ModelArmorRaiFilter,
 } from '@aid-framework/ir';
 
+import { TARGETS } from '../targets.js';
 import { type Cloud, DEFAULT_CLOUD } from './cloud.js';
 import { emitProviderModules, envRoot, modulesOf } from './modules/index.js';
 import { INFRA_CDK_CONTEXT_PATH, INFRA_GENERATED_DIR, INFRA_PLAN_PATH } from './paths.js';
+import { awsSchedulerCronExpression } from './schedule.js';
 
 export {
   INFRA_CDK_CONTEXT_PATH,
@@ -155,6 +158,68 @@ export function deployModelArmorTemplate(
 }
 
 /**
+ * One plan task in the spelling the modules read.
+ *
+ * `schedule` is the spec's five-field UTC cron, kept because a diagnostic quotes what the
+ * person wrote. The three fields beside it are what a module cannot derive in HCL: the
+ * AWS dialect of the same expression, the dotted ingest module a refresh runs, and the
+ * batch deployment whose image and environment it borrows.
+ */
+export interface DeployTaskSpelling {
+  readonly id: string;
+  readonly kind: string;
+  readonly source: string;
+  readonly schedule?: string;
+  readonly schedule_aws?: string;
+  readonly module?: string;
+  readonly deployment?: string;
+}
+
+/**
+ * The batch deployment that ingests `retrieverId`, if one does.
+ *
+ * A deployment's `ingest` lists every retriever in the build, so this is the deployment a
+ * scheduled refresh shares an image and an environment with. Sorted, because two such
+ * deployments must resolve to the same one on every run.
+ */
+function batchDeploymentIngesting(plan: DeployPlan, retrieverId: string): string | undefined {
+  return plan.services
+    .filter((service) => service.target === 'batch' && service.ingest.includes(retrieverId))
+    .map((service) => service.id)
+    .sort()[0];
+}
+
+/** The python target's ingest module path is the only one a batch job can run. */
+const PYTHON_INGEST_MODULE = TARGETS.find(
+  (target) => target.runner === 'python',
+)?.retrievalIngestModule;
+
+/**
+ * `task`, plus the three facts a scheduler needs when it carries one.
+ *
+ * A task with no schedule is spelled exactly as before, so a plan that schedules nothing
+ * yields the document it always did.
+ */
+function spellTask(plan: DeployPlan, task: DeployTask): DeployTaskSpelling {
+  const spelled: DeployTaskSpelling = {
+    id: task.id,
+    kind: task.kind,
+    source: task.source,
+  };
+  if (task.schedule === undefined) return spelled;
+
+  const module = PYTHON_INGEST_MODULE?.(task.source);
+  const deployment = batchDeploymentIngesting(plan, task.source);
+  return {
+    ...spelled,
+    schedule: task.schedule,
+    schedule_aws: awsSchedulerCronExpression(task.schedule),
+    ...(module === undefined ? {} : { module }),
+    ...(deployment === undefined ? {} : { deployment }),
+  };
+}
+
+/**
  * A tfvars document: the plan in the spelling an env root reads. Keys are snake_case
  * because that is what a Terraform variable is called; values are the plan's, unchanged.
  *
@@ -258,7 +323,7 @@ export interface DeployTfvars {
       }
     >
   >;
-  readonly tasks: readonly { id: string; kind: string; source: string; schedule?: string }[];
+  readonly tasks: readonly DeployTaskSpelling[];
   readonly alarms: readonly { id: string; metric: string; source: string }[];
 }
 
@@ -336,7 +401,7 @@ export interface DeployContext {
       }
     >
   >;
-  readonly tasks: readonly { id: string; kind: string; source: string; schedule?: string }[];
+  readonly tasks: readonly DeployTaskSpelling[];
   readonly alarms: readonly { id: string; metric: string; source: string }[];
 }
 
@@ -445,12 +510,7 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
     model_armor_templates: modelArmorTemplates,
     knowledge_bases: knowledgeBases,
     data_stores: dataStores,
-    tasks: plan.tasks.map((task) => ({
-      id: task.id,
-      kind: task.kind,
-      source: task.source,
-      ...(task.schedule === undefined ? {} : { schedule: task.schedule }),
-    })),
+    tasks: plan.tasks.map((task) => spellTask(plan, task)),
     alarms: plan.alarms.map((alarm) => ({
       id: alarm.id,
       metric: alarm.metric,

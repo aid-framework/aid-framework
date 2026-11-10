@@ -35,8 +35,26 @@ The emitted infrastructure is OpenTofu. A plan targets one cloud at a time, beca
 
 ## Spec language
 
-The current spec language version is `0.22`.
+The current spec language version is `0.23`.
 A construct that needs a later version is reported as `spec/not-supported`, naming the version it needs, instead of being ignored.
+
+Retriever chunking strategies are all implemented in both runtimes:
+
+| `chunking.strategy` | Python | TypeScript | Since |
+| --- | --- | --- | --- |
+| `fixed` | yes | yes | 0.1 |
+| `recursive` | yes | yes | 0.1 |
+| `semantic` | yes | yes | 0.22 |
+| `code` | yes | yes | 0.1 |
+
+A retriever the application ingests itself can declare `refresh.schedule` since 0.23: a five-field cron read as UTC, which the plan turns into a scheduler rather than a second ingestion path. A retriever bound to a managed knowledge base still refuses `refresh` entirely, because the managed engine owns ingestion.
+
+| `refresh.schedule` | `aws` | `gcp` |
+| --- | --- | --- |
+| Scheduler | `aws_scheduler_schedule` | `google_cloud_scheduler_job` |
+| Run it starts | `aws_batch_job_definition` | `google_cloud_run_v2_job` |
+| Cron dialect | EventBridge `cron(...)`, UTC | five-field cron, `Etc/UTC` |
+| Also required | a `target: batch` deployment that ingests the retriever | the same |
 
 ## Conformance
 

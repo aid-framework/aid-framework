@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.22`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.23`.
 
 ## Deployment targets
 
@@ -319,6 +319,14 @@ A retriever cuts a document where the cosine similarity between adjacent units d
 - **Turned on by:** `retrievers[].chunking.strategy: semantic`
 - **Reference:** [spec](./reference/spec.md#retriever)
 - **Since:** `0.1.135`
+
+### Scheduled re-ingestion
+
+A retriever the application ingests itself declares a five-field cron read as UTC, and the generated module emits a cloud scheduler that submits the job running that retriever's ingest.
+
+- **Turned on by:** `retrievers[].refresh.schedule`
+- **Reference:** [spec](./reference/spec.md#retriever)
+- **Since:** `0.1.136`
 
 ## Refused, on purpose
 

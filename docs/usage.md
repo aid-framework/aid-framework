@@ -143,11 +143,19 @@ the chunks are embedded, so its tokens and cost are counted in the ingest report
 left out. `fixed`, `recursive` and `code` still cut by size and produce the same chunks and ids
 they did before.
 
+Re-ingestion can run on a clock. A retriever the application ingests itself declares
+`refresh.schedule` as a five-field cron read as UTC, and the generated module emits a
+scheduler that submits the job running that retriever's ingest - `aws_scheduler_schedule`
+against the AWS Batch queue, `google_cloud_scheduler_job` against the Cloud Run job. It needs
+`specVersion: "0.23"`, and the retriever must be named in a `target: batch` deployment, since
+that deployment supplies the image and environment the refresh runs in.
+
 Covers:
 
 - **Retrieval with citations**
 - **S3 and HTTP corpus sources**
 - **Semantic chunking**
+- **Scheduled re-ingestion**
 - **Memory tiers**
 - **Semantic cache**
 - **Bedrock knowledge bases**

@@ -1,6 +1,6 @@
 {
   "name": "@aid-framework/generator-ts-vercel",
-  "version": "0.1.135",
+  "version": "0.1.136",
   "description": "AID generator for a Next.js App Router (Vercel) TypeScript target.",
   "license": "Apache-2.0",
   "repository": {

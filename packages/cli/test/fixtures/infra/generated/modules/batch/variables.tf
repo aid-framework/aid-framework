@@ -81,6 +81,20 @@ variable "log_retention_days" {
   default = 30
 }
 
+variable "tasks" {
+  description = "The plan deploy tasks verbatim. A task with a schedule is a retriever this build ingests itself, on its own schedule."
+  type = list(object({
+    id           = string
+    kind         = string
+    source       = string
+    schedule     = optional(string)
+    schedule_aws = optional(string)
+    module       = optional(string)
+    deployment   = optional(string)
+  }))
+  default = []
+}
+
 variable "bedrock_region" {
   description = "Region for Bedrock calls. Empty means the region this stack deploys into."
   type        = string

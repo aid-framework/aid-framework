@@ -48,6 +48,7 @@ module "cloudrunjob" {
   deletion_protection   = var.deletion_protection
   knowledge_bases       = module.vertex-rag.knowledge_bases
   model_armor_templates = var.model_armor_templates
+  tasks                 = var.tasks
   tags                  = var.tags
 }
 

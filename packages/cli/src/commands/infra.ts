@@ -342,10 +342,12 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
   // CDK constructs exist for `serverless`, `container` and managed knowledge bases only.
   // A plan naming anything else would synth a clean app that deploys part of the project,
   // so it is refused for the same reason a GCP CDK app is: an empty app is worse than a
-  // refusal. `action()` repeats this check against the emitted plan, because `plan` and
-  // `apply` read that file rather than the spec and would otherwise accept a plan written
-  // by a `gen` that had no `--iac cdk` to warn it.
-  const obstacles = cdkObstacles(deployPlan.services);
+  // refusal. A scheduled refresh is the same kind of gap -- no construct creates one, so
+  // the app would deploy a retriever that never refreshes. `action()` repeats this check
+  // against the emitted plan, because `plan` and `apply` read that file rather than the
+  // spec and would otherwise accept a plan written by a `gen` that had no `--iac cdk` to
+  // warn it.
+  const obstacles = cdkObstacles(deployPlan.services, deployPlan.tasks);
   if (options.iac === 'cdk' && obstacles.length > 0) {
     return outcome({
       command,
@@ -534,8 +536,11 @@ function destroyingKnowledgeBases(context: CliContext, env: string, cloud: Cloud
 
 /** A service the CDK backend cannot represent, and why. */
 interface CdkObstacle {
-  /** `runtime`: a managed agent runtime; `target`: a target with no construct. */
-  readonly reason: 'runtime' | 'target';
+  /**
+   * `runtime`: a managed agent runtime; `target`: a target with no construct;
+   * `schedule`: a refresh schedule, which no construct in this backend emits.
+   */
+  readonly reason: 'runtime' | 'target' | 'schedule';
   readonly id: string;
   /** The target name, when that is the obstacle. */
   readonly detail?: string;
@@ -548,14 +553,29 @@ interface SavedPlanService {
   readonly runtime?: unknown;
 }
 
+/** The part of a saved task this check needs: whether it asks to be scheduled. */
+interface SavedPlanTask {
+  readonly id: string;
+  readonly schedule?: unknown;
+}
+
 /**
- * The services a CDK app would silently drop.
+ * The services and tasks a CDK app would silently drop.
  *
  * `target` rather than a fixed list so a target added later fails closed instead of
  * deploying a partial project. The list names every target a construct exists for;
  * `batch` and `edge` were the case this guard existed for, and now have one.
+ *
+ * A scheduled refresh is the second kind of drop: the constructs that exist cover
+ * compute, and none of them creates an EventBridge schedule, so a plan carrying a
+ * `refresh.schedule` would deploy an environment where the refresh never runs. The spec
+ * already refuses a schedule no batch deployment ingests, so this only has to refuse the
+ * backend that cannot express one.
  */
-function cdkObstacles(services: readonly SavedPlanService[]): CdkObstacle[] {
+function cdkObstacles(
+  services: readonly SavedPlanService[],
+  tasks: readonly SavedPlanTask[] = [],
+): CdkObstacle[] {
   const represented = new Set(['serverless', 'container', 'batch', 'edge']);
   const obstacles: CdkObstacle[] = [];
   for (const service of services) {
@@ -563,6 +583,11 @@ function cdkObstacles(services: readonly SavedPlanService[]): CdkObstacle[] {
       obstacles.push({ reason: 'runtime', id: service.id });
     } else if (!represented.has(service.target)) {
       obstacles.push({ reason: 'target', id: service.id, detail: service.target });
+    }
+  }
+  for (const task of tasks) {
+    if (typeof task.schedule === 'string' && task.schedule !== '') {
+      obstacles.push({ reason: 'schedule', id: task.id });
     }
   }
   return obstacles;
@@ -573,6 +598,7 @@ function cdkObstacleDiagnostic(obstacles: readonly CdkObstacle[]): CliDiagnostic
     list.map((obstacle) => `"${obstacle.id}"`).join(', ');
   const managed = obstacles.filter((obstacle) => obstacle.reason === 'runtime');
   const targets = obstacles.filter((obstacle) => obstacle.reason === 'target');
+  const scheduled = obstacles.filter((obstacle) => obstacle.reason === 'schedule');
 
   const sentences: string[] = [];
   if (managed.length > 0) {
@@ -588,11 +614,16 @@ function cdkObstacleDiagnostic(obstacles: readonly CdkObstacle[]): CliDiagnostic
       `Service ${quote(targets)} targets ${named}, which the CDK backend does not emit a construct for.`,
     );
   }
+  if (scheduled.length > 0) {
+    sentences.push(
+      `Retriever ${quote(scheduled)} declares refresh.schedule, and the CDK backend emits no scheduler, so the refresh would never run.`,
+    );
+  }
 
   return cliError({
     code: CLI_DIAGNOSTIC_CODES.infraCloudBackendUnsupported,
     message: sentences.join(' '),
-    hint: 'Use --iac tofu, which emits a module for every target and the managed runtime, or retarget the service to a target with a construct (`serverless`, `container`, `batch` or `edge`).',
+    hint: 'Use --iac tofu, which emits a module for every target, the managed runtime and a scheduler for a refresh, or retarget the service to a target with a construct (`serverless`, `container`, `batch` or `edge`).',
   });
 }
 
@@ -613,6 +644,7 @@ function savedPlanObstacles(context: CliContext): CdkObstacle[] {
   if (typeof parsed !== 'object' || parsed === null) return [];
   const services = (parsed as { services?: unknown }).services;
   if (!Array.isArray(services)) return [];
+  const tasks = (parsed as { tasks?: unknown }).tasks;
 
   const known = services.filter(
     (service): service is SavedPlanService =>
@@ -621,7 +653,15 @@ function savedPlanObstacles(context: CliContext): CdkObstacle[] {
       typeof (service as { id?: unknown }).id === 'string' &&
       typeof (service as { target?: unknown }).target === 'string',
   );
-  return cdkObstacles(known);
+  const knownTasks = Array.isArray(tasks)
+    ? tasks.filter(
+        (task): task is SavedPlanTask =>
+          typeof task === 'object' &&
+          task !== null &&
+          typeof (task as { id?: unknown }).id === 'string',
+      )
+    : [];
+  return cdkObstacles(known, knownTasks);
 }
 
 function action(
