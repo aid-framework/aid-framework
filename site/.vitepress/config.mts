@@ -193,6 +193,7 @@ export default defineConfig({
           text: 'Reference',
           items: [
             { text: 'Spec', link: '/reference/spec' },
+            { text: 'Spec changelog', link: '/reference/spec-changelog' },
             { text: 'CLI', link: '/reference/cli' },
             { text: 'Targets', link: '/reference/targets' },
             { text: 'Support', link: '/reference/support' },
@@ -224,6 +225,7 @@ export default defineConfig({
           text: 'Reference',
           items: [
             { text: 'Spec', link: '/reference/spec' },
+            { text: 'Spec changelog', link: '/reference/spec-changelog' },
             { text: 'CLI', link: '/reference/cli' },
             { text: 'Targets', link: '/reference/targets' },
             { text: 'Support', link: '/reference/support' },
