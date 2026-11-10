@@ -22,6 +22,7 @@ import type { SourceDocument } from './source-document.js';
  */
 export const SUPPORTED_SECTIONS = [
   'specVersion',
+  'profile',
   'project',
   'types',
   'models',
@@ -74,6 +75,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.22',
   '0.23',
   '0.24',
+  '0.25',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -93,6 +95,7 @@ export const SECTION_MIN_VERSION: Partial<
   decisions: '0.6',
   knowledgeBases: '0.12',
   gateways: '0.24',
+  profile: '0.25',
 };
 
 /**
@@ -147,6 +150,15 @@ export const CONFIDENCE_ANSWER_TYPES: readonly string[] = ['choice', 'score'];
  * rather than have the key silently dropped by a schema it declared.
  */
 export const DEPLOYMENT_IMAGE_MIN_VERSION: SpecVersion = '0.4';
+
+/**
+ * The first spec version that accepts the placement keys on a deployment: `cloud`,
+ * `region` and `audit`. Nested for the same reason as `deployments[].image` -- the
+ * `deployments` section has existed since 0.2, so the top-level gate cannot see them,
+ * and a 0.24 document that declares a region must be told which version it needs
+ * instead of having the key silently ignored by a runtime that never read it.
+ */
+export const DEPLOYMENT_PLACEMENT_MIN_VERSION: SpecVersion = '0.25';
 
 /**
  * The first spec version that accepts the batch surface: `pipelines[].trigger.manual` and
@@ -601,6 +613,7 @@ function scopeDiagnostics(
   providerVersionDiagnostics(spec, diagnostics, reported);
   guardrailDecisionDiagnostics(spec, diagnostics, reported);
   deploymentImageDiagnostics(spec, diagnostics, reported);
+  deploymentPlacementDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
   routeDiagnostics(spec, diagnostics, reported);
@@ -912,6 +925,46 @@ function modelCacheDiagnostics(
       }),
     );
     reported.add(JSON.stringify(['models', name, 'cache']));
+  }
+}
+
+/**
+ * Nested version gating for the placement keys a deployment gained in 0.25: `cloud`,
+ * `region` and `audit`.
+ *
+ * They are gated together because they are one decision -- where the deployment lands and
+ * where its audit record goes -- and because a 0.24 document that declares any of them was
+ * written against a vocabulary its version did not offer. The section gate cannot see them
+ * (`deployments` exists from 0.2), so without this rule the keys would be accepted by the
+ * schema and then read by nobody, which is the silent drop this layer exists to prevent.
+ */
+function deploymentPlacementDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  // An unrecognised version is already a schema error at `specVersion`; saying "0.25
+  // needed" against it would bury the root cause.
+  if (declared === undefined || !known) return;
+  if (specVersionAtLeast(declared, DEPLOYMENT_PLACEMENT_MIN_VERSION)) return;
+
+  for (const [id, raw] of Object.entries(asRecord(spec.deployments))) {
+    const deployment = asRecord(raw);
+    for (const key of ['cloud', 'region', 'audit'] as const) {
+      if (deployment[key] === undefined) continue;
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'deployments.${id}.${key}' requires specVersion ${DEPLOYMENT_PLACEMENT_MIN_VERSION}, but this specification declares version ${declared}`,
+          path: ['deployments', id, key],
+          hint: `set specVersion: "${DEPLOYMENT_PLACEMENT_MIN_VERSION}"; a document that declares no cloud, region or audit sink is unchanged`,
+        }),
+      );
+      reported.add(JSON.stringify(['deployments', id, key]));
+    }
   }
 }
 

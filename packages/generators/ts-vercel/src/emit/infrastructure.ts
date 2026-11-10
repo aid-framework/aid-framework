@@ -373,6 +373,14 @@ export function emitObservability(ir: IR): EmittedFile {
     irVersion: ir.irVersion,
     models: { advertised: modelWired, unrepresentable },
     observability: { redact: [...ir.observability.redact], trace: ir.observability.trace },
+    placements: ir.deployments.map((deployment) => {
+      const placement: Record<string, unknown> = { id: deployment.id };
+      if (deployment.cloud !== undefined) placement.cloud = deployment.cloud;
+      if (deployment.region !== undefined) placement.region = deployment.region;
+      if (deployment.audit !== undefined) placement.audit = deployment.audit;
+      return placement;
+    }),
+    profile: ir.profile,
     target: 'ts-vercel',
   };
 

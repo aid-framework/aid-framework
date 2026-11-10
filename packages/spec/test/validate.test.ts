@@ -65,6 +65,7 @@ describe('spec version', () => {
       'memory',
       'models',
       'pipelines',
+      'profile',
       'project',
       'prompts',
       'retrievers',
@@ -74,9 +75,9 @@ describe('spec version', () => {
       'types',
     ]);
     // The version boundary, named explicitly: four sections are supported from 0.2,
-    // `decisions` from 0.6, `knowledgeBases` from 0.12 and `gateways` from 0.24. A section
-    // that gains a minimum version without appearing here would be enforced by the schema
-    // and quietly refused by the scope rule.
+    // `decisions` from 0.6, `knowledgeBases` from 0.12, `gateways` from 0.24 and
+    // `profile` from 0.25. A section that gains a minimum version without appearing here
+    // would be enforced by the schema and quietly refused by the scope rule.
     expect(SECTION_MIN_VERSION).toEqual({
       agents: '0.2',
       decisions: '0.6',
@@ -85,6 +86,7 @@ describe('spec version', () => {
       guardrails: '0.2',
       knowledgeBases: '0.12',
       memory: '0.2',
+      profile: '0.25',
     });
   });
 
@@ -131,20 +133,22 @@ describe('valid fixtures', () => {
 
   it('accepts every section declared as supported', () => {
     // No single fixture carries every section: four require spec 0.2, `decisions` needs
-    // 0.6, `knowledgeBases` needs 0.12, `gateways` needs 0.24, and the v0.1 fixture is the
-    // byte-identical baseline this layer must leave alone. The union is the assertion, so a
-    // supported section that no valid fixture carries fails here.
+    // 0.6, `knowledgeBases` needs 0.12, `gateways` needs 0.24, `profile` needs 0.25, and the
+    // v0.1 fixture is the byte-identical baseline this layer must leave alone. The union is
+    // the assertion, so a supported section that no valid fixture carries fails here.
     const fixtureNames = [
       'valid/full.spec.yaml',
       'valid/v02-sections.spec.yaml',
       'valid/v06-decisions.spec.yaml',
       'valid/v12-knowledge-bases.spec.yaml',
       'valid/v24-gateways.spec.yaml',
+      'valid/v25-profile.spec.yaml',
     ] as const;
     const documents = fixtureNames.map(
       (name) => checkSpecText(readFixture(name)).value as Record<string, unknown>,
     );
-    const [v01, v02, v06, v12, v24] = documents as [
+    const [v01, v02, v06, v12, v24, v25] = documents as [
+      Record<string, unknown>,
       Record<string, unknown>,
       Record<string, unknown>,
       Record<string, unknown>,
@@ -163,7 +167,10 @@ describe('valid fixtures', () => {
       [...SUPPORTED_SECTIONS]
         .filter(
           (section) =>
-            section !== 'decisions' && section !== 'knowledgeBases' && section !== 'gateways',
+            section !== 'decisions' &&
+            section !== 'knowledgeBases' &&
+            section !== 'gateways' &&
+            section !== 'profile',
         )
         .sort(),
     );
@@ -178,6 +185,7 @@ describe('valid fixtures', () => {
       'prompts',
       'specVersion',
     ]);
+    expect(Object.keys(v25).sort()).toEqual(['deployments', 'profile', 'project', 'specVersion']);
   });
 });
 
@@ -1580,6 +1588,95 @@ describe('a cloud registry', () => {
 
     expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
     expect(paths(diagnostics)).toEqual(['deployments.prod.image.workloadIdentityProvider']);
+  });
+});
+
+/**
+ * The delivery placement: `profile` at the top level and `cloud`/`region`/`audit` on a
+ * deployment, all of which arrived together in 0.25.
+ *
+ * The section gate covers `profile`; the three deployment keys are nested inside a section
+ * that has existed since 0.2, so they need their own rule. Both are tested here because a
+ * 0.24 customer migrating to a profile hits them in the same edit, and each must hear a
+ * version and not a shape error it cannot act on.
+ */
+describe('the delivery placement', () => {
+  /** A deployment the schema admits, so each test varies exactly one field. */
+  function doc(
+    specVersion: string,
+    deployment: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      specVersion,
+      project: { name: 'p' },
+      deployments: { prod: { target: 'container', secrets: [], ...deployment } },
+    };
+  }
+
+  it('accepts cloud, region and audit from spec 0.25', () => {
+    expect(
+      validateSpec(
+        doc('0.25', { cloud: 'aws', region: 'eu-central-1', audit: { sink: 'cloudwatch' } }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('tells a 0.24 document that a pinned cloud needs 0.25', () => {
+    const diagnostics = validateSpec(doc('0.24', { cloud: 'aws' }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.cloud']);
+    expect(diagnostics[0]?.message).toContain(
+      "'deployments.prod.cloud' requires specVersion 0.25, but this specification declares version 0.24",
+    );
+    expect(diagnostics[0]?.hint).toContain('set specVersion: "0.25"');
+  });
+
+  it('refuses each placement key separately, so the fix names one key', () => {
+    // One diagnostic per key rather than one per deployment: a spec that pins a region
+    // and forgets the version should learn which line to touch, not that a deployment
+    // is wrong somehow.
+    const diagnostics = validateSpec(
+      doc('0.24', {
+        cloud: 'gcp',
+        region: 'europe-west1',
+        audit: { sink: 'gcs', retentionDays: 30 },
+      }),
+    );
+
+    expect(codes(diagnostics)).toEqual([
+      DIAGNOSTIC_CODES.notSupported,
+      DIAGNOSTIC_CODES.notSupported,
+      DIAGNOSTIC_CODES.notSupported,
+    ]);
+    expect(paths(diagnostics)).toEqual([
+      'deployments.prod.cloud',
+      'deployments.prod.region',
+      'deployments.prod.audit',
+    ]);
+  });
+
+  it('leaves a 0.24 document with no placement keys alone', () => {
+    // The backward-compatibility promise: the keys were additive, so nothing a 0.24
+    // document could already write changes meaning or starts failing.
+    expect(validateSpec(doc('0.24'))).toEqual([]);
+  });
+
+  it('tells a 0.24 document that profile needs 0.25', () => {
+    const diagnostics = validateSpec({
+      specVersion: '0.24',
+      profile: 'enterprise',
+      project: { name: 'p' },
+    });
+
+    expect(codes(diagnostics)).toContain(DIAGNOSTIC_CODES.notSupported);
+    const diagnostic = diagnostics.find((entry) =>
+      entry.message.startsWith("'profile' requires specVersion"),
+    );
+    expect(diagnostic?.path).toEqual(['profile']);
+    expect(diagnostic?.message).toContain(
+      "'profile' requires specVersion 0.25, but this specification declares version 0.24",
+    );
   });
 });
 

@@ -32,6 +32,7 @@ import { knowledgeBaseGate } from './knowledge-base.js';
 import { memoryRefsGate } from './memory.js';
 import { normalizeGate } from './normalize.js';
 import { orchestrationDeepagentsGate } from './orchestration.js';
+import { profileGate } from './profile.js';
 import { referentialGate } from './referential.js';
 import { securityGate } from './security.js';
 
@@ -53,6 +54,7 @@ export const GATES = {
   'retrievers/knowledge-bases': knowledgeBaseGate,
   'deploy/streaming': deployStreamingGate,
   'orchestration/deepagents': orchestrationDeepagentsGate,
+  profile: profileGate,
 } as const satisfies Record<string, Gate>;
 
 export type GateName = keyof typeof GATES;

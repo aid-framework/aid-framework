@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.24`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.25`.
 
 ## Deployment targets
 
@@ -336,6 +336,14 @@ A `gateways` entry names an Amazon Bedrock AgentCore Gateway, its authorizer and
 - **Reference:** [spec](./reference/spec.md#gateway)
 - **Since:** `0.1.139`
 
+### Delivery profiles with a pinned placement and audit sink
+
+A top-level `profile` names a bundle of required controls -- `standard` is the default and `enterprise` is the regulated one -- and a deployment can pin the `cloud`, `region` and `audit` sink it lands in, so the placement and the audit record are properties of the customer rather than of whoever ran the apply. The `profile` gate refuses an `enterprise` spec that omits a region pin, an audit sink, or a guardrail that runs on output.
+
+- **Turned on by:** `profile, deployments[].cloud, deployments[].region, deployments[].audit`
+- **Reference:** [spec](./reference/spec.md#top-level-keys)
+- **Since:** `0.1.142`
+
 ## Refused, on purpose
 
 An absent capability is stated once, here, with the diagnostic that enforces it, instead of being discovered during an apply or debugged in production.
@@ -375,6 +383,12 @@ The spec holds the *names* of the repository secrets a login reads, never the va
 Cloud CDN serves static assets and cannot run the app, so the infra planner refuses the plan instead of emitting part of a project.
 
 - **Enforced by:** `cli/infra-cloud-target-unsupported`
+
+### An `enterprise` profile with a required control missing
+
+`enterprise` is a promise that the controls a regulated deployment cannot go without are present, so a spec that declares it and then omits a region pin, an audit sink, or a guardrail that runs on output is refused by the `profile` gate. The three are reported separately -- `ir/profile-region`, `ir/profile-audit` and `ir/profile-guardrail` -- because each has its own fix, and the gate is what keeps the word `enterprise` from meaning nothing.
+
+- **Enforced by:** `ir/profile-audit`
 
 ---
 

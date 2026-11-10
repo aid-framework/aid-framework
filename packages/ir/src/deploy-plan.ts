@@ -275,6 +275,24 @@ export interface DeployPlan {
   gateways: DeployGateway[];
   tasks: DeployTask[];
   alarms: DeployAlarm[];
+  /**
+   * The audit destination the document pins, if it pins one. Project-level rather than
+   * per service because an audit record is written by the environment, not by one
+   * deployment: the plan has one audit module, and `profileGate` refuses a document whose
+   * deployments disagree so this single value is never an arbitrary pick.
+   *
+   * The destination's *location* is deliberately absent. It is the env root's `region`
+   * input, because a spec that pins no region must not be handed a baked one (design
+   * §12.2) -- and the region a deployment pins is already checked against its cloud by
+   * the profile gate before any of this is derived.
+   */
+  audit?: DeployAudit;
+}
+
+export interface DeployAudit {
+  sink: 'cloudwatch' | 's3' | 'gcs' | 'bigquery';
+  /** Omitted means the sink's own default; AID does not invent a retention policy. */
+  retentionDays?: number;
 }
 
 /**
@@ -426,7 +444,7 @@ export function buildDeployPlan(ir: IR): DeployPlan {
     })),
   ].sort((left, right) => compare(left.id, right.id));
 
-  return {
+  const plan: DeployPlan = {
     planVersion: DEPLOY_PLAN_VERSION,
     project: { name: ir.project.name, namespace: ir.project.namespace },
     services,
@@ -436,6 +454,19 @@ export function buildDeployPlan(ir: IR): DeployPlan {
     tasks,
     alarms: alarms(ir),
   };
+
+  // Deployments are sorted, so the first declared audit is deterministic. `profileGate`
+  // refuses a document whose deployments disagree, which is what keeps this from being an
+  // arbitrary pick between two destinations.
+  const declared = ir.deployments.find((deployment) => deployment.audit !== undefined)?.audit;
+  if (declared !== undefined) {
+    plan.audit =
+      declared.retentionDays === undefined
+        ? { sink: declared.sink }
+        : { sink: declared.sink, retentionDays: declared.retentionDays };
+  }
+
+  return plan;
 }
 
 /** Routes the app serves, taken from HTTP-triggered pipelines only. */

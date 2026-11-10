@@ -9,8 +9,8 @@ from typing import Any
 
 
 def generated_capabilities() -> dict[str, Any]:
-    """The generator identity, the reconciliation of every declared capability, and the target
-    settings the emitted wiring honours.
+    """The generator identity, the reconciliation of every declared capability, the profile and
+    placement the app was generated under, and the target settings the emitted wiring honours.
     """
 
     return {
@@ -48,7 +48,7 @@ def generated_capabilities() -> dict[str, Any]:
         },
         "emitsAgainst": {"structuredOutput": "pydantic", "tracing": "otel-genai"},
         "generator": {"name": "@aid-framework/generator-py-fastapi", "version": "0.1.0"},
-        "irVersion": "0.1.0",
+        "irVersion": "0.2.0",
         "models": {
             "advertised": {
                 "embed": ["Capability.EMBEDDINGS"],
@@ -78,5 +78,7 @@ def generated_capabilities() -> dict[str, Any]:
             },
         },
         "observability": {"redact": [], "trace": True},
+        "placements": [{"id": "api"}],
+        "profile": "standard",
         "target": "py-fastapi",
     }

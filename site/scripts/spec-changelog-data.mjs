@@ -100,4 +100,8 @@ export const SPEC_VERSIONS = [
     version: '0.24',
     adds: 'Adds `gateways` and `deployments[].runtime.gateway`, which federate tools behind a managed Amazon Bedrock AgentCore Gateway endpoint a runtime reaches over MCP instead of bundling them.',
   },
+  {
+    version: '0.25',
+    adds: "Adds the top-level `profile` -- a named bundle of required controls, `standard` by default -- and `deployments[].cloud`, `.region` and `.audit`, which put the placement and the audit record in the spec instead of in whoever's shell ran the apply.",
+  },
 ];

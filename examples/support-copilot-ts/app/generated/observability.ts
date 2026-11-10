@@ -31,7 +31,7 @@ export function generatedCapabilities(): Record<string, unknown> {
     },
     emitsAgainst: { structuredOutput: 'zod', tracing: 'otel-genai' },
     generator: '@aid-framework/generator-ts-vercel',
-    irVersion: '0.1.0',
+    irVersion: '0.2.0',
     models: {
       advertised: {
         embed: ['embeddings'],
@@ -42,6 +42,8 @@ export function generatedCapabilities(): Record<string, unknown> {
       unrepresentable: {},
     },
     observability: { redact: [], trace: true },
+    placements: [{ id: 'api' }],
+    profile: 'standard',
     target: 'ts-vercel',
   };
 }

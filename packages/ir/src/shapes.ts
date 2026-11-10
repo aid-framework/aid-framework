@@ -18,8 +18,15 @@ import type { ModelCapability, RequiredCapability } from './capabilities.js';
 import type { PolicyExpr } from './policy/index.js';
 import type { PredicateNode } from './predicate/index.js';
 
-/** IR format version. Semver, independent of the spec's `specVersion`. */
-export const IR_VERSION = '0.1.0';
+/**
+ * IR format version. Semver, independent of the spec's `specVersion`.
+ *
+ * A minor bump is a shape the IR gained, not a shape it lost: `0.2.0` adds the top-level
+ * `profile` and the placement keys on a deployment (`cloud`, `region`, `audit`). Every
+ * field is additive, so a consumer written against `0.1.0` reads a `0.2.0` document without
+ * change -- it simply does not see the new keys.
+ */
+export const IR_VERSION = '0.2.0';
 
 export const PRIMITIVE_TYPES = ['string', 'number', 'integer', 'boolean'] as const;
 
@@ -947,6 +954,146 @@ export const DEPLOY_TARGETS = ['serverless', 'container', 'batch', 'edge'] as co
 export type DeploymentTarget = (typeof DEPLOY_TARGETS)[number];
 
 /**
+ * The operating profiles a spec may declare, from spec 0.25.
+ *
+ * A profile is a named bundle of defaults and required controls, not a mode: it changes
+ * what the gates demand, never what the generators emit. `standard` is what an absent
+ * `profile` means, so every document written before 0.25 is read as `standard` and keeps
+ * exactly the behaviour it had.
+ */
+export const PROFILES = ['standard', 'enterprise'] as const;
+
+export type Profile = (typeof PROFILES)[number];
+
+/** The profile an absent `profile` means. Spelled once so nothing defaults differently. */
+export const DEFAULT_PROFILE: Profile = 'standard';
+
+/**
+ * The clouds a deployment may land in, from spec 0.25.
+ *
+ * The runtime list, so the gate that refuses an unsupported region and the plan that
+ * threads the cloud into the module set cannot disagree. `packages/cli/src/infra/cloud.ts`
+ * keeps its own `CLOUDS` because `site/scripts/support-data.mjs` parses that literal out of
+ * the source to build the support matrix; a test pins the two lists equal so neither can
+ * drift silently.
+ */
+export const SPEC_CLOUDS = ['aws', 'gcp'] as const;
+
+export type SpecCloud = (typeof SPEC_CLOUDS)[number];
+
+/**
+ * The regions each cloud offers, as the gate's source of truth for `deployments[].region`.
+ *
+ * This table exists to refuse a cross-cloud mistake at validate time -- `region:
+ * eu-central-1` on a `cloud: gcp` deployment -- with the valid set in the diagnostic,
+ * instead of emitting a module that fails at apply. It is deliberately a curated list
+ * rather than "any string the provider might one day accept": a region AID has not been
+ * tested against is refused, not approximated.
+ */
+export const CLOUD_REGIONS: Readonly<Record<SpecCloud, readonly string[]>> = {
+  aws: [
+    'af-south-1',
+    'ap-east-1',
+    'ap-northeast-1',
+    'ap-northeast-2',
+    'ap-northeast-3',
+    'ap-south-1',
+    'ap-south-2',
+    'ap-southeast-1',
+    'ap-southeast-2',
+    'ap-southeast-3',
+    'ap-southeast-4',
+    'ca-central-1',
+    'ca-west-1',
+    'eu-central-1',
+    'eu-central-2',
+    'eu-north-1',
+    'eu-south-1',
+    'eu-south-2',
+    'eu-west-1',
+    'eu-west-2',
+    'eu-west-3',
+    'il-central-1',
+    'me-central-1',
+    'me-south-1',
+    'sa-east-1',
+    'us-east-1',
+    'us-east-2',
+    'us-west-1',
+    'us-west-2',
+  ],
+  gcp: [
+    'africa-south1',
+    'asia-east1',
+    'asia-east2',
+    'asia-northeast1',
+    'asia-northeast2',
+    'asia-northeast3',
+    'asia-south1',
+    'asia-south2',
+    'asia-southeast1',
+    'asia-southeast2',
+    'australia-southeast1',
+    'australia-southeast2',
+    'europe-central2',
+    'europe-north1',
+    'europe-southwest1',
+    'europe-west1',
+    'europe-west10',
+    'europe-west12',
+    'europe-west2',
+    'europe-west3',
+    'europe-west4',
+    'europe-west6',
+    'europe-west8',
+    'europe-west9',
+    'me-central1',
+    'me-central2',
+    'me-west1',
+    'northamerica-northeast1',
+    'northamerica-northeast2',
+    'southamerica-east1',
+    'southamerica-west1',
+    'us-central1',
+    'us-east1',
+    'us-east4',
+    'us-east5',
+    'us-south1',
+    'us-west1',
+    'us-west2',
+    'us-west3',
+    'us-west4',
+  ],
+};
+
+/**
+ * The audit sinks each cloud offers, from spec 0.25.
+ *
+ * A sink names a service the customer already runs. Naming one that belongs to the other
+ * cloud is refused (`ir/audit-target`) rather than emitted as a resource the deploy cannot
+ * create -- the same rule as `CLOUD_REGIONS`, for the same reason.
+ */
+export const CLOUD_AUDIT_SINKS: Readonly<Record<SpecCloud, readonly AuditSink[]>> = {
+  aws: ['cloudwatch', 's3'],
+  gcp: ['gcs', 'bigquery'],
+};
+
+export const AUDIT_SINKS = ['cloudwatch', 's3', 'gcs', 'bigquery'] as const;
+
+export type AuditSink = (typeof AUDIT_SINKS)[number];
+
+/** Where a deployment's audit record lands, from spec 0.25. */
+export interface DeploymentAuditShape {
+  sink: AuditSink;
+  /**
+   * How long the record is kept, in days. Absent when the spec names none, which means the
+   * sink's own policy decides: AID does not invent a retention rule for an operator's log
+   * store, and only `cloudwatch` has a retention it can actually set.
+   */
+  retentionDays?: number;
+}
+
+/**
  * The registries a container image may be published to.
  *
  * The table itself lives in `@aid-framework/spec` (`registries.ts`), next to the schema
@@ -1042,6 +1189,20 @@ export interface DeploymentShape {
   secrets: string[];
   env: { name: string; value?: string; secret?: boolean }[];
   /**
+   * The cloud this deployment lands in, when the spec pins it (spec 0.25). Absent means
+   * the spec did not decide, and the CLI's `--cloud` (or its `aws` default) still does --
+   * which is why an absent value serializes exactly as it did before this key existed.
+   */
+  cloud?: SpecCloud;
+  /**
+   * The region the deployment is placed in, and the residency pin (spec 0.25). A
+   * deployment scalar rather than a project one, because one project may place `prod` and
+   * `dev` in different regions. Checked against `CLOUD_REGIONS[cloud]` by the profile gate.
+   */
+  region?: string;
+  /** Where this deployment's audit record lands (spec 0.25). */
+  audit?: DeploymentAuditShape;
+  /**
    * Where a container image is published. Present only on a `target: container`
    * deployment, and only from spec 0.4. The registry is one of
    * `IMAGE_REGISTRY_DESCRIPTORS`, and a `secret-pair` registry carries the *names* of the
@@ -1068,6 +1229,12 @@ export interface IR {
   /** Semver of the IR format itself; independent of `specVersion`. */
   irVersion: string;
   specVersion: string;
+  /**
+   * The operating profile the document declared, or `standard` when it declared none.
+   * Always present: the gates read one value instead of testing for absence, so a
+   * document written before 0.25 and one that says `profile: standard` behave identically.
+   */
+  profile: Profile;
   project: ProjectShape;
   types: TypeShape[];
   models: ModelShape[];
@@ -1144,7 +1311,7 @@ export const IR_ONLY_COLLECTIONS = ['embeddings'] as const;
  * Together with `POPULATED_COLLECTION_BY_SECTION` these account for every
  * `SUPPORTED_SECTIONS` entry exactly once.
  */
-export const NON_COLLECTION_SECTIONS = ['specVersion', 'project'] as const;
+export const NON_COLLECTION_SECTIONS = ['specVersion', 'profile', 'project'] as const;
 
 /**
  * Providers the shipped runtime adapters can actually serve. The IR's `Provider`

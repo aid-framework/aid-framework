@@ -1,0 +1,164 @@
+/**
+ * Profile — one gate, `profile`, that enforces what a profile promises.
+ *
+ * A `profile` is a bundle of controls, and a bundle that is not enforced is a label. So
+ * the enterprise profile exports two obligations to the build: every deployment pins the
+ * region its data must stay in and the sink its audit record must land in, and the
+ * document declares at least one guardrail that inspects model *output*. Both are
+ * properties of the spec alone, which is what lets `aid validate` refuse them without a
+ * cloud account, a CLI flag, or a network call.
+ *
+ * The gate also owns the target-consistency checks, because a region or an audit sink is
+ * only meaningful against a named cloud: `eu-west-1` is not a GCP region and
+ * `google_logging_project_sink` is not something AWS can create. Those checks run for
+ * every profile, including documents that declare none -- an unvalidated region is wrong
+ * regardless of which controls the document promised. For the same reason it refuses a
+ * document whose deployments disagree about their placement: one module set targets one
+ * cloud, and one environment has one audit destination, so a second value would silently
+ * be generated for the wrong provider or dropped in favour of the first.
+ *
+ * What this gate deliberately does not do: it does not require identity, private
+ * networking, or an approval policy, because no spec construct expresses them yet.
+ * Requiring a key that cannot be set would be an unsatisfiable gate, and refusing a
+ * document for the absence of a feature the language does not have is precisely the
+ * approximation this layer exists to avoid.
+ */
+
+import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
+import { CLOUD_AUDIT_SINKS, CLOUD_REGIONS, type IR, type SpecCloud } from '../shapes.js';
+import { type GateOptions, type GateResult, NO_SUPPRESSIONS, reporter } from './contract.js';
+
+/** Where a region has to be checked against, once a cloud is named. */
+function regionHint(cloud: string, regions: readonly string[]): string {
+  const sample = [...regions].slice(0, 2);
+  return `pin a region ${cloud} offers, such as ${sample.join(' or ')}`;
+}
+
+export function profileGate(ir: IR, options: GateOptions): GateResult {
+  const diagnostics: IrDiagnostic[] = [];
+  const report = reporter(options);
+  const enterprise = ir.profile === 'enterprise';
+
+  // One module set targets one cloud, and `aid infra` drives one cloud per invocation, so
+  // a document that pins two would generate the second deployment's resources for the
+  // wrong provider and report success. `cloud` is optional per deployment, so the check
+  // looks only at the deployments that named one.
+  const clouds = [
+    ...new Set(
+      ir.deployments
+        .map((deployment) => deployment.cloud)
+        .filter((cloud): cloud is SpecCloud => cloud !== undefined),
+    ),
+  ];
+  if (clouds.length > 1) {
+    const named = ir.deployments
+      .filter((deployment) => deployment.cloud !== undefined)
+      .map((deployment) => `"${deployment.id}" (${deployment.cloud})`)
+      .join(', ');
+    diagnostics.push(
+      report.error({
+        code: IR_DIAGNOSTIC_CODES.cloudConflict,
+        message: `the profile gate rejected the document: deployments name different clouds, and one module set targets one cloud — ${named}`,
+        path: ['deployments'],
+        hint: 'pin one cloud for every deployment, or split the deployments into one spec per cloud',
+      }),
+    );
+  }
+
+  // An audit sink is likewise one destination per environment: the plan has one audit
+  // module, so two deployments naming different sinks (or different retention) would
+  // emit one and report success for both.
+  const audits = new Map<string, string[]>();
+  for (const deployment of ir.deployments) {
+    if (deployment.audit === undefined) continue;
+    const key = `${deployment.audit.sink}:${deployment.audit.retentionDays ?? ''}`;
+    audits.set(key, [...(audits.get(key) ?? []), deployment.id]);
+  }
+  if (audits.size > 1) {
+    const named = [...audits.entries()]
+      .map(([key, ids]) => {
+        const [sink, retention] = key.split(':');
+        const spelled =
+          retention === '' ? `${sink}, no retention` : `${sink}, retention ${retention} days`;
+        return `"${ids.join('", "')}" (${spelled})`;
+      })
+      .join(', ');
+    diagnostics.push(
+      report.error({
+        code: IR_DIAGNOSTIC_CODES.auditConflict,
+        message: `the profile gate rejected the document: deployments name different audit destinations, and one environment has one — ${named}. A different sink or a different retention is a different destination`,
+        path: ['deployments'],
+        hint: 'give every deployment the same `audit` sink and retention, or split them into one spec per audit destination',
+      }),
+    );
+  }
+
+  for (const deployment of ir.deployments) {
+    const { id, cloud, region, audit } = deployment;
+
+    if (cloud !== undefined) {
+      if (region !== undefined && !CLOUD_REGIONS[cloud].includes(region)) {
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.regionTarget,
+            message: `the profile gate rejected "${id}": region "${region}" is not a ${cloud} region`,
+            path: ['deployments', id, 'region'],
+            hint: regionHint(cloud, CLOUD_REGIONS[cloud]),
+          }),
+        );
+      }
+
+      if (audit !== undefined && !CLOUD_AUDIT_SINKS[cloud].includes(audit.sink)) {
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.auditTarget,
+            message: `the profile gate rejected "${id}": audit sink "${audit.sink}" is not one ${cloud} can create`,
+            path: ['deployments', id, 'audit', 'sink'],
+            hint: `${cloud} sinks: ${CLOUD_AUDIT_SINKS[cloud].join(', ')}`,
+          }),
+        );
+      }
+    }
+
+    if (!enterprise) continue;
+
+    // Residency without a pinned cloud is not a residency guarantee: the deployment is
+    // free to land on whatever cloud `aid infra --cloud` names, which the spec does not
+    // constrain. So the enterprise profile requires the pair, not the region alone.
+    if (region === undefined) {
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.profileRegion,
+          message: `the profile gate rejected "${id}": the enterprise profile requires every deployment to pin the region its data must stay in`,
+          path: ['deployments', id],
+          hint: 'add `region: <region>` (and `cloud:` if the deployment does not pin one)',
+        }),
+      );
+    }
+
+    if (audit === undefined) {
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.profileAudit,
+          message: `the profile gate rejected "${id}": the enterprise profile requires every deployment to pin an audit sink`,
+          path: ['deployments', id],
+          hint: 'add `audit: { sink: cloudwatch }` (or the sink your cloud provides) so the record has a destination',
+        }),
+      );
+    }
+  }
+
+  if (enterprise && !ir.guardrails.some((guardrail) => guardrail.stages.includes('output'))) {
+    diagnostics.push(
+      report.error({
+        code: IR_DIAGNOSTIC_CODES.profileGuardrail,
+        message:
+          'the profile gate rejected the document: the enterprise profile requires at least one guardrail that inspects model output',
+        path: ['guardrails'],
+        hint: 'add a guardrail with `stages: [output]`; an input-only guardrail cannot see what the model says',
+      }),
+    );
+  }
+
+  return { diagnostics, suppressed: NO_SUPPRESSIONS };
+}

@@ -270,6 +270,12 @@ aid package <edge> [spec] [--target <name>] [--out <file>]
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |
 
+## Maturity and versioning
+
+The framework is pre-1.0: a minor release may still change an interface. The spec language is versioned separately, and `specVersion` decides which constructs a spec may use — asking for a construct newer than the declared version is refused with `spec/not-supported`, naming the version that introduced it.
+
+A command, flag or construct that is specified but not built is recorded here as not built rather than implied to work. This page is generated from the `COMMANDS` table and the [features page](../features.md) from the source, so neither can list a capability the compiler does not generate, test and gate.
+
 ## Exit codes
 
 The exit code is the contract CI reads, so the three values are distinct on purpose.

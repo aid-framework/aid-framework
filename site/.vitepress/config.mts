@@ -59,10 +59,16 @@ function canonicalUrl(relativePath: string): string {
  * copy: the site renders it where it already lives instead of owning a duplicate.
  *
  * `srcExclude` keeps the internal documents — the design document, the contributor guide,
- * and the four layer deep-dives — out of the published site while leaving them in the
- * repository. They are cited by section number from `CONTRIBUTING.md`, the package READMEs
+ * the four layer deep-dives, and the RFCs — out of the published site while leaving them in
+ * the repository. They are cited by section number from `CONTRIBUTING.md`, the package READMEs
  * and source comments, so deleting them would leave those references pointing at nothing;
  * publishing them would put build-internals in front of a reader looking for the product.
+ *
+ * `rfcs` is excluded for a sharper reason than the rest: an RFC is a *proposal*, and the home
+ * page exists to explain and sell what ships. A roadmap of phases, effort estimates and
+ * "specified but not built" entries is the opposite of that promise, and a reader who found
+ * it would reasonably read a plan as a commitment. The document stays in the repository,
+ * where a reviewer and `git log` can find it, and out of the product site entirely.
  */
 export default defineConfig({
   title: SITE_NAME,
@@ -73,6 +79,7 @@ export default defineConfig({
   srcExclude: [
     'design.md',
     'contributing.md',
+    'rfcs/**',
     'guide/spec-to-ir.md',
     'guide/ir-to-generator.md',
     'guide/generator-to-runtime.md',
@@ -208,6 +215,7 @@ export default defineConfig({
           items: [
             { text: 'Support copilot', link: '/walkthroughs/support-copilot' },
             { text: 'Guarded reply', link: '/walkthroughs/guarded-reply' },
+            { text: 'Enterprise profile', link: '/walkthroughs/enterprise-profile' },
           ],
         },
       ],
@@ -218,6 +226,7 @@ export default defineConfig({
             { text: 'Getting started', link: '/guide/getting-started' },
             { text: 'Usage', link: '/usage' },
             { text: 'Concepts', link: '/guide/concepts' },
+            { text: 'Migrations', link: '/migration' },
             { text: 'Troubleshooting', link: '/troubleshooting' },
           ],
         },

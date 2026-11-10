@@ -5,7 +5,9 @@
  * manifest and the capabilities each model declares -- and both are smaller or larger
  * than what the runtime can express. Rather than let the difference live only in prose,
  * the emitted app carries the reconciled answer: what was promised, what was wired, and
- * what had no runtime name to land in.
+ * what had no runtime name to land in. It also carries the delivery profile it was built
+ * for and each deployment's placement, so a running app can report the controls it was
+ * generated under rather than leaving that to a README.
  */
 
 import type { IR } from '@aid-framework/ir';
@@ -43,14 +45,23 @@ export function emitObservability(ir: IR): EmittedFile {
     irVersion: ir.irVersion,
     models: { advertised, unrepresentable },
     observability: { redact: ir.observability.redact, trace: ir.observability.trace },
+    placements: ir.deployments.map((deployment) => {
+      const placement: Record<string, unknown> = { id: deployment.id };
+      if (deployment.cloud !== undefined) placement.cloud = deployment.cloud;
+      if (deployment.region !== undefined) placement.region = deployment.region;
+      if (deployment.audit !== undefined) placement.audit = deployment.audit;
+      return placement;
+    }),
+    profile: ir.profile,
     target: PY_FASTAPI_TARGET,
   };
 
   const body = [
     'def generated_capabilities() -> dict[str, Any]:',
     pythonDoc(
-      'The generator identity, the reconciliation of every declared capability, and the ' +
-        'target settings the emitted wiring honours.',
+      'The generator identity, the reconciliation of every declared capability, the ' +
+        'profile and placement the app was generated under, and the target settings the ' +
+        'emitted wiring honours.',
       INDENT,
     ),
     pythonStatement('return ', report, INDENT),

@@ -1,13 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://aid-framework.dev/schema/ir-0.1.json",
-  "title": "AID IR v0.1",
+  "$id": "https://aid-framework.dev/schema/ir-0.2.json",
+  "title": "AID IR v0.2",
   "description": "The packed intermediate representation produced from an AID spec document. Every top-level key is always present; deferred collections are empty arrays in Phase 0 rather than absent.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "irVersion",
     "specVersion",
+    "profile",
     "project",
     "types",
     "models",
@@ -39,6 +40,10 @@
       "type": "string",
       "pattern": "^[0-9]+\\.[0-9]+$",
       "description": "The spec language version this IR was built from."
+    },
+    "profile": {
+      "description": "The delivery profile the spec selected. Always present: a spec that names no profile is `standard`, so the requirement set a build is measured against is never implicit.",
+      "enum": ["standard", "enterprise"]
     },
     "project": { "$ref": "#/$defs/project" },
     "types": { "type": "array", "items": { "$ref": "#/$defs/typeShape" } },
@@ -1410,6 +1415,16 @@
         "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
       }
     },
+    "audit": {
+      "description": "Where a deployment's audit trail is written. The sink vocabulary is wider than any one cloud on purpose; the `region` and `audit` gates pair it with the cloud actually selected.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sink"],
+      "properties": {
+        "sink": { "enum": ["cloudwatch", "s3", "gcs", "bigquery"] },
+        "retentionDays": { "type": "integer", "minimum": 1 }
+      }
+    },
     "deployment": {
       "type": "object",
       "additionalProperties": false,
@@ -1430,6 +1445,16 @@
           }
         },
         "secrets": { "type": "array", "items": { "type": "string" } },
+        "cloud": {
+          "description": "The cloud this deployment is placed in. Absent when the spec names none, so the environment's `--cloud` (or `aws`) still decides and existing output is byte-identical.",
+          "enum": ["aws", "gcp"]
+        },
+        "region": {
+          "description": "The region pinned by the spec. Validated against the selected cloud; it is a placement fact carried to the plan, not module content.",
+          "type": "string",
+          "minLength": 1
+        },
+        "audit": { "$ref": "#/$defs/audit" },
         "env": {
           "type": "array",
           "items": {

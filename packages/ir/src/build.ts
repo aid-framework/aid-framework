@@ -25,6 +25,8 @@ import {
   type AgentOnBudgetExhausted,
   type AgentRuntimePlatform,
   type AgentShape,
+  AUDIT_SINKS,
+  type AuditSink,
   BEDROCK_CONTENT_FILTERS,
   BEDROCK_CONTENT_STRENGTHS,
   BEDROCK_PII_ENTITIES,
@@ -37,11 +39,13 @@ import {
   DECISION_QUESTION_TYPES,
   DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_OBSERVABILITY,
+  DEFAULT_PROFILE,
   DEFAULT_RUNTIME,
   DEPLOY_TARGETS,
   type DecisionOnError,
   type DecisionQuestionType,
   type DecisionShape,
+  type DeploymentAuditShape,
   type DeploymentImageShape,
   type DeploymentRuntimeShape,
   type DeploymentShape,
@@ -88,7 +92,9 @@ import {
   type PipelineShape,
   type PipelineTrigger,
   PRIMITIVE_TYPES,
+  PROFILES,
   type PrimitiveType,
+  type Profile,
   type ProjectShape,
   type PromptOutput,
   type PromptShape,
@@ -103,6 +109,8 @@ import {
   type RouteStep,
   type SemanticCacheShape,
   type SideEffects,
+  SPEC_CLOUDS,
+  type SpecCloud,
   type StepInput,
   type StepInputValue,
   type StepShape,
@@ -191,6 +199,7 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
   const ir: IR = {
     irVersion: IR_VERSION,
     specVersion: asString(root.specVersion) ?? SPEC_VERSION,
+    profile: buildProfile(root.profile, context),
     project,
     types,
     models,
@@ -1324,6 +1333,29 @@ function asAgentOnBudgetExhausted(raw: unknown): AgentOnBudgetExhausted | undefi
     : undefined;
 }
 
+/**
+ * The declared profile, or `standard` when the document declares none.
+ *
+ * An unrecognised value is reported rather than coerced. The schema already pins the enum,
+ * so reaching this with a bad value means the document bypassed validation -- and a
+ * profile decides which controls the gates require, so defaulting an unknown one to
+ * `standard` would silently drop every requirement it was meant to impose.
+ */
+function buildProfile(raw: unknown, context: BuildContext): Profile {
+  const declared = asString(raw);
+  if (declared === undefined) return DEFAULT_PROFILE;
+  if ((PROFILES as readonly string[]).includes(declared)) return declared as Profile;
+  context.diagnostics.push(
+    errorDiagnostic({
+      code: IR_DIAGNOSTIC_CODES.profileUnknown,
+      message: `profile "${declared}" is not one of ${PROFILES.join(', ')}`,
+      path: ['profile'],
+      hint: 'name `standard` or `enterprise`; the profile decides which controls the gates require, so an unknown one would require nothing',
+    }),
+  );
+  return DEFAULT_PROFILE;
+}
+
 function buildDeployments(raw: unknown, context: BuildContext): DeploymentShape[] {
   const record = asRecord(raw) ?? {};
   return sortedKeys(record).map((id) => {
@@ -1376,6 +1408,12 @@ function buildDeployments(raw: unknown, context: BuildContext): DeploymentShape[
       }
       deployment.autoscale = { min: min ?? 0, max: max ?? 1, metric: metric ?? '' };
     }
+    const cloud = buildSpecCloud(entry.cloud, id, context);
+    if (cloud !== undefined) deployment.cloud = cloud;
+    const region = asString(entry.region);
+    if (region !== undefined) deployment.region = region;
+    const audit = buildDeploymentAudit(entry.audit, id, context);
+    if (audit !== undefined) deployment.audit = audit;
     const image: DeploymentImageShape | undefined = buildDeploymentImage(entry.image, id, context);
     if (image !== undefined) deployment.image = image;
     const runtime = buildDeploymentRuntime(entry.runtime, id, context);
@@ -1384,6 +1422,60 @@ function buildDeployments(raw: unknown, context: BuildContext): DeploymentShape[
     if (pipeline !== undefined) deployment.pipeline = pipeline;
     return deployment;
   });
+}
+
+/**
+ * The cloud a deployment pins, when it pins one.
+ *
+ * Absent is not an error: it means the spec did not decide, so the CLI's `--cloud` still
+ * does, which is exactly the behaviour every document written before 0.25 relies on. A
+ * value outside the enum is reported, because the projection would otherwise have to
+ * choose a cloud for a deployment that named a different one.
+ */
+function buildSpecCloud(raw: unknown, id: string, context: BuildContext): SpecCloud | undefined {
+  const declared = asString(raw);
+  if (declared === undefined) return undefined;
+  if ((SPEC_CLOUDS as readonly string[]).includes(declared)) return declared as SpecCloud;
+  context.diagnostics.push(
+    errorDiagnostic({
+      code: IR_DIAGNOSTIC_CODES.deployTargetUnknown,
+      message: `deployment "${id}" declares cloud "${declared}", which is not one of ${SPEC_CLOUDS.join(', ')}`,
+      path: ['deployments', id, 'cloud'],
+      hint: 'name a supported cloud, or drop `cloud` and pass `--cloud` to `aid infra`',
+    }),
+  );
+  return undefined;
+}
+
+/**
+ * The audit destination a deployment declares.
+ *
+ * Only the shape is projected here; whether the sink belongs to the deployment's cloud is
+ * the profile gate's question, because that is where the diagnostic can name the valid set.
+ */
+function buildDeploymentAudit(
+  raw: unknown,
+  id: string,
+  context: BuildContext,
+): DeploymentAuditShape | undefined {
+  const audit = asRecord(raw);
+  if (audit === undefined) return undefined;
+  const sink = asString(audit.sink);
+  if (sink === undefined || !(AUDIT_SINKS as readonly string[]).includes(sink)) {
+    context.diagnostics.push(
+      errorDiagnostic({
+        code: IR_DIAGNOSTIC_CODES.auditTarget,
+        message: `deployment "${id}" declares an audit sink "${sink ?? ''}", which is not one of ${AUDIT_SINKS.join(', ')}`,
+        path: ['deployments', id, 'audit', 'sink'],
+        hint: 'name one of the supported sinks; an audit record has to land somewhere the deploy can create',
+      }),
+    );
+    return undefined;
+  }
+  const shape: DeploymentAuditShape = { sink: sink as AuditSink };
+  const retentionDays = asNumber(audit.retentionDays);
+  if (retentionDays !== undefined) shape.retentionDays = retentionDays;
+  return shape;
 }
 
 function buildDeploymentImage(
