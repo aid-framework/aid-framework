@@ -1262,9 +1262,10 @@ the layers that follow.)*
 ### Phase 2 — Production concerns
 
 - Agents: full loop, handoffs, memory, HITL, budgets (token/cost/step) enforced in runtime.
-- Guardrails engine + red-team safety suite; tool permissioning + least privilege. *(Landed in Python as
-  L3 — §7.6: four stages, four actions, deny-by-default tool calls, offline corpus in CI. TypeScript
-  parity is L6, so the TS runtime does not have this engine yet.)*
+- Guardrails engine + red-team safety suite; tool permissioning + least privilege. *(Landed in both
+  runtimes as L3/L6 — §7.6: four stages, four actions, deny-by-default tool calls. `py-fastapi` and
+  `ts-vercel` both emit the wiring, and each engine has its own test suite; the offline red-team corpus
+  is still Python-only.)*
 - Cost/latency dashboards; semantic + prompt caching; streaming + concurrency.
 
 ### Phase 3 — Business-logic focus (the payoff)
