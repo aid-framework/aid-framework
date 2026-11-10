@@ -608,7 +608,7 @@ const MAIN_TF = hcl([
   '',
   '  project  = var.project_id',
   '  location = var.region',
-  '  job      = google_cloud_run_v2_job.refresh[each.key].name',
+  '  name     = google_cloud_run_v2_job.refresh[each.key].name',
   '  role     = "roles/run.invoker"',
   '  member   = "serviceAccount:@{google_service_account.scheduler[0].email}"',
   '}',
