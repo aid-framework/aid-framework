@@ -10,7 +10,9 @@
  * - **Ingest.** `aws_bedrockagent_knowledge_base` is created empty. The first ingestion
  *   job is minutes long and costs money per document, so running it inside `apply`
  *   would make a plan's duration depend on corpus size and hide a bill behind a refresh.
- *   The base is created, and the operator (or `aid doctor`) starts ingestion.
+ *   The base is created; the emitted README names the one command that starts ingestion
+ *   for this engine, and `aid doctor` reports the engine and the environment name the
+ *   runtime reads, without contacting the cloud.
  * - **Embed with the app's role.** The engine embeds, so the base's own role owns the
  *   `bedrock:InvokeModel` grant and the app's role only reads the result. That is why a
  *   `knowledgeBases[].embedModel` alias never reaches `embedder_for`.
