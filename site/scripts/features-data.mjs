@@ -362,6 +362,15 @@ export const SHIPPED_FEATURES = [
     href: './reference/spec.md#retriever',
     since: '0.1.134',
   },
+  {
+    id: 'retrieval-semantic-chunking',
+    title: 'Semantic chunking',
+    detail:
+      'A retriever cuts a document where the cosine similarity between adjacent units dips, so a boundary follows the topic rather than a character count; the units are embedded before the chunks are, and that boundary pass is priced into the ingest report.',
+    declaredBy: 'retrievers[].chunking.strategy: semantic',
+    href: './reference/spec.md#retriever',
+    since: '0.1.135',
+  },
 ];
 
 /**
@@ -461,6 +470,7 @@ export const CAPABILITY_FAMILIES = [
     featureIds: [
       'retrieval-citations',
       'retrieval-remote-sources',
+      'retrieval-semantic-chunking',
       'memory',
       'semantic-cache',
       'bedrock-knowledge-base',

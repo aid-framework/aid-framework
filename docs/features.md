@@ -314,10 +314,10 @@ A retriever indexes an `s3://` prefix or one `http(s)://` document instead of a 
 
 ### Semantic chunking
 
-A retriever cuts a document where its topic changes, measured as a dip in the embedding similarity of adjacent units, instead of at a fixed size boundary.
+A retriever cuts a document where the cosine similarity between adjacent units dips, so a boundary follows the topic rather than a character count; the units are embedded before the chunks are, and that boundary pass is priced into the ingest report.
 
 - **Turned on by:** `retrievers[].chunking.strategy: semantic`
-- **Reference:** [spec](./reference/spec.md#retrieverchunking)
+- **Reference:** [spec](./reference/spec.md#retriever)
 - **Since:** `0.1.135`
 
 ## Refused, on purpose
