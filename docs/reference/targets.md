@@ -31,7 +31,7 @@ A declared capability is a promise: there is an emitter for it, the target's run
 | --- | --- |
 | Package | `@aid-framework/generator-py-fastapi` |
 | Manifest version | `0.1.0` |
-| IR range | `^0.2.0` |
+| IR range | `^0.3.0` |
 | Capabilities | `http-trigger`, `json-schema`, `streaming`, `tool-calling`, `otel`, `embeddings`, `rerank`, `guardrails`, `agents`, `cursor-memory` |
 | Emits against | `structuredOutput`: `pydantic`; `tracing`: `otel-genai` |
 | Output root | `app` |
@@ -44,7 +44,7 @@ A declared capability is a promise: there is an emitter for it, the target's run
 | --- | --- |
 | Package | `@aid-framework/generator-ts-vercel` |
 | Manifest version | `0.1.0` |
-| IR range | `^0.2.0` |
+| IR range | `^0.3.0` |
 | Capabilities | `http-trigger`, `streaming`, `json-schema`, `tool-calling`, `otel`, `embeddings`, `rerank`, `guardrails`, `agents`, `cursor-memory` |
 | Emits against | `structuredOutput`: `zod`; `tracing`: `otel-genai` |
 | Output root | `app` |

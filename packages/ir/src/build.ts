@@ -7,7 +7,7 @@
  * and reports `ir/*` diagnostics through the same shape every other gate uses.
  */
 
-import { errorDiagnostic, SPEC_VERSION } from '@aid-framework/spec';
+import { errorDiagnostic, formatPath, SPEC_VERSION } from '@aid-framework/spec';
 import {
   deriveRequiredCapabilities,
   isModelCapability,
@@ -21,10 +21,13 @@ import {
   AGENT_ENGINES,
   AGENT_ON_BUDGET_EXHAUSTED,
   AGENT_RUNTIME_PLATFORMS,
+  AGENT_STATE_KINDS,
   type AgentEngine,
   type AgentOnBudgetExhausted,
   type AgentRuntimePlatform,
   type AgentShape,
+  type AgentStateKind,
+  type AgentStateShape,
   AUDIT_SINKS,
   type AuditSink,
   BEDROCK_CONTENT_FILTERS,
@@ -42,11 +45,18 @@ import {
   DEFAULT_PROFILE,
   DEFAULT_RUNTIME,
   DEPLOY_TARGETS,
+  DEPLOYMENT_EGRESS,
+  DEPLOYMENT_IDENTITY_KINDS,
   type DecisionOnError,
   type DecisionQuestionType,
   type DecisionShape,
+  type DeploymentApprovalsShape,
   type DeploymentAuditShape,
+  type DeploymentEgress,
+  type DeploymentIdentityKind,
+  type DeploymentIdentityShape,
   type DeploymentImageShape,
+  type DeploymentNetworkShape,
   type DeploymentRuntimeShape,
   type DeploymentShape,
   decisionIdentity,
@@ -116,6 +126,7 @@ import {
   type StepShape,
   type ToolHandler,
   type ToolShape,
+  type ToolStep,
   type Trait,
   type TypeField,
   type TypeRef,
@@ -187,7 +198,8 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
   const memory = buildMemory(root.memory);
   const guardrails = buildGuardrails(root.guardrails);
   const decisions = buildDecisions(root.decisions);
-  const agents = buildAgents(root.agents, context);
+  const state = buildState(root.state, ['state'], context);
+  const agents = buildAgents(root.agents, context, state);
   const deployments = buildDeployments(root.deployments, context);
   const embeddings = buildEmbeddings(models);
   const sensitive = sensitiveNames({ types, prompts });
@@ -212,6 +224,11 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
     stores,
     memory,
     agents,
+    // `state` is the one conditional top level key: a document that declares no durable
+    // store has nowhere to put a paused run, so there is no store to describe. It is
+    // spread rather than assigned after the literal so its position stays between
+    // `agents` and `pipelines` while an undeclared store leaves no key at all.
+    ...(state === undefined ? {} : { state }),
     pipelines,
     evals,
     guardrails,
@@ -225,7 +242,6 @@ export function buildIR(value: unknown, options: BuildOptions = {}): BuildResult
 
   return { ir, diagnostics: context.diagnostics };
 }
-
 function buildProject(raw: unknown): ProjectShape {
   const record = asRecord(raw) ?? {};
   const name = asString(record.name) ?? '';
@@ -879,12 +895,15 @@ function buildStep(
   }
   const tool = asRecord(record.tool);
   if (tool !== undefined) {
-    return {
+    const step: ToolStep = {
       kind: 'tool',
       tool: asString(tool.tool) ?? '',
       input: buildStepInput(tool.input),
       as: asString(tool.as) ?? '',
     };
+    const requiresApproval = asBoolean(tool.requiresApproval);
+    if (requiresApproval !== undefined) step.requiresApproval = requiresApproval;
+    return step;
   }
   const branch = asRecord(record.branch);
   if (branch !== undefined) {
@@ -1268,7 +1287,11 @@ function buildDecisions(raw: unknown): DecisionShape[] {
   });
 }
 
-function buildAgents(raw: unknown, context: BuildContext): AgentShape[] {
+function buildAgents(
+  raw: unknown,
+  context: BuildContext,
+  projectState: AgentStateShape | undefined,
+): AgentShape[] {
   const record = asRecord(raw) ?? {};
   return sortedKeys(record).map((id) => {
     const entry = asRecord(record[id]) ?? {};
@@ -1287,6 +1310,13 @@ function buildAgents(raw: unknown, context: BuildContext): AgentShape[] {
       engine: asAgentEngine(entry.engine),
       traits: [],
     };
+
+    // The project store is resolved into every agent that declares none, so a generator
+    // reads one field instead of walking up to the document. An agent override replaces it
+    // whole rather than merging: two stores with one field swapped would be a store whose
+    // connection string and kind disagree.
+    const state = buildState(entry.state, ['agents', id, 'state'], context) ?? projectState;
+    if (state !== undefined) agent.state = state;
 
     const structuredOutput = asString(entry.structuredOutput);
     if (structuredOutput !== undefined) {
@@ -1414,6 +1444,12 @@ function buildDeployments(raw: unknown, context: BuildContext): DeploymentShape[
     if (region !== undefined) deployment.region = region;
     const audit = buildDeploymentAudit(entry.audit, id, context);
     if (audit !== undefined) deployment.audit = audit;
+    const identity = buildDeploymentIdentity(entry.identity, id, context);
+    if (identity !== undefined) deployment.identity = identity;
+    const network = buildDeploymentNetwork(entry.network, id, context);
+    if (network !== undefined) deployment.network = network;
+    const approvals = buildDeploymentApprovals(entry.approvals, id, context);
+    if (approvals !== undefined) deployment.approvals = approvals;
     const image: DeploymentImageShape | undefined = buildDeploymentImage(entry.image, id, context);
     if (image !== undefined) deployment.image = image;
     const runtime = buildDeploymentRuntime(entry.runtime, id, context);
@@ -1447,6 +1483,148 @@ function buildSpecCloud(raw: unknown, id: string, context: BuildContext): SpecCl
   return undefined;
 }
 
+/**
+ * The durable run store a document declares, for the project or for one agent.
+ *
+ * The schema already requires `kind` and `urlEnv`, so a missing one means the document
+ * bypassed validation. It is reported rather than defaulted: a store is a deployment
+ * commitment, and inventing a connection variable would point the generated code at a
+ * database nobody declared.
+ */
+function buildState(
+  raw: unknown,
+  path: (string | number)[],
+  context: BuildContext,
+): AgentStateShape | undefined {
+  const state = asRecord(raw);
+  if (state === undefined) return undefined;
+  const kind = asString(state.kind);
+  const urlEnv = asString(state.urlEnv);
+  if (kind === undefined || !(AGENT_STATE_KINDS as readonly string[]).includes(kind)) {
+    context.diagnostics.push(
+      errorDiagnostic({
+        code: IR_DIAGNOSTIC_CODES.agentsStateStore,
+        message: `${formatPath(path)} declares state kind "${kind ?? ''}", which is not one of ${AGENT_STATE_KINDS.join(', ')}`,
+        path: [...path, 'kind'],
+        hint: 'name `postgres` for a shared store or `sqlite` for a single-instance deploy',
+      }),
+    );
+    return undefined;
+  }
+  if (urlEnv === undefined) {
+    context.diagnostics.push(
+      errorDiagnostic({
+        code: IR_DIAGNOSTIC_CODES.agentsStateStore,
+        message: `${formatPath(path)} declares a state store with no \`urlEnv\``,
+        path: [...path, 'urlEnv'],
+        hint: 'name the environment variable holding the connection string; a credential never enters the spec',
+      }),
+    );
+    return undefined;
+  }
+  const shape: AgentStateShape = { kind: kind as AgentStateKind, urlEnv };
+  const ttlHours = asNumber(state.ttlHours);
+  if (ttlHours !== undefined) shape.ttlHours = ttlHours;
+  return shape;
+}
+
+/**
+ * The identity provider a deployment trusts.
+ *
+ * Projected as declared: whether the provider is one the customer can actually reach is
+ * their provider's question, and the generated code only checks the claims it is told to.
+ */
+function buildDeploymentIdentity(
+  raw: unknown,
+  id: string,
+  context: BuildContext,
+): DeploymentIdentityShape | undefined {
+  const identity = asRecord(raw);
+  if (identity === undefined) return undefined;
+  const kind = asString(identity.kind);
+  const issuer = asString(identity.issuer);
+  if (kind === undefined || !(DEPLOYMENT_IDENTITY_KINDS as readonly string[]).includes(kind)) {
+    context.diagnostics.push(
+      errorDiagnostic({
+        code: IR_DIAGNOSTIC_CODES.profileIdentity,
+        message: `deployment "${id}" declares identity kind "${kind ?? ''}", which is not one of ${DEPLOYMENT_IDENTITY_KINDS.join(', ')}`,
+        path: ['deployments', id, 'identity', 'kind'],
+        hint: 'name `oidc`, which covers every OIDC-compliant provider',
+      }),
+    );
+    return undefined;
+  }
+  if (issuer === undefined) return undefined;
+  const shape: DeploymentIdentityShape = { kind: kind as DeploymentIdentityKind, issuer };
+  const audience = asString(identity.audience);
+  if (audience !== undefined) shape.audience = audience;
+  const rolesClaim = asString(identity.rolesClaim);
+  if (rolesClaim !== undefined) shape.rolesClaim = rolesClaim;
+  const scopesClaim = asString(identity.scopesClaim);
+  if (scopesClaim !== undefined) shape.scopesClaim = scopesClaim;
+  return shape;
+}
+
+/** How a deployment is reachable and what it may reach. */
+function buildDeploymentNetwork(
+  raw: unknown,
+  id: string,
+  context: BuildContext,
+): DeploymentNetworkShape | undefined {
+  const network = asRecord(raw);
+  if (network === undefined) return undefined;
+  // `private` is schema-required, so absence means validation was bypassed. Reading a
+  // missing flag as `false` would emit a public deployment from a document that meant to
+  // ask for a private one, so the builder reports instead of guessing.
+  if (typeof network.private !== 'boolean') {
+    context.diagnostics.push(
+      errorDiagnostic({
+        code: IR_DIAGNOSTIC_CODES.profileNetwork,
+        message: `deployment "${id}" declares network placement with no boolean \`private\` flag`,
+        path: ['deployments', id, 'network', 'private'],
+        hint: 'set `private: true` for private placement or `private: false` to reach the internet directly',
+      }),
+    );
+    return undefined;
+  }
+  const shape: DeploymentNetworkShape = { private: network.private };
+  const egress = asString(network.egress);
+  if (egress !== undefined && (DEPLOYMENT_EGRESS as readonly string[]).includes(egress)) {
+    shape.egress = egress as DeploymentEgress;
+  }
+  return shape;
+}
+
+/** Who has to sign off before a change lands. */
+function buildDeploymentApprovals(
+  raw: unknown,
+  id: string,
+  context: BuildContext,
+): DeploymentApprovalsShape | undefined {
+  const approvals = asRecord(raw);
+  if (approvals === undefined) return undefined;
+  const require = asStringArray(approvals.require);
+  const minApprovers = asNumber(approvals.minApprovers);
+  // A policy with no reviewer or no threshold approves nothing, so the profile gate would
+  // be satisfied by a document that asks no one. Both are schema-required; a missing one
+  // here means validation was bypassed and the control does not exist.
+  if (require.length === 0 || minApprovers === undefined) {
+    const problem = require.length === 0 ? 'no required approvers' : 'no minApprovers threshold';
+    context.diagnostics.push(
+      errorDiagnostic({
+        code: IR_DIAGNOSTIC_CODES.profileApprovals,
+        message: `deployment "${id}" declares an approval policy with ${problem}`,
+        path: ['deployments', id, 'approvals'],
+        hint: 'list at least one reviewer in `require` and set `minApprovers` to how many must agree',
+      }),
+    );
+    return undefined;
+  }
+  const shape: DeploymentApprovalsShape = { require, minApprovers };
+  const environments = asStringArray(approvals.environments);
+  if (environments.length > 0) shape.environments = environments;
+  return shape;
+}
 /**
  * The audit destination a deployment declares.
  *

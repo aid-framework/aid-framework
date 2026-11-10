@@ -89,6 +89,21 @@ describe('buildIR', () => {
     expect(Object.keys(ir)).toEqual(TOP_LEVEL_KEYS);
   });
 
+  it('places the durable store between agents and pipelines when one is declared', () => {
+    const built = buildFixture('v26-controls.yaml').ir;
+    const keys = Object.keys(built);
+
+    expect(keys[keys.indexOf('agents') + 1]).toBe('state');
+    expect(keys.indexOf('state')).toBeLessThan(keys.indexOf('pipelines'));
+  });
+
+  it('omits the durable store entirely when the document declares none', () => {
+    // Same rule as `pipeline` and `image`: a document that declares no store has nothing
+    // to describe, and an enumerated `state: undefined` would rewrite every golden.
+    expect(ir.state).toBeUndefined();
+    expect(Object.keys(ir)).not.toContain('state');
+  });
+
   it('populates the Phase 0 sections', () => {
     expect(ir.types.map((type) => type.id)).toEqual([
       'RefundRequest',

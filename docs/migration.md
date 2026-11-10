@@ -116,10 +116,64 @@ pin it.
 This is the one place 0.25 can refuse a command that used to succeed. It refuses only when the
 document and the flag actively disagree, which is the case where one of the two is wrong.
 
+## 0.25 to 0.26: the delivery controls
+
+The control surface an `enterprise` delivery needs before a run can pause, be audited and be
+resumed. Every key is additive, so a 0.25 document is still a 0.25 document; what changes is what
+an `enterprise` document must now say.
+
+> **What 0.26 gates but does not yet generate.** This release lands the schema, the IR projection
+> and the gates. The generated app does not yet emit the durable store, the identity check or the
+> approval pause, so `state`, `identity`, `network`, `approvals` and `requiresApproval` are
+> **validated and refused when wrong, and pending in the generators**. `/features` says so on the
+> row itself. Declaring them is safe — nothing is silently ignored — but do not plan a rollout
+> that depends on the pause resuming yet.
+
+### What 0.26 adds
+
+| Construct | What it says |
+| --- | --- |
+| `state` | The durable store a paused run waits in: `kind` of `redis` or `postgres`, `urlEnv` naming the environment variable that holds the connection string, and an optional `ttlHours`. |
+| `agents[].state` | An agent's own store. It replaces the document store rather than merging with it, so a kind and a connection string cannot disagree. |
+| `deployments[].identity` | Where a caller is authenticated: `issuer`, `audience`, and the `subjectClaim` / `rolesClaim` / `scopesClaim` that become the runtime `Principal`. |
+| `deployments[].network` | `private` (required — see below), an optional `vpcId` / `subnetIds` / `privateEndpoints`. |
+| `deployments[].approvals` | The change-control policy for production: `environment`, `requiredApprovals`, and an optional `preventSelfReview`. |
+| `pipelines[].steps[].requiresApproval` | A pipeline tool step that stops and asks a human before it runs. |
+
+### Nothing to do for 0.25 documents
+
+A document at `specVersion: "0.25"` is read exactly as before. The new `enterprise` requirements
+and the `state` gate are both scoped to `specVersion: "0.26"`, because 0.25 has no `state` key to
+satisfy them with — holding the old version to the new rule would make every existing enterprise
+document unsatisfiable.
+
+### What a 0.26 `enterprise` document must now declare
+
+| Refusal | What is missing | The fix |
+| --- | --- | --- |
+| `ir/profile-identity` | No `deployments[].identity`. | Name the issuer, the audience, and the claim that carries the subject. |
+| `ir/profile-network` | No `deployments[].network`, or `private: false`. | Declare `network: { private: true }`. |
+| `ir/profile-approvals` | A production deployment with no `approvals`. | Declare `approvals: { environment: production, requiredApprovals: 2 }`. |
+| `ir/agents-state-store` | An agent that reaches a `write` or `destructive` tool with no store. | Add `state`, on the agent or on the document. |
+
+### Why `network.private` is required rather than defaulted
+
+An omitted `private` is reported, not read as `false`. Whether traffic stays inside a VPC is a
+decision about a customer's data, and a default would make the decision for the author silently.
+Under `enterprise`, `private: false` is refused as well, because the profile promises otherwise.
+
+### The two new non-profile refusals
+
+`ir/approval-step-tool` refuses an approval in front of a **read** — a tool whose `sideEffects` is
+neither `write` nor `destructive` — and refuses a pause in a document that declares no store,
+because a run with nowhere to wait would never resume. It applies to every profile: asking a human
+to approve a read teaches them to approve without reading, which is worse than no pause at all.
+
 ## Version history
 
 | Spec | Backward compatible | What it added |
 | --- | --- | --- |
+| 0.26 | Yes | `state`; `deployments[].identity`, `.network`, `.approvals`; `requiresApproval` on a pipeline tool step |
 | 0.25 | Yes | `profile`; `deployments[].cloud`, `.region`, `.audit` |
 | 0.24 | Yes | `gateways` and `deployments[].runtime.gateway`, tools federated behind an AgentCore Gateway |
 | 0.23 | Yes | `retrievers[].refresh.schedule`, scheduled re-ingestion |

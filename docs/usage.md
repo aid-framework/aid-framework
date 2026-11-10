@@ -498,6 +498,7 @@ Covers:
 - **Generated project CI**
 - **A Dockerfile and an image**
 - **Delivery profiles with a pinned placement and audit sink**
+- **Durable run state, deployment identity, private network and change approval**
 - **Eject**
 
 ## Observability and cost

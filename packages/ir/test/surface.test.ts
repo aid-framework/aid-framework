@@ -51,7 +51,7 @@ const ir = buildFixture('full.yaml').ir;
 describe('ir/* diagnostics', () => {
   it('names every code ir/<slug>, distinct from the spec namespace', () => {
     const codes = Object.values(IR_DIAGNOSTIC_CODES);
-    expect(codes.length).toBe(78);
+    expect(codes.length).toBe(83);
     expect(new Set(codes).size).toBe(codes.length);
     for (const code of codes) {
       expect(code).toMatch(/^ir\/[a-z0-9-]+$/);
@@ -170,7 +170,7 @@ describe('the offline catalog', () => {
 
 describe('IR shape constants', () => {
   it('keeps irVersion independent of specVersion', () => {
-    expect(IR_VERSION).toBe('0.2.0');
+    expect(IR_VERSION).toBe('0.3.0');
     expect(IR_VERSION).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
     expect(SPEC_VERSION).toBe('0.1');
     expect(IR_VERSION).not.toBe(SPEC_VERSION);
@@ -198,7 +198,7 @@ describe('IR shape constants', () => {
   it('pins the collection accounting constants', () => {
     expect(IR_COLLECTIONS.length).toBe(16);
     expect(IR_ONLY_COLLECTIONS).toEqual(['embeddings']);
-    expect(NON_COLLECTION_SECTIONS).toEqual(['specVersion', 'profile', 'project']);
+    expect(NON_COLLECTION_SECTIONS).toEqual(['specVersion', 'profile', 'project', 'state']);
   });
 
   it('accounts for every top-level key as a section, a collection, or one of its own singletons', () => {
@@ -256,6 +256,8 @@ describe('the gate contract', () => {
       'deploy/streaming',
       'orchestration/deepagents',
       'profile',
+      'state',
+      'approvals',
     ]);
     const result = gateFixture('eval-uncovered.yaml');
     expect(Object.keys(result.byGate)).toEqual(Object.keys(GATES));

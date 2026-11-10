@@ -48,11 +48,27 @@ And the three placement checks that apply to **every** profile, enterprise or no
 | The audit sink must be one the pinned cloud can create | `ir/audit-target` |
 | Deployments must agree on one cloud and one audit destination | `ir/cloud-conflict`, `ir/audit-conflict` |
 
-**What the gate does not yet demand** is as important as what it does. Enterprise identity/SSO, private
-networking and an approval policy for production are named in `docs/rfcs/0001-agents-at-scale.md`
-and **not built** - no construct in the spec language expresses them, and AID does not refuse a spec for
-omitting something it cannot generate. Adding `profile: enterprise` buys the three rows above and
-nothing else.
+## What 0.26 adds to `enterprise`
+
+A 0.26 document must now also name the identity it authenticates against, a private network, and a
+production approval policy — and its agents that can write need somewhere durable to wait.
+
+| Requirement | Diagnostic | Scope |
+| --- | --- | --- |
+| A declared `identity` | `ir/profile-identity` | Every deployment |
+| A `network` with `private: true` | `ir/profile-network` | Every deployment |
+| An `approvals` policy for production | `ir/profile-approvals` | A deployment that targets production |
+| A `state` store for an agent that can call a writing tool | `ir/agents-state-store` | Every such agent |
+
+These four are scoped to `specVersion: "0.26"`, because 0.25 has no key to satisfy them with;
+holding an old document to a rule it cannot express would make it unsatisfiable.
+
+**What is gated is not yet generated.** `state`, `identity`, `network`, `approvals` and
+`requiresApproval` are validated, projected into the IR, and refused when wrong — and the
+generators that emit the store, the identity check and the pause land in their own release. That
+is stated on the `/features` row and in [`docs/migration.md`](../migration.md) rather than left for
+an operator to discover by reading generated code. AID still does not refuse a spec for omitting
+something it cannot generate, and it does not claim a capability it has not written.
 
 ## Refusal 1: the missing controls
 
@@ -206,5 +222,6 @@ a region that the cloud does not offer is refused whether or not a tier was name
 required and no artifact moves. Regenerating an existing 0.24 spec at 0.25 produces byte-identical
 output; see [Migrating](../migration.md).
 
-Read next: [guarded-reply](guarded-reply.md) for the example this one starts from, or
+Read next: [delivery controls](delivery-controls.md) for the 0.26 controls this walkthrough's tier
+now also requires, [guarded-reply](guarded-reply.md) for the example this one starts from, or
 [the spec reference](../reference/spec.md#top-level-keys) for `profile` and the `audit` block.

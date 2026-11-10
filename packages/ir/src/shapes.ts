@@ -22,11 +22,13 @@ import type { PredicateNode } from './predicate/index.js';
  * IR format version. Semver, independent of the spec's `specVersion`.
  *
  * A minor bump is a shape the IR gained, not a shape it lost: `0.2.0` adds the top-level
- * `profile` and the placement keys on a deployment (`cloud`, `region`, `audit`). Every
- * field is additive, so a consumer written against `0.1.0` reads a `0.2.0` document without
+ * `profile` and the placement keys on a deployment (`cloud`, `region`, `audit`); `0.3.0`
+ * adds the top-level `state` store, the `identity`/`network`/`approvals` controls on a
+ * deployment, `agents[].state` and a tool step's `requiresApproval`. Every field is
+ * additive, so a consumer written against `0.1.0` reads a `0.3.0` document without
  * change -- it simply does not see the new keys.
  */
-export const IR_VERSION = '0.2.0';
+export const IR_VERSION = '0.3.0';
 
 export const PRIMITIVE_TYPES = ['string', 'number', 'integer', 'boolean'] as const;
 
@@ -260,6 +262,12 @@ export interface ToolStep {
   tool: string;
   input: StepInput;
   as: string;
+  /**
+   * Whether the run pauses for a human before this step executes (spec 0.26). A pause has
+   * to be recorded somewhere the next request can read, so `ir/approval-step-tool` refuses
+   * this flag without a durable `state` store and on a tool that has no side effects.
+   */
+  requiresApproval?: boolean;
 }
 
 export interface EmitStep {
@@ -723,6 +731,34 @@ export const AGENT_ON_BUDGET_EXHAUSTED = ['fail', 'degrade'] as const;
 
 export type AgentOnBudgetExhausted = (typeof AGENT_ON_BUDGET_EXHAUSTED)[number];
 
+/**
+ * The stores a durable run may live in. `sqlite` is for a single-instance deploy.
+ */
+export const AGENT_STATE_KINDS = ['postgres', 'sqlite'] as const;
+
+export type AgentStateKind = (typeof AGENT_STATE_KINDS)[number];
+
+/**
+ * A durable run store, from spec 0.26. A long-running agent -- one that pauses for an
+ * approval, or that outlives a single request -- has to write step results somewhere the
+ * next request can read.
+ *
+ * `urlEnv` names an environment variable, mirroring `models.*.apiKeyEnv`: the connection
+ * string is a credential and never enters the spec, so the generated code reads it at
+ * boot and the deploy refuses to start without it.
+ */
+export interface AgentStateShape {
+  kind: AgentStateKind;
+  /** The environment variable holding the connection string. */
+  urlEnv: string;
+  /**
+   * How long a saved run is kept, in hours. Absent leaves retention to the store; the
+   * generated sweep only runs when a value is set, because AID does not delete an
+   * operator's rows on a policy it invented.
+   */
+  ttlHours?: number;
+}
+
 export interface AgentShape {
   id: string;
   name: string;
@@ -752,6 +788,12 @@ export interface AgentShape {
   /** Pinned framework version; required when `engine` is `deepagents`. */
   engineVersion?: string;
   humanInTheLoop?: { when: PolicyExpr; channel: string };
+  /**
+   * This agent's durable run store, when it overrides the project's (spec 0.26). The
+   * build resolves the project default into every agent that declares none, so a
+   * generator never has to look in two places.
+   */
+  state?: AgentStateShape;
   traits: Trait[];
 }
 
@@ -1094,6 +1136,64 @@ export interface DeploymentAuditShape {
 }
 
 /**
+ * The identity provider a deployment trusts, from spec 0.26.
+ *
+ * A reference, never a secret: `issuer` and `audience` are what a token has to claim, and
+ * the generated middleware refuses one that does not. Verifying the signature needs the
+ * provider's keys, which belong to the customer, so that half stays in `business/`.
+ */
+export interface DeploymentIdentityShape {
+  kind: DeploymentIdentityKind;
+  /** The provider's issuer URL, exactly as it appears in the `iss` claim. */
+  issuer: string;
+  /** The `aud` claim a token has to carry. */
+  audience?: string;
+  /** The claim carrying the caller's roles. Absent means the deployment has no roles. */
+  rolesClaim?: string;
+  /** The claim carrying the caller's scopes. Absent means the deployment has no scopes. */
+  scopesClaim?: string;
+}
+
+/** The token protocols a deployment can trust. `oidc` covers every OIDC-compliant IdP. */
+export const DEPLOYMENT_IDENTITY_KINDS = ['oidc', 'saml'] as const;
+
+export type DeploymentIdentityKind = (typeof DEPLOYMENT_IDENTITY_KINDS)[number];
+
+/**
+ * How a deployment is reachable and what it may reach, from spec 0.26.
+ *
+ * `private` places the runtime where only the customer's network can reach it, and
+ * `egress` says whether it may call anything it likes or only declared destinations.
+ * Both are placement decisions, so a cloud with no private-placement module is refused by
+ * `ir/network-target` rather than emitted as a resource the deploy cannot create.
+ */
+export interface DeploymentNetworkShape {
+  private: boolean;
+  egress?: DeploymentEgress;
+}
+
+/** Whether a deployment may reach only what the spec declares, or anything. */
+export const DEPLOYMENT_EGRESS = ['declared-only', 'open'] as const;
+
+export type DeploymentEgress = (typeof DEPLOYMENT_EGRESS)[number];
+
+/**
+ * Who has to sign off before a change lands, from spec 0.26.
+ *
+ * Change control, not runtime human-in-the-loop: this emits `infra/approvals.json` and
+ * binds it to the plan workflow's GitHub `environment`, so the approval happens in the
+ * repository's own review process. AID reads and writes no repository setting.
+ */
+export interface DeploymentApprovalsShape {
+  /** The reviewers whose approval a production change needs. */
+  require: string[];
+  /** How many of them have to approve. */
+  minApprovers: number;
+  /** Named environments the policy applies to. Absent means every deployment of them. */
+  environments?: string[];
+}
+
+/**
  * The registries a container image may be published to.
  *
  * The table itself lives in `@aid-framework/spec` (`registries.ts`), next to the schema
@@ -1203,6 +1303,16 @@ export interface DeploymentShape {
   /** Where this deployment's audit record lands (spec 0.25). */
   audit?: DeploymentAuditShape;
   /**
+   * The identity provider this deployment trusts (spec 0.26). A reference and not a
+   * credential: the issuer URL and audience let the generated code reject a token that
+   * was not minted for it, while the signing keys stay the customer's, in `business/`.
+   */
+  identity?: DeploymentIdentityShape;
+  /** How the deployment is reachable and what it may reach (spec 0.26). */
+  network?: DeploymentNetworkShape;
+  /** Who has to sign off before a production change lands (spec 0.26). */
+  approvals?: DeploymentApprovalsShape;
+  /**
    * Where a container image is published. Present only on a `target: container`
    * deployment, and only from spec 0.4. The registry is one of
    * `IMAGE_REGISTRY_DESCRIPTORS`, and a `secret-pair` registry carries the *names* of the
@@ -1247,6 +1357,12 @@ export interface IR {
   stores: VectorStoreShape[];
   memory: MemoryShape[];
   agents: AgentShape[];
+  /**
+   * The project's durable run store, from spec 0.26. Absent when the document names none;
+   * the build does not invent one, because a store is a deployment commitment (a database
+   * to create, a connection string to hold) and not a default.
+   */
+  state?: AgentStateShape;
   pipelines: PipelineShape[];
   evals: EvalShape[];
   guardrails: GuardrailShape[];
@@ -1311,7 +1427,7 @@ export const IR_ONLY_COLLECTIONS = ['embeddings'] as const;
  * Together with `POPULATED_COLLECTION_BY_SECTION` these account for every
  * `SUPPORTED_SECTIONS` entry exactly once.
  */
-export const NON_COLLECTION_SECTIONS = ['specVersion', 'profile', 'project'] as const;
+export const NON_COLLECTION_SECTIONS = ['specVersion', 'profile', 'project', 'state'] as const;
 
 /**
  * Providers the shipped runtime adapters can actually serve. The IR's `Provider`

@@ -24,6 +24,7 @@ import {
 import { capabilityGate } from './capability.js';
 import type { Gate, GateOptions, GateReporter, GateResult, SuppressedCheck } from './contract.js';
 import { costGate } from './cost.js';
+import { approvalGate, stateGate } from './delivery.js';
 import { deployStreamingGate } from './deploy.js';
 import { evalCoverageGate } from './eval-coverage.js';
 import { guardrailCoverageGate, guardrailPolicyGate } from './guardrails.js';
@@ -55,6 +56,8 @@ export const GATES = {
   'deploy/streaming': deployStreamingGate,
   'orchestration/deepagents': orchestrationDeepagentsGate,
   profile: profileGate,
+  state: stateGate,
+  approvals: approvalGate,
 } as const satisfies Record<string, Gate>;
 
 export type GateName = keyof typeof GATES;

@@ -4,10 +4,11 @@ description: "What each spec language version adds, from the original surface th
 
 # Spec version changelog
 
-A spec declares its language version with `specVersion`. The current version is `0.25`, and each row below lists what that version adds.
+A spec declares its language version with `specVersion`. The current version is `0.26`, and each row below lists what that version adds.
 
 | Version | What it adds |
 | --- | --- |
+| `0.26` | Adds the durable `state` store, `deployments[].identity`, `.network` and `.approvals`, and `requiresApproval` on a pipeline tool step -- the control surface an enterprise delivery needs before a run can pause, be audited and be resumed. |
 | `0.25` | Adds the top-level `profile` -- a named bundle of required controls, `standard` by default -- and `deployments[].cloud`, `.region` and `.audit`, which put the placement and the audit record in the spec instead of in whoever's shell ran the apply. |
 | `0.24` | Adds `gateways` and `deployments[].runtime.gateway`, which federate tools behind a managed Amazon Bedrock AgentCore Gateway endpoint a runtime reaches over MCP instead of bundling them. |
 | `0.23` | Implements `retrievers[].refresh.schedule`, the UTC five-field cron the compiler turns into a scheduler (`aws_scheduler_schedule` or `google_cloud_scheduler_job`) that submits the batch job running that retriever's ingest. |
