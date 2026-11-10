@@ -192,6 +192,7 @@ export interface RetrieverSpecOverrides {
   readonly rerank?: RerankSpecArg | null;
   readonly chunking?: ChunkingSpec;
   readonly glob?: string | null;
+  readonly refreshMode?: 'full' | 'incremental';
 }
 
 type RerankSpecArg = import('../src/index.js').RerankSpec;
@@ -209,7 +210,7 @@ export function retrieverSpec(overrides: RetrieverSpecOverrides = {}): Retriever
     }),
     topK: overrides.topK ?? 4,
     rerank: overrides.rerank ?? null,
-    refresh: new RefreshSpec({ mode: 'full' }),
+    refresh: new RefreshSpec({ mode: overrides.refreshMode ?? 'full' }),
   });
 }
 

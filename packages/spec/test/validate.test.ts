@@ -13,6 +13,7 @@ import {
   MODEL_CACHE_MIN_VERSION,
   type PathSegment,
   RETIRED_STEP_KINDS,
+  RETRIEVAL_INCREMENTAL_MIN_VERSION,
   RUNTIME_MIN_VERSION,
   SECTION_MIN_VERSION,
   SPEC_VERSION,
@@ -265,7 +266,7 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
     code: DIAGNOSTIC_CODES.notSupported,
     path: ['retrievers', 'knowledge', 'filters'],
   },
-  'retriever-incremental-refresh.spec.yaml': {
+  'retriever-incremental-refresh-below-version.spec.yaml': {
     code: DIAGNOSTIC_CODES.notSupported,
     path: ['retrievers', 'knowledge', 'refresh', 'mode'],
   },
@@ -1859,5 +1860,57 @@ describe('managed agent runtimes', () => {
     expect(codes(many)).toEqual([DIAGNOSTIC_CODES.runtimeInvocationRoutes]);
     expect(many[0]?.message).toContain('declares 2 HTTP-triggered pipelines');
     expect(many[0]?.hint).toContain('answer, other');
+  });
+});
+
+describe('incremental retrieval', () => {
+  const doc = (specVersion: string) => ({
+    specVersion,
+    project: { name: 'p' },
+    models: { embed: { provider: 'fake', modelId: 'e', capabilities: ['embeddings'] } },
+    stores: { docs: { kind: 'memory', dimensions: 8 } },
+    retrievers: {
+      docs: {
+        source: { kind: 'file', uri: './docs' },
+        chunking: { strategy: 'recursive', size: 512, overlap: 64 },
+        embedModel: 'embed',
+        store: 'docs',
+        index: { metric: 'cosine' },
+        topK: 4,
+        refresh: { mode: 'incremental' },
+      },
+    },
+  });
+
+  it('accepts the mode from spec 0.19', () => {
+    expect(validateSpec(doc('0.19'))).toEqual([]);
+  });
+
+  it('refuses the mode below 0.19 and names the version it needs', () => {
+    const diagnostics = validateSpec(doc('0.18'));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['retrievers.docs.refresh.mode']);
+    expect(diagnostics[0]?.message).toContain(
+      "'retrievers.docs.refresh.mode: incremental' requires specVersion 0.19",
+    );
+    expect(diagnostics[0]?.hint).toContain(
+      `set specVersion: "${RETRIEVAL_INCREMENTAL_MIN_VERSION}"`,
+    );
+  });
+
+  it('still refuses a schedule at 0.19', () => {
+    // Scheduling is the part that needs a runner the compiler does not emit, so the
+    // mode shipping must not take the reservation with it.
+    const withSchedule = doc('0.19');
+    withSchedule.retrievers.docs.refresh = {
+      mode: 'incremental',
+      schedule: '0 * * * *',
+    } as typeof withSchedule.retrievers.docs.refresh;
+
+    const diagnostics = validateSpec(withSchedule);
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['retrievers.docs.refresh.schedule']);
   });
 });

@@ -77,6 +77,10 @@ _CORPUS = (
     "SELECT chunk_id, doc_id, uri, chunk_index, start_offset, end_offset, body, metadata, "
     "embedding FROM aid_chunks ORDER BY chunk_id"
 )
+_CHUNK_IDS = "SELECT chunk_id FROM aid_chunks ORDER BY chunk_id"
+# `= ANY(%(chunk_ids)s)` binds a Python list as one array parameter, so a reconciliation
+# that names thousands of stale chunks still sends one statement rather than one per id.
+_DELETE = "DELETE FROM aid_chunks WHERE chunk_id = ANY(%(chunk_ids)s)"
 # `<=>` is cosine distance, `<#>` is negative inner product and `<->` is L2 distance.
 # Each is rewritten into "higher is better" so callers see one orientation, matching
 # `stores.similarity`. The tie-break on `chunk_id` matches the in-memory adapter too:
@@ -211,6 +215,23 @@ class PgVectorStore:
             await cursor.execute(_CORPUS)
             rows = await cursor.fetchall()
         return tuple(self._record(row) for row in rows)
+
+    async def chunk_ids(self) -> tuple[str, ...]:
+        connection = await self._connect()
+        async with connection.cursor() as cursor:
+            await cursor.execute(_CHUNK_IDS)
+            rows = await cursor.fetchall()
+        return tuple(row[0] for row in rows)
+
+    async def delete(self, chunk_ids: Sequence[str]) -> int:
+        if not chunk_ids:
+            return 0
+        connection = await self._connect()
+        async with connection.cursor() as cursor:
+            await cursor.execute(_DELETE, {"chunk_ids": list(chunk_ids)})
+            removed = cursor.rowcount
+        await connection.commit()
+        return max(removed, 0)
 
     async def aclose(self) -> None:
         if self._closed:

@@ -24,6 +24,7 @@ input yields identical ids and a no-op diff.
 
 from __future__ import annotations
 
+import asyncio
 import math
 from pathlib import Path
 
@@ -34,7 +35,6 @@ from aid_runtime import (
     BudgetExceededError,
     ConfigurationError,
     EvalError,
-    FeatureDeferredError,
 )
 from aid_runtime.cost import CostLedger
 from aid_runtime.evals.gate import EvalBaseline, EvalRun, MetricRun, Threshold
@@ -368,11 +368,93 @@ def test_a_candidate_factor_below_one_is_refused() -> None:
         Retriever(binding(), candidate_factor=0)
 
 
-def test_incremental_refresh_is_deferred_rather_than_ignored() -> None:
-    # Quietly treating an incremental refresh as a full one would be a correctness hole:
-    # the caller asked for something this layer does not implement.
-    with pytest.raises(FeatureDeferredError, match="incremental"):
-        Retriever(binding(refresh_mode=RefreshMode.INCREMENTAL))
+def make_incremental_retriever(
+    *,
+    glob: str | None = "**/*.md",
+    size: int = 120,
+) -> Retriever:
+    """A retriever that reconciles its index with its source, over a shared store."""
+    return Retriever(
+        binding(glob=glob, size=size, refresh_mode=RefreshMode.INCREMENTAL),
+        embedder=FakeDeterministicEmbedder(),
+        store=InMemoryVectorStore(),
+    )
+
+
+async def test_incremental_refresh_reuses_every_unchanged_chunk() -> None:
+    # The point of the mode: a second run over an unchanged corpus must not spend on
+    # embeddings. `tokens` is what the fake embedder reported, so a zero here means no
+    # text reached the embedder -- not merely that the writes were skipped.
+    retriever = make_incremental_retriever()
+    documents = [document("a.md", "alpha"), document("b.md", "beta")]
+
+    first = await retriever.ingest(documents)
+    second = await retriever.ingest(documents)
+
+    assert first.written == 2
+    assert second.reused == 2
+    assert second.written == 0
+    assert second.removed == 0
+    assert second.tokens == 0
+    assert second.cost_usd == 0.0
+    assert second.chunk_ids == first.chunk_ids
+
+
+async def test_incremental_refresh_reconciles_a_changed_document() -> None:
+    # A changed document yields a different content hash, so its old chunk is stale.
+    # Leaving it would keep returning text the source no longer contains.
+    retriever = make_incremental_retriever()
+
+    first = await retriever.ingest([document("a.md", "alpha"), document("b.md", "beta")])
+    second = await retriever.ingest(
+        [document("a.md", "alpha, revised"), document("b.md", "beta")]
+    )
+
+    stored = {record.chunk.chunk_id for record in await retriever.store.corpus()}
+    assert len(stored) == 2
+    assert len(set(first.chunk_ids) - stored) == 1
+    assert second.written == 1
+    assert second.reused == 1
+    assert second.removed == 1
+
+
+async def test_incremental_refresh_deletes_a_removed_document() -> None:
+    # A full refresh never deletes, so this is the behaviour the mode actually buys.
+    # An explicit list is the snapshot the index is reconciled against, so omitting a
+    # document means its chunks are gone; the opposite reading -- a merge -- would keep
+    # text the caller considers removed.
+    retriever = make_incremental_retriever()
+
+    await retriever.ingest([document("a.md", "alpha"), document("b.md", "beta")])
+    second = await retriever.ingest([document("a.md", "alpha")])
+
+    assert [record.chunk.doc_id for record in await retriever.store.corpus()] == ["a.md"]
+    assert second.removed == 1
+    assert second.reused == 1
+    assert second.documents == 1
+
+
+async def test_incremental_refresh_reads_the_source_through_the_connector(
+    tmp_path: Path,
+) -> None:
+    # The path generated code takes: the index is reconciled against disk, so deleting
+    # a file removes its vectors without the caller naming them.
+    write_docs(tmp_path / "docs", {"guide.md": "alpha", "nested/deep.md": "beta"})
+    retriever = Retriever(
+        binding(refresh_mode=RefreshMode.INCREMENTAL),
+        embedder=FakeDeterministicEmbedder(),
+        store=InMemoryVectorStore(),
+        base_dir=str(tmp_path),
+    )
+
+    first = await retriever.ingest()
+    (tmp_path / "docs" / "nested" / "deep.md").unlink()
+    second = await retriever.ingest()
+
+    assert first.written == 2
+    assert second.reused == 1
+    assert second.removed == 1
+    assert [record.chunk.doc_id for record in await retriever.store.corpus()] == ["guide.md"]
 
 
 def test_the_gate_exposes_its_thresholds_and_metrics() -> None:

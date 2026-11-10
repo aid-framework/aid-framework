@@ -110,7 +110,9 @@ async def test_re_upserting_the_same_chunk_replaces_it_rather_than_duplicating()
     await store.upsert([record])
     await store.upsert([record])
 
-    assert len(await store.corpus()) == 1
+    corpus = await store.corpus()
+    assert len(corpus) == 1
+    assert {record.chunk.doc_id for record in corpus} == {"a.md"}
 
 
 async def test_the_corpus_is_ordered_by_chunk_id() -> None:
@@ -125,7 +127,45 @@ async def test_the_corpus_is_ordered_by_chunk_id() -> None:
     assert [record.chunk.chunk_id for record in corpus] == sorted(
         record.chunk.chunk_id for record in records
     )
-    assert {record.chunk.doc_id for record in corpus} == {"a.md", "b.md"}
+
+
+async def test_chunk_ids_are_the_corpus_keys_and_nothing_more() -> None:
+    # The incremental ingest compares ids alone; carrying vectors here would charge it
+    # for data it does not read.
+    store = InMemoryVectorStore()
+    records = [store_record("b", (1.0,)), store_record("a", (1.0,))]
+    await store.upsert(records)
+
+    assert await store.chunk_ids() == tuple(sorted(record.chunk.chunk_id for record in records))
+
+
+async def test_deleting_reports_how_many_records_were_removed() -> None:
+    store = InMemoryVectorStore()
+    records = [store_record("a", (1.0,)), store_record("b", (1.0,))]
+    await store.upsert(records)
+
+    removed = await store.delete([records[0].chunk.chunk_id])
+
+    assert removed == 1
+    assert await store.chunk_ids() == (records[1].chunk.chunk_id,)
+
+
+async def test_deleting_a_chunk_that_is_not_stored_is_not_an_error() -> None:
+    # A reconciliation may name a chunk a concurrent run already removed; refusing it
+    # would turn a benign race into a failed ingest.
+    store = InMemoryVectorStore()
+    await store.upsert([store_record("a", (1.0,))])
+
+    assert await store.delete(["not-a-real-chunk-id"]) == 0
+    assert len(await store.corpus()) == 1
+
+
+async def test_deleting_nothing_is_a_no_op() -> None:
+    store = InMemoryVectorStore()
+    await store.upsert([store_record("a", (1.0,))])
+
+    assert await store.delete([]) == 0
+    assert len(await store.corpus()) == 1
 
 
 async def test_a_search_returns_the_nearest_records_highest_first() -> None:
@@ -269,6 +309,14 @@ async def test_upserting_nothing_does_not_reach_for_the_driver() -> None:
     store = PgVectorStore(uri=URI, dimensions=DIMENSIONS)
 
     assert await store.upsert([]) == 0
+
+
+async def test_deleting_nothing_does_not_reach_for_the_driver() -> None:
+    # The same short-circuit as an empty upsert: an unchanged corpus reconciles to no
+    # deletions, and that run must not open a connection to say so.
+    store = PgVectorStore(uri=URI, dimensions=DIMENSIONS)
+
+    assert await store.delete([]) == 0
 
 
 async def test_a_missing_driver_is_a_configuration_error_that_names_the_extra() -> None:

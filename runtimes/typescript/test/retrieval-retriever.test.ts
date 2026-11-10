@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -6,7 +10,6 @@ import {
   CostLedger,
   DEFAULT_CANDIDATE_FACTOR,
   FakeDeterministicEmbedder,
-  FeatureDeferredError,
   IngestReport,
   InMemoryVectorStore,
   LedgerEntry,
@@ -41,12 +44,15 @@ function retriever(
     metric?: 'cosine' | 'dot' | 'l2';
     rerank?: RerankSpec | null;
     chunking?: import('../src/index.js').ChunkingSpec;
+    refreshMode?: 'full' | 'incremental';
+    baseDir?: string;
   } = {},
   extra: { readonly ledger?: CostLedger; readonly budget?: Budget } = {},
 ): Retriever {
   return new Retriever(binding(options), {
     embedder: new FakeDeterministicEmbedder(),
     store: new InMemoryVectorStore(),
+    ...(options.baseDir === undefined ? {} : { baseDir: options.baseDir }),
     ...extra,
   });
 }
@@ -59,7 +65,7 @@ describe('Retriever construction', () => {
     expect(bound.store.kind).toBe('memory');
   });
 
-  it('defers a refresh mode other than full', () => {
+  it('refuses a refresh mode it does not implement', () => {
     const full = binding();
     const manual = new RetrieverBinding({
       retrieverId: full.retrieverId,
@@ -74,12 +80,13 @@ describe('Retriever construction', () => {
       topK: full.topK,
       rerank: full.rerank,
       // The spec's own type forbids this mode; that is the point of the test, which
-      // asserts the *runtime* refuses it too rather than trusting the type alone.
+      // asserts the *runtime* refuses it too rather than trusting the type alone. A
+      // mode it does not know must not quietly behave as `full`.
       refreshMode: 'manual' as unknown as RefreshMode,
     });
 
-    expect(() => new Retriever(manual)).toThrow(FeatureDeferredError);
-    expect(() => new Retriever(manual)).toThrow(/refresh mode 'manual' is declared/);
+    expect(() => new Retriever(manual)).toThrow(ConfigurationError);
+    expect(() => new Retriever(manual)).toThrow(/refresh mode 'manual' is not one this runtime/);
   });
 
   it('refuses a candidate factor below one', () => {
@@ -191,6 +198,83 @@ describe('Retriever ingest', () => {
     const report = await bound.ingest(CORPUS);
 
     expect(report.costUsd).toBeGreaterThan(0);
+  });
+});
+
+describe('Retriever ingest, incremental refresh', () => {
+  // The mode exists to skip work, so every test here reads the evidence that nothing
+  // reached the embedder (`tokens`) or the evidence that a stale vector is gone from
+  // the store. Asserting only the report counters would let a no-op pass.
+
+  it('reuses every unchanged chunk and embeds nothing', async () => {
+    const bound = retriever({ refreshMode: 'incremental' });
+    const corpus = [document('a.md', 'alpha'), document('b.md', 'beta')];
+
+    const first = await bound.ingest(corpus);
+    const second = await bound.ingest(corpus);
+
+    expect(first.written).toBe(2);
+    expect(second.reused).toBe(2);
+    expect(second.written).toBe(0);
+    expect(second.removed).toBe(0);
+    expect(second.tokens).toBe(0);
+    expect(second.costUsd).toBe(0);
+    expect(second.chunkIds).toEqual(first.chunkIds);
+  });
+
+  it('replaces the stale chunk of a changed document', async () => {
+    const bound = retriever({ refreshMode: 'incremental' });
+
+    const first = await bound.ingest([document('a.md', 'alpha'), document('b.md', 'beta')]);
+    const second = await bound.ingest([
+      document('a.md', 'alpha, revised'),
+      document('b.md', 'beta'),
+    ]);
+
+    const stored = new Set((await bound.store.corpus()).map((record) => record.chunk.chunkId));
+    expect(stored.size).toBe(2);
+    expect([...first.chunkIds].filter((id) => !stored.has(id))).toHaveLength(1);
+    expect(second.written).toBe(1);
+    expect(second.reused).toBe(1);
+    expect(second.removed).toBe(1);
+  });
+
+  it('deletes a document dropped from the corpus', async () => {
+    // A full refresh never deletes, so this is the behaviour the mode buys. The list
+    // handed to `ingest` is the snapshot the index reconciles against, so omitting a
+    // document means its chunks are gone; a merge would keep text the caller removed.
+    const bound = retriever({ refreshMode: 'incremental' });
+
+    await bound.ingest([document('a.md', 'alpha'), document('b.md', 'beta')]);
+    const second = await bound.ingest([document('a.md', 'alpha')]);
+
+    expect((await bound.store.corpus()).map((record) => record.chunk.docId)).toEqual(['a.md']);
+    expect(second.removed).toBe(1);
+    expect(second.reused).toBe(1);
+    expect(second.documents).toBe(1);
+  });
+
+  it('reconciles against disk, so deleting a file removes its vectors', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'aid-incremental-'));
+    try {
+      mkdirSync(join(root, 'docs', 'nested'), { recursive: true });
+      writeFileSync(join(root, 'docs', 'guide.md'), 'alpha', 'utf8');
+      writeFileSync(join(root, 'docs', 'nested', 'deep.md'), 'beta', 'utf8');
+      const bound = retriever({ refreshMode: 'incremental', baseDir: root });
+
+      const first = await bound.ingest();
+      unlinkSync(join(root, 'docs', 'nested', 'deep.md'));
+      const second = await bound.ingest();
+
+      expect(first.written).toBe(2);
+      expect(second.reused).toBe(1);
+      expect(second.removed).toBe(1);
+      expect((await bound.store.corpus()).map((record) => record.chunk.docId)).toEqual([
+        'guide.md',
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

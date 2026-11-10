@@ -184,6 +184,46 @@ describe('InMemoryVectorStore', () => {
       [],
     );
   });
+
+  it('reports the stored chunk ids and nothing more', async () => {
+    // Identity is what incremental refresh reconciles against, so it is deliberately a
+    // separate, cheap read rather than a projection of the corpus.
+    const store = new InMemoryVectorStore();
+    const upserted = [record('z.md', 0, 'z', [1, 0]), record('a.md', 0, 'a', [1, 0])];
+    await store.upsert(upserted);
+
+    expect(await store.chunkIds()).toEqual(
+      upserted.map((entry) => entry.chunk.chunkId).sort((left, right) => (left < right ? -1 : 1)),
+    );
+  });
+
+  it('reports how many records a delete removed', async () => {
+    const store = new InMemoryVectorStore();
+    const kept = record('a.md', 0, 'a', [1, 0]);
+    const dropped = record('b.md', 0, 'b', [0, 1]);
+    await store.upsert([kept, dropped]);
+
+    expect(await store.delete([dropped.chunk.chunkId])).toBe(1);
+    expect((await store.corpus()).map((entry) => entry.chunk.chunkId)).toEqual([
+      kept.chunk.chunkId,
+    ]);
+  });
+
+  it('treats deleting an id that is not stored as a no-op', async () => {
+    const store = new InMemoryVectorStore();
+    await store.upsert([record('a.md', 0, 'a', [1, 0])]);
+
+    expect(await store.delete(['not-a-chunk'])).toBe(0);
+    expect(await store.corpus()).toHaveLength(1);
+  });
+
+  it('treats deleting nothing as a no-op', async () => {
+    const store = new InMemoryVectorStore();
+    await store.upsert([record('a.md', 0, 'a', [1, 0])]);
+
+    expect(await store.delete([])).toBe(0);
+    expect(await store.corpus()).toHaveLength(1);
+  });
 });
 
 describe('SearchHit', () => {

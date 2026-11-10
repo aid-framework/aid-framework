@@ -92,6 +92,23 @@ class VectorStore(Protocol):
         """
         ...
 
+    async def chunk_ids(self) -> tuple[str, ...]:
+        """Every stored chunk id, sorted.
+
+        Separate from :meth:`corpus` because an incremental ingest needs only
+        identity: it compares this set with the ids the source currently yields, and
+        fetching every vector to learn a key would cost what the mode exists to save.
+        """
+        ...
+
+    async def delete(self, chunk_ids: Sequence[str]) -> int:
+        """Remove records by ``chunk_id``. Returns the number actually removed.
+
+        Deleting an absent id is not an error -- a caller reconciling an index with a
+        source may name a chunk another run already removed.
+        """
+        ...
+
     async def aclose(self) -> None: ...
 
 
@@ -133,6 +150,16 @@ class InMemoryVectorStore:
 
     async def corpus(self) -> tuple[StoreRecord, ...]:
         return tuple(self._records[chunk_id] for chunk_id in sorted(self._records))
+
+    async def chunk_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._records))
+
+    async def delete(self, chunk_ids: Sequence[str]) -> int:
+        removed = 0
+        for chunk_id in chunk_ids:
+            if self._records.pop(chunk_id, None) is not None:
+                removed += 1
+        return removed
 
     async def aclose(self) -> None:
         self._closed = True

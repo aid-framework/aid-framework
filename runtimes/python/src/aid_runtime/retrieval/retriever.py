@@ -78,6 +78,12 @@ class IngestReport(BaseModel):
     ingests of identical input compare equal without depending on the order the
     filesystem happened to yield. ``cost_usd`` is what *this* ingest charged, not the
     ledger's running total, so ingesting twice reads as two separate spends.
+
+    ``written`` counts chunks upserted and ``reused`` counts chunks an incremental
+    ingest found already stored and therefore did not embed; ``written + reused`` is
+    ``chunks``. ``removed`` counts chunks deleted because their document no longer
+    yields them. All three are zero-or-more, and all but ``written`` are zero for a
+    ``full`` refresh, which never reads the index and never deletes from it.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -89,6 +95,8 @@ class IngestReport(BaseModel):
     tokens: int = Field(ge=0)
     cost_usd: float = Field(ge=0.0)
     chunk_ids: tuple[str, ...]
+    reused: int = Field(default=0, ge=0)
+    removed: int = Field(default=0, ge=0)
 
     @property
     def is_empty(self) -> bool:
@@ -145,12 +153,6 @@ class Retriever:
             self._connector = None
             self._base_dir = None
             return
-        if binding.refresh_mode is not RefreshMode.FULL:
-            raise FeatureDeferredError(
-                f"refresh mode {binding.refresh_mode.value!r} is declared but not implemented: "
-                "spec v0.1 reindexes the whole source, and incremental refresh needs change "
-                "detection the runtime does not have"
-            )
         self._knowledge_base_client = None
         self._embedder = embedder or embedder_for(binding.embedding)
         self._store = store or create_store(
@@ -185,6 +187,18 @@ class Retriever:
         upserts on them, so ingesting the same input twice replaces rather than
         duplicates. Re-ingesting is therefore a legitimate way to refresh a corpus.
 
+        ``refresh.mode`` decides what the second run redoes. ``full`` -- the default --
+        embeds and upserts every chunk and never reads or deletes from the index, so
+        dropping a document from the source leaves its vectors behind. ``incremental``
+        instead reconciles the index with the source: a chunk the store already holds
+        keeps its vector, a stored chunk the source no longer yields is deleted, and
+        only new chunks are embedded.
+
+        Incremental therefore treats what it is given as the *whole* corpus, whether
+        that came from the connector or from an explicit ``documents`` argument. Passing
+        a subset of the corpus in incremental mode deletes the rest, exactly as narrowing
+        the source glob would; the mode is a reconciliation, not a merge.
+
         Refused for a managed retriever. The engine ingests from its own data source, so
         a local ingest would write vectors the retriever never reads -- work that costs
         money and changes nothing, which is the worst kind of silent success.
@@ -195,16 +209,26 @@ class Retriever:
                 "which ingests from its data source inside the engine; there is no local "
                 "index to fill, and writing one would be read by nothing"
             )
+        incremental = self._binding.refresh_mode is RefreshMode.INCREMENTAL
         source_documents = tuple(documents) if documents is not None else await self._read_source()
         local = self._local
         chunker = chunker_for(local.chunking)
         chunks = [chunk for document in source_documents for chunk in chunker.chunk(document)]
 
+        to_embed = chunks
+        removed = 0
+        if incremental:
+            stored = set(await self.store.chunk_ids())
+            current = {chunk.chunk_id for chunk in chunks}
+            if stale := sorted(stored - current):
+                removed = await self.store.delete(stale)
+            to_embed = [chunk for chunk in chunks if chunk.chunk_id not in stored]
+
         records: list[StoreRecord] = []
         tokens = 0
         cost = 0.0
-        for start in range(0, len(chunks), _BATCH_SIZE):
-            batch = chunks[start : start + _BATCH_SIZE]
+        for start in range(0, len(to_embed), _BATCH_SIZE):
+            batch = to_embed[start : start + _BATCH_SIZE]
             embedded, batch_cost = await self._embed(tuple(chunk.text for chunk in batch))
             tokens += embedded.usage.input_tokens
             cost += batch_cost
@@ -219,6 +243,8 @@ class Retriever:
             documents=len(source_documents),
             chunks=len(chunks),
             written=written,
+            reused=len(chunks) - len(to_embed),
+            removed=removed,
             tokens=tokens,
             cost_usd=cost,
             chunk_ids=tuple(sorted(chunk.chunk_id for chunk in chunks)),

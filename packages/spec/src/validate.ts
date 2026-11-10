@@ -66,6 +66,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.16',
   '0.17',
   '0.18',
+  '0.19',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -219,6 +220,15 @@ export const KNOWLEDGE_BASE_MIN_VERSION: SpecVersion = '0.12';
  * version it needs instead of being deployed to a compute module it did not ask for.
  */
 export const RUNTIME_MIN_VERSION: SpecVersion = '0.13';
+
+/**
+ * The first spec version whose runtimes reconcile an index instead of rebuilding it.
+ *
+ * Both runtimes refuse an unknown mode rather than treating it as `full`, and before
+ * 0.19 they refused `incremental` for the same reason. A 0.18 document that asks for it
+ * is told the version it needs instead of being silently rebuilt from scratch.
+ */
+export const RETRIEVAL_INCREMENTAL_MIN_VERSION: SpecVersion = '0.19';
 
 /** The version gate for every provider id that arrived after the spec that introduced it. */
 const PROVIDER_MIN_VERSIONS: Readonly<Record<string, SpecVersion>> = {
@@ -2236,6 +2246,9 @@ function assertMetricDiagnostics(spec: Record<string, unknown>, diagnostics: Dia
  */
 function retrievalDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnostic[]): void {
   const retrievers = asRecord(spec.retrievers);
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
 
   for (const [name, retrieverNode] of Object.entries(retrievers)) {
     const retriever = asRecord(retrieverNode);
@@ -2271,13 +2284,18 @@ function retrievalDiagnostics(spec: Record<string, unknown>, diagnostics: Diagno
     }
 
     const refresh = asRecord(retriever.refresh);
-    if (refresh.mode === 'incremental') {
+    if (
+      refresh.mode === 'incremental' &&
+      declared !== undefined &&
+      known &&
+      !specVersionAtLeast(declared, RETRIEVAL_INCREMENTAL_MIN_VERSION)
+    ) {
       diagnostics.push(
         errorDiagnostic({
           code: DIAGNOSTIC_CODES.notSupported,
-          message: `'retrievers.${name}.refresh.mode: incremental' is defined by the AID design but is not implemented in spec v0.1`,
+          message: `'retrievers.${name}.refresh.mode: incremental' requires specVersion ${RETRIEVAL_INCREMENTAL_MIN_VERSION}, but this specification declares version ${declared}`,
           path: at('refresh', 'mode'),
-          hint: 'spec v0.1 rebuilds the index (mode: full); an incremental refresh the runtime does not honour would claim more than it does',
+          hint: `set specVersion: "${RETRIEVAL_INCREMENTAL_MIN_VERSION}"; documents that refresh with mode: full are unchanged`,
         }),
       );
     }
@@ -2285,9 +2303,9 @@ function retrievalDiagnostics(spec: Record<string, unknown>, diagnostics: Diagno
       diagnostics.push(
         errorDiagnostic({
           code: DIAGNOSTIC_CODES.notSupported,
-          message: `'retrievers.${name}.refresh.schedule' is defined by the AID design but is not implemented in spec v0.1`,
+          message: `'retrievers.${name}.refresh.schedule' is defined by the AID design but is not implemented in any supported spec version`,
           path: at('refresh', 'schedule'),
-          hint: 'scheduling an incremental refresh needs the ingestion runtime a later phase ships; spec v0.1 refreshes on rebuild',
+          hint: 'spec 0.19 reconciles a refresh when it is asked to; triggering one on a clock needs a scheduler the compiler does not emit',
         }),
       );
     }
