@@ -20,6 +20,8 @@ variable "services" {
       cloud             = string
       memory_short_term = bool
       ttl_minutes       = number
+      # The gateway this deployment federates its tools through, absent when none.
+      gateway = optional(string)
     })
     routes = list(object({
       pipeline = string

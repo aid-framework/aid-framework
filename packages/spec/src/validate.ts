@@ -30,6 +30,7 @@ export const SUPPORTED_SECTIONS = [
   'stores',
   'retrievers',
   'knowledgeBases',
+  'gateways',
   'agents',
   'guardrails',
   'decisions',
@@ -72,6 +73,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.21',
   '0.22',
   '0.23',
+  '0.24',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -90,6 +92,7 @@ export const SECTION_MIN_VERSION: Partial<
   deployments: '0.2',
   decisions: '0.6',
   knowledgeBases: '0.12',
+  gateways: '0.24',
 };
 
 /**
@@ -275,6 +278,19 @@ export const RETRIEVAL_SEMANTIC_CHUNKING_MIN_VERSION: SpecVersion = '0.22';
  * ingestion -- which is why the schedule check below runs only for local retrievers.
  */
 export const REFRESH_SCHEDULE_MIN_VERSION: SpecVersion = '0.23';
+
+/**
+ * The first spec version that accepts `gateways` and `deployments[].runtime.gateway`.
+ *
+ * Before 0.24 both were unknown keys, and an unknown key is refused rather than ignored,
+ * so a 0.23 document already learns something. It just learns the wrong thing -- that the
+ * construct does not exist, rather than that it exists from 0.24 -- so the check below
+ * names the version instead. The gateway section has its own gate beside
+ * `SECTION_MIN_VERSION` because `runtime.gateway` is a *nested* construct that
+ * `SECTION_MIN_VERSION` cannot see, and both are reported by the same function: a document
+ * that declares a gateway and points a runtime at it has one problem, not two.
+ */
+export const GATEWAY_MIN_VERSION: SpecVersion = '0.24';
 
 /** The version gate for every provider id that arrived after the spec that introduced it. */
 const PROVIDER_MIN_VERSIONS: Readonly<Record<string, SpecVersion>> = {
@@ -590,6 +606,7 @@ function scopeDiagnostics(
   routeDiagnostics(spec, diagnostics, reported);
   knowledgeBaseDiagnostics(spec, diagnostics, reported);
   runtimeDiagnostics(spec, diagnostics, reported);
+  gatewayDiagnostics(spec, diagnostics, reported);
 }
 
 /**
@@ -1358,6 +1375,150 @@ function runtimeDiagnostics(
             : `keep one pipeline with \`trigger.http\`; currently ${httpRoutes.join(', ')}. A second route needs its own service`,
       }),
     );
+  }
+}
+
+/**
+ * Managed MCP gateways: `gateways` and `deployments[].runtime.gateway`.
+ *
+ * One function gates both because they are one feature, and `SECTION_MIN_VERSION` sees
+ * only the first: `runtime.gateway` is nested inside a deployment. A document that
+ * declares a gateway and points a runtime at it has one problem, not two, so the nested
+ * gate defers to the section gate when that one already fired.
+ *
+ * The checks below the version branch are version-independent and deliberately sit beside
+ * it rather than inside it, so a 0.23 document with a duplicate target name learns that
+ * fact in the same pass as the version it needs. Two of them are the contradictions the
+ * schema cannot state: a gateway is an AgentCore resource, so a document with no runtime
+ * anywhere but the Google platform cannot host one; and a `runtime.gateway` naming nothing
+ * would export a URL no resource creates, which fails on the first invocation instead of
+ * at plan time.
+ */
+function gatewayDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) return;
+  const belowVersion = !specVersionAtLeast(declared, GATEWAY_MIN_VERSION);
+  const gateways = asRecord(spec.gateways);
+  const gatewayNames = Object.keys(gateways).sort();
+  const declaresSection = Object.hasOwn(spec, 'gateways');
+  const deployments = asRecord(spec.deployments);
+
+  // `gateways` is a top-level section, so `SECTION_MIN_VERSION` names its version and has
+  // already reported it; this constant gates the nested `runtime.gateway`, which that map
+  // cannot see. Reading `reported` is what keeps a below-version document with both from
+  // hearing the same version requirement twice.
+
+  // The schema cannot say "these names are distinct": `uniqueItems` compares whole
+  // targets, and two targets may legitimately share every field but the name. The emitted
+  // resource is named after the target, so a repeat collides at apply time.
+  for (const [id, raw] of Object.entries(gateways)) {
+    const targets = asRecord(raw).targets;
+    if (!Array.isArray(targets)) continue;
+    const seen = new Set<string>();
+    const duplicated = new Set<string>();
+    for (const target of targets) {
+      const name = asRecord(target).name;
+      if (typeof name !== 'string') continue;
+      if (seen.has(name)) duplicated.add(name);
+      seen.add(name);
+    }
+    if (duplicated.size === 0) continue;
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.invalidValue,
+        message: `gateway '${id}' declares the target name ${[...duplicated].map((name) => `'${name}'`).join(', ')} more than once; one gateway identifies a target by its name`,
+        path: ['gateways', id, 'targets'],
+        hint: 'give each target a distinct `name`; the emitted resource is named after it, so two identical names collide at apply time',
+      }),
+    );
+  }
+
+  // Gated on the version above having passed: on a 0.23 document the fix is the bump, and
+  // a second error naming the cloud would describe a gateway that version cannot have.
+  if (declaresSection && !belowVersion) {
+    const runtimes = Object.entries(deployments)
+      .map(([id, raw]) => [id, asRecord(asRecord(raw).runtime)] as const)
+      .filter(([, runtime]) => runtime.platform !== undefined);
+    // A gateway only contradicts the document when *nothing* in it could host one. A
+    // mixed document is deployable: an `aws-agentcore` runtime reaching the gateway and an
+    // unrelated Google runtime beside it is coherent, and the deployment that names no
+    // gateway is not the reason for anything. The per-runtime check below covers the
+    // deployment that actually reaches one from the wrong platform, and `--cloud gcp`
+    // refuses the deploy-time conflict, which is per-invocation and not per-document.
+    const gcpOnly =
+      runtimes.length > 0 &&
+      runtimes.every(([, runtime]) => runtime.platform === 'gcp-agent-platform');
+    if (gcpOnly) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.gatewayOnGcp,
+          message: `'gateways' declares a managed MCP gateway, but every runtime in this specification (${runtimes.map(([id]) => `'${id}'`).join(', ')}) runs on 'gcp-agent-platform', which is Google Cloud`,
+          path: ['gateways'],
+          hint: 'an AgentCore Gateway is an AWS resource with no Google Cloud counterpart; drop `gateways` for this document, or move a runtime to `aws-agentcore` and deploy with --cloud aws',
+        }),
+      );
+      reported.add(JSON.stringify(['gateways']));
+    }
+  }
+
+  for (const [id, raw] of Object.entries(deployments)) {
+    const deployment = asRecord(raw);
+    const runtime = asRecord(deployment.runtime);
+    if (runtime.gateway === undefined) continue;
+    const path: DiagnosticPath = ['deployments', id, 'runtime', 'gateway'];
+
+    if (belowVersion) {
+      if (!alreadyReported(['gateways'], reported)) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.notSupported,
+            message: `'deployments.${id}.runtime.gateway' requires specVersion ${GATEWAY_MIN_VERSION}, but this specification declares version ${declared}`,
+            path,
+            hint: `set specVersion: "${GATEWAY_MIN_VERSION}"; a specification that reaches no gateway is unchanged by the bump`,
+          }),
+        );
+      }
+      reported.add(JSON.stringify(['deployments', id, 'runtime']));
+      continue;
+    }
+
+    if (runtime.platform === 'gcp-agent-platform') {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.gatewayOnPlatform,
+          message: `deployment '${id}' reaches a gateway from 'gcp-agent-platform', but AgentCore Gateway is an AWS resource with no Google Cloud counterpart`,
+          path,
+          hint: `drop \`gateway\`, or move this deployment to \`aws-agentcore\` and deploy with --cloud aws`,
+        }),
+      );
+      reported.add(JSON.stringify(path));
+      continue;
+    }
+
+    // A non-string gateway is the schema's to refuse; naming it here would print a
+    // friendly but meaningless name for a value the author did not write as a name.
+    if (typeof runtime.gateway !== 'string') continue;
+    const named = runtime.gateway;
+    if (!Object.hasOwn(gateways, named)) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.gatewayUnknown,
+          message: `deployment '${id}' reaches gateway '${named}', which this specification does not declare`,
+          path,
+          hint:
+            gatewayNames.length === 0
+              ? `declare a \`gateways\` entry named '${named}'`
+              : `declare \`gateways.${named}\`, or name one of ${gatewayNames.join(', ')}`,
+        }),
+      );
+      reported.add(JSON.stringify(path));
+    }
   }
 }
 

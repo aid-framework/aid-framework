@@ -543,6 +543,50 @@ export interface KnowledgeBaseShape {
 }
 
 /**
+ * The authorizer a gateway presents, as the two the platform serves. `NONE` and
+ * `AUTHENTICATE_ONLY` exist on the resource but are not reachable from a specification:
+ * `NONE` publishes an unauthenticated MCP endpoint, which is not worth a one-word opt-in,
+ * and `AUTHENTICATE_ONLY` authorizes nothing on its own.
+ */
+export type GatewayAuthorizerShape =
+  | { kind: 'awsIam' }
+  | { kind: 'jwt'; discoveryUrl: string; audience: string[] };
+
+/**
+ * What a target points at. Both variants are payloads of the resource's single `Mcp`
+ * configuration rather than sibling target kinds, because the platform accepts no
+ * schema-only target shape: a discriminated union here would emit an invalid resource.
+ * The OpenAPI variant keeps the two schema sources apart, so `uri` never accompanies
+ * `inline` and the module cannot pick one at apply time.
+ */
+export type GatewayTargetSourceShape =
+  | {
+      kind: 'openApiSchema';
+      schema: { uri: string; bucketOwnerAccountId?: string } | { inline: string };
+    }
+  | { kind: 'mcpServer'; endpoint: string };
+
+export interface GatewayTargetShape {
+  id: string;
+  description?: string;
+  source: GatewayTargetSourceShape;
+}
+
+/**
+ * A managed MCP endpoint (Amazon Bedrock AgentCore Gateway), from spec 0.24. The platform
+ * hosts it and the targets behind it are federated tools, so a runtime reaches the
+ * gateway's URL over MCP instead of carrying every tool in its image. This is federation
+ * of tools, not a second generation path: a gateway holds no tool bodies, so `tools:` is
+ * emitted exactly as before.
+ */
+export interface GatewayShape {
+  id: string;
+  description?: string;
+  authorizer: GatewayAuthorizerShape;
+  targets: GatewayTargetShape[];
+}
+
+/**
  * Shaped per design §7.2 and populated from the `retrievers` spec section. This is the
  * declaration only; the generated runtime owns chunking, embedding, and search.
  */
@@ -981,6 +1025,12 @@ export interface DeploymentRuntimeShape {
   memory: { shortTerm: boolean };
   /** Session lifetime in minutes; 480 when the spec names none. */
   session: { ttlMinutes: number };
+  /**
+   * Id of a `GatewayShape` this runtime reaches over MCP, from spec 0.24. Present only on
+   * `aws-agentcore`, because a gateway is an AWS resource; the platform injects its URL
+   * into the environment and the emitted role may invoke that one gateway.
+   */
+  gateway?: string;
 }
 
 export interface DeploymentShape {
@@ -1025,6 +1075,7 @@ export interface IR {
   tools: ToolShape[];
   retrievers: RetrieverShape[];
   knowledgeBases: KnowledgeBaseShape[];
+  gateways: GatewayShape[];
   embeddings: EmbeddingShape[];
   stores: VectorStoreShape[];
   memory: MemoryShape[];
@@ -1048,6 +1099,7 @@ export const IR_COLLECTIONS = [
   'tools',
   'retrievers',
   'knowledgeBases',
+  'gateways',
   'embeddings',
   'stores',
   'memory',
@@ -1070,6 +1122,7 @@ export const POPULATED_COLLECTION_BY_SECTION = {
   stores: 'stores',
   retrievers: 'retrievers',
   knowledgeBases: 'knowledgeBases',
+  gateways: 'gateways',
   memory: 'memory',
   agents: 'agents',
   guardrails: 'guardrails',

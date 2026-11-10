@@ -62,6 +62,7 @@ export type {
   DeployAlarm,
   DeployEndpoint,
   DeployEnvVar,
+  DeployGateway,
   DeployManagedGuardrail,
   DeployPlan,
   DeployRuntime,
@@ -69,7 +70,12 @@ export type {
   DeployStore,
   DeployTask,
 } from './deploy-plan.js';
-export { buildDeployPlan, DEPLOY_PLAN_VERSION, knowledgeBaseEnvName } from './deploy-plan.js';
+export {
+  buildDeployPlan,
+  DEPLOY_PLAN_VERSION,
+  gatewayEnvName,
+  knowledgeBaseEnvName,
+} from './deploy-plan.js';
 export type { IrDiagnostic, IrDiagnosticCode } from './diagnostics.js';
 export {
   IR_DIAGNOSTIC_CODES,
@@ -204,6 +210,10 @@ export type {
   EvalShape,
   EvalTarget,
   EvalTargetKind,
+  GatewayAuthorizerShape,
+  GatewayShape,
+  GatewayTargetShape,
+  GatewayTargetSourceShape,
   GenerateStep,
   GUARDRAIL_DECISION_ACTIONS,
   GuardrailDecisionAction,

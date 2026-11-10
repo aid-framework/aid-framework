@@ -15,6 +15,7 @@
     "tools",
     "retrievers",
     "knowledgeBases",
+    "gateways",
     "embeddings",
     "stores",
     "memory",
@@ -48,6 +49,7 @@
     "evals": { "type": "array", "items": { "$ref": "#/$defs/eval" } },
     "retrievers": { "type": "array", "items": { "$ref": "#/$defs/retriever" } },
     "knowledgeBases": { "type": "array", "items": { "$ref": "#/$defs/knowledgeBase" } },
+    "gateways": { "type": "array", "items": { "$ref": "#/$defs/gateway" } },
     "embeddings": { "type": "array", "items": { "$ref": "#/$defs/embedding" } },
     "stores": { "type": "array", "items": { "$ref": "#/$defs/vectorStore" } },
     "memory": { "type": "array", "items": { "$ref": "#/$defs/memory" } },
@@ -1082,6 +1084,105 @@
         }
       }
     },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "authorizer", "targets"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "description": { "type": "string" },
+        "authorizer": { "$ref": "#/$defs/gatewayAuthorizer" },
+        "targets": { "type": "array", "items": { "$ref": "#/$defs/gatewayTarget" } }
+      }
+    },
+    "gatewayAuthorizer": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "awsIam" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "discoveryUrl", "audience"],
+          "properties": {
+            "kind": { "const": "jwt" },
+            "discoveryUrl": { "type": "string" },
+            "audience": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      ]
+    },
+    "gatewayTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "description": { "type": "string" },
+        "source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "schema"],
+              "properties": {
+                "kind": { "const": "openApiSchema" },
+                "schema": { "$ref": "#/$defs/gatewayOpenApiSchema" }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "endpoint"],
+              "properties": {
+                "kind": { "const": "mcpServer" },
+                "endpoint": { "type": "string" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "gatewayOpenApiSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uri": { "type": "string" },
+        "bucketOwnerAccountId": { "type": "string" },
+        "inline": { "type": "string" }
+      },
+      "oneOf": [
+        { "required": ["uri"], "properties": { "uri": true } },
+        {
+          "required": ["inline"],
+          "properties": { "inline": true, "bucketOwnerAccountId": false }
+        }
+      ]
+    },
+    "deploymentRuntime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "memory", "session"],
+      "properties": {
+        "platform": { "enum": ["aws-agentcore", "gcp-agent-platform"] },
+        "memory": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["shortTerm"],
+          "properties": { "shortTerm": { "type": "boolean" } }
+        },
+        "session": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ttlMinutes"],
+          "properties": { "ttlMinutes": { "type": "integer", "minimum": 1 } }
+        },
+        "gateway": { "$ref": "#/$defs/identifier" }
+      }
+    },
     "embedding": {
       "type": "object",
       "additionalProperties": false,
@@ -1342,6 +1443,7 @@
             }
           }
         },
+        "runtime": { "$ref": "#/$defs/deploymentRuntime" },
         "image": {
           "description": "Where the image for this deployment is published; only a container deployment can carry one. `loginServer` and `loginFields` are present only when the registry's host or credential is derived from declared fields, so a `ghcr.io` or `docker.io` image serializes exactly as it did before a cloud registry existed.",
           "type": "object",

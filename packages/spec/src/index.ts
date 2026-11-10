@@ -51,6 +51,7 @@ export {
   DEFERRED_SECTIONS,
   DEFERRED_STEP_KINDS,
   DEPLOYMENT_IMAGE_MIN_VERSION,
+  GATEWAY_MIN_VERSION,
   GEMINI_PROVIDER_MIN_VERSION,
   GOOGLE_PROVIDER_MIN_VERSION,
   KNOWLEDGE_BASE_MIN_VERSION,
@@ -88,7 +89,7 @@ import { validateSpec } from './validate.js';
 export const SPEC_VERSION = '0.1';
 
 /** The newest version this build reads. Sections above this are rejected, not ignored. */
-export const SPEC_VERSION_LATEST: SpecVersion = '0.23';
+export const SPEC_VERSION_LATEST: SpecVersion = '0.24';
 
 export interface SpecCheckResult {
   /** True when no diagnostic has `error` severity. Warnings do not fail a check. */

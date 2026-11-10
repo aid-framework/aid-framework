@@ -53,6 +53,9 @@ export const DIAGNOSTIC_CODES = {
   runtimePlatformConflict: 'spec/runtime-platform-conflict',
   runtimeInvocationRoutes: 'spec/runtime-invocation-routes',
   runtimePort: 'spec/runtime-port',
+  gatewayOnGcp: 'spec/gateway-on-gcp',
+  gatewayUnknown: 'spec/gateway-unknown',
+  gatewayOnPlatform: 'spec/gateway-on-platform',
   filterExpression: 'spec/filter-expression',
   invalidValue: 'spec/invalid-value',
 } as const;

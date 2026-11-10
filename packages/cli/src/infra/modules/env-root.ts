@@ -23,6 +23,8 @@ export interface EnvRootModules {
   readonly edge?: boolean;
   /** Optional for the same reason: "no managed base" unless a caller says otherwise. */
   readonly knowledgeBase?: boolean;
+  /** Optional for the same reason: "no managed MCP gateway" unless a caller says so. */
+  readonly gateway?: boolean;
   /** Optional for the same reason: "no managed agent runtime" unless a caller says so. */
   readonly agentRuntime?: boolean;
   /** Optional for the same reason: "no managed guardrail template" unless a caller says so. */
@@ -40,6 +42,17 @@ const PLAN_VARIABLES = [
   'variable "alarms" {}',
   'variable "knowledge_bases" {}',
   'variable "model_armor_templates" {}',
+];
+
+/**
+ * Declared only when the gateway module exists, unlike the plan-shaped variables above.
+ * A project with no gateway omits the key from its tfvars, and a variable with no default
+ * that the tfvars never sets fails the plan outright rather than merely warning.
+ */
+const GATEWAY_INPUT = [
+  '',
+  '# Every gateway in the plan, keyed by spec name. The module derives the platform name.',
+  'variable "gateways" {}',
 ];
 
 const IMAGE_URIS = [
@@ -349,10 +362,11 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   const secrets = modules.serverless || modules.container || modules.batch === true;
   // A runtime may call Bedrock too, so the regional override is not tied to compute.
   const bedrock = secrets || runtime;
-  const any = images || edge || modules.knowledgeBase === true;
+  const any = images || edge || modules.knowledgeBase === true || modules.gateway === true;
 
   const variables = [
     ...PLAN_VARIABLES,
+    ...(modules.gateway === true ? GATEWAY_INPUT : []),
     ...(images ? IMAGE_URIS : []),
     ...(secrets ? SECRET_ARNS : []),
     ...(bedrock ? BEDROCK_INPUTS : []),
@@ -387,6 +401,20 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
       '  value = module.knowledge-base.knowledge_base_ids',
       '}',
     ]);
+  }
+
+  // The gateway is created by its own module for the same reason a base is: the runtime
+  // is handed a URL only the platform can assign, so the runtime module reads the map
+  // this one returns rather than the plan's entry verbatim.
+  if (modules.gateway === true) {
+    calls.push(
+      moduleCall('gateway', [
+        'project  = var.project',
+        'gateways = var.gateways',
+        'tags     = var.tags',
+      ]),
+    );
+    outputs.push(['output "gateway_urls" {', '  value = module.gateway.gateway_urls', '}']);
   }
 
   if (modules.serverless) {
@@ -446,6 +474,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         'image_uris      = var.image_uris',
         'bedrock_region  = var.bedrock_region',
         `knowledge_bases = ${knowledgeBases}`,
+        ...(modules.gateway === true ? ['gateways        = module.gateway.gateways'] : []),
         'tags            = var.tags',
       ]),
     );

@@ -48,6 +48,7 @@ const TOP_LEVEL_KEYS = [
   'tools',
   'retrievers',
   'knowledgeBases',
+  'gateways',
   'embeddings',
   'stores',
   'memory',

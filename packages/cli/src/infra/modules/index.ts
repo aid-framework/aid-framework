@@ -18,6 +18,7 @@ export {
   CDK_CONTAINER_MODULE,
   CDK_DIR,
   CDK_EDGE_MODULE,
+  CDK_GATEWAY_MODULE,
   CDK_KNOWLEDGE_BASE_MODULE,
   CDK_SERVERLESS_MODULE,
   emitCdkModules,
@@ -27,6 +28,7 @@ export { CLOUDRUNJOB_MODULE_DIR, emitCloudRunJobModule } from './cloudrunjob.js'
 export { CONTAINER_MODULE_DIR, emitContainerModule } from './container.js';
 export { EDGE_MODULE_DIR, emitEdgeModule } from './edge.js';
 export { type EnvRootModules, envRoot } from './env-root.js';
+export { emitGatewayModule, GATEWAY_MODULE_DIR } from './gateway.js';
 export type { ModuleFile } from './hcl.js';
 export { hcl } from './hcl.js';
 export { emitKnowledgeBaseModule, KNOWLEDGE_BASE_MODULE_DIR } from './knowledge-base.js';
@@ -46,6 +48,7 @@ import { emitCloudRunModule } from './cloudrun.js';
 import { emitCloudRunJobModule } from './cloudrunjob.js';
 import { emitContainerModule } from './container.js';
 import { emitEdgeModule } from './edge.js';
+import { emitGatewayModule } from './gateway.js';
 import { emitKnowledgeBaseModule } from './knowledge-base.js';
 import { emitModelArmorModule } from './model-armor.js';
 import { emitServerlessModule } from './serverless.js';
@@ -72,6 +75,8 @@ export function modulesOf(
   batch: boolean;
   edge: boolean;
   knowledgeBase: boolean;
+  /** A managed MCP gateway this plan owns, which only an AWS plan can. */
+  gateway: boolean;
   agentRuntime: boolean;
   /** A Model Armor template this plan owns, which only a GCP plan can. */
   modelArmor: boolean;
@@ -92,6 +97,9 @@ export function modulesOf(
     knowledgeBase:
       (cloud === 'aws' && plan.knowledgeBases.some((base) => base.engine === 'aws-bedrock')) ||
       (cloud === 'gcp' && plan.knowledgeBases.some((base) => base.engine === 'vertex-rag')),
+    // AgentCore Gateway is an AWS product: `infra gen` refuses a gateway on a GCP plan,
+    // so the cloud check restates that refusal rather than adding a second rule.
+    gateway: cloud === 'aws' && plan.gateways.length > 0,
     // A runtime service is emitted by the agent-runtime module instead of the compute
     // module above, so the two call sites are mutually exclusive by construction.
     agentRuntime: plan.services.some(
@@ -121,6 +129,7 @@ export function emitProviderModules(plan: DeployPlan, cloud: Cloud = DEFAULT_CLO
         ...emitBatchModule(plan),
         ...emitEdgeModule(plan),
         ...emitKnowledgeBaseModule(plan),
+        ...emitGatewayModule(plan),
         ...emitAgentRuntimeModule(plan, cloud),
         ...emitCdkModules(plan, cloud),
       ];

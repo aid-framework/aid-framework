@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.23`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.24`.
 
 ## Deployment targets
 
@@ -327,6 +327,14 @@ A retriever the application ingests itself declares a five-field cron read as UT
 - **Turned on by:** `retrievers[].refresh.schedule`
 - **Reference:** [spec](./reference/spec.md#retriever)
 - **Since:** `0.1.136`
+
+### Tools federated behind a managed MCP endpoint
+
+A `gateways` entry names an Amazon Bedrock AgentCore Gateway, its authorizer and the OpenAPI or MCP-server targets behind it, so a runtime reaches federated tools over one MCP endpoint instead of bundling every tool; an `aws-agentcore` runtime that names a gateway is handed its URL and the permission to invoke it.
+
+- **Turned on by:** `gateways[], deployments[].runtime.gateway`
+- **Reference:** [spec](./reference/spec.md#gateway)
+- **Since:** `0.1.139`
 
 ## Refused, on purpose
 

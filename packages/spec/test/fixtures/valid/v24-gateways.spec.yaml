@@ -1,0 +1,61 @@
+specVersion: "0.24"
+
+project:
+  name: federated-tools
+  namespace: aid.examples.federated
+  description: Reaches federated tools over one managed AgentCore Gateway endpoint instead of bundling each tool.
+  targets:
+    - py-fastapi
+
+models:
+  answer:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [tools]
+
+prompts:
+  answer_instructions:
+    version: 1
+    model: answer
+    template: "Answer using the federated tools the gateway advertises."
+    output:
+      kind: text
+
+gateways:
+  tools:
+    description: Federates the order API and a partner MCP server behind one endpoint.
+    authorizer:
+      kind: jwt
+      discoveryUrl: https://issuer.example.com/.well-known/openid-configuration
+      audience: [aid-gateway]
+    targets:
+      - name: orders
+        kind: openApiSchema
+        openApiSchema:
+          uri: s3://acme-gateway/orders.json
+          bucketOwnerAccountId: "123456789012"
+      - name: search
+        kind: mcpServer
+        mcpServer:
+          endpoint: https://mcp.example.com/mcp
+
+pipelines:
+  ask:
+    trigger:
+      http:
+        method: post
+        path: /ask
+    steps:
+      - generate:
+          prompt: answer_instructions
+          as: reply
+
+deployments:
+  api:
+    target: container
+    streaming: false
+    secrets: []
+    runtime:
+      platform: aws-agentcore
+      gateway: tools

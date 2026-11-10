@@ -45,6 +45,7 @@
       "traits": []
     }
   ],
+  "gateways": [],
   "guardrails": [],
   "irVersion": "0.1.0",
   "knowledgeBases": [],

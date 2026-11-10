@@ -31,6 +31,7 @@
 import type { DeployPlan } from '@aid-framework/ir';
 
 import { INFRA_GENERATED_DIR } from '../paths.js';
+import { GATEWAY_VARIABLES, gatewayGrant, gatewayLocals } from './gateway.js';
 import { GUARDRAIL_VARIABLES, guardrailLocals, guardrailResources } from './guardrails.js';
 import { hcl, type ModuleFile, moduleFiles } from './hcl.js';
 import {
@@ -60,6 +61,8 @@ const SERVICE_SHAPE = [
   '      cloud             = string',
   '      memory_short_term = bool',
   '      ttl_minutes       = number',
+  '      # The gateway this deployment federates its tools through, absent when none.',
+  '      gateway = optional(string)',
   '    })',
   '    routes = list(object({',
   '      pipeline = string',
@@ -140,6 +143,7 @@ const AWS_VARIABLES_TF = hcl([
   '}',
   ...GUARDRAIL_VARIABLES,
   ...KNOWLEDGE_BASE_VARIABLES,
+  ...GATEWAY_VARIABLES,
 ]);
 
 const AWS_MAIN_TF = hcl([
@@ -198,10 +202,12 @@ const AWS_MAIN_TF = hcl([
   '        BEDROCK_AGENTCORE_MEMORY_ID = aws_bedrockagentcore_memory.managed[id].id',
   '      } : {},',
   '      local.knowledge_base_env[id],',
+  '      local.gateway_env[id],',
   '    )',
   '  }',
   ...guardrailLocals('managed'),
   ...knowledgeBaseLocals('managed'),
+  ...gatewayLocals('managed'),
   '}',
   '',
   '# ---------------------------------------------------------------------------- iam',
@@ -295,6 +301,7 @@ const AWS_MAIN_TF = hcl([
   '}',
   ...guardrailResources('aws_iam_role.runtime[each.key].id'),
   ...knowledgeBaseGrant('aws_iam_role.runtime[each.key].id', 'managed'),
+  ...gatewayGrant('aws_iam_role.runtime[each.key].id', 'managed'),
   '',
   '# ------------------------------------------------------------------------- memory',
   '',

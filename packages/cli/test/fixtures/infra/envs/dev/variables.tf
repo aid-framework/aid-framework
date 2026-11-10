@@ -8,6 +8,9 @@ variable "alarms" {}
 variable "knowledge_bases" {}
 variable "model_armor_templates" {}
 
+# Every gateway in the plan, keyed by spec name. The module derives the platform name.
+variable "gateways" {}
+
 # Business inputs. None of these is derivable from the spec, by design.
 variable "image_uris" {
   description = "Service id -> the image it runs, pinned to a released tag."

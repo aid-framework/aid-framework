@@ -13,6 +13,8 @@ import type {
   AgentRuntimePlatform,
   BedrockGuardrailPolicy,
   DeploymentTarget,
+  GatewayAuthorizerShape,
+  GatewayTargetShape,
   GuardrailEngine,
   GuardrailShape,
   IR,
@@ -45,6 +47,19 @@ export const DEPLOY_PLAN_VERSION = '1';
 export function knowledgeBaseEnvName(id: string, engine: KnowledgeBaseEngine): string {
   const prefix = engine === 'aws-bedrock' ? 'BEDROCK_KNOWLEDGE_BASE' : 'VERTEX_RAG_CORPUS';
   return `${prefix}_${environmentSlug(id)}`;
+}
+
+/**
+ * The environment name a deployment exports a gateway's URL under.
+ *
+ * The runtime reads this to build its MCP client, so the spelling is a contract: the
+ * emitted module exports the platform-assigned `gateway_url` and the runtime module
+ * projects it into this variable. Derived from the gateway id alone because a gateway has
+ * one authorizer and one endpoint; unlike a knowledge base, there is no engine to
+ * distinguish, and no two gateways can share a URL.
+ */
+export function gatewayEnvName(id: string): string {
+  return `AID_GATEWAY_${environmentSlug(id)}_URL`;
 }
 
 /**
@@ -103,6 +118,12 @@ export interface DeployRuntime {
   cloud: 'aws' | 'gcp';
   memory: { shortTerm: boolean };
   session: { ttlMinutes: number };
+  /**
+   * Id of the `DeployGateway` this runtime reaches over MCP, from spec 0.24. Present only
+   * on `aws-agentcore`; the emitted runtime module projects that gateway's URL into the
+   * environment and the role gains `bedrock-agentcore:InvokeGateway` on it alone.
+   */
+  gateway?: string;
 }
 
 export interface DeployService {
@@ -199,6 +220,33 @@ export interface DeployKnowledgeBase {
   preventDestroy: true;
 }
 
+/**
+ * A managed MCP gateway the deployment creates, from spec 0.24, plus the two names an
+ * emitter needs to wire a runtime to it. The `gateway_url` is assigned by the platform at
+ * apply time, so the plan cannot carry it; it carries the environment variable the URL is
+ * projected into instead, which is what the runtime reads.
+ */
+export interface DeployGateway {
+  id: string;
+  description?: string;
+  authorizer: GatewayAuthorizerShape;
+  targets: GatewayTargetShape[];
+  /**
+   * The environment variable this gateway's URL is projected into for every runtime that
+   * declares `runtime.gateway`. Derived here so the module and the runtime cannot spell
+   * it differently.
+   */
+  envName: string;
+  /** Ids of the deployments that reach this gateway, sorted. */
+  runtimes: string[];
+  /**
+   * The cloud the gateway is created on. Always `aws`: a gateway is an AgentCore resource,
+   * and both the CLI and the validator refuse one for a Google Cloud deploy. Carried so
+   * the refusal and the emitter read one field instead of restating the platform.
+   */
+  cloud: 'aws';
+}
+
 export interface DeployTask {
   id: string;
   kind: 'ingest' | 'eval';
@@ -224,6 +272,7 @@ export interface DeployPlan {
   services: DeployService[];
   stores: DeployStore[];
   knowledgeBases: DeployKnowledgeBase[];
+  gateways: DeployGateway[];
   tasks: DeployTask[];
   alarms: DeployAlarm[];
 }
@@ -337,6 +386,25 @@ export function buildDeployPlan(ir: IR): DeployPlan {
     })
     .sort((left, right) => compare(left.id, right.id));
 
+  const gateways: DeployGateway[] = ir.gateways
+    .map((gateway) => {
+      const planned: DeployGateway = {
+        id: gateway.id,
+        authorizer: gateway.authorizer,
+        targets: gateway.targets,
+        envName: gatewayEnvName(gateway.id),
+        runtimes: uniqueSorted(
+          ir.deployments
+            .filter((deployment) => deployment.runtime?.gateway === gateway.id)
+            .map((deployment) => deployment.id),
+        ),
+        cloud: 'aws',
+      };
+      if (gateway.description !== undefined) planned.description = gateway.description;
+      return planned;
+    })
+    .sort((left, right) => compare(left.id, right.id));
+
   const tasks: DeployTask[] = [
     // A managed base ingests inside the engine, so it schedules nothing here. Left in
     // this list it would become a local job that embeds the corpus a second time.
@@ -364,6 +432,7 @@ export function buildDeployPlan(ir: IR): DeployPlan {
     services,
     stores,
     knowledgeBases,
+    gateways,
     tasks,
     alarms: alarms(ir),
   };

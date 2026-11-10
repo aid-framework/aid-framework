@@ -53,6 +53,7 @@ locals {
         BEDROCK_AGENTCORE_MEMORY_ID = aws_bedrockagentcore_memory.managed[id].id
       } : {},
       local.knowledge_base_env[id],
+      local.gateway_env[id],
     )
   }
 
@@ -74,6 +75,20 @@ locals {
       for base_id, base in var.knowledge_bases :
       base.env_name => base.id
       if base.id != "" && length(setintersection(toset(base.retrievers), toset(service.ingest))) > 0
+    }
+  }
+
+  # Only the gateways that exist. `tofu plan` before the first apply sees none, and
+  # emitting a policy with an empty resource would fail the plan rather than skip it.
+  gateway_arns = [for gateway in values(var.gateways) : gateway.arn if gateway.arn != ""]
+
+  # Exported only to a service that names the gateway, and only once it has a URL: a
+  # missing variable would read as an empty endpoint, which an MCP client cannot dial.
+  gateway_env = {
+    for id, service in local.managed : id => {
+      for gateway_id, gateway in var.gateways :
+      gateway.env_name => gateway.url
+      if gateway.url != "" && try(service.runtime.gateway, "") == gateway_id
     }
   }
 }
@@ -276,6 +291,23 @@ resource "aws_iam_role_policy" "knowledge_base" {
       Effect   = "Allow"
       Action   = ["bedrock:Retrieve"]
       Resource = local.knowledge_base_arns
+    }]
+  })
+}
+
+# Invoke is the only call the app makes on a gateway: the gateway itself reaches the
+# targets, so neither their addresses nor their credentials ever reach this role.
+resource "aws_iam_role_policy" "gateway" {
+  for_each = length(local.gateway_arns) > 0 ? local.managed : {}
+  role     = aws_iam_role.runtime[each.key].id
+  name = "${substr(replace("${var.project.namespace}-${var.project.name}", "/[^A-Za-z0-9-_]/", "-"), 0, 40)}-gateway-invoke"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["bedrock-agentcore:InvokeGateway"]
+      Resource = local.gateway_arns
     }]
   })
 }

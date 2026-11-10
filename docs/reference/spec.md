@@ -14,7 +14,7 @@ Spec schema title: *AID Framework spec v0.6*.
 
 | Key | Type | Description |
 | --- | --- | --- |
-| `specVersion` | `0.1`, `0.2`, `0.3`, `0.4`, `0.5`, `0.6`, `0.7`, `0.8`, `0.9`, `0.10`, `0.11`, `0.12`, `0.13`, `0.14`, `0.15`, `0.16`, `0.17`, `0.18`, `0.19`, `0.20`, `0.21`, `0.22`, `0.23` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). 0.8 adds the `decision` metric kind, which scores an eval prediction with a `score` decision. 0.9 adds the `route` pipeline step, which runs the arm a `choice` decision's answer names. 0.10 adds the `gemini` provider, which calls the Gemini API with an API key instead of Google Cloud credentials. 0.11 adds `guardrails[].engine` and the `bedrock` policy block, which move a guardrail's policy into a managed AWS Bedrock guardrail. 0.12 adds `knowledgeBases` and `retrievers[].knowledgeBase`, which bind a retriever to a managed knowledge base (Bedrock Knowledge Bases or Vertex AI RAG) instead of a local source, chunker, embedder and store. 0.13 adds `deployments[].runtime`, which moves a `container` service onto a managed agent runtime (Amazon Bedrock AgentCore or the Gemini Enterprise Agent Platform) instead of a compute module AID keeps warm. 0.14 adds `engine: model-armor`, which hands a guardrail's policy to Vertex AI Model Armor, the Google Cloud counterpart to a managed Bedrock guardrail. 0.15 adds the `modelArmor` policy block, which lets the spec own the Model Armor template instead of naming one the operator already created. 0.16 lets `deployments[].image` name a registry other than `ghcr.io` by naming the repository secrets its login reads, rather than holding a credential value in the spec. 0.17 adds `aws.ecr`, which derives its host from the account and region and assumes an IAM role through GitHub's OIDC provider. 0.18 adds `gcp.artifact-registry`, which federates through Workload Identity and prefixes the repository path with the project. 0.19 lets a retriever declare `refresh.mode: incremental`, which embeds only chunks the index does not already hold and deletes the vectors of documents the corpus no longer contains. 0.20 lets a retriever declare `filters`, the field/operator/value expressions that narrow a query to the passages a tenant or classification allows; a filter is never copied into the generated code as data, so a filter narrows candidates rather than replacing a policy check. 0.21 adds the `s3` and `http` retriever sources, which load a corpus from an object store or a single URL; `db` and `mcp` remain reserved. 0.22 implements `chunking.strategy: semantic`, which cuts a document where adjacent-unit embedding similarity dips rather than at a fixed size. 0.23 implements `retrievers[].refresh.schedule`, the UTC five-field cron the compiler turns into a scheduler (`aws_scheduler_schedule` or `google_cloud_scheduler_job`) that submits the batch job running that retriever's ingest. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
+| `specVersion` | `0.1`, `0.2`, `0.3`, `0.4`, `0.5`, `0.6`, `0.7`, `0.8`, `0.9`, `0.10`, `0.11`, `0.12`, `0.13`, `0.14`, `0.15`, `0.16`, `0.17`, `0.18`, `0.19`, `0.20`, `0.21`, `0.22`, `0.23`, `0.24` | Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). 0.8 adds the `decision` metric kind, which scores an eval prediction with a `score` decision. 0.9 adds the `route` pipeline step, which runs the arm a `choice` decision's answer names. 0.10 adds the `gemini` provider, which calls the Gemini API with an API key instead of Google Cloud credentials. 0.11 adds `guardrails[].engine` and the `bedrock` policy block, which move a guardrail's policy into a managed AWS Bedrock guardrail. 0.12 adds `knowledgeBases` and `retrievers[].knowledgeBase`, which bind a retriever to a managed knowledge base (Bedrock Knowledge Bases or Vertex AI RAG) instead of a local source, chunker, embedder and store. 0.13 adds `deployments[].runtime`, which moves a `container` service onto a managed agent runtime (Amazon Bedrock AgentCore or the Gemini Enterprise Agent Platform) instead of a compute module AID keeps warm. 0.14 adds `engine: model-armor`, which hands a guardrail's policy to Vertex AI Model Armor, the Google Cloud counterpart to a managed Bedrock guardrail. 0.15 adds the `modelArmor` policy block, which lets the spec own the Model Armor template instead of naming one the operator already created. 0.16 lets `deployments[].image` name a registry other than `ghcr.io` by naming the repository secrets its login reads, rather than holding a credential value in the spec. 0.17 adds `aws.ecr`, which derives its host from the account and region and assumes an IAM role through GitHub's OIDC provider. 0.18 adds `gcp.artifact-registry`, which federates through Workload Identity and prefixes the repository path with the project. 0.19 lets a retriever declare `refresh.mode: incremental`, which embeds only chunks the index does not already hold and deletes the vectors of documents the corpus no longer contains. 0.20 lets a retriever declare `filters`, the field/operator/value expressions that narrow a query to the passages a tenant or classification allows; a filter is never copied into the generated code as data, so a filter narrows candidates rather than replacing a policy check. 0.21 adds the `s3` and `http` retriever sources, which load a corpus from an object store or a single URL; `db` and `mcp` remain reserved. 0.22 implements `chunking.strategy: semantic`, which cuts a document where adjacent-unit embedding similarity dips rather than at a fixed size. 0.23 implements `retrievers[].refresh.schedule`, the UTC five-field cron the compiler turns into a scheduler (`aws_scheduler_schedule` or `google_cloud_scheduler_job`) that submits the batch job running that retriever's ingest. 0.24 adds `gateways` and `deployments[].runtime.gateway`, which federate tools behind a managed Amazon Bedrock AgentCore Gateway endpoint a runtime reaches over MCP instead of bundling them. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
 | `project` | `project` | — |
 | `types` | map of `typeDef` | Named structured types referenced by prompts (structured output) and tools (input/output). |
 | `models` | map of `model` | Model aliases. The alias is what the rest of the spec refers to; the vendor id is pinned here and only here. |
@@ -23,6 +23,7 @@ Spec schema title: *AID Framework spec v0.6*.
 | `stores` | map of `store` | Vector store instances. `kind: memory` is the fully supported default and needs no service; `kind: pgvector` is declarable here and its adapter ships with the retrieval runtime. |
 | `retrievers` | map of `retriever` | Retrievers: what to index, how to chunk it, which embedding model and store to use, and how to rank. |
 | `knowledgeBases` | map of `knowledgeBase` | Managed knowledge bases: a source, chunker, embedding pass, store and index the cloud owns, referenced by a retriever's `knowledgeBase`. Declarable from spec v0.12. A managed knowledge base is a retriever, not a pipeline: the runtime still retrieves chunks and generates the answer, so the cost gate, the evals and the trace keep covering the generation path. |
+| `gateways` | map of `gateway` | Managed MCP gateways: an endpoint the cloud hosts, fronting federated tool targets, reached by a runtime over MCP instead of bundling every tool into it. Declarable from spec v0.24, and AWS only: the resource is Amazon Bedrock AgentCore Gateway. A gateway federates tools the spec does not own -- this is not a second generation path for `tools:`, which keeps emitting the same local tool registry whether or not a gateway exists. Every target kind lives under the gateway's one `Mcp` target union, which is why a target is one shape with a `kind` discriminator rather than sibling keys: the CloudFormation resource accepts no top-level OpenAPI target. The `authorizer` is required because a gateway with no authentication is reachable by anyone who learns its URL, and neither `NONE` nor `AUTHENTICATE_ONLY` is reachable from this surface. |
 | `agents` | map of `agent` | Agents: a model, instructions, the tools and retrievers it may use, and the budget it may spend. Declarable from spec v0.2; a target that emits no agent route is rejected by the capability gate rather than silently generating one. |
 | `guardrails` | map of `guardrail` | Guardrails: the stages a check runs at, the policies it evaluates, and what happens when one fails. Declarable from spec v0.2. The runtime evaluates them and both targets (`py-fastapi` and `ts-vercel`) emit the wiring; a guardrail declared here applies to every pipeline route of the document, not to the one that named it. |
 | `decisions` | map of `decision` | Decision points answered by TypeSafe AI Jev: a named question with its own reply shape, referenced by guardrails, routers and evals. Declarable from spec v0.6. A decision is not a provider, because Jev has no chat surface: it returns a typed answer rather than text. `choice` and `score` require `criteria`; `noul` forbids it. A pinned model version is the reproducible choice; an eval reference refuses a moving alias, while interactive routing may use one. |
@@ -207,6 +208,71 @@ Where the engine keeps vectors. `provisioned` (the default) has the module creat
 | --- | --- | --- | --- |
 | `kind` | `provisioned`, `existing` | yes | — |
 | `arn` | `string` | no | — |
+
+## `gateway`
+
+A managed MCP gateway: the cloud hosts the endpoint, the targets behind it are federated tools, and a runtime reaches it over MCP instead of bundling every tool. Declarable from spec v0.24. The gateway owns its invocation surface, so a target here is a tool the app does not run -- which is why nothing in this section is copied into the generated tool registry: `tools:` is unchanged and a gateway is reached through an MCP client, not through a second emitter.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `description` | `string` | no | What this gateway is for. Carried to the resource's `Description`, which the CloudFormation reference caps at 200 characters. |
+| `authorizer` | `gatewayAuthorizer` | yes | — |
+| `targets` | array of `gatewayTarget` | yes | The federated tool targets this gateway fronts. Every kind is one target under the gateway's `Mcp` configuration, so a single shape carries them all. |
+
+## `gatewayAuthorizer`
+
+How a caller proves it may invoke the gateway. `awsIam` signs with SigV4 and is what a runtime on the same account uses; `jwt` validates a bearer token against an OIDC discovery document and is what an outside caller uses. The CloudFormation resource also accepts `NONE` and `AUTHENTICATE_ONLY`, which are deliberately unreachable: a gateway that authenticates nobody is reachable by anyone who learns its URL, and one that only authenticates forwards every request to a target the platform then authorizes with the gateway's own role.
+
+A `gatewayAuthorizer` is exactly one of the 2 forms below; each form is recognised by its discriminating key.
+
+### `kind` = `awsIam`
+
+SigV4 request signing with an IAM identity. Maps to `AuthorizerType: AWS_IAM`.
+
+Takes the value `"awsIam"` and no other keys.
+
+### `kind` = `jwt`
+
+A JWT bearer token validated against OpenID Connect discovery. Maps to `AuthorizerType: CUSTOM_JWT`.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `discoveryUrl` | `string` | yes | The OIDC discovery document the gateway reads to find the issuer's signing keys. The platform requires the `.well-known/openid-configuration` suffix, so the pattern refuses a bare issuer URL here rather than at apply time. |
+| `audience` | array of `string` | yes | Accepted `aud` values, at least one. A token minted for another audience is refused by the gateway rather than by the target. |
+
+## `gatewayTarget`
+
+One federated target behind a gateway. `kind` selects which of the two configurations below is required, and the other is refused rather than ignored: a target that carried both would describe two tools, and the CloudFormation resource accepts exactly one per target.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | `name` | yes | The target's name, used for the resource name and the tool prefix the gateway advertises. |
+| `kind` | `openApiSchema`, `mcpServer` | yes | `openApiSchema` federates every operation in an OpenAPI document; `mcpServer` federates every tool an existing MCP server already exposes. |
+| `description` | `string` | no | What this target fronts. Carried to the target resource's `Description`. |
+| `openApiSchema` | `gatewayOpenApiSchema` | no | — |
+| `mcpServer` | `gatewayMcpServer` | no | — |
+
+## `gatewayOpenApiSchema`
+
+An OpenAPI document the gateway reads to advertise one tool per operation. Either an object-store URI or the document itself, never both: the CloudFormation `ApiSchemaConfiguration` accepts `S3` or `InlinePayload`, and a target that named both would leave the platform choosing which one wins.
+
+A `gatewayOpenApiSchema` is exactly one of the 2 forms below; each form is recognised by its discriminating key.
+
+### `uri`
+
+Takes the value `""` and no other keys.
+
+### `inline`
+
+Takes the value `""` and no other keys.
+
+## `gatewayMcpServer`
+
+An MCP server the gateway proxies: the app reaches one gateway URL and the platform reaches every tool the server behind it exposes. Nothing is copied here -- the server keeps owning its own tool list.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `endpoint` | `string` | yes | The server's HTTPS MCP endpoint. The platform refuses a plaintext endpoint, so the pattern is enforced at build time rather than at apply time. |
 
 ## `retriever`
 
@@ -659,6 +725,7 @@ A managed agent runtime: a service that stops being a container the operator kee
 | `platform` | `aws-agentcore`, `gcp-agent-platform` | yes | The platform that runs the process. The platform's credentials are the deploy's credentials, so a platform and `--cloud` that disagree are refused instead of deployed unreachable. |
 | `memory` | object (fields below) | no | AgentCore Memory. Short-term events are the session transcript; long-term memory is deliberately absent until the spec has a construct that names what is stored and who may read it. |
 | `session` | object (fields below) | no | How long one session may live. Defaults to 480 minutes, the AgentCore microVM ceiling. |
+| `gateway` | `name` | no | Name of a `gateways` entry this runtime reaches over MCP. Spec 0.24, `aws-agentcore` only: the gateway is an AgentCore resource and the Google platform has no counterpart. Presence does two things and nothing else: the emitted module exports the gateway URL into the runtime's environment and grants the runtime role `bedrock-agentcore:InvokeGateway` on exactly that gateway. The app keeps its own tool list -- a gateway adds tools it does not own, it does not replace one it does. |
 
 ### `runtime.memory`
 

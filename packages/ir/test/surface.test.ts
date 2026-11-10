@@ -196,7 +196,7 @@ describe('IR shape constants', () => {
   });
 
   it('pins the collection accounting constants', () => {
-    expect(IR_COLLECTIONS.length).toBe(15);
+    expect(IR_COLLECTIONS.length).toBe(16);
     expect(IR_ONLY_COLLECTIONS).toEqual(['embeddings']);
     expect(NON_COLLECTION_SECTIONS).toEqual(['specVersion', 'project']);
   });

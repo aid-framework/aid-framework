@@ -9,7 +9,7 @@
   "additionalProperties": false,
   "properties": {
     "specVersion": {
-      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). 0.8 adds the `decision` metric kind, which scores an eval prediction with a `score` decision. 0.9 adds the `route` pipeline step, which runs the arm a `choice` decision's answer names. 0.10 adds the `gemini` provider, which calls the Gemini API with an API key instead of Google Cloud credentials. 0.11 adds `guardrails[].engine` and the `bedrock` policy block, which move a guardrail's policy into a managed AWS Bedrock guardrail. 0.12 adds `knowledgeBases` and `retrievers[].knowledgeBase`, which bind a retriever to a managed knowledge base (Bedrock Knowledge Bases or Vertex AI RAG) instead of a local source, chunker, embedder and store. 0.13 adds `deployments[].runtime`, which moves a `container` service onto a managed agent runtime (Amazon Bedrock AgentCore or the Gemini Enterprise Agent Platform) instead of a compute module AID keeps warm. 0.14 adds `engine: model-armor`, which hands a guardrail's policy to Vertex AI Model Armor, the Google Cloud counterpart to a managed Bedrock guardrail. 0.15 adds the `modelArmor` policy block, which lets the spec own the Model Armor template instead of naming one the operator already created. 0.16 lets `deployments[].image` name a registry other than `ghcr.io` by naming the repository secrets its login reads, rather than holding a credential value in the spec. 0.17 adds `aws.ecr`, which derives its host from the account and region and assumes an IAM role through GitHub's OIDC provider. 0.18 adds `gcp.artifact-registry`, which federates through Workload Identity and prefixes the repository path with the project. 0.19 lets a retriever declare `refresh.mode: incremental`, which embeds only chunks the index does not already hold and deletes the vectors of documents the corpus no longer contains. 0.20 lets a retriever declare `filters`, the field/operator/value expressions that narrow a query to the passages a tenant or classification allows; a filter is never copied into the generated code as data, so a filter narrows candidates rather than replacing a policy check. 0.21 adds the `s3` and `http` retriever sources, which load a corpus from an object store or a single URL; `db` and `mcp` remain reserved. 0.22 implements `chunking.strategy: semantic`, which cuts a document where adjacent-unit embedding similarity dips rather than at a fixed size. 0.23 implements `retrievers[].refresh.schedule`, the UTC five-field cron the compiler turns into a scheduler (`aws_scheduler_schedule` or `google_cloud_scheduler_job`) that submits the batch job running that retriever's ingest. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
+      "description": "Spec language version. 0.1 is the original surface; 0.2 adds the closed `agents`, `guardrails`, `memory` and `deployments` sections; 0.3 adds the `models[].cache` construct (prompt and semantic caching); 0.4 adds `deployments[].image`, the registry and repository a container image is published to; 0.5 adds `pipelines[].trigger.manual` and `deployments[].pipeline`, the pair that lets a `target: batch` deployment run one pipeline once to completion; 0.6 adds the `google` provider (Vertex AI) and the `decisions` section (TypeSafe AI Jev); 0.7 lets a `guardrails` entry name a decision (`decision` + `onDecision`). 0.8 adds the `decision` metric kind, which scores an eval prediction with a `score` decision. 0.9 adds the `route` pipeline step, which runs the arm a `choice` decision's answer names. 0.10 adds the `gemini` provider, which calls the Gemini API with an API key instead of Google Cloud credentials. 0.11 adds `guardrails[].engine` and the `bedrock` policy block, which move a guardrail's policy into a managed AWS Bedrock guardrail. 0.12 adds `knowledgeBases` and `retrievers[].knowledgeBase`, which bind a retriever to a managed knowledge base (Bedrock Knowledge Bases or Vertex AI RAG) instead of a local source, chunker, embedder and store. 0.13 adds `deployments[].runtime`, which moves a `container` service onto a managed agent runtime (Amazon Bedrock AgentCore or the Gemini Enterprise Agent Platform) instead of a compute module AID keeps warm. 0.14 adds `engine: model-armor`, which hands a guardrail's policy to Vertex AI Model Armor, the Google Cloud counterpart to a managed Bedrock guardrail. 0.15 adds the `modelArmor` policy block, which lets the spec own the Model Armor template instead of naming one the operator already created. 0.16 lets `deployments[].image` name a registry other than `ghcr.io` by naming the repository secrets its login reads, rather than holding a credential value in the spec. 0.17 adds `aws.ecr`, which derives its host from the account and region and assumes an IAM role through GitHub's OIDC provider. 0.18 adds `gcp.artifact-registry`, which federates through Workload Identity and prefixes the repository path with the project. 0.19 lets a retriever declare `refresh.mode: incremental`, which embeds only chunks the index does not already hold and deletes the vectors of documents the corpus no longer contains. 0.20 lets a retriever declare `filters`, the field/operator/value expressions that narrow a query to the passages a tenant or classification allows; a filter is never copied into the generated code as data, so a filter narrows candidates rather than replacing a policy check. 0.21 adds the `s3` and `http` retriever sources, which load a corpus from an object store or a single URL; `db` and `mcp` remain reserved. 0.22 implements `chunking.strategy: semantic`, which cuts a document where adjacent-unit embedding similarity dips rather than at a fixed size. 0.23 implements `retrievers[].refresh.schedule`, the UTC five-field cron the compiler turns into a scheduler (`aws_scheduler_schedule` or `google_cloud_scheduler_job`) that submits the batch job running that retriever's ingest. 0.24 adds `gateways` and `deployments[].runtime.gateway`, which federate tools behind a managed Amazon Bedrock AgentCore Gateway endpoint a runtime reaches over MCP instead of bundling them. A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.",
       "enum": [
         "0.1",
         "0.2",
@@ -33,7 +33,8 @@
         "0.20",
         "0.21",
         "0.22",
-        "0.23"
+        "0.23",
+        "0.24"
       ]
     },
     "project": { "$ref": "#/$defs/project" },
@@ -83,6 +84,13 @@
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/name" },
       "additionalProperties": { "$ref": "#/$defs/knowledgeBase" }
+    },
+    "gateways": {
+      "description": "Managed MCP gateways: an endpoint the cloud hosts, fronting federated tool targets, reached by a runtime over MCP instead of bundling every tool into it. Declarable from spec v0.24, and AWS only: the resource is Amazon Bedrock AgentCore Gateway. A gateway federates tools the spec does not own -- this is not a second generation path for `tools:`, which keeps emitting the same local tool registry whether or not a gateway exists. Every target kind lives under the gateway's one `Mcp` target union, which is why a target is one shape with a `kind` discriminator rather than sibling keys: the CloudFormation resource accepts no top-level OpenAPI target. The `authorizer` is required because a gateway with no authentication is reachable by anyone who learns its URL, and neither `NONE` nor `AUTHENTICATE_ONLY` is reachable from this surface.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/gateway" }
     },
     "agents": {
       "description": "Agents: a model, instructions, the tools and retrievers it may use, and the budget it may spend. Declarable from spec v0.2; a target that emits no agent route is rejected by the capability gate rather than silently generating one.",
@@ -576,6 +584,154 @@
           }
         }
       ]
+    },
+    "gateway": {
+      "description": "A managed MCP gateway: the cloud hosts the endpoint, the targets behind it are federated tools, and a runtime reaches it over MCP instead of bundling every tool. Declarable from spec v0.24. The gateway owns its invocation surface, so a target here is a tool the app does not run -- which is why nothing in this section is copied into the generated tool registry: `tools:` is unchanged and a gateway is reached through an MCP client, not through a second emitter.",
+      "type": "object",
+      "required": ["authorizer", "targets"],
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "description": "What this gateway is for. Carried to the resource's `Description`, which the CloudFormation reference caps at 200 characters.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "authorizer": { "$ref": "#/$defs/gatewayAuthorizer" },
+        "targets": {
+          "description": "The federated tool targets this gateway fronts. Every kind is one target under the gateway's `Mcp` configuration, so a single shape carries them all.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/gatewayTarget" }
+        }
+      }
+    },
+    "gatewayAuthorizer": {
+      "description": "How a caller proves it may invoke the gateway. `awsIam` signs with SigV4 and is what a runtime on the same account uses; `jwt` validates a bearer token against an OIDC discovery document and is what an outside caller uses. The CloudFormation resource also accepts `NONE` and `AUTHENTICATE_ONLY`, which are deliberately unreachable: a gateway that authenticates nobody is reachable by anyone who learns its URL, and one that only authenticates forwards every request to a target the platform then authorizes with the gateway's own role.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "description": "SigV4 request signing with an IAM identity. Maps to `AuthorizerType: AWS_IAM`.",
+              "const": "awsIam"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "discoveryUrl", "audience"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "description": "A JWT bearer token validated against OpenID Connect discovery. Maps to `AuthorizerType: CUSTOM_JWT`.",
+              "const": "jwt"
+            },
+            "discoveryUrl": {
+              "description": "The OIDC discovery document the gateway reads to find the issuer's signing keys. The platform requires the `.well-known/openid-configuration` suffix, so the pattern refuses a bare issuer URL here rather than at apply time.",
+              "type": "string",
+              "pattern": "^https://.+/(\\.well-known/openid-configuration)$"
+            },
+            "audience": {
+              "description": "Accepted `aud` values, at least one. A token minted for another audience is refused by the gateway rather than by the target.",
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      ]
+    },
+    "gatewayTarget": {
+      "description": "One federated target behind a gateway. `kind` selects which of the two configurations below is required, and the other is refused rather than ignored: a target that carried both would describe two tools, and the CloudFormation resource accepts exactly one per target.",
+      "type": "object",
+      "required": ["name", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "The target's name, used for the resource name and the tool prefix the gateway advertises.",
+          "$ref": "#/$defs/name"
+        },
+        "kind": {
+          "description": "`openApiSchema` federates every operation in an OpenAPI document; `mcpServer` federates every tool an existing MCP server already exposes.",
+          "enum": ["openApiSchema", "mcpServer"]
+        },
+        "description": {
+          "description": "What this target fronts. Carried to the target resource's `Description`.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "openApiSchema": { "$ref": "#/$defs/gatewayOpenApiSchema" },
+        "mcpServer": { "$ref": "#/$defs/gatewayMcpServer" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "const": "openApiSchema" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": ["openApiSchema"],
+            "properties": { "openApiSchema": true, "mcpServer": false }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "mcpServer" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": ["mcpServer"],
+            "properties": { "mcpServer": true, "openApiSchema": false }
+          }
+        }
+      ]
+    },
+    "gatewayOpenApiSchema": {
+      "description": "An OpenAPI document the gateway reads to advertise one tool per operation. Either an object-store URI or the document itself, never both: the CloudFormation `ApiSchemaConfiguration` accepts `S3` or `InlinePayload`, and a target that named both would leave the platform choosing which one wins.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "description": "`s3://` URI of the document. The pattern is the one the CloudFormation `S3Configuration.Uri` property documents, so an invalid URI is refused here rather than at apply time.",
+          "type": "string",
+          "pattern": "^s3://.{1,2043}$"
+        },
+        "bucketOwnerAccountId": {
+          "description": "The 12-digit account that owns the bucket, when it is not the account deploying the gateway. Required for a cross-account bucket, refused otherwise by the platform.",
+          "type": "string",
+          "pattern": "^[0-9]{12}$"
+        },
+        "inline": {
+          "description": "The document itself, for a schema too small or too changeable to publish to a bucket. Written verbatim into the target's `InlinePayload`.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "oneOf": [
+        { "required": ["uri"], "properties": { "uri": true } },
+        {
+          "required": ["inline"],
+          "properties": { "inline": true, "bucketOwnerAccountId": false }
+        }
+      ]
+    },
+    "gatewayMcpServer": {
+      "description": "An MCP server the gateway proxies: the app reaches one gateway URL and the platform reaches every tool the server behind it exposes. Nothing is copied here -- the server keeps owning its own tool list.",
+      "type": "object",
+      "required": ["endpoint"],
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "description": "The server's HTTPS MCP endpoint. The platform refuses a plaintext endpoint, so the pattern is enforced at build time rather than at apply time.",
+          "type": "string",
+          "pattern": "^https://.+"
+        }
+      }
     },
     "retriever": {
       "type": "object",
@@ -1695,6 +1851,10 @@
               "maximum": 20160
             }
           }
+        },
+        "gateway": {
+          "description": "Name of a `gateways` entry this runtime reaches over MCP. Spec 0.24, `aws-agentcore` only: the gateway is an AgentCore resource and the Google platform has no counterpart. Presence does two things and nothing else: the emitted module exports the gateway URL into the runtime's environment and grants the runtime role `bedrock-agentcore:InvokeGateway` on exactly that gateway. The app keeps its own tool list -- a gateway adds tools it does not own, it does not replace one it does.",
+          "$ref": "#/$defs/name"
         }
       }
     },

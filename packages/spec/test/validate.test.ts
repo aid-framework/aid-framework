@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import { CRON_FIELD_LIST } from '../src/cron.js';
 import {
   checkSpecText,
@@ -8,6 +8,7 @@ import {
   DIAGNOSTIC_CODES,
   type Diagnostic,
   formatPath,
+  GATEWAY_MIN_VERSION,
   GEMINI_PROVIDER_MIN_VERSION,
   GOOGLE_PROVIDER_MIN_VERSION,
   KNOWLEDGE_BASE_MIN_VERSION,
@@ -52,12 +53,13 @@ describe('spec version', () => {
     expect(SPEC_VERSION_LATEST).toBe(SUPPORTED_SPEC_VERSIONS[SUPPORTED_SPEC_VERSIONS.length - 1]);
   });
 
-  it('lists the sixteen supported sections, six of which need a later version', () => {
+  it('lists the seventeen supported sections, seven of which need a later version', () => {
     expect([...SUPPORTED_SECTIONS].sort()).toEqual([
       'agents',
       'decisions',
       'deployments',
       'evals',
+      'gateways',
       'guardrails',
       'knowledgeBases',
       'memory',
@@ -72,13 +74,14 @@ describe('spec version', () => {
       'types',
     ]);
     // The version boundary, named explicitly: four sections are supported from 0.2,
-    // `decisions` from 0.6 and `knowledgeBases` from 0.12. A section that gains a
-    // minimum version without appearing here would be enforced by the schema and
-    // quietly refused by the scope rule.
+    // `decisions` from 0.6, `knowledgeBases` from 0.12 and `gateways` from 0.24. A section
+    // that gains a minimum version without appearing here would be enforced by the schema
+    // and quietly refused by the scope rule.
     expect(SECTION_MIN_VERSION).toEqual({
       agents: '0.2',
       decisions: '0.6',
       deployments: '0.2',
+      gateways: '0.24',
       guardrails: '0.2',
       knowledgeBases: '0.12',
       memory: '0.2',
@@ -128,19 +131,21 @@ describe('valid fixtures', () => {
 
   it('accepts every section declared as supported', () => {
     // No single fixture carries every section: four require spec 0.2, `decisions` needs
-    // 0.6, `knowledgeBases` needs 0.12, and the v0.1 fixture is the byte-identical
-    // baseline this layer must leave alone. The union is the assertion, so a supported
-    // section that no valid fixture carries fails here.
+    // 0.6, `knowledgeBases` needs 0.12, `gateways` needs 0.24, and the v0.1 fixture is the
+    // byte-identical baseline this layer must leave alone. The union is the assertion, so a
+    // supported section that no valid fixture carries fails here.
     const fixtureNames = [
       'valid/full.spec.yaml',
       'valid/v02-sections.spec.yaml',
       'valid/v06-decisions.spec.yaml',
       'valid/v12-knowledge-bases.spec.yaml',
+      'valid/v24-gateways.spec.yaml',
     ] as const;
     const documents = fixtureNames.map(
       (name) => checkSpecText(readFixture(name)).value as Record<string, unknown>,
     );
-    const [v01, v02, v06, v12] = documents as [
+    const [v01, v02, v06, v12, v24] = documents as [
+      Record<string, unknown>,
       Record<string, unknown>,
       Record<string, unknown>,
       Record<string, unknown>,
@@ -156,11 +161,23 @@ describe('valid fixtures', () => {
     );
     expect(Object.keys(v02).sort()).toEqual(
       [...SUPPORTED_SECTIONS]
-        .filter((section) => section !== 'decisions' && section !== 'knowledgeBases')
+        .filter(
+          (section) =>
+            section !== 'decisions' && section !== 'knowledgeBases' && section !== 'gateways',
+        )
         .sort(),
     );
     expect(Object.keys(v06).sort()).toEqual(['decisions', 'project', 'specVersion']);
     expect(Object.keys(v12).sort()).toEqual(['knowledgeBases', 'project', 'specVersion']);
+    expect(Object.keys(v24).sort()).toEqual([
+      'deployments',
+      'gateways',
+      'models',
+      'pipelines',
+      'project',
+      'prompts',
+      'specVersion',
+    ]);
   });
 });
 
@@ -1196,7 +1213,7 @@ describe('managed knowledge bases', () => {
     }
   });
 
-  it('refuses refresh on a managed retriever, because ingestion is the engine’s', () => {
+  it('refuses refresh on a managed retriever, because ingestion is the engineâ€™s', () => {
     const diagnostics = validateSpec({
       ...managed(),
       retrievers: { docs: { knowledgeBase: 'docs', topK: 4, refresh: { mode: 'full' } } },
@@ -2139,5 +2156,256 @@ describe('refresh schedules', () => {
       DIAGNOSTIC_CODES.notSupported,
       DIAGNOSTIC_CODES.invalidValue,
     ]);
+  });
+});
+
+describe('managed MCP gateways', () => {
+  const GATEWAY = {
+    authorizer: {
+      kind: 'jwt',
+      discoveryUrl: 'https://issuer.example.com/.well-known/openid-configuration',
+      audience: ['aid-gateway'],
+    },
+    targets: [
+      { name: 'orders', kind: 'openApiSchema', openApiSchema: { uri: 's3://acme/orders.json' } },
+      { name: 'search', kind: 'mcpServer', mcpServer: { endpoint: 'https://mcp.example.com/mcp' } },
+    ],
+  };
+  const ASK = [{ generate: { prompt: 'draft', as: 'answer' } }];
+  const RUNTIME = {
+    api: {
+      target: 'container',
+      secrets: [],
+      runtime: { platform: 'aws-agentcore', gateway: 'tools' },
+    },
+  };
+
+  function doc(
+    specVersion: string,
+    {
+      gateway = true,
+      gatewayBody = GATEWAY as Record<string, unknown>,
+      deployments = RUNTIME as Record<string, unknown> | null,
+    }: {
+      gateway?: boolean;
+      gatewayBody?: Record<string, unknown>;
+      deployments?: Record<string, unknown> | null;
+    } = {},
+  ) {
+    return {
+      specVersion,
+      project: { name: 'p' },
+      models: {
+        fast: {
+          provider: 'fake',
+          modelId: 'fake-deterministic-1',
+          capabilities: ['json-schema'],
+        },
+      },
+      prompts: {
+        draft: {
+          version: 1,
+          model: 'fast',
+          template: 'Answer the request.',
+          output: { kind: 'text' },
+        },
+      },
+      ...(gateway ? { gateways: { tools: gatewayBody } } : {}),
+      pipelines: { ask: { trigger: { http: { method: 'post', path: '/ask' } }, steps: ASK } },
+      ...(deployments === null ? {} : { deployments }),
+    };
+  }
+
+  it('accepts a gateway a runtime reaches at 0.24', () => {
+    expect(validateSpec(doc('0.24'))).toEqual([]);
+  });
+
+  it('refuses a bucket owner beside an inline schema', () => {
+    // `bucketOwnerAccountId` qualifies an `s3://` bucket. With `inline` there is no bucket,
+    // so the account id could only be dropped on the floor; refuse the combination instead.
+    const diagnostics = validateSpec(
+      doc('0.24', {
+        gatewayBody: {
+          ...GATEWAY,
+          targets: [
+            {
+              name: 'orders',
+              kind: 'openApiSchema',
+              openApiSchema: {
+                inline: '{"openapi":"3.0.0"}',
+                bucketOwnerAccountId: '123456789012',
+              },
+            },
+          ],
+        },
+        deployments: null,
+      }),
+    );
+
+    const reported = paths(diagnostics);
+
+    // Ajv reports each failing `oneOf` branch as well as the branch itself, so only the
+    // account-id path is asserted: it is the one that names the field that would vanish.
+    expect(codes(diagnostics).every((code) => code === DIAGNOSTIC_CODES.schemaViolation)).toBe(
+      true,
+    );
+    expect(reported).toContain('gateways.tools.targets[0].openApiSchema.bucketOwnerAccountId');
+  });
+
+  it('refuses the section below 0.24 and names the version it needs', () => {
+    const diagnostics = validateSpec(doc('0.23', { deployments: null }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['gateways']);
+    expect(diagnostics[0]?.message).toContain("'gateways' requires specVersion 0.24");
+    expect(diagnostics[0]?.hint).toContain(`set specVersion: "${GATEWAY_MIN_VERSION}"`);
+  });
+
+  it('gates the runtime reference even when no section is declared', () => {
+    // The section gate cannot see `deployments[].runtime.gateway`, and a 0.23 document that
+    // names one would otherwise deploy a runtime whose environment names a gateway nothing
+    // creates.
+    const diagnostics = validateSpec(doc('0.23', { gateway: false }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['deployments.api.runtime.gateway']);
+    expect(diagnostics[0]?.message).toContain(
+      "'deployments.api.runtime.gateway' requires specVersion 0.24",
+    );
+    expect(diagnostics[0]?.hint).toContain(`set specVersion: "${GATEWAY_MIN_VERSION}"`);
+  });
+
+  it('reports the section once when a below-version document declares both', () => {
+    const diagnostics = validateSpec(doc('0.23'));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['gateways']);
+  });
+
+  it('still reports a duplicate target name below 0.24', () => {
+    // Grammar and shape checks are siblings of the version branch, so one pass tells the
+    // author everything a bump would not fix.
+    const diagnostics = validateSpec(
+      doc('0.23', {
+        gatewayBody: {
+          ...GATEWAY,
+          targets: [
+            { name: 'orders', kind: 'mcpServer', mcpServer: { endpoint: 'https://a.example.com' } },
+            { name: 'orders', kind: 'mcpServer', mcpServer: { endpoint: 'https://b.example.com' } },
+          ],
+        },
+        deployments: null,
+      }),
+    );
+
+    expect(codes(diagnostics)).toEqual([
+      DIAGNOSTIC_CODES.notSupported,
+      DIAGNOSTIC_CODES.invalidValue,
+    ]);
+    expect(paths(diagnostics)).toEqual(['gateways', 'gateways.tools.targets']);
+    expect(diagnostics[1]?.message).toContain("target name 'orders' more than once");
+  });
+
+  it('refuses a gateway beside a Google-platform runtime, naming the cloud', () => {
+    const diagnostics = validateSpec(
+      doc('0.24', {
+        deployments: {
+          api: { target: 'container', secrets: [], runtime: { platform: 'gcp-agent-platform' } },
+        },
+      }),
+    );
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.gatewayOnGcp]);
+    expect(paths(diagnostics)).toEqual(['gateways']);
+    expect(diagnostics[0]?.message).toContain("'gcp-agent-platform', which is Google Cloud");
+    expect(diagnostics[0]?.hint).toContain('no Google Cloud counterpart');
+  });
+
+  it('does not blame an unrelated Google-platform runtime for the gateway', () => {
+    // A mixed document is refused on its own `runtime-platform-conflict` grounds, so what
+    // matters here is only that the gateway section is not named as the reason: `gcpSvc`
+    // names no gateway and has nothing to do with one.
+    const diagnostics = validateSpec(
+      doc('0.24', {
+        deployments: {
+          ...RUNTIME,
+          gcpSvc: { target: 'container', secrets: [], runtime: { platform: 'gcp-agent-platform' } },
+        },
+      }),
+    );
+
+    expect(codes(diagnostics)).not.toContain(DIAGNOSTIC_CODES.gatewayOnGcp);
+  });
+
+  it('refuses a runtime that reaches a gateway from the Google platform', () => {
+    const diagnostics = validateSpec(
+      doc('0.24', {
+        gateway: false,
+        deployments: {
+          api: {
+            target: 'container',
+            secrets: [],
+            runtime: { platform: 'gcp-agent-platform', gateway: 'tools' },
+          },
+        },
+      }),
+    );
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.gatewayOnPlatform]);
+    expect(paths(diagnostics)).toEqual(['deployments.api.runtime.gateway']);
+    expect(diagnostics[0]?.message).toContain("reaches a gateway from 'gcp-agent-platform'");
+  });
+
+  it('refuses a runtime naming a gateway this document does not declare', () => {
+    const diagnostics = validateSpec(
+      doc('0.24', {
+        deployments: {
+          api: {
+            target: 'container',
+            secrets: [],
+            runtime: { platform: 'aws-agentcore', gateway: 'missing' },
+          },
+        },
+      }),
+    );
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.gatewayUnknown]);
+    expect(paths(diagnostics)).toEqual(['deployments.api.runtime.gateway']);
+    expect(diagnostics[0]?.message).toContain("reaches gateway 'missing'");
+    expect(diagnostics[0]?.hint).toContain('gateways.missing');
+    expect(diagnostics[0]?.hint).toContain('tools');
+  });
+
+  it('refuses an NONE or AUTHENTICATE_ONLY authorizer the schema does not carry', () => {
+    for (const kind of ['none', 'authenticate_only']) {
+      const diagnostics = validateSpec(
+        doc('0.24', { gatewayBody: { ...GATEWAY, authorizer: { kind } }, deployments: null }),
+      );
+
+      expect(codes(diagnostics), kind).toContain(DIAGNOSTIC_CODES.schemaViolation);
+      expect(paths(diagnostics), kind).toContain('gateways.tools.authorizer.kind');
+    }
+  });
+
+  it('refuses a target that names both source configurations', () => {
+    const diagnostics = validateSpec(
+      doc('0.24', {
+        gatewayBody: {
+          ...GATEWAY,
+          targets: [
+            {
+              name: 'both',
+              kind: 'mcpServer',
+              mcpServer: { endpoint: 'https://mcp.example.com/mcp' },
+              openApiSchema: { uri: 's3://acme/orders.json' },
+            },
+          ],
+        },
+        deployments: null,
+      }),
+    );
+
+    expect(codes(diagnostics)).toContain(DIAGNOSTIC_CODES.schemaViolation);
+    expect(paths(diagnostics)).toContain('gateways.tools.targets[0].openApiSchema');
   });
 });

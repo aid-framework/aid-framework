@@ -1,0 +1,62 @@
+specVersion: "0.24"
+
+project:
+  name: gateway-shape
+  namespace: aid.tests.gateway
+  targets:
+    - py-fastapi
+
+models:
+  answer:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+
+prompts:
+  answer_instructions:
+    version: 1
+    model: answer
+    template: "Answer using the tools the gateway advertises."
+    output:
+      kind: text
+
+# The gateway half of `ir.schema.json` is otherwise validated against nothing: this fixture
+# exists so a target description is carried by the built IR as well as built by the shape,
+# which is the difference between a field being accepted and being silently dropped.
+gateways:
+  tools:
+    description: One endpoint in front of the order API and a partner MCP server.
+    authorizer:
+      kind: jwt
+      discoveryUrl: https://issuer.example.com/.well-known/openid-configuration
+      audience: [aid-gateway]
+    targets:
+      - name: orders
+        kind: openApiSchema
+        description: The order API, described from its OpenAPI document.
+        openApiSchema:
+          uri: s3://acme-gateway/orders.json
+          bucketOwnerAccountId: "123456789012"
+      - name: search
+        kind: mcpServer
+        mcpServer:
+          endpoint: https://mcp.example.com/mcp
+
+pipelines:
+  ask:
+    trigger:
+      http:
+        method: post
+        path: /ask
+    steps:
+      - generate:
+          prompt: answer_instructions
+          as: reply
+
+deployments:
+  api:
+    target: container
+    secrets: []
+    runtime:
+      platform: aws-agentcore
+      gateway: tools

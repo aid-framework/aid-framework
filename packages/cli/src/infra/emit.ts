@@ -220,6 +220,25 @@ function spellTask(plan: DeployPlan, task: DeployTask): DeployTaskSpelling {
 }
 
 /**
+ * A federated tool behind a gateway, in the spelling the module reads.
+ *
+ * One shape rather than one per kind: the API has no top-level schema target, so a
+ * document-backed target is an MCP target whose `open_api_schema` is set. `kind` is
+ * carried alongside so the module can pick the block and a reader can see which.
+ */
+export interface DeployGatewayTarget {
+  readonly name: string;
+  readonly kind: string;
+  readonly description?: string;
+  readonly open_api_schema?: {
+    readonly uri?: string;
+    readonly bucket_owner_account_id?: string;
+    readonly inline?: string;
+  };
+  readonly mcp_server?: { readonly endpoint?: string };
+}
+
+/**
  * A tfvars document: the plan in the spelling an env root reads. Keys are snake_case
  * because that is what a Terraform variable is called; values are the plan's, unchanged.
  *
@@ -260,6 +279,12 @@ export interface DeployTfvars {
           readonly cloud: string;
           readonly memory_short_term: boolean;
           readonly ttl_minutes: number;
+          /**
+           * The gateway this runtime is handed, by id. Present only when the deployment
+           * named one; the gateway module assigns the URL, so the module reads it from
+           * the map it returns rather than from here.
+           */
+          readonly gateway?: string;
         };
       }
     >
@@ -309,6 +334,22 @@ export interface DeployTfvars {
         readonly filterable: readonly string[];
         readonly vector_store: { readonly kind: string; readonly arn?: string };
         readonly retrievers: readonly string[];
+      }
+    >
+  >;
+  readonly gateways?: Readonly<
+    Record<
+      string,
+      {
+        readonly description?: string;
+        /** The variable this gateway's URL is exported under; the runtime reads it. */
+        readonly env_name: string;
+        readonly authorizer: {
+          readonly kind: string;
+          readonly discovery_url?: string;
+          readonly audience?: readonly string[];
+        };
+        readonly targets: readonly DeployGatewayTarget[];
       }
     >
   >;
@@ -362,6 +403,7 @@ export interface DeployContext {
           readonly cloud: string;
           readonly memoryShortTerm: boolean;
           readonly ttlMinutes: number;
+          readonly gateway?: string;
         };
       }
     >
@@ -387,6 +429,30 @@ export interface DeployContext {
         readonly filterable: readonly string[];
         readonly vectorStore: { readonly kind: string; readonly arn?: string };
         readonly retrievers: readonly string[];
+      }
+    >
+  >;
+  readonly gateways?: Readonly<
+    Record<
+      string,
+      {
+        readonly description?: string;
+        readonly envName: string;
+        readonly authorizer: {
+          readonly kind: string;
+          readonly discoveryUrl?: string;
+          readonly audience?: readonly string[];
+        };
+        readonly targets: readonly {
+          readonly name: string;
+          readonly kind: string;
+          readonly openApiSchema?: {
+            readonly uri?: string;
+            readonly bucketOwnerAccountId?: string;
+            readonly inline?: string;
+          };
+          readonly mcpServer?: { readonly endpoint?: string };
+        }[];
       }
     >
   >;
@@ -450,6 +516,9 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
               cloud: service.runtime.cloud,
               memory_short_term: service.runtime.memory.shortTerm,
               ttl_minutes: service.runtime.session.ttlMinutes,
+              ...(service.runtime.gateway === undefined
+                ? {}
+                : { gateway: service.runtime.gateway }),
             },
           }),
     };
@@ -491,6 +560,50 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
     };
   }
 
+  // Omitted entirely when the plan declares no gateway, so a project without one keeps
+  // the tfvars it had. The env root only declares `variable "gateways"` when it emitted
+  // the gateway module, so an absent key and an undeclared variable agree.
+  const gateways: Record<string, NonNullable<DeployTfvars['gateways']>[string]> = {};
+  for (const gateway of plan.gateways) {
+    gateways[gateway.id] = {
+      ...(gateway.description === undefined ? {} : { description: gateway.description }),
+      env_name: gateway.envName,
+      authorizer: {
+        kind: gateway.authorizer.kind,
+        ...(gateway.authorizer.kind === 'jwt'
+          ? {
+              discovery_url: gateway.authorizer.discoveryUrl,
+              audience: [...gateway.authorizer.audience],
+            }
+          : {}),
+      },
+      targets: gateway.targets.map((target) =>
+        target.source.kind === 'mcpServer'
+          ? {
+              name: target.id,
+              kind: target.source.kind,
+              ...(target.description === undefined ? {} : { description: target.description }),
+              mcp_server: { endpoint: target.source.endpoint },
+            }
+          : {
+              name: target.id,
+              kind: target.source.kind,
+              ...(target.description === undefined ? {} : { description: target.description }),
+              open_api_schema: {
+                ...('uri' in target.source.schema ? { uri: target.source.schema.uri } : {}),
+                ...('uri' in target.source.schema &&
+                target.source.schema.bucketOwnerAccountId !== undefined
+                  ? { bucket_owner_account_id: target.source.schema.bucketOwnerAccountId }
+                  : {}),
+                ...('inline' in target.source.schema
+                  ? { inline: target.source.schema.inline }
+                  : {}),
+              },
+            },
+      ),
+    };
+  }
+
   const dataStores: Record<string, DeployTfvars['data_stores'][string]> = {};
   for (const store of plan.stores) {
     dataStores[store.id] = {
@@ -509,6 +622,7 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
     guardrails,
     model_armor_templates: modelArmorTemplates,
     knowledge_bases: knowledgeBases,
+    ...(plan.gateways.length === 0 ? {} : { gateways }),
     data_stores: dataStores,
     tasks: plan.tasks.map((task) => spellTask(plan, task)),
     alarms: plan.alarms.map((alarm) => ({
@@ -554,6 +668,9 @@ export function cdkContext(plan: DeployPlan): DeployContext {
               cloud: service.runtime.cloud,
               memoryShortTerm: service.runtime.memory_short_term,
               ttlMinutes: service.runtime.ttl_minutes,
+              ...(service.runtime.gateway === undefined
+                ? {}
+                : { gateway: service.runtime.gateway }),
             },
           }),
     };
@@ -607,11 +724,50 @@ export function cdkContext(plan: DeployPlan): DeployContext {
     };
   }
 
+  const gateways: Record<string, NonNullable<DeployContext['gateways']>[string]> = {};
+  for (const [id, gateway] of Object.entries(spelled.gateways ?? {})) {
+    gateways[id] = {
+      ...(gateway.description === undefined ? {} : { description: gateway.description }),
+      envName: gateway.env_name,
+      authorizer: {
+        kind: gateway.authorizer.kind,
+        ...(gateway.authorizer.discovery_url === undefined
+          ? {}
+          : { discoveryUrl: gateway.authorizer.discovery_url }),
+        ...(gateway.authorizer.audience === undefined
+          ? {}
+          : { audience: [...gateway.authorizer.audience] }),
+      },
+      targets: gateway.targets.map((target) => ({
+        name: target.name,
+        kind: target.kind,
+        ...(target.description === undefined ? {} : { description: target.description }),
+        ...(target.open_api_schema === undefined
+          ? {}
+          : {
+              openApiSchema: {
+                ...(target.open_api_schema.uri === undefined
+                  ? {}
+                  : { uri: target.open_api_schema.uri }),
+                ...(target.open_api_schema.bucket_owner_account_id === undefined
+                  ? {}
+                  : { bucketOwnerAccountId: target.open_api_schema.bucket_owner_account_id }),
+                ...(target.open_api_schema.inline === undefined
+                  ? {}
+                  : { inline: target.open_api_schema.inline }),
+              },
+            }),
+        ...(target.mcp_server === undefined ? {} : { mcpServer: { ...target.mcp_server } }),
+      })),
+    };
+  }
+
   return {
     project: { name: spelled.project.name, namespace: spelled.project.namespace },
     services,
     guardrails,
     knowledgeBases,
+    ...(spelled.gateways === undefined ? {} : { gateways }),
     stores,
     tasks: spelled.tasks.map((task) => ({ ...task })),
     alarms: spelled.alarms.map((alarm) => ({ ...alarm })),

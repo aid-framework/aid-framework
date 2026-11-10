@@ -2,6 +2,14 @@
 # the values they supply, which is what lets one generated tree run in more than one
 # account.
 
+module "gateway" {
+  source = "../../generated/modules/gateway"
+
+  project  = var.project
+  gateways = var.gateways
+  tags     = var.tags
+}
+
 module "serverless" {
   source = "../../generated/modules/serverless"
 
@@ -46,6 +54,7 @@ module "agent-runtime" {
   image_uris      = var.image_uris
   bedrock_region  = var.bedrock_region
   knowledge_bases = var.knowledge_bases
+  gateways        = module.gateway.gateways
   tags            = var.tags
 }
 
@@ -80,6 +89,10 @@ module "edge" {
   edge_certificate_arn = var.edge_certificate_arn
   edge_price_class     = var.edge_price_class
   tags                 = var.tags
+}
+
+output "gateway_urls" {
+  value = module.gateway.gateway_urls
 }
 
 output "serverless_endpoint" {

@@ -42,6 +42,7 @@ import {
   DEFAULT_CLOUD,
   isCloud,
   KNOWLEDGE_BASE_CLOUDS,
+  unsupportedGateways,
   unsupportedKnowledgeBases,
   unsupportedRuntimes,
   unsupportedTargets,
@@ -334,6 +335,27 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
           code: CLI_DIAGNOSTIC_CODES.infraRuntimeUnsupported,
           message: `Service ${services} names a runtime that runs on ${wanted.join(' and ')}, which --cloud ${cloud} does not create.`,
           hint: `Generate this environment with --cloud ${wanted[0]}, or choose the platform this cloud runs (${cloud === 'gcp' ? 'gcp-agent-platform' : 'aws-agentcore'}).`,
+        }),
+      ],
+    });
+  }
+
+  // A gateway is a managed MCP endpoint, and only AgentCore hosts one: there is no GCP
+  // counterpart at any layer, and the runtime that reaches it is the AWS one. A GCP
+  // environment would emit no gateway and still succeed, so the federation the spec
+  // describes would be missing from the deployed project.
+  const misplacedGateways = unsupportedGateways(deployPlan, cloud);
+  if (misplacedGateways.length > 0) {
+    const gateways = misplacedGateways.map((gateway) => `"${gateway.id}"`).join(', ');
+    return outcome({
+      command,
+      exitCode: EXIT_FAILURE,
+      fields,
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.infraGatewayUnsupported,
+          message: `Gateway ${gateways} needs AWS, which --cloud ${cloud} does not create.`,
+          hint: 'Generate this environment with --cloud aws, or remove the gateway and reach each tool from the application itself.',
         }),
       ],
     });
