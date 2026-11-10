@@ -714,8 +714,8 @@ For the CLI reference and the features page, at the end of this RFC:
 | Construct / command | Status |
 | --- | --- |
 | `profile`, `deployments[].cloud`, `.region`, `.audit` | **built in 0.25** (see §10.1) |
-| `deployments[].identity`, `.network`, `.approvals` | proposed, 0.26, not built |
-| `agents[].state`, step `requiresApproval` | proposed, 0.26, not built |
+| `deployments[].identity`, `.network`, `.approvals` | **declared and gated in 0.26, generation pending** (§10.2) |
+| `agents[].state`, step `requiresApproval` | **declared and gated in 0.26, generation pending** (§10.2) |
 | `tool-trace` / `cost` / `latency` measured | declarable, **refused at generation today**; proposed 0.27 |
 | `observability` as a spec section, `.export: otlp` | **no spec section today** (IR-only); proposed 0.27 |
 | `observability.feedback`, `evals[].gate.promotion` | proposed, 0.28, not built |
@@ -758,6 +758,43 @@ Deliberately **not** built in Phase 1, and refused rather than implied:
   the same sink with different retention conflict, `ir/audit-conflict`) and is honoured by all
   four sinks, but is not yet validated against a per-cloud minimum or maximum.
 - No `aid report`, no overlay, no `--template`. Nothing in this phase adds a hosted component.
+
+### 10.2 Phase 2, as shipped
+
+Spec and IR are complete and gated; the generators are not, and that gap is stated in
+`docs/migration.md`, `docs/usage.md` and on the `/features` row rather than implied by silence.
+
+Built and gated:
+
+- `specVersion` `0.26`; top-level `state` (`kind` `redis` | `postgres`, `urlEnv`, optional
+  `ttlHours`); `agents[].state`; `deployments[].identity` (issuer, audience, and the
+  `subjectClaim` / `rolesClaim` / `scopesClaim` names); `deployments[].network`
+  (`private` required, optional `vpcId` / `subnetIds` / `privateEndpoints`);
+  `deployments[].approvals` (`environment`, `requiredApprovals`, optional `preventSelfReview`);
+  and `requiresApproval` on a pipeline tool step.
+- `IR_VERSION` 0.3.0: `IR.state` and `AgentShape.state`, `ToolStep.requiresApproval`, and the
+  three deployment blocks. An agent inherits the document store unless it declares its own — it
+  replaces rather than merges, so a kind and a connection string cannot disagree.
+- Gate `profile` extended with `ir/profile-identity`, `ir/profile-network` and
+  `ir/profile-approvals`; gate `state` (20th) with `ir/agents-state-store`; gate `approvals`
+  (21st) with `ir/approval-step-tool`.
+
+Deliberately **not** built in Phase 2, and stated rather than implied:
+
+- The generators do not yet emit the durable store, the identity check, the private-network
+  module or the approval pause. A declared control is validated and projected, then ignored by
+  `aid gen`; the release that emits it is its own reviewable change. Declaring one is therefore
+  safe but confers nothing yet.
+- The new enterprise requirements and the `state` gate are scoped to `specVersion: "0.26"`. A
+  0.25 enterprise document is still read exactly as before, because it has no key with which to
+  satisfy a rule introduced after it.
+- `requiresApproval` on a pipeline step has no executor: `aid_runtime/pipeline.py` is a fixed
+  step chain with no pause/resume, unlike the agent loop, which already has `AgentCheckpoint`.
+  The gate refuses a pause in front of a read and a pause with no store, and the executable
+  wiring is a follow-up rather than a claim in this phase.
+- `network.private` is schema-required rather than defaulted, so an omitted value is reported
+  instead of read as `false`: whether traffic leaves a VPC is a decision about a customer's
+  data, and a default would make it silently.
 
 ---
 

@@ -48,7 +48,7 @@ def generated_capabilities() -> dict[str, Any]:
         },
         "emitsAgainst": {"structuredOutput": "pydantic", "tracing": "otel-genai"},
         "generator": {"name": "@aid-framework/generator-py-fastapi", "version": "0.1.0"},
-        "irVersion": "0.2.0",
+        "irVersion": "0.3.0",
         "models": {
             "advertised": {"fast": ["Capability.STRUCTURED_OUTPUT", "Capability.TOOL_CALLING"]},
             "unrepresentable": {"fast": []},

@@ -104,4 +104,8 @@ export const SPEC_VERSIONS = [
     version: '0.25',
     adds: "Adds the top-level `profile` -- a named bundle of required controls, `standard` by default -- and `deployments[].cloud`, `.region` and `.audit`, which put the placement and the audit record in the spec instead of in whoever's shell ran the apply.",
   },
+  {
+    version: '0.26',
+    adds: 'Adds the durable `state` store, `deployments[].identity`, `.network` and `.approvals`, and `requiresApproval` on a pipeline tool step -- the control surface an enterprise delivery needs before a run can pause, be audited and be resumed.',
+  },
 ];

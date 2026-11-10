@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.25`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.26`.
 
 ## Deployment targets
 
@@ -344,6 +344,14 @@ A top-level `profile` names a bundle of required controls -- `standard` is the d
 - **Reference:** [spec](./reference/spec.md#top-level-keys)
 - **Since:** `0.1.142`
 
+### Durable run state, deployment identity, private network and change approval
+
+Spec 0.26 declares the controls an enterprise delivery is held to: a `state` store that outlives the process, an `identity` reference (issuer, audience and claim names) that becomes the runtime `Principal`, a `network` block whose `private` pin is required, an `approvals` policy for production change, and `requiresApproval` on a pipeline tool step. The `state` and `approvals` gates refuse a document that declares a control it cannot honour -- an enterprise agent that can write with no store, an approval on a read, or a pause with nowhere to wait.
+
+- **Turned on by:** `state, deployments[].identity, deployments[].network, deployments[].approvals`
+- **Reference:** [spec](./reference/spec.md#top-level-keys)
+- **Since:** `0.1.143`
+
 ## Refused, on purpose
 
 An absent capability is stated once, here, with the diagnostic that enforces it, instead of being discovered during an apply or debugged in production.
@@ -389,6 +397,36 @@ Cloud CDN serves static assets and cannot run the app, so the infra planner refu
 `enterprise` is a promise that the controls a regulated deployment cannot go without are present, so a spec that declares it and then omits a region pin, an audit sink, or a guardrail that runs on output is refused by the `profile` gate. The three are reported separately -- `ir/profile-region`, `ir/profile-audit` and `ir/profile-guardrail` -- because each has its own fix, and the gate is what keeps the word `enterprise` from meaning nothing.
 
 - **Enforced by:** `ir/profile-audit`
+
+### An `enterprise` profile with no identity reference
+
+A regulated deployment has to say where a caller is authenticated, so an `enterprise` spec with no `deployments[].identity` is refused by the `profile` gate. The block carries an issuer, an audience and the claim names that become the runtime `Principal`; signature verification stays in `business/`, so AID never holds a tenant's signing key. `network`, `region` and `approvals` are refused separately -- `ir/profile-network` and `ir/profile-approvals` -- because each has its own fix.
+
+- **Enforced by:** `ir/profile-identity`
+
+### A private network that is not private, or not declared
+
+The `network` block requires `private` to be stated, so a spec that omits it is refused rather than read as false -- silence is not a decision about whether traffic leaves a VPC. Under `enterprise`, `private: false` is refused too, because the profile promises otherwise.
+
+- **Enforced by:** `ir/profile-network`
+
+### An `enterprise` profile with no production approval policy
+
+A change-control policy is what makes a production apply reviewable, so an `enterprise` spec that deploys to production with no `deployments[].approvals` is refused. The policy is emitted as infrastructure, not read from repository settings: AID writes `infra/approvals.json` and binds it to the plan workflow, and never reads or sets a repo's protection rules.
+
+- **Enforced by:** `ir/profile-approvals`
+
+### An agent that can write, with no durable store
+
+An agent that can call a writing tool can be paused mid-write, and a paused run with no store dies with the process, leaving a write the operator cannot account for. So the `state` gate refuses an `enterprise` agent that reaches a `write` or `destructive` tool and declares no state.
+
+- **Enforced by:** `ir/agents-state-store`
+
+### An approval pause in front of a read
+
+`requiresApproval` on a tool with no side effects pauses a run to ask a human about a read; the operator learns to approve without reading, which is worse than no approval step at all. The `approvals` gate refuses it, and refuses a pause whose run has nowhere to wait.
+
+- **Enforced by:** `ir/approval-step-tool`
 
 ---
 

@@ -15,7 +15,7 @@ Spec schema title: *AID Framework spec v0.6*.
 | Key | Type | Description |
 | --- | --- | --- |
 | `specVersion` | `string` | Spec language version. Each version's additions are listed in the spec version changelog (`docs/reference/spec-changelog.md`). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
-| `profile` | `standard`, `enterprise` | The operating profile: a named bundle of defaults and required controls, not a mode. `standard` is the default and is what an absent `profile` means, so every spec written before 0.25 keeps exactly the behaviour it had. `enterprise` requires the controls a regulated deployment cannot go without, and the profile gate refuses a spec that declares it and then omits them: a region pin on every deployment, an audit sink on every deployment, and at least one guardrail that runs on output. A requirement that a spec could not satisfy is never added to a profile, so `enterprise` is always passable. Declarable from spec v0.25. |
+| `profile` | `standard`, `enterprise` | The operating profile: a named bundle of defaults and required controls, not a mode. `standard` is the default and is what an absent `profile` means, so every spec written before 0.25 keeps exactly the behaviour it had. `enterprise` requires the controls a regulated deployment cannot go without, and the profile gate refuses a spec that declares it and then omits them: a region pin, an audit sink, a declared identity provider, private networking and an approval policy on every deployment, plus at least one guardrail that runs on output. A requirement that a spec could not satisfy is never added to a profile, so `enterprise` is always passable. Declarable from spec v0.25; the identity, network and approval requirements are enforced from 0.26. |
 | `project` | `project` | — |
 | `types` | map of `typeDef` | Named structured types referenced by prompts (structured output) and tools (input/output). |
 | `models` | map of `model` | Model aliases. The alias is what the rest of the spec refers to; the vendor id is pinned here and only here. |
@@ -26,6 +26,7 @@ Spec schema title: *AID Framework spec v0.6*.
 | `knowledgeBases` | map of `knowledgeBase` | Managed knowledge bases: a source, chunker, embedding pass, store and index the cloud owns, referenced by a retriever's `knowledgeBase`. Declarable from spec v0.12. A managed knowledge base is a retriever, not a pipeline: the runtime still retrieves chunks and generates the answer, so the cost gate, the evals and the trace keep covering the generation path. |
 | `gateways` | map of `gateway` | Managed MCP gateways: an endpoint the cloud hosts, fronting federated tool targets, reached by a runtime over MCP instead of bundling every tool into it. Declarable from spec v0.24, and AWS only: the resource is Amazon Bedrock AgentCore Gateway. A gateway federates tools the spec does not own -- this is not a second generation path for `tools:`, which keeps emitting the same local tool registry whether or not a gateway exists. Every target kind lives under the gateway's one `Mcp` target union, which is why a target is one shape with a `kind` discriminator rather than sibling keys: the CloudFormation resource accepts no top-level OpenAPI target. The `authorizer` is required because a gateway with no authentication is reachable by anyone who learns its URL, and neither `NONE` nor `AUTHENTICATE_ONLY` is reachable from this surface. |
 | `agents` | map of `agent` | Agents: a model, instructions, the tools and retrievers it may use, and the budget it may spend. Declarable from spec v0.2; a target that emits no agent route is rejected by the capability gate rather than silently generating one. |
+| `state` | `agentState` | The durable run store for the project, shared by every agent and by every pipeline step that pauses for approval. Declarable from spec v0.26. One app has one process and one run history, so the store is declared once rather than per agent; an agent may still override it with `agents.&lt;id&gt;.state` when its runs need their own retention. Absent means runs are held in the process, which is why an agent that can call a side-effecting tool is refused without it (`ir/agents-state-store`): a run that pauses for a human decision cannot survive a restart if nothing wrote it down. |
 | `guardrails` | map of `guardrail` | Guardrails: the stages a check runs at, the policies it evaluates, and what happens when one fails. Declarable from spec v0.2. The runtime evaluates them and both targets (`py-fastapi` and `ts-vercel`) emit the wiring; a guardrail declared here applies to every pipeline route of the document, not to the one that named it. |
 | `decisions` | map of `decision` | Decision points answered by TypeSafe AI Jev: a named question with its own reply shape, referenced by guardrails, routers and evals. Declarable from spec v0.6. A decision is not a provider, because Jev has no chat surface: it returns a typed answer rather than text. `choice` and `score` require `criteria`; `noul` forbids it. A pinned model version is the reproducible choice; an eval reference refuses a moving alias, while interactive routing may use one. |
 | `memory` | map of `memory` | Memory tiers: what is remembered, for how long, within what token budget, and where it lives. Declarable from spec v0.2; the kinds a target cannot serve are refused by its plan gate rather than approximated. |
@@ -484,6 +485,7 @@ Explicitly invoked by the pipeline, never chosen by the model. That is what keep
 | `tool` | `name` | no | — |
 | `input` | `stepInput` | no | — |
 | `as` | `binding` | yes | — |
+| `requiresApproval` | `boolean` | no | Pause the run before this call and wait for a recorded decision. Spec 0.26. Only a tool whose `sideEffects` is `write` or `destructive` may set it (`ir/approval-step-tool`): approving a read adds a run record and a delay for no control. A pause needs somewhere to be written, so a pipeline that declares one requires a durable `state`. |
 
 ### `retrieve`
 
@@ -604,6 +606,7 @@ Data-driven control flow: asks a declared `choice` decision what the input is, t
 | `engine` | `native`, `deepagents` | no | Who owns the loop. `native` is the AID agent runtime; `deepagents` delegates to the pinned framework, which requires an engineVersion. |
 | `engineVersion` | `string` | no | — |
 | `humanInTheLoop` | object (fields below) | no | — |
+| `state` | `agentState` | no | A durable run store for this agent, overriding the project-level `state`. Spec 0.26. Required when the agent can call a tool with side effects, because a run that pauses for a human decision cannot outlive the process without one. |
 
 ### `agent.humanInTheLoop`
 
@@ -709,6 +712,9 @@ Responsible-AI categories the template filters, category -> the lowest confidenc
 | `cloud` | `aws`, `gcp` | no | The cloud this deployment lands in. Spec 0.25. Before 0.25 the cloud was only a CLI flag (`aid infra --cloud`, defaulting to `aws`), which put a property of the customer's deployment in whoever's shell happened to run the apply. When the spec declares it, the spec wins and an agreeing `--cloud` is ignored, while a disagreeing one is refused with `cli/infra-cloud-conflict` rather than silently dropped. When the spec omits it, `--cloud` decides, and `aws` when that is absent too -- byte-identical to the behaviour before this key existed. Deployments that pin *different* clouds are refused separately, by `ir/cloud-conflict`, because one module set targets one cloud. |
 | `region` | `string` | no | The region the deployment is placed in, and the residency pin. Spec 0.25. A deployment scalar rather than a project one, because one project may place `prod` and `dev` in different regions. Validated against the region set of the deployment's cloud, so a region that belongs to the other cloud is `ir/region-target` at validate time rather than a module that fails at apply time. |
 | `audit` | `audit` | no | Where this deployment's audit record lands. Spec 0.25. The sink names a service the customer already owns; AID emits the log group or sink, never its contents. `enterprise` requires one on every deployment. |
+| `identity` | `identity` | no | The identity provider this deployment trusts. Spec 0.26. A reference to an IdP the customer already runs -- an issuer URL and an audience -- never a secret and never a credential. AID compiles it into the generated app's token enforcement: a request whose token names another issuer or audience is refused, and the token's role and scope claims become the runtime `Principal` that every `auth` policy is evaluated against. Signature verification stays a `business/` function, because the verification keys belong to the customer's IdP. `enterprise` requires one on every deployment. |
+| `network` | `network` | no | Where this deployment's compute sits on the network. Spec 0.26. `private: true` places the workload in private subnets with no public address and emits the egress path its declared dependencies need; a cloud with no private-placement module is refused (`ir/network-target`) rather than emitted as a resource that could not apply. `enterprise` requires `private: true` on every deployment. |
+| `approvals` | `approvals` | no | Change control for this deployment, which is a review policy and not runtime human-in-the-loop. Spec 0.26. Compiled into `infra/approvals.json` and into the generated plan workflow's `environment` binding, so the policy is a file the customer's GitHub organisation applies reviewers from; AID neither reads nor sets repository settings. `enterprise` requires it on every deployment. |
 | `image` | `image` | no | Where the image is published. Spec 0.4, and only on a `target: container` deployment: another target builds no image to publish. |
 | `pipeline` | `name` | no | The pipeline this job runs, by id. Spec 0.5, and only on a `target: batch` deployment: a run-to-completion job exists to run exactly one pipeline once, and a target that answers requests runs whichever pipeline its route names. The pipeline must declare `trigger.manual`. |
 | `runtime` | `runtime` | no | The managed agent runtime the process runs on. Spec 0.13, and only on a `target: container` deployment: the platform schedules, isolates and addresses the process, so the compute module is replaced rather than paired with it. The spec must declare exactly one HTTP route, because the platform's invocation route carries one request shape. The app is unchanged: the generated contract wrapper mounts the same ASGI app and route handlers, so the cost ceiling, trace span, eval hook and refusals stay on the invocation path. |
@@ -757,6 +763,47 @@ The audit destination for a deployment: a service the customer already runs, nam
 | --- | --- | --- | --- |
 | `sink` | `cloudwatch`, `s3`, `gcs`, `bigquery` | yes | The log destination. `cloudwatch` and `s3` are AWS; `gcs` and `bigquery` are Google Cloud. |
 | `retentionDays` | `integer` | no | How long the record is kept, in days. Omitted means the sink's own default, which is the honest answer: AID does not invent a retention policy for an operator's log store, and no lifecycle rule is emitted at all rather than one guessed. When the document does name one, every sink honours it, each in its own provider's terms: a CloudWatch log group via `retention_in_days`, an S3 archive via a lifecycle expiration, a GCS bucket via a lifecycle rule, and a partitioned BigQuery dataset via a partition expiration. Two deployments naming the same sink with different retention are different destinations, and `ir/audit-conflict` refuses them. |
+
+## `identity`
+
+The identity provider a deployment trusts, as a reference: an issuer URL a reader can fetch and an audience name. No field accepts a credential, and the generated enforcement pins the issuer literally, so moving to another IdP is a spec change that regenerates rather than an environment variable nobody reviews.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | `oidc`, `saml` | yes | `oidc` is a JWT issuer the app validates tokens from. `saml` is declared for an organisation whose SSO asserts identity before the gateway forwards it; the generated enforcement is the same claim check, and the assertion is the provider's business. |
+| `issuer` | `string` | yes | The issuer URL the token's `iss` claim must equal exactly. |
+| `audience` | `string` | no | The `aud` claim the token must carry. Omitted means the project id, which is what a generated app registers as its client. |
+| `rolesClaim` | `string` | no | Which claim holds the token's roles, mapped onto the runtime `Principal` that `auth` policies read. Omitted means `roles`. |
+| `scopesClaim` | `string` | no | Which claim holds the token's scopes. Omitted means `scp`, which is what OIDC providers issue. |
+
+## `network`
+
+Private placement for a deployment. `private: true` is the only value that satisfies the `enterprise` profile; a deployment may declare `private: false` explicitly, which behaves like omitting the key and is what lets the profile gate's refusal say what was declared rather than what was missing.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `private` | `boolean` | yes | — |
+| `egress` | `declared-only`, `open` | no | What the workload may reach outbound. `declared-only` (the default) routes egress through the endpoints the generated module creates for the declared dependencies and creates no path to the internet; `open` adds a NAT path, which is accepted and is documented as the weaker placement. |
+
+## `approvals`
+
+Change control for a deployment: the reviewers a credentialed infrastructure plan needs before it applies. Named as teams or logins the customer's repository already knows, because AID generates the policy file and the workflow binding while the repository's environment protection rules are what enforce the reviewers.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `require` | array of `string` | yes | The teams or logins that must approve. At least one, because a policy that names nobody approves everything. |
+| `minApprovers` | `integer` | yes | How many of `require` must approve. Never more than the number named, which the profile gate refuses rather than emitting a policy that can never be satisfied. |
+| `environments` | array of `string` | no | Which environments this policy covers. Omitted means the deployment it is declared on. |
+
+## `agentState`
+
+A durable run store, so a paused or long-running run outlives the process that started it. `urlEnv` is the *name* of an environment variable holding the connection string, following the `models.*.apiKeyEnv` precedent: the value stays in the platform and never enters the spec. Deliberately not `stores`, which is a vector store whose `dimensions` the normalize gate compares against the embedding model's width; run state is neither embedded nor a width, so putting it there would force a meaningless `dimensions`.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | `postgres`, `sqlite` | yes | `postgres` is a database the customer runs and names through `urlEnv`; `sqlite` is a file, which survives a restart only on a mounted volume and is therefore refused for `target: container` without one. |
+| `urlEnv` | `string` | yes | The environment variable holding the connection string or file path. A name, never a value. |
+| `ttlHours` | `integer` | no | How long a saved run is kept before the store may delete it. Omitted means no expiry, which is accepted and documented rather than defaulted. |
 
 ## `image`
 

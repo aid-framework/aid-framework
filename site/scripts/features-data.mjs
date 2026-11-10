@@ -398,6 +398,17 @@ export const SHIPPED_FEATURES = [
     href: './reference/spec.md#top-level-keys',
     since: '0.1.142',
   },
+  {
+    id: 'delivery-controls',
+    title: 'Durable run state, deployment identity, private network and change approval',
+    detail:
+      'Spec 0.26 declares the controls an enterprise delivery is held to: a `state` store that outlives the process, an `identity` reference (issuer, audience and claim names) that becomes the runtime `Principal`, a `network` block whose `private` pin is required, an `approvals` policy for production change, and `requiresApproval` on a pipeline tool step. The `state` and `approvals` gates refuse a document that declares a control it cannot honour -- an enterprise agent that can write with no store, an approval on a read, or a pause with nowhere to wait.',
+    declaredBy: 'state, deployments[].identity, deployments[].network, deployments[].approvals',
+    href: './reference/spec.md#top-level-keys',
+    // Declared and gated at 0.26; the generators that emit the store, the identity check
+    // and the pause land in their own release, so this row does not claim they exist yet.
+    since: '0.1.143',
+  },
 ];
 
 /**
@@ -458,6 +469,41 @@ export const REFUSALS = [
     reason:
       '`enterprise` is a promise that the controls a regulated deployment cannot go without are present, so a spec that declares it and then omits a region pin, an audit sink, or a guardrail that runs on output is refused by the `profile` gate. The three are reported separately -- `ir/profile-region`, `ir/profile-audit` and `ir/profile-guardrail` -- because each has its own fix, and the gate is what keeps the word `enterprise` from meaning nothing.',
     code: 'ir/profile-audit',
+  },
+  {
+    id: 'enterprise-profile-without-identity',
+    title: 'An `enterprise` profile with no identity reference',
+    reason:
+      "A regulated deployment has to say where a caller is authenticated, so an `enterprise` spec with no `deployments[].identity` is refused by the `profile` gate. The block carries an issuer, an audience and the claim names that become the runtime `Principal`; signature verification stays in `business/`, so AID never holds a tenant's signing key. `network`, `region` and `approvals` are refused separately -- `ir/profile-network` and `ir/profile-approvals` -- because each has its own fix.",
+    code: 'ir/profile-identity',
+  },
+  {
+    id: 'enterprise-profile-with-public-network',
+    title: 'A private network that is not private, or not declared',
+    reason:
+      'The `network` block requires `private` to be stated, so a spec that omits it is refused rather than read as false -- silence is not a decision about whether traffic leaves a VPC. Under `enterprise`, `private: false` is refused too, because the profile promises otherwise.',
+    code: 'ir/profile-network',
+  },
+  {
+    id: 'enterprise-profile-without-approvals',
+    title: 'An `enterprise` profile with no production approval policy',
+    reason:
+      "A change-control policy is what makes a production apply reviewable, so an `enterprise` spec that deploys to production with no `deployments[].approvals` is refused. The policy is emitted as infrastructure, not read from repository settings: AID writes `infra/approvals.json` and binds it to the plan workflow, and never reads or sets a repo's protection rules.",
+    code: 'ir/profile-approvals',
+  },
+  {
+    id: 'enterprise-agent-writing-with-no-store',
+    title: 'An agent that can write, with no durable store',
+    reason:
+      'An agent that can call a writing tool can be paused mid-write, and a paused run with no store dies with the process, leaving a write the operator cannot account for. So the `state` gate refuses an `enterprise` agent that reaches a `write` or `destructive` tool and declares no state.',
+    code: 'ir/agents-state-store',
+  },
+  {
+    id: 'approval-on-a-read',
+    title: 'An approval pause in front of a read',
+    reason:
+      '`requiresApproval` on a tool with no side effects pauses a run to ask a human about a read; the operator learns to approve without reading, which is worse than no approval step at all. The `approvals` gate refuses it, and refuses a pause whose run has nowhere to wait.',
+    code: 'ir/approval-step-tool',
   },
 ];
 
@@ -562,6 +608,7 @@ export const CAPABILITY_FAMILIES = [
       'image',
       'eject',
       'profiles',
+      'delivery-controls',
     ],
   },
   {

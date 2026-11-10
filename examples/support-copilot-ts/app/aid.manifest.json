@@ -131,7 +131,7 @@
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/observability.ts",
-      "sha256": "b3e0bb7baa76d009d7a7e8a90cbc9eff1df2f0a3ec4a26e273245ff60c6b25c3"
+      "sha256": "068a4c82cb12a54fab553aa19644cfae29311861281ead0b531abd6d922838c6"
     },
     {
       "generator": "@aid-framework/generator-ts-vercel",
@@ -256,7 +256,7 @@
   "generatedBy": {
     "generator": "@aid-framework/generator-ts-vercel",
     "generatorVersion": "0.1.0",
-    "irVersion": "0.2.0"
+    "irVersion": "0.3.0"
   },
   "manifestVersion": 1
 }
