@@ -34,12 +34,9 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 from aid_runtime.errors import ConfigurationError
-
-if TYPE_CHECKING:
-    from aid_runtime.retrieval.types import Chunk
 
 __all__ = [
     "FILTER_OPERATORS",
@@ -53,6 +50,20 @@ __all__ = [
 
 #: The operators the grammar admits, in the order a diagnostic lists them.
 FILTER_OPERATORS: tuple[str, ...] = ("==", "!=", "^=", "$=", "*=")
+
+
+class ChunkLike(Protocol):
+    """The slice of a chunk a filter observes.
+
+    Retrieval's ``Chunk`` satisfies this structurally. Naming the shape here rather
+    than importing it keeps this module free of a cycle back into ``retrieval.types``,
+    which imports :func:`metadata_fields` at module level.
+    """
+
+    doc_id: str
+    uri: str
+    metadata: dict[str, str]
+
 
 _FIELD = r"[A-Za-z0-9_.\-]+"
 _OPERATOR = r"==|!=|\^=|\$=|\*="
@@ -124,7 +135,7 @@ def metadata_fields(expressions: Sequence[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(field for field in fields if field not in _RESERVED_FIELDS))
 
 
-def matches(chunk: Chunk, condition: Filter) -> bool:
+def matches(chunk: ChunkLike, condition: Filter) -> bool:
     """Whether ``chunk`` satisfies one comparison.
 
     A missing field is a non-match for every operator. ``!=`` therefore means "this
@@ -149,6 +160,6 @@ def matches(chunk: Chunk, condition: Filter) -> bool:
     return condition.value in actual
 
 
-def matches_all(chunk: Chunk, filters: Sequence[Filter]) -> bool:
+def matches_all(chunk: ChunkLike, filters: Sequence[Filter]) -> bool:
     """Whether ``chunk`` satisfies every filter. An empty list admits everything."""
     return all(matches(chunk, condition) for condition in filters)
