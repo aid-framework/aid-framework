@@ -49,6 +49,15 @@ import { fileURLToPath } from 'node:url';
  */
 
 /**
+ * A file whose content is a function of other files in the tree. See
+ * `derivedOnly()` for what the gate does with it.
+ *
+ * @typedef {object} DerivedRule
+ * @property {string} pattern
+ * @property {string} reason
+ */
+
+/**
  * @typedef {object} PackageEntry
  * @property {string} name
  * @property {string} path
@@ -64,6 +73,7 @@ import { fileURLToPath } from 'node:url';
  * @property {string} bootstrapVersion
  * @property {string} [releaseGating]
  * @property {NonReleasableRule[]} nonReleasable
+ * @property {DerivedRule[]} [derived]
  * @property {PackageEntry[]} packages
  */
 
@@ -472,6 +482,29 @@ export function packageFor(path, packages) {
 }
 
 /**
+ * Derived paths that cannot account for anything shipping. A lockfile records how
+ * the manifests beside it resolved; when every other changed path is non-releasable
+ * those manifests are untouched, so the lockfile cannot change what ships either —
+ * a docs-only PR that bumps a docs dependency should not mint a version.
+ *
+ * A change set made *only* of derived files stays releasable: a lockfile rewritten
+ * without its manifests still resolves different versions for them.
+ *
+ * @param {readonly string[]} changedPaths
+ * @param {readonly DerivedRule[]} derived
+ * @param {readonly NonReleasableRule[]} nonReleasable
+ * @returns {Set<string>}
+ */
+export function derivedOnly(changedPaths, derived, nonReleasable) {
+  /** @param {string} path @returns {boolean} */
+  const isDerived = (path) => derived.some((rule) => new RegExp(rule.pattern).test(path));
+  const primary = changedPaths.filter((path) => !isDerived(path));
+  if (primary.length === 0) return new Set();
+  if (primary.some((path) => isReleasable(path, nonReleasable))) return new Set();
+  return new Set(changedPaths.filter(isDerived));
+}
+
+/**
  * @param {string | null} latestTag
  * @param {ReleaseConfig} config
  * @returns {string}
@@ -492,7 +525,10 @@ export function nextVersion(latestTag, config) {
  * @returns {ReleaseDecision}
  */
 export function decide({ tags, changedPaths, force = false, config }) {
-  const releasablePaths = changedPaths.filter((path) => isReleasable(path, config.nonReleasable));
+  const ignored = derivedOnly(changedPaths, config.derived ?? [], config.nonReleasable);
+  const releasablePaths = changedPaths.filter(
+    (path) => !ignored.has(path) && isReleasable(path, config.nonReleasable),
+  );
   const latestTag = latestReleaseTag(tags, config.tagPrefix);
   const forced = force && releasablePaths.length === 0;
 
@@ -508,7 +544,9 @@ export function decide({ tags, changedPaths, force = false, config }) {
     mode: 'repo-wide',
     reason: releasing
       ? describe(releasablePaths, changedPaths, forced)
-      : 'no releasable paths changed',
+      : ignored.size > 0
+        ? `no releasable paths changed (${ignored.size} derived path(s) ignored: no releasable path changed alongside them)`
+        : 'no releasable paths changed',
     forced,
     currentVersion: latestTag,
     version: releasing ? version : null,
@@ -668,6 +706,26 @@ export function parseConfig(raw) {
     const reason = typeof item['reason'] === 'string' ? item['reason'] : '';
     return { pattern, reason };
   });
+  const derived = record['derived'];
+  if (derived !== undefined && !Array.isArray(derived)) {
+    throw new Error('release config "derived" must be an array of { pattern, reason }');
+  }
+  const derivedRules = (derived ?? []).map((entry) => {
+    if (typeof entry !== 'object' || entry === null) {
+      throw new Error('each "derived" entry must be an object');
+    }
+    const item = /** @type {Record<string, unknown>} */ (entry);
+    const pattern = item['pattern'];
+    if (typeof pattern !== 'string')
+      throw new Error('each "derived" entry needs a string "pattern"');
+    try {
+      new RegExp(pattern);
+    } catch {
+      throw new Error(`"derived" pattern ${pattern} is not a valid regular expression`);
+    }
+    const reason = typeof item['reason'] === 'string' ? item['reason'] : '';
+    return { pattern, reason };
+  });
   const packages = record['packages'];
   if (!Array.isArray(packages)) {
     throw new Error('release config "packages" must be an array of { name, path, registry }');
@@ -692,6 +750,7 @@ export function parseConfig(raw) {
     bump,
     bootstrapVersion,
     nonReleasable: rules,
+    derived: derivedRules,
     packages: entries,
   };
 }
