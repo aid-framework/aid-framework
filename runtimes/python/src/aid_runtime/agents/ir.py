@@ -122,6 +122,11 @@ class DecisionDefinition:
     model: str
     instructions: str
     criteria: tuple[str, ...]
+    #: What a call that could not answer means: ``allow`` lets the payload through,
+    #: ``block`` (the declared default) fails the check closed. It never governs an
+    #: answer the guardrail can read but not act on -- an unmapped label or a
+    #: confidence under the floor is a policy failure and blocks regardless.
+    on_error: str = "block"
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,6 +448,7 @@ def _decision(decision_id: str, entry: Mapping[str, Any]) -> DecisionDefinition:
         model=_required_str(entry, "model", where),
         instructions=_required_str(entry, "instructions", where),
         criteria=labels,
+        on_error="allow" if entry.get("onError") == "allow" else "block",
     )
 
 

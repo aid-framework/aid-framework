@@ -552,7 +552,7 @@ Data-driven control flow: asks a declared `choice` decision what the input is, t
 | `type` | `choice`, `score`, `noul` | yes | — |
 | `instructions` | `string` | yes | The question, in one sentence. Not a prompt template: Jev does not carry a conversation. |
 | `criteria` | one of 2 | no | — |
-| `onError` | `allow`, `block` | no | What a failed call means. `block` (the default) keeps a gate closed when the vendor is unreachable; `allow` keeps an advisory check from stopping traffic. |
+| `onError` | `allow`, `block` | no | What a failed call means for a guardrail that names this decision. `block` (the default) keeps the gate closed when the vendor is unreachable; `allow` keeps an advisory check from stopping traffic. A `route` and an eval metric still fail the run, because neither has an arm or a score to fall back on. |
 | `description` | `string` | no | — |
 
 ## `guardrail`

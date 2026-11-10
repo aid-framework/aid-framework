@@ -278,7 +278,11 @@ the exact model that produced it. A `score` decision is also usable as an eval m
 ordered criteria turn a prediction into a `0..1` score. Decisions are not `models` entries, so
 they cannot be aliased, budgeted, or swapped by an eval. `onError` is `block` (default) or
 `allow`, and it is declared rather than inferred: a billing decision that silently degrades to
-"allow" fails open in the one place correctness matters.
+"allow" fails open in the one place correctness matters. It answers only whether a guardrail's
+check keeps its gate closed when the call itself fails - a throw, no answer, or no choice. It does
+not excuse an answer the guardrail cannot act on: a label `onDecision` does not map, or a
+confidence under `minConfidence`, still blocks. A `route` and an eval metric also fail the run
+regardless of the posture, because neither has an arm or a score to fall back on.
 
 Jev bills input tokens at $0.042 per million and states that output tokens are free, so a
 decision is priced from its input count alone. The client records `aid.cost.usd` on the decision

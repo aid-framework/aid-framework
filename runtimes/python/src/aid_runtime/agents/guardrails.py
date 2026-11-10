@@ -460,10 +460,15 @@ class GuardrailEngine:
     ) -> GuardrailRecord | None:
         """Ask one ``choice`` decision and turn its label into a record, or ``None``.
 
-        Everything that is not a usable answer is a :class:`GuardrailBlockedError`:
-        an undeclared decision, an unmapped label, a confidence below the declared
-        floor, or a call that raised. That is the same rule the policy path follows
-        -- there is no path from "the check could not run" to "no violation found".
+        An undeclared decision, an unmapped label, an unknown outcome, or a confidence
+        below the declared floor is a :class:`GuardrailBlockedError`: an answer the
+        guardrail can read but cannot act on blocks. A call that produced no label at
+        all -- it raised, named no answer, or carried no choice -- follows the
+        decision's ``on_error`` instead: ``allow`` returns ``None`` so an advisory check
+        does not stop traffic, and ``block`` (the default) raises. ``on_error`` governs
+        whether the answer arrived, never what a present answer means, so the policy
+        path's rule holds: there is no path from "the check could not run" to "no
+        violation found" unless the spec declares one.
         """
         name = guardrail.decision or ""
         definition = self._decisions.get(name)
@@ -494,6 +499,8 @@ class GuardrailEngine:
                 questions={name: question},
             )
         except Exception as error:
+            if definition.on_error == "allow":
+                return None
             raise GuardrailBlockedError(
                 guardrail.id,
                 "input",
@@ -502,13 +509,23 @@ class GuardrailEngine:
 
         answer = response.answers.get(name)
         if answer is None:
+            if definition.on_error == "allow":
+                return None
             raise GuardrailBlockedError(
                 guardrail.id,
                 "input",
                 f"decision {name!r} returned no answer for its own question",
             )
         label = answer.choice
-        if label is None or label not in outcomes:
+        if label is None:
+            if definition.on_error == "allow":
+                return None
+            raise GuardrailBlockedError(
+                guardrail.id,
+                "input",
+                f"decision {name!r} returned an answer with no choice",
+            )
+        if label not in outcomes:
             raise GuardrailBlockedError(
                 guardrail.id,
                 "input",

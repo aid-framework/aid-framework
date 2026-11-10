@@ -15,6 +15,7 @@ be explained by "nothing fired".
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -1038,6 +1039,65 @@ async def test_a_decision_call_that_raises_is_a_blocked_check() -> None:
 
     with pytest.raises(GuardrailBlockedError, match="could not answer"):
         await decision_engine(client).check_input_async((decision_guardrail(),), CLEAN)
+
+
+async def test_an_allowed_error_posture_lets_the_text_through_when_the_call_raises() -> None:
+    # The declaration decides: `allow` is an advisory check, so an unreachable vendor
+    # must not stop traffic. Dropping the flag would leave this indistinguishable from
+    # the default, which is exactly the bug this pair of tests exists to catch.
+    client = FakeDecisionClient(error=RuntimeError("502 from Jev"))
+    decisions = {"topical": replace(TOPICAL, on_error="allow")}
+
+    verdict = await decision_engine(client, decisions=decisions).check_input_async(
+        (decision_guardrail(),), CLEAN
+    )
+
+    assert verdict.action is None
+    assert verdict.records == ()
+    assert verdict.text == CLEAN
+
+
+async def test_an_allowed_error_posture_still_blocks_a_label_it_cannot_act_on() -> None:
+    # `onError` governs whether an answer arrived, never what a present answer means.
+    client = FakeDecisionClient(label="off_topic")
+    decisions = {"topical": replace(TOPICAL, on_error="allow")}
+
+    with pytest.raises(GuardrailBlockedError, match="does not map"):
+        await decision_engine(client, decisions=decisions).check_input_async(
+            (decision_guardrail(on_decision=(("product", "allow"),)),), CLEAN
+        )
+
+
+async def test_an_allowed_error_posture_still_blocks_under_the_confidence_floor() -> None:
+    client = FakeDecisionClient(label="product", confidence=0.2)
+    decisions = {"topical": replace(TOPICAL, on_error="allow")}
+
+    with pytest.raises(GuardrailBlockedError, match="below the declared minimum"):
+        await decision_engine(client, decisions=decisions).check_input_async(
+            (decision_guardrail(min_confidence=0.8),), CLEAN
+        )
+
+
+def test_the_ir_keeps_the_declared_error_posture() -> None:
+    """A posture the runtime cannot see is a posture the spec cannot rely on."""
+    document = solo(
+        decisions=[
+            {
+                "id": "topical",
+                "provider": "typesafe",
+                "model": "jev-1.14.0",
+                "type": "choice",
+                "instructions": "Is this message about our product",
+                "criteria": {"product": "asks about us", "off_topic": "anything else"},
+                "onError": "allow",
+            }
+        ],
+    )
+
+    spec = from_ir(document)
+
+    assert spec.decisions["topical"].on_error == "allow"
+    assert spec.decisions["topical"].criteria == ("off_topic", "product")
 
 
 async def test_an_undeclared_decision_is_a_blocked_check() -> None:

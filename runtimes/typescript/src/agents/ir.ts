@@ -105,6 +105,13 @@ export interface DecisionDefinition {
   readonly model: string;
   readonly instructions: string;
   readonly criteria: readonly string[];
+  /**
+   * What a call that produced no label means: `allow` lets the payload through,
+   * `block` (the declared default) fails the check closed. It never governs an
+   * answer the guardrail can read but not act on — an unmapped label or a
+   * confidence under the floor is a policy failure and blocks regardless.
+   */
+  readonly onError: 'allow' | 'block';
 }
 
 /** One IR `memory` entry, resolved for the scope rules in `agents/memory`. */
@@ -529,6 +536,7 @@ function decisionDefinition(
     model: requiredStr(entry, 'model', where),
     instructions: requiredStr(entry, 'instructions', where),
     criteria: labels,
+    onError: entry.onError === 'allow' ? 'allow' : 'block',
   };
 }
 

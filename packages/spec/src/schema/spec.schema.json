@@ -1333,7 +1333,7 @@
           ]
         },
         "onError": {
-          "description": "What a failed call means. `block` (the default) keeps a gate closed when the vendor is unreachable; `allow` keeps an advisory check from stopping traffic.",
+          "description": "What a failed call means for a guardrail that names this decision. `block` (the default) keeps the gate closed when the vendor is unreachable; `allow` keeps an advisory check from stopping traffic. A `route` and an eval metric still fail the run, because neither has an arm or a score to fall back on.",
           "enum": ["allow", "block"]
         },
         "description": { "type": "string", "minLength": 1 }
