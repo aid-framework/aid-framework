@@ -21,6 +21,7 @@ import {
   evalModulePath as pyFastApiEvalModulePath,
   pyFastApiGenerator,
   retrievalIngestModulePath as pyFastApiIngestModulePath,
+  retrievalSyncModulePath as pyFastApiSyncModulePath,
 } from '@aid-framework/generator-py-fastapi';
 import {
   type Generator,
@@ -36,6 +37,7 @@ import {
   tsVercelGenerator,
   retrievalIngestModulePath as tsVercelIngestModulePath,
   paths as tsVercelPaths,
+  retrievalSyncModulePath as tsVercelSyncModulePath,
 } from '@aid-framework/generator-ts-vercel';
 import type { IR, TargetCapabilityDeclarations } from '@aid-framework/ir';
 import { errorDiagnostic } from '@aid-framework/spec';
@@ -127,6 +129,10 @@ export interface Target {
   retrievalIngestModule(retrieverId: string): string;
   /** The repo-relative file the generated ingest module for `retrieverId` lives in. */
   retrievalIngestModuleFile(retrieverId: string): string;
+  /** The dotted module path of the generated sync module for `retrieverId`. */
+  retrievalSyncModule(retrieverId: string): string;
+  /** The repo-relative file the generated sync module for `retrieverId` lives in. */
+  retrievalSyncModuleFile(retrieverId: string): string;
 }
 
 /**
@@ -147,6 +153,7 @@ interface TargetModule {
   readonly evalsIndexPath: string;
   readonly evalModulePath: (evalId: string) => string;
   readonly retrievalIngestModulePath: (retrieverId: string) => string;
+  readonly retrievalSyncModulePath: (retrieverId: string) => string;
   readonly checkPlan: (ir: IR) => readonly PlanProblemLike[];
 }
 
@@ -203,6 +210,12 @@ function targetFor(module: TargetModule): Target {
     retrievalIngestModule(retrieverId) {
       return dotted(module.retrievalIngestModulePath(retrieverId), module.extension);
     },
+    retrievalSyncModuleFile(retrieverId) {
+      return module.retrievalSyncModulePath(retrieverId);
+    },
+    retrievalSyncModule(retrieverId) {
+      return dotted(module.retrievalSyncModulePath(retrieverId), module.extension);
+    },
   };
 }
 
@@ -234,6 +247,7 @@ export const TARGETS: readonly Target[] = [
     evalsIndexPath: EVALS_INIT_PATH,
     evalModulePath: pyFastApiEvalModulePath,
     retrievalIngestModulePath: pyFastApiIngestModulePath,
+    retrievalSyncModulePath: pyFastApiSyncModulePath,
     checkPlan: checkPyFastApi,
   }),
   targetFor({
@@ -255,6 +269,7 @@ export const TARGETS: readonly Target[] = [
     evalsIndexPath: tsVercelPaths.evalsIndex,
     evalModulePath: tsVercelEvalModulePath,
     retrievalIngestModulePath: tsVercelIngestModulePath,
+    retrievalSyncModulePath: tsVercelSyncModulePath,
     checkPlan: checkTsVercel,
   }),
 ];

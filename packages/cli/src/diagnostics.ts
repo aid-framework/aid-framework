@@ -33,6 +33,17 @@ export const CLI_DIAGNOSTIC_CODES = {
   runnerUnsupported: 'cli/runner-unsupported',
   runnerFailed: 'cli/runner-failed',
   runnerWarned: 'cli/runner-warned',
+  // `aid kb` originates these. The split is the same one `aid ingest` draws: a
+  // subcommand that is missing or unknown, a retriever that is not managed, and an
+  // engine with no ingestion job are all "nothing was judged" -- the command had no
+  // work it could do -- so they exit 2. A missing generated module is a project that
+  // has not been generated, which is a well-formed request that cannot do its job, so
+  // it exits 1 and points at `aid gen`.
+  kbSubcommandRequired: 'cli/kb-subcommand-required',
+  kbUnknownSubcommand: 'cli/kb-unknown-subcommand',
+  kbRetrieverNotManaged: 'cli/kb-retriever-not-managed',
+  kbSyncModulesMissing: 'cli/kb-sync-modules-missing',
+  kbEngineUnsupported: 'cli/kb-engine-unsupported',
   // `aid doctor` originates these. The tree checks it reports through the SDK's own
   // codes (drift, stale) rather than these, so a reader sees one code per fact.
   manifestMissing: 'cli/manifest-missing',

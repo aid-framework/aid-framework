@@ -26,6 +26,16 @@ operation the caller holds, not a property of the corpus -- so there the guarant
 from the fixture client and from the deployment gating traffic on the import. That
 limitation is stated rather than hidden behind a poll that could never return false.
 
+**Sync is what a managed retriever has instead of ingest.** A local retriever is filled by
+an ingest module this runtime runs; a managed one is filled by the engine, so the only
+operation left is asking the engine to do it. :meth:`BedrockKnowledgeBaseClient.sync`
+starts the base's ingestion job and, when told to wait, polls the same job summary the
+readiness check reads. It reports the job -- id, status and the engine's own failure
+reason -- rather than a bare success, because a ``FAILED`` job folded into "ok" is the
+same lie as an unindexed corpus answering every query with nothing. :func:`sync_support`
+answers the prior question, *can this engine be asked at all*, so a caller can refuse
+before it starts anything rather than after.
+
 **Filters are refused, not dropped.** The spec carries filter expressions as opaque
 strings, and the two engines disagree about what a string means. Bedrock's ``Retrieve``
 takes a structured filter document; Vertex's takes an expression in its own language.
@@ -68,15 +78,19 @@ from aid_runtime.providers.vertex import (
 from aid_runtime.retrieval.types import KnowledgeBaseEngine, KnowledgeBaseSpec
 
 __all__ = [
+    "DEFAULT_SYNC_TIMEOUT_SECONDS",
     "FIXTURE_ENV",
     "BedrockKnowledgeBaseClient",
     "FixtureKnowledgeBaseClient",
     "KnowledgeBaseClient",
     "KnowledgeChunk",
     "KnowledgeResult",
+    "SyncResult",
+    "SyncSupport",
     "VertexKnowledgeBaseClient",
     "knowledge_base_client_for",
     "knowledge_base_env_id",
+    "sync_support",
 ]
 
 #: Names a JSON file the fixture client serves results from. Set by ``aid dev`` and by a
@@ -92,6 +106,106 @@ _MAX_ERROR_BODY = 500
 #: ``GET .../ingestionjobs?maxResults=1&sortOrder=DESCENDING``. The canonical query string
 #: is sorted by key, which this literal already is, so it can be signed and sent as one.
 _LATEST_JOB_QUERY = "maxResults=1&sortOrder=DESCENDING"
+
+#: How long ``sync(wait=True)`` waits for a job before giving up. An ingestion of a small
+#: corpus finishes in minutes; the ceiling exists so that a job wedged in the engine fails
+#: the command instead of hanging it, and it is a parameter rather than a constant because
+#: a large corpus legitimately needs a longer one.
+DEFAULT_SYNC_TIMEOUT_SECONDS = 900.0
+
+#: How often ``sync(wait=True)`` re-reads the job summary.
+DEFAULT_SYNC_POLL_SECONDS = 2.0
+
+_SYNC_COMPLETE = "COMPLETE"
+
+#: Statuses that already are the job's verdict, so waiting for one more poll can only lose
+#: it. ``STOPPED`` is here because Bedrock treats it as terminal and never resumes on its own.
+_SYNC_FAILED_STATUSES = frozenset({"FAILED", "STOPPED"})
+
+#: The engines with an ingestion job a caller can start, and the sentence that says why the
+#: others have none. A missing entry means syncable; `_SYNC_REFUSALS` below states the
+#: engine-specific reason rather than a generic "not supported", which would leave a reader
+#: with nothing to do about it.
+_SYNC_REFUSALS: Mapping[str, str] = {
+    "vertex-rag": (
+        "A vertex-rag corpus is filled by an import the caller holds rather than by an "
+        "ingestion job the corpus owns, so there is no job to start; re-run the "
+        "deployment's import instead."
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class SyncSupport:
+    """Whether one engine can be asked to ingest, and the sentence when it cannot.
+
+    ``engine`` echoes what was asked for, normalised when the runtime knows it, so a caller
+    that passed an alias still hears back the spelling the runtime resolved. ``reason`` is a
+    standalone sentence: the CLI prints it verbatim as the hint on its refusal, and the
+    hosted clients raise it after "cannot be synced.".
+    """
+
+    engine: str
+    supported: bool
+    reason: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        """The JSON shape a caller that cannot import this module reads."""
+        return {"engine": self.engine, "supported": self.supported, "reason": self.reason}
+
+
+def sync_support(engine: str) -> SyncSupport:
+    """Whether a base on ``engine`` has an ingestion job this runtime can start.
+
+    The answer lives here rather than in the caller because "does this provider support
+    ingestion" is a fact about the provider, and a caller that restated it would be a second
+    copy of the engine table -- the copy that goes stale the day a provider changes.
+    """
+    try:
+        resolved = KnowledgeBaseEngine(engine)
+    except ValueError:
+        return SyncSupport(
+            engine=engine,
+            supported=False,
+            reason=(
+                f"No engine named {engine!r} is known to this runtime, so nothing can be "
+                "asked to ingest."
+            ),
+        )
+    reason = _SYNC_REFUSALS.get(resolved.value)
+    return SyncSupport(engine=resolved.value, supported=reason is None, reason=reason)
+
+
+@dataclass(frozen=True, slots=True)
+class SyncResult:
+    """What one ``sync`` started, and -- when it waited -- how that job ended.
+
+    ``status`` is the engine's own word for the job, never translated: ``COMPLETE`` and
+    ``FAILED`` mean what Bedrock says they mean, and a caller that has never seen a status
+    before can still report it honestly. ``waited`` distinguishes "the job was started" from
+    "the job is finished", which are different claims and must not be collapsed, and
+    ``failure_reason`` carries the engine's explanation rather than this runtime's summary.
+    """
+
+    knowledge_base_id: str
+    data_source_id: str
+    job_id: str
+    status: str
+    waited: bool = False
+    failure_reason: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """Whether the job is worth reporting as a success.
+
+        A started job is a success when the caller did not ask to wait: the request was to
+        begin an ingestion, and it did. A job the engine has already failed is never one,
+        waited for or not -- the status is the engine's verdict and is not this side's to
+        overrule.
+        """
+        if self.status in _SYNC_FAILED_STATUSES:
+            return False
+        return not self.waited or self.status == _SYNC_COMPLETE
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +280,16 @@ class KnowledgeBaseClient(Protocol):
         filters: Sequence[str] = (),
     ) -> KnowledgeResult:
         """One retrieve against the base, with the filters the caller asked for."""
+
+    async def sync(
+        self,
+        base: KnowledgeBaseSpec,
+        *,
+        wait: bool = False,
+        timeout_seconds: float = DEFAULT_SYNC_TIMEOUT_SECONDS,
+        poll_seconds: float = DEFAULT_SYNC_POLL_SECONDS,
+    ) -> SyncResult:
+        """Start an ingestion job, and -- under ``wait`` -- report how it ended."""
 
     async def aclose(self) -> None:
         """Release whatever the client holds open."""
@@ -313,19 +437,119 @@ class BedrockKnowledgeBaseClient(_HttpKnowledgeBaseClient):
             cost_usd=base.retrieve_cost_per_query_usd,
         )
 
+    async def sync(
+        self,
+        base: KnowledgeBaseSpec,
+        *,
+        wait: bool = False,
+        timeout_seconds: float = DEFAULT_SYNC_TIMEOUT_SECONDS,
+        poll_seconds: float = DEFAULT_SYNC_POLL_SECONDS,
+    ) -> SyncResult:
+        """Start the base's ingestion job, and under ``wait`` report how it ends.
+
+        The job is the engine's, not this process's: ``StartIngestionJob`` returns as soon as
+        the work is queued, so a return without ``wait`` says "an ingestion began", never
+        "the corpus is ready". Waiting polls the same summary the readiness check reads, and
+        stops on the engine's own terminal statuses rather than on a prediction of how long
+        indexing takes; a failed wait then reads the job itself, because the summary carries
+        no failure reason.
+
+        Starting a job invalidates the cached readiness either way: a base that was
+        ``COMPLETE`` a minute ago is being rebuilt now, and a retrieve that trusted the old
+        answer would search a corpus that is briefly empty.
+        """
+        knowledge_base_id = self._resolve(base)
+        data_source_id = await self._first_data_source(knowledge_base_id)
+        url = self._jobs_url(knowledge_base_id, data_source_id)
+        # `StartIngestionJob` has no body this runtime has anything to say in, but the
+        # request is still signed over a payload, so `{}` keeps one signing path instead of
+        # growing a third shape for an empty body.
+        body = await self._post(url, "{}")
+        started = _job_result(
+            self._json(body).get("ingestionJob"),
+            knowledge_base_id=knowledge_base_id,
+            data_source_id=data_source_id,
+        )
+        if started is None:
+            raise ProviderResponseError(
+                "the knowledge base acknowledged the start without an ingestion job", body
+            )
+        self._ready.discard(knowledge_base_id)
+        if not wait:
+            return started
+        return await self._await_job(
+            started,
+            url,
+            timeout_seconds=timeout_seconds,
+            poll_seconds=poll_seconds,
+        )
+
+    async def _await_job(
+        self,
+        started: SyncResult,
+        url: str,
+        *,
+        timeout_seconds: float,
+        poll_seconds: float,
+    ) -> SyncResult:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
+        current = started
+        while current.status != _SYNC_COMPLETE and current.status not in _SYNC_FAILED_STATUSES:
+            if loop.time() >= deadline:
+                raise ProviderError(
+                    f"ingestion job {started.job_id} on knowledge base "
+                    f"{started.knowledge_base_id!r} was still {current.status} after "
+                    f"{timeout_seconds:g}s; the job keeps running inside the engine, where a "
+                    "later status read still sees it"
+                )
+            await asyncio.sleep(poll_seconds)
+            body = await self._get(url, query=_LATEST_JOB_QUERY)
+            latest = _job_result(
+                self._json(body).get("ingestionJobSummaries"),
+                knowledge_base_id=started.knowledge_base_id,
+                data_source_id=started.data_source_id,
+                waited=True,
+            )
+            if latest is None:
+                raise ProviderResponseError(
+                    f"no ingestion job for knowledge base {started.knowledge_base_id!r} "
+                    "while one was being waited for",
+                    body,
+                )
+            current = latest
+        if current.status == _SYNC_COMPLETE:
+            # The wait ended on the one status the readiness check accepts, so recording it
+            # saves the next retrieve a round trip without ever asserting more than AWS said.
+            self._ready.add(started.knowledge_base_id)
+        elif current.status in _SYNC_FAILED_STATUSES:
+            # The poll reads the summary list, whose element type has no `failureReasons`,
+            # so a failed wait spends one more request to learn why instead of reporting a
+            # failure it cannot explain.
+            current = await self._failure_detail(current, url)
+        return current
+
+    async def _failure_detail(self, job: SyncResult, url: str) -> SyncResult:
+        """The failed job's own record, where the engine states why it failed."""
+        body = await self._get(f"{url}/{rfc3986(job.job_id)}")
+        detailed = _job_result(
+            self._json(body).get("ingestionJob"),
+            knowledge_base_id=job.knowledge_base_id,
+            data_source_id=job.data_source_id,
+            waited=True,
+        )
+        return detailed if detailed is not None else job
+
     async def _ensure_ingested(self, knowledge_base_id: str) -> None:
         if knowledge_base_id in self._ready:
             return
         data_source = await self._first_data_source(knowledge_base_id)
         body = await self._get(
-            self._url(
-                knowledge_base_id,
-                f"datasources/{rfc3986(data_source)}/ingestionjobs",
-            ),
-            query=_LATEST_JOB_QUERY,
+            self._jobs_url(knowledge_base_id, data_source), query=_LATEST_JOB_QUERY
         )
-        status = _first_status(self._json(body).get("ingestionJobSummaries"))
-        if status != "COMPLETE":
+        job = _first_ingestion_job(self._json(body).get("ingestionJobSummaries"))
+        status = job.get("status") if job is not None else None
+        if status != _SYNC_COMPLETE:
             raise ConfigurationError(
                 f"knowledge base {knowledge_base_id!r} has no completed ingestion job "
                 f"(latest status: {status or 'none'}); the corpus is empty until one "
@@ -353,6 +577,13 @@ class BedrockKnowledgeBaseClient(_HttpKnowledgeBaseClient):
         base = self._base_url or f"https://{_BEDROCK_SERVICE}.{region}.amazonaws.com"
         return f"{base}/knowledgebases/{rfc3986(knowledge_base_id)}/{suffix}"
 
+    def _jobs_url(self, knowledge_base_id: str, data_source_id: str) -> str:
+        """The one ingestion-job collection: read for the latest job, posted to start one."""
+        return self._url(
+            knowledge_base_id,
+            f"datasources/{rfc3986(data_source_id)}/ingestionjobs",
+        )
+
     async def _get(self, url: str, *, query: str = "") -> str:
         headers = sigv4_headers(
             url=url,
@@ -378,15 +609,62 @@ class BedrockKnowledgeBaseClient(_HttpKnowledgeBaseClient):
         return await self._send("POST", url, body=payload, headers=headers)
 
 
-def _first_status(summaries: Any) -> str | None:
-    if not isinstance(summaries, Sequence) or isinstance(summaries, (str, bytes)):
+def _first_ingestion_job(value: Any) -> Mapping[str, Any] | None:
+    """One job record, from either shape the engine returns it in.
+
+    ``StartIngestionJob`` and ``GetIngestionJob`` answer with ``ingestionJob``; the list
+    answers with ``ingestionJobSummaries``. One reader serves both for the fields it reads,
+    the job id and the status. It does not serve both for ``failureReasons``: the summary
+    element type has no such member, so the reason is only readable from the job itself.
+    """
+    if isinstance(value, Mapping):
+        return value
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         return None
-    for entry in summaries:
+    for entry in value:
         if isinstance(entry, Mapping):
-            status = entry.get("status")
-            if isinstance(status, str):
-                return status
+            return entry
     return None
+
+
+def _failure_reason(value: Any) -> str | None:
+    """The engine's own explanation for a failed job, or ``None`` when it gave none.
+
+    ``IngestionJob.failureReasons`` is an array of strings, not of records. A reader that
+    expected objects would find nothing on every real failure and still look correct
+    against a fixture that encoded the same wrong shape.
+    """
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return None
+    for entry in value:
+        if isinstance(entry, str) and entry:
+            return entry
+    return None
+
+
+def _job_result(
+    value: Any,
+    *,
+    knowledge_base_id: str,
+    data_source_id: str,
+    waited: bool = False,
+) -> SyncResult | None:
+    """A job record as a :class:`SyncResult`, or ``None`` when the record is unusable."""
+    job = _first_ingestion_job(value)
+    if job is None:
+        return None
+    job_id = job.get("ingestionJobId")
+    status = job.get("status")
+    if not isinstance(job_id, str) or not job_id or not isinstance(status, str) or not status:
+        return None
+    return SyncResult(
+        knowledge_base_id=knowledge_base_id,
+        data_source_id=data_source_id,
+        job_id=job_id,
+        status=status,
+        waited=waited,
+        failure_reason=_failure_reason(job.get("failureReasons")),
+    )
 
 
 def _bedrock_chunks(answer: Mapping[str, Any]) -> tuple[KnowledgeChunk, ...]:
@@ -499,6 +777,27 @@ class VertexKnowledgeBaseClient(_HttpKnowledgeBaseClient):
         return KnowledgeResult(
             chunks=_vertex_chunks(self._json(body)),
             cost_usd=base.retrieve_cost_per_query_usd,
+        )
+
+    async def sync(
+        self,
+        base: KnowledgeBaseSpec,
+        *,
+        wait: bool = False,
+        timeout_seconds: float = DEFAULT_SYNC_TIMEOUT_SECONDS,
+        poll_seconds: float = DEFAULT_SYNC_POLL_SECONDS,
+    ) -> SyncResult:
+        """Refused: a Vertex RAG corpus has no ingestion job for a caller to start.
+
+        Refused rather than silently reported as started, because the caller asked for a
+        corpus to be rebuilt and returning success would let a run believe it had been. The
+        reason comes from :func:`sync_support`, so a caller that checks first and a caller
+        that calls anyway hear exactly the same sentence.
+        """
+        support = sync_support(base.engine)
+        raise ConfigurationError(
+            f"knowledge base {base.id!r} cannot be synced. "
+            f"{support.reason or 'This engine has no ingestion job to start.'}"
         )
 
     def _resolve_project(self) -> str:
@@ -660,6 +959,25 @@ class FixtureKnowledgeBaseClient:
         return KnowledgeResult(
             chunks=chunks[:top_k],
             cost_usd=base.retrieve_cost_per_query_usd,
+        )
+
+    async def sync(
+        self,
+        base: KnowledgeBaseSpec,
+        *,
+        wait: bool = False,
+        timeout_seconds: float = DEFAULT_SYNC_TIMEOUT_SECONDS,
+        poll_seconds: float = DEFAULT_SYNC_POLL_SECONDS,
+    ) -> SyncResult:
+        """Refused: a fixture is a recording, so there is no corpus to rebuild.
+
+        The engine's capability is not in question here -- the fixture replaces the engine,
+        not its provider -- so the refusal names the fixture instead of reusing
+        :func:`sync_support`, whose sentence would blame an engine that is not being used.
+        """
+        raise ConfigurationError(
+            f"knowledge base {base.id!r} is served from a fixture, so there is no remote "
+            f"corpus to sync; unset {FIXTURE_ENV} to run against the engine"
         )
 
 

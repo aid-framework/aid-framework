@@ -24,6 +24,7 @@ import { guard } from './commands/guard.js';
 import { infra } from './commands/infra.js';
 import { ingest } from './commands/ingest.js';
 import { init } from './commands/init.js';
+import { kb } from './commands/kb.js';
 import { migrate } from './commands/migrate.js';
 import { packageEdge } from './commands/package.js';
 import { trace } from './commands/trace.js';
@@ -172,6 +173,28 @@ export const COMMANDS: readonly Command[] = [
         retriever: args.values.get('retriever'),
         all: args.booleans.has('all'),
         dryRun: args.booleans.has('dry-run'),
+      }),
+  },
+  {
+    name: 'kb',
+    summary: 'ask the engine that owns a managed knowledge base to re-ingest it',
+    usage: 'kb sync [spec] [--target <name>] [--retriever <id> | --all] [--wait]',
+    maxPositionals: 2,
+    flags: [
+      valueFlag('retriever', 'id', 'sync one managed retriever, by the id the spec used'),
+      booleanFlag('all', 'sync every managed retriever the spec declares'),
+      booleanFlag('wait', 'follow the ingestion job until the engine reports it done'),
+      TARGET_FLAG,
+      JSON_FLAG,
+    ],
+    run: (context, args) =>
+      kb(context, {
+        subcommand: args.positionals[0],
+        spec: args.positionals[1],
+        target: args.values.get('target'),
+        retriever: args.values.get('retriever'),
+        all: args.booleans.has('all'),
+        wait: args.booleans.has('wait'),
       }),
   },
   {

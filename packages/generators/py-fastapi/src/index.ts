@@ -82,6 +82,7 @@ export {
   RETRIEVAL_INIT_PATH,
 } from './emit/retrieval.js';
 export { RETRIEVAL_INGEST_INIT_PATH, retrievalIngestModulePath } from './emit/retrievalIngest.js';
+export { RETRIEVAL_SYNC_INIT_PATH, retrievalSyncModulePath } from './emit/retrievalSync.js';
 /**
  * The managed-runtime adapter, and the gate the Dockerfile asks before it points
  * `uvicorn` at it.

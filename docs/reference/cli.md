@@ -23,6 +23,7 @@ Every command accepts `-h` / `--help` for its own usage. All except `dev` accept
 | [`guard`](#guard) | measure the guardrails against a red-team corpus |
 | [`migrate`](#migrate) | emit the SQL the declared vector stores need, for an operator to apply |
 | [`ingest`](#ingest) | index a retriever corpus into the store the spec declares |
+| [`kb`](#kb) | ask the engine that owns a managed knowledge base to re-ingest it |
 | [`eval`](#eval) | run the eval gate, or record the baseline it measures against |
 | [`cost`](#cost) | report cost and latency from the local trace sink |
 | [`trace`](#trace) | inspect a traced run: the span tree, timings, models, tokens and cost |
@@ -138,6 +139,23 @@ aid ingest [spec] [--target <name>] [--retriever <id> | --all] [--dry-run]
 | `--retriever <id>` | ingest one declared retriever, by the id the spec used |
 | `--all` | ingest every retriever the spec declares |
 | `--dry-run` | report what a run would write, and write nothing |
+| `--target <name>` | generator target; one of py-fastapi, ts-vercel |
+| `--json` | print one JSON document on stdout |
+| `-h`, `--help` | print this command's usage |
+
+## `kb`
+
+ask the engine that owns a managed knowledge base to re-ingest it
+
+```sh
+aid kb sync [spec] [--target <name>] [--retriever <id> | --all] [--wait]
+```
+
+| Option | Description |
+| --- | --- |
+| `--retriever <id>` | sync one managed retriever, by the id the spec used |
+| `--all` | sync every managed retriever the spec declares |
+| `--wait` | follow the ingestion job until the engine reports it done |
 | `--target <name>` | generator target; one of py-fastapi, ts-vercel |
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |

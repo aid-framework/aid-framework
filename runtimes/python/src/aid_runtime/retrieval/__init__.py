@@ -76,15 +76,19 @@ from aid_runtime.retrieval.hybrid import (
     tokenize,
 )
 from aid_runtime.retrieval.knowledge_base import (
+    DEFAULT_SYNC_TIMEOUT_SECONDS,
     FIXTURE_ENV,
     BedrockKnowledgeBaseClient,
     FixtureKnowledgeBaseClient,
     KnowledgeBaseClient,
     KnowledgeChunk,
     KnowledgeResult,
+    SyncResult,
+    SyncSupport,
     VertexKnowledgeBaseClient,
     knowledge_base_client_for,
     knowledge_base_env_id,
+    sync_support,
 )
 from aid_runtime.retrieval.metrics import (
     CitationGrounding,
@@ -141,6 +145,7 @@ from aid_runtime.retrieval.types import (
 
 __all__ = [
     "DEFAULT_CANDIDATE_FACTOR",
+    "DEFAULT_SYNC_TIMEOUT_SECONDS",
     "FILTER_OPERATORS",
     "FIXTURE_ENV",
     "BedrockEmbedder",
@@ -209,6 +214,8 @@ __all__ = [
     "SourceSpec",
     "StoreKind",
     "StoreRecord",
+    "SyncResult",
+    "SyncSupport",
     "VectorStore",
     "VectorStoreSpec",
     "VertexEmbedder",
@@ -240,5 +247,6 @@ __all__ = [
     "retrieval_metrics",
     "rrf_score",
     "similarity",
+    "sync_support",
     "tokenize",
 ]

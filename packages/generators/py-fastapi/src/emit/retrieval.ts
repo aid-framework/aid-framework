@@ -20,7 +20,7 @@
  */
 
 import type { IR, ManagedRetrieverShape, RetrieverShape, Trait } from '@aid-framework/ir';
-import { catalogKnowledgeBaseCost, isManagedRetriever } from '@aid-framework/ir';
+import { catalogKnowledgeBaseCost, isLocalRetriever, isManagedRetriever } from '@aid-framework/ir';
 
 import { moduleName } from '../names.js';
 import { INDENT, pythonNumber, pythonStatement, pythonString } from '../python.js';
@@ -32,6 +32,7 @@ import { stageGuardrails, stageTable } from './guardrails.js';
 import { orderedRetrievers } from './order.js';
 import { require } from './require.js';
 import { retrievalIngestFiles } from './retrievalIngest.js';
+import { retrievalSyncFiles } from './retrievalSync.js';
 import { pythonDoc } from './text.js';
 
 export const RETRIEVAL_INIT_PATH = `${GENERATED_ROOT}/retrieval/__init__.py`;
@@ -74,27 +75,65 @@ const COMPREHENSION_BODY =
 export function emitRetrieval(ir: IR): EmittedFile[] {
   if (ir.retrievers.length === 0) return [];
   return [
-    emitRetrievalInit(),
+    emitRetrievalInit(ir),
     emitRetrievalBindings(ir),
     emitCitationsContract(),
     ...retrievalIngestFiles(ir),
+    ...retrievalSyncFiles(ir),
   ];
 }
 
-function emitRetrievalInit(): EmittedFile {
+/**
+ * The subpackages the `retrieval/` package actually contains.
+ *
+ * Named here rather than listed statically, because a package that imported a
+ * subpackage it does not have would fail at import time -- and the two halves of the
+ * layout are conditional in opposite directions: a spec whose retrievers are all local
+ * has `ingest/` and no `sync/`, one whose retrievers are all managed has `sync/` and no
+ * `ingest/`.
+ */
+function retrievalPackages(ir: IR): string[] {
+  return [
+    'bindings',
+    ...(ir.retrievers.some(isLocalRetriever) ? ['ingest'] : []),
+    ...(ir.retrievers.some(isManagedRetriever) ? ['sync'] : []),
+  ];
+}
+
+function emitRetrievalInit(ir: IR): EmittedFile {
+  const packages = retrievalPackages(ir);
   return generated(
     RETRIEVAL_INIT_PATH,
     assemble([
       HEADER,
       pythonDoc(
         'The retrievers the spec declares, each bound to the embedding and store it ' +
-          'names -- or, when it reads a managed knowledge base, to that base -- and the ' +
-          'ingest entry point that fills a local index.',
+          'names -- or, when it reads a managed knowledge base, to that base' +
+          entryPoints(packages),
       ),
-      importFrom('.', ['bindings', 'ingest']),
-      pythonStatement('__all__ = ', ['bindings', 'ingest']),
+      importFrom('.', packages),
+      pythonStatement('__all__ = ', packages),
     ]),
   );
+}
+
+/**
+ * The clause naming the entry points this package actually has.
+ *
+ * A local retriever's corpus is filled here, which the `ingest/` entry point does; a
+ * managed one is filled inside the engine, which `sync/` asks it to do. Naming an entry
+ * point the package does not contain would point a reader at a directory that is not
+ * there, so the sentence follows the tree the way `__all__` does.
+ */
+function entryPoints(packages: readonly string[]): string {
+  const ingest = 'the ingest entry point that fills a local index';
+  const sync = 'the sync entry point that rebuilds an engine-owned one';
+  if (packages.includes('ingest') && packages.includes('sync')) {
+    return ` -- ${ingest}, and ${sync}.`;
+  }
+  if (packages.includes('ingest')) return ` -- and ${ingest}.`;
+  if (packages.includes('sync')) return ` -- and ${sync}.`;
+  return '.';
 }
 
 /**
