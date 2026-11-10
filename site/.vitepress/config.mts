@@ -216,6 +216,7 @@ export default defineConfig({
             { text: 'Support copilot', link: '/walkthroughs/support-copilot' },
             { text: 'Guarded reply', link: '/walkthroughs/guarded-reply' },
             { text: 'Enterprise profile', link: '/walkthroughs/enterprise-profile' },
+            { text: 'Delivery controls', link: '/walkthroughs/delivery-controls' },
           ],
         },
       ],

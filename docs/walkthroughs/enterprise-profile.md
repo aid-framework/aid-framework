@@ -222,5 +222,6 @@ a region that the cloud does not offer is refused whether or not a tier was name
 required and no artifact moves. Regenerating an existing 0.24 spec at 0.25 produces byte-identical
 output; see [Migrating](../migration.md).
 
-Read next: [guarded-reply](guarded-reply.md) for the example this one starts from, or
+Read next: [delivery controls](delivery-controls.md) for the 0.26 controls this walkthrough's tier
+now also requires, [guarded-reply](guarded-reply.md) for the example this one starts from, or
 [the spec reference](../reference/spec.md#top-level-keys) for `profile` and the `audit` block.
