@@ -389,6 +389,15 @@ export const SHIPPED_FEATURES = [
     href: './reference/spec.md#gateway',
     since: '0.1.139',
   },
+  {
+    id: 'profiles',
+    title: 'Delivery profiles with a pinned placement and audit sink',
+    detail:
+      'A top-level `profile` names a bundle of required controls -- `standard` is the default and `enterprise` is the regulated one -- and a deployment can pin the `cloud`, `region` and `audit` sink it lands in, so the placement and the audit record are properties of the customer rather than of whoever ran the apply. The `profile` gate refuses an `enterprise` spec that omits a region pin, an audit sink, or a guardrail that runs on output.',
+    declaredBy: 'profile, deployments[].cloud, deployments[].region, deployments[].audit',
+    href: './reference/spec.md#top-level-keys',
+    since: '0.1.141',
+  },
 ];
 
 /**
@@ -442,6 +451,13 @@ export const REFUSALS = [
     reason:
       'Cloud CDN serves static assets and cannot run the app, so the infra planner refuses the plan instead of emitting part of a project.',
     code: 'cli/infra-cloud-target-unsupported',
+  },
+  {
+    id: 'enterprise-profile-without-audit',
+    title: 'An `enterprise` profile with a required control missing',
+    reason:
+      '`enterprise` is a promise that the controls a regulated deployment cannot go without are present, so a spec that declares it and then omits a region pin, an audit sink, or a guardrail that runs on output is refused by the `profile` gate. The three are reported separately -- `ir/profile-region`, `ir/profile-audit` and `ir/profile-guardrail` -- because each has its own fix, and the gate is what keeps the word `enterprise` from meaning nothing.',
+    code: 'ir/profile-audit',
   },
 ];
 
@@ -537,7 +553,16 @@ export const CAPABILITY_FAMILIES = [
       'The same spec emits a Dockerfile, OpenTofu for AWS or GCP, a CDK app, and the project CI that re-runs every gate — then stops owning any of it.',
     declaredBy: 'deployments[], aid infra',
     href: './reference/targets.md#capability-matrix',
-    featureIds: ['infra', 'cdk', 'aws-bedrock', 'gcp-vertex', 'generated-ci', 'image', 'eject'],
+    featureIds: [
+      'infra',
+      'cdk',
+      'aws-bedrock',
+      'gcp-vertex',
+      'generated-ci',
+      'image',
+      'eject',
+      'profiles',
+    ],
   },
   {
     id: 'observability',

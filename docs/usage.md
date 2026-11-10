@@ -364,8 +364,8 @@ Covers:
 
 <!-- capability-family: deploy -->
 
-A deployment says where the app runs. The cloud is a flag on `aid infra`, not a spec field,
-because the same spec can be planned against either one.
+A deployment says where the app runs. `target` picks the shape, and the placement — cloud,
+region, audit sink — may be pinned in the spec or left to the flag.
 
 ```yaml
 deployments:
@@ -426,6 +426,37 @@ Both cloud paths ask for `id-token: write` and nothing else; the emitted workflo
 the derived host and the identity per matrix entry, so two accounts publishing in one
 project do not share a login.
 
+A top-level `profile` says which
+class of customer the app is built for. `standard` is the default, and it is what an absent
+`profile` means, so a document written before `0.25` reads exactly as it did. `enterprise`
+requires the three controls `0.25` can generate — a region pin, an audit sink, and at least one
+`output`-stage guardrail — because a gate that asks for a control the schema cannot express is a
+gate nobody can pass. Identity, private networking and production approval policy are the next
+increments, and the reference says so rather than implying they are enforced today.
+
+```yaml
+profile: enterprise
+
+deployments:
+  api:
+    target: container
+    streaming: true
+    secrets: [OPENAI_API_KEY]
+
+    cloud: aws             # aws | gcp
+    region: eu-central-1   # placement, and the residency pin
+    audit:
+      sink: cloudwatch     # cloudwatch | s3 | gcs | bigquery
+      retentionDays: 365
+```
+
+`cloud` is optional. Absent, `aid infra` keeps taking `--cloud` and defaulting to `aws`, which is
+why adding the key changes no existing output. Pinned, it wins: a spec that says `gcp` and a
+command that says `--cloud aws` is refused, because planning somewhere the spec did not say is
+the one mistake a placement field exists to prevent. `region` is checked against the region set
+of that cloud. `audit` is one environment-scoped sink rather than one per service, because the
+record covers the placement, not a process.
+
 ```sh
 aid infra gen --cloud aws
 aid infra plan --cloud aws --iac tofu
@@ -450,6 +481,10 @@ What is refused:
 - An image on a registry the release workflow has no login for, a cloud image missing the
   account, role or provider its login federates with, or one whose credential names the
   registry does not read.
+- An enterprise profile with no region pin, no audit sink, or no `output`-stage guardrail; a
+  region the deployment's cloud does not offer; a deployment whose cloud or audit sink
+  disagrees with its sibling's; and a spec that pins one cloud while the command asks for
+  another.
 
 `aid eject` moves a generated file into `business/` and stops generating it. After that the
 file is yours, and the manifest says so instead of re-reporting it as drift.
@@ -462,6 +497,7 @@ Covers:
 - **Vertex AI from the GCP modules**
 - **Generated project CI**
 - **A Dockerfile and an image**
+- **Delivery profiles with a pinned placement and audit sink**
 - **Eject**
 
 ## Observability and cost

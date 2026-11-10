@@ -15,6 +15,7 @@ Spec schema title: *AID Framework spec v0.6*.
 | Key | Type | Description |
 | --- | --- | --- |
 | `specVersion` | `string` | Spec language version. Each version's additions are listed in the spec version changelog (`docs/reference/spec-changelog.md`). A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key. |
+| `profile` | `standard`, `enterprise` | The operating profile: a named bundle of defaults and required controls, not a mode. `standard` is the default and is what an absent `profile` means, so every spec written before 0.25 keeps exactly the behaviour it had. `enterprise` requires the controls a regulated deployment cannot go without, and the profile gate refuses a spec that declares it and then omits them: a region pin on every deployment, an audit sink on every deployment, and at least one guardrail that runs on output. A requirement that a spec could not satisfy is never added to a profile, so `enterprise` is always passable. Declarable from spec v0.25. |
 | `project` | `project` | — |
 | `types` | map of `typeDef` | Named structured types referenced by prompts (structured output) and tools (input/output). |
 | `models` | map of `model` | Model aliases. The alias is what the rest of the spec refers to; the vendor id is pinned here and only here. |
@@ -705,6 +706,9 @@ Responsible-AI categories the template filters, category -> the lowest confidenc
 | `concurrency` | `integer` | no | — |
 | `autoscale` | object (fields below) | no | — |
 | `secrets` | array of `string` | yes | — |
+| `cloud` | `aws`, `gcp` | no | The cloud this deployment lands in. Spec 0.25. Before 0.25 the cloud was only a CLI flag (`aid infra --cloud`, defaulting to `aws`), which put a property of the customer's deployment in whoever's shell happened to run the apply. When the spec declares it, the spec wins and an agreeing `--cloud` is ignored, while a disagreeing one is refused with `cli/infra-cloud-conflict` rather than silently dropped. When the spec omits it, `--cloud` decides, and `aws` when that is absent too -- byte-identical to the behaviour before this key existed. Deployments that pin *different* clouds are refused separately, by `ir/cloud-conflict`, because one module set targets one cloud. |
+| `region` | `string` | no | The region the deployment is placed in, and the residency pin. Spec 0.25. A deployment scalar rather than a project one, because one project may place `prod` and `dev` in different regions. Validated against the region set of the deployment's cloud, so a region that belongs to the other cloud is `ir/region-target` at validate time rather than a module that fails at apply time. |
+| `audit` | `audit` | no | Where this deployment's audit record lands. Spec 0.25. The sink names a service the customer already owns; AID emits the log group or sink, never its contents. `enterprise` requires one on every deployment. |
 | `image` | `image` | no | Where the image is published. Spec 0.4, and only on a `target: container` deployment: another target builds no image to publish. |
 | `pipeline` | `name` | no | The pipeline this job runs, by id. Spec 0.5, and only on a `target: batch` deployment: a run-to-completion job exists to run exactly one pipeline once, and a target that answers requests runs whichever pipeline its route names. The pipeline must declare `trigger.manual`. |
 | `runtime` | `runtime` | no | The managed agent runtime the process runs on. Spec 0.13, and only on a `target: container` deployment: the platform schedules, isolates and addresses the process, so the compute module is replaced rather than paired with it. The spec must declare exactly one HTTP route, because the platform's invocation route carries one request shape. The app is unchanged: the generated contract wrapper mounts the same ASGI app and route handlers, so the cost ceiling, trace span, eval hook and refusals stay on the invocation path. |
@@ -744,6 +748,15 @@ How long one session may live. Defaults to 480 minutes, the AgentCore microVM ce
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `ttlMinutes` | `integer` | no | Session lifetime in minutes. AgentCore microVMs stop at 480; the Google platform accepts up to 20160 (14 days). |
+
+## `audit`
+
+The audit destination for a deployment: a service the customer already runs, named rather than configured here. Each sink belongs to one cloud, and a sink named for the other cloud is refused (`ir/audit-target`) instead of emitted as a resource the deploy cannot create.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `sink` | `cloudwatch`, `s3`, `gcs`, `bigquery` | yes | The log destination. `cloudwatch` and `s3` are AWS; `gcs` and `bigquery` are Google Cloud. |
+| `retentionDays` | `integer` | no | How long the record is kept, in days. Omitted means the sink's own default, which is the honest answer: AID does not invent a retention policy for an operator's log store, and no lifecycle rule is emitted at all rather than one guessed. When the document does name one, every sink honours it, each in its own provider's terms: a CloudWatch log group via `retention_in_days`, an S3 archive via a lifecycle expiration, a GCS bucket via a lifecycle rule, and a partitioned BigQuery dataset via a partition expiration. Two deployments naming the same sink with different retention are different destinations, and `ir/audit-conflict` refuses them. |
 
 ## `image`
 

@@ -77,7 +77,7 @@ priced and gated. The count is how much of that family has already shipped.
 | **[Guardrails and decisions](./reference/spec.md#guardrail)** | `guardrails[], decisions[]` | A policy names its stages and its failing action, the security gate refuses an unguarded POST route, and a judgement can be a checked decision rather than prose. | 6 |
 | **[Quality gates](./reference/spec.md#eval)** | `evals[]` | An eval declares a regression budget over a dataset, `aid eval` exits non-zero when it is exceeded, and a pipeline with no CI eval is a build error. | 2 |
 | **[Agents and tools](./reference/spec.md#agent)** | `agents[], tools[]` | A tool loop is generated from the spec while the tool bodies stay yours in `app/business/`, so the plumbing is owned and the logic is not. | 2 |
-| **[Deployment and infrastructure](./reference/targets.md#capability-matrix)** | `deployments[], aid infra` | The same spec emits a Dockerfile, OpenTofu for AWS or GCP, a CDK app, and the project CI that re-runs every gate — then stops owning any of it. | 7 |
+| **[Deployment and infrastructure](./reference/targets.md#capability-matrix)** | `deployments[], aid infra` | The same spec emits a Dockerfile, OpenTofu for AWS or GCP, a CDK app, and the project CI that re-runs every gate — then stops owning any of it. | 8 |
 | **[Observability and cost](./reference/cli.md#trace)** | `traces[], aid cost` | A trace records what each step did and a cost metric reports what it spent, both read from the same priced profiles the budget gate enforces. | 2 |
 
 <!-- capability-band:end -->
@@ -135,7 +135,7 @@ shows every file `gen` wrote and serves the endpoint. You need Node.js 24 or new
 account, no email gate, nothing else to install.
 
 Seven packages on npm and one on PyPI ship together at version **{{ AID_VERSION }}**, with
-the spec language at `0.24`.
+the spec language at `0.25`.
 
 ## Support, read from the code
 

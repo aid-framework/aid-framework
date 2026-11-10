@@ -215,6 +215,7 @@ export default defineConfig({
           items: [
             { text: 'Support copilot', link: '/walkthroughs/support-copilot' },
             { text: 'Guarded reply', link: '/walkthroughs/guarded-reply' },
+            { text: 'Enterprise profile', link: '/walkthroughs/enterprise-profile' },
           ],
         },
       ],
@@ -225,6 +226,7 @@ export default defineConfig({
             { text: 'Getting started', link: '/guide/getting-started' },
             { text: 'Usage', link: '/usage' },
             { text: 'Concepts', link: '/guide/concepts' },
+            { text: 'Migrations', link: '/migration' },
             { text: 'Troubleshooting', link: '/troubleshooting' },
           ],
         },

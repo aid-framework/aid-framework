@@ -5,7 +5,7 @@
 | Status | **Draft — awaiting review** |
 | Author | Agent-assisted audit, 2026 |
 | Phase | 0 (audit + design). No feature code in this RFC. |
-| Affects | `spec` 0.19 → 0.23, `ir` 0.2.0 → 0.6.0, `cli`, both generators, `runtimes/python`, `runtimes/typescript` |
+| Affects | `spec` 0.25 → 0.29, `ir` 0.2.0 → 0.6.0, `cli`, both generators, `runtimes/python`, `runtimes/typescript` |
 | Supersedes | nothing |
 
 > **Nothing in this document is built.** Every construct, gate and command below is a
@@ -39,7 +39,7 @@ which is exactly the honesty pattern a trajectory-eval phase should replace.
 controls that reuse constructs the spec already has or that need only a scalar, one scalar to give
 the customer's own cloud a home in the spec (so a region can be checked against the right region
 set), five gates, two goldens, one walkthrough. It needs no runtime change and no new CLI verb, it
-bumps `specVersion` to `0.19` additively (absent `profile` means `standard`, and a spec with no
+bumps `specVersion` to `0.25` additively (absent `profile` means `standard`, and a spec with no
 `cloud` keeps consulting `--cloud`, so no existing spec changes meaning), and it establishes the
 *shape* the following four phases hang off.
 
@@ -59,7 +59,7 @@ bumps `specVersion` to `0.19` additively (absent `profile` means `standard`, and
 
 | Fact | Value | Source of truth |
 | --- | --- | --- |
-| Spec language version | `0.18` | `packages/spec/src/schema/spec.schema.json` |
+| Spec language version | `0.24` | `packages/spec/src/schema/spec.schema.json` |
 | IR version | `0.1.0` | `packages/ir/src/build.ts` |
 | Build-time gates | **17** | `packages/ir/src/gates/index.ts` (`GATES`) |
 | Diagnostic codes | **70** under `ir/`, plus `spec/` and `cli/` namespaces | `packages/ir/src/diagnostics.ts` |
@@ -118,11 +118,11 @@ The brief sets six. Each proposal in this RFC is checked against them, and where
 5. **Reproducible output.** Every phase adds byte-asserted fixtures and updates
    `test/golden.test.ts` / `digests.json`. Profile resolution is a pure function of
    `(spec, overlay)`, so the resolved spec is itself a golden.
-6. **Versioned language.** `profile` is additive but still bumps `specVersion` to `0.19`, because
-   the schema is closed: a `0.18` spec that writes `profile` must be told it needs `0.19` by
+6. **Versioned language.** `profile` is additive but still bumps `specVersion` to `0.25`, because
+   the schema is closed: a `0.24` spec that writes `profile` must be told it needs `0.25` by
    `spec/not-supported`, not silently accepted. No phase renames or removes a key, but two phases
-   change what an existing construct *admits* — 0.21 widens `evals.*.target` from `pipeline:` only,
-   and 0.19 adds `deployments[].cloud` where `--cloud` already existed — so both carry a migration
+   change what an existing construct *admits* — 0.27 widens `evals.*.target` from `pipeline:` only,
+   and 0.25 adds `deployments[].cloud` where `--cloud` already existed — so both carry a migration
    note in §7 even though neither invalidates an existing spec.
 
 ---
@@ -153,9 +153,9 @@ current gate answers "is this spec internally consistent?" None answers "is this
 | **Top-level `profile` (chosen)** | One place to read, one place to gate, and overlays (F) set it per customer. |
 
 **Profile requirement sets grow by version.** This is the honest-increment mechanism. An
-enterprise profile at `0.19` requires exactly the three controls `0.19` can enforce (region, audit
-sink, input+output guardrails). `0.20` adds identity and private networking to the same
-requirement list; `0.21` adds production approval policy. At no point does the gate require a
+enterprise profile at `0.25` requires exactly the three controls `0.25` can enforce (region, audit
+sink, an `output`-stage guardrail). `0.26` adds identity and private networking to the same
+requirement list; `0.27` adds production approval policy. At no point does the gate require a
 construct the schema cannot express — which would be a gate nobody can pass.
 
 ### B. Workflow and agent depth
@@ -269,13 +269,13 @@ that path.
 
 ## 4. Proposed spec additions
 
-All examples assume `specVersion: "0.19"` unless stated. Only new keys are annotated; anything
+All examples assume `specVersion: "0.25"` unless stated. Only new keys are annotated; anything
 unannotated already exists.
 
-### 4.1 `profile` (0.19) — capability A
+### 4.1 `profile` (0.25) — capability A
 
 ```yaml
-specVersion: "0.19"
+specVersion: "0.25"
 profile: enterprise          # NEW. standard | enterprise. Absent means standard.
 
 project:
@@ -285,9 +285,9 @@ deployments:                     # a map keyed by deployment name, like every se
   prod:
     target: serverless
     secrets: [OPENAI_API_KEY]    # required today; these are names, never values
-    cloud: aws                   # NEW (0.19). aws | gcp.
-    region: eu-central-1         # NEW (0.19). Placement and residency pin.
-    audit:                       # NEW (0.19). Where the audit record lands.
+    cloud: aws                   # NEW (0.25). aws | gcp.
+    region: eu-central-1         # NEW (0.25). Placement and residency pin.
+    audit:                       # NEW (0.25). Where the audit record lands.
       sink: cloudwatch           # cloudwatch | s3 | gcs | bigquery
       retentionDays: 365
 ```
@@ -306,10 +306,10 @@ apply. The precedence rule keeps existing specs byte-identical:
 - spec declares `cloud` → the spec wins, and a conflicting `--cloud` is refused with
   `ir/cloud-conflict` rather than silently ignored. Passing `--cloud` that agrees is not an error.
 
-### 4.2 Enterprise identity, network, approval (0.20) — capability A, continued
+### 4.2 Enterprise identity, network, approval (0.26) — capability A, continued
 
 ```yaml
-specVersion: "0.20"
+specVersion: "0.26"
 profile: enterprise
 
 deployments:
@@ -318,14 +318,14 @@ deployments:
     secrets: [OPENAI_API_KEY, DATABASE_URL]
     cloud: aws
     region: eu-central-1
-    identity:                      # NEW (0.20). Reference, never a secret.
+    identity:                      # NEW (0.26). Reference, never a secret.
       kind: oidc                   # oidc | saml
       issuer: https://login.example.com
       audience: aid-claims
-    network:                       # NEW (0.20). Private placement.
+    network:                       # NEW (0.26). Private placement.
       private: true
       egress: declared-only        # declared-only | open
-    approvals:                     # NEW (0.20). Change control, not runtime HITL.
+    approvals:                     # NEW (0.26). Change control, not runtime HITL.
       require: [security, platform]
       minApprovers: 2
       environments: [prod]
@@ -338,10 +338,10 @@ already runs (an IdP, a VPC, a code-review policy), never material AID would pro
 back. Nothing here creates a control plane — `identity` compiles into the generated app's token
 validation, and `approvals` compiles into a required-reviewers rule in the generated CI.
 
-### 4.3 Durable runs and step approval (0.20) — capability B
+### 4.3 Durable runs and step approval (0.26) — capability B
 
 ```yaml
-specVersion: "0.20"
+specVersion: "0.26"
 
 agents:
   claims_adjudicator:
@@ -351,7 +351,7 @@ agents:
     tools: [lookup_policy, issue_refund]
     maxSteps: 12                    # already required today
     maxCostBudget: 2.50
-    state:                          # NEW (0.20). Durable run state.
+    state:                          # NEW (0.26). Durable run state.
       kind: postgres                # postgres | sqlite
       urlEnv: DATABASE_URL          # a name, not a value
       ttlHours: 168
@@ -369,7 +369,7 @@ pipelines:
           input:
             claim: "{{ event.claim }}"
           as: receipt
-          requiresApproval: true    # NEW (0.20). Pause before this write step.
+          requiresApproval: true    # NEW (0.26). Pause before this write step.
 ```
 
 `state` does **not** reuse `stores`, and the reason is a real constraint rather than taste: `stores`
@@ -384,10 +384,10 @@ caller in the moment" to "stop the run and wait for a recorded decision," which 
 approval queue needs. The generated plumbing is the pause/resume route, the `Approval` typed
 contract and the state-store interface; the *decision* is a `business/` function.
 
-### 4.4 Trajectory metrics (0.21) — capability C
+### 4.4 Trajectory metrics (0.27) — capability C
 
 `tool-trace`, `cost` and `latency` already exist in the schema and are refused at generation.
-`0.21` implements them in the runtime and moves the refusal from the generator to the gate layer
+`0.27` implements them in the runtime and moves the refusal from the generator to the gate layer
 so the message is a gate diagnostic rather than a codegen error.
 
 An eval's `target` is a single string today, and its pattern is `^pipeline:[a-z][a-z0-9_]{0,63}$` —
@@ -400,7 +400,7 @@ it carries a version bump and a migration note even though no existing spec beco
 evals:
   refund_trajectory:
     description: Whether the adjudicator calls the tools it should, in order, within budget.
-    target: agent:claims_adjudicator   # NEW (0.21). Today the pattern admits pipeline: only.
+    target: agent:claims_adjudicator   # NEW (0.27). Today the pattern admits pipeline: only.
     dataset:
       source: file
       uri: evals/refund_trajectory.jsonl
@@ -422,7 +422,7 @@ The metric keys are not new: `tool-trace` requires `expect` (with optional `orde
 generation*, so this phase adds no schema surface for them — it adds the runtime measurement and the
 gate diagnostic, which is the smaller and more honest change.
 
-### 4.5 OTel export intent (0.21) — capability D
+### 4.5 OTel export intent (0.27) — capability D
 
 `observability` is **not a spec section today**: it exists only in the IR
 (`DEFAULT_OBSERVABILITY` in `packages/ir/src/shapes.ts`, always `{ trace: true, redact: [] }`).
@@ -430,20 +430,20 @@ So this phase *introduces* the spec section and carries `trace` and `redact` int
 adding a key to something already declarable.
 
 ```yaml
-observability:                 # NEW section (0.21). Today only the IR has this shape.
+observability:                 # NEW section (0.27). Today only the IR has this shape.
   trace: true                  # carried from the IR default once the section exists
   redact: [email]
-  export: otlp                 # NEW (0.21). otlp | none. Address comes from the environment.
+  export: otlp                 # NEW (0.27). otlp | none. Address comes from the environment.
 ```
 
-### 4.6 Feedback and promotion (0.22) — capability E
+### 4.6 Feedback and promotion (0.28) — capability E
 
 ```yaml
-specVersion: "0.22"
+specVersion: "0.28"
 
-observability:                 # the section introduced at 0.21
+observability:                 # the section introduced at 0.27
   trace: true
-  feedback:                    # NEW (0.22). Declared signals, with PII rules.
+  feedback:                    # NEW (0.28). Declared signals, with PII rules.
     signals: [thumbs, correction, escalation-outcome]
     stateUrlEnv: DATABASE_URL  # a name, not a value
     pii:
@@ -471,7 +471,7 @@ evals:
     gate:
       ci: true
       maxRegression: 0.05
-      promotion:               # NEW (0.22). Refuses a candidate that regresses.
+      promotion:               # NEW (0.28). Refuses a candidate that regresses.
         allowedQualityDrop: 0.01
         maxCostIncrease: 0.10
         requireApproval: true  # enterprise: always true
@@ -481,14 +481,14 @@ Pinning is **half-built already**, and the RFC is more useful for saying exactly
 `prompts.<name>.version` is required, and `normalize.ts` builds the node identity as
 `promptIdentity(id, version)` — so the registry key exists and a prompt revision does not move the IR
 node id. What is missing is the other half: **no gate compares the template text to the version**, so
-a template can be edited with the version left at `4` and nothing refuses it. `0.22` adds
+a template can be edited with the version left at `4` and nothing refuses it. `0.28` adds
 `ir/prompt-version-stale`, which hashes each template (the manifest already hashes generated files)
 and refuses a changed hash at an unchanged version. That is the promotion gate applied to the
 cheapest artifact in the spec, and it is the prerequisite for the eval-budget promotion below.
 
 `feedback.stateUrlEnv` follows the same name-not-value rule as `state.urlEnv` above.
 
-### 4.7 Overlays and templates (0.23) — capability F
+### 4.7 Overlays and templates (0.29) — capability F
 
 Overlays are **not** part of the spec schema. They are a separate file type with their own schema and
 their own diagnostics, so a bad overlay reads `overlay/...` and never pretends to be an IR failure.
@@ -513,7 +513,7 @@ overrides:
 
 ```yaml
 # in the base spec: the only paths an overlay may touch, and how far
-overridable:                    # NEW (0.23). The one key this phase adds to the spec.
+overridable:                    # NEW (0.29). The one key this phase adds to the spec.
   project.name: true
   deployments.prod.region: true
   deployments.prod.audit.sink: true
@@ -533,7 +533,7 @@ rather than an edit buried in a customer file.
 House voice, matched to existing gates: `the <name> gate rejected "<id>": <what is wrong>` with a
 `hint` that is the fix. Every message names the artifact and the field so a reader can find it.
 
-### 0.19 — profile (5 codes)
+### 0.25 — profile (5 codes)
 
 | Code | Sev | Message | Hint |
 | --- | --- | --- | --- |
@@ -547,10 +547,10 @@ House voice, matched to existing gates: `the <name> gate rejected "<id>": <what 
 already exists and defaults to `aws`. Two sources of truth for the same value is exactly the kind of
 ambiguity this repo refuses rather than resolves silently.
 
-Also: writing `profile` in a `0.18` spec yields the existing `spec/not-supported`, naming `0.19`
+Also: writing `profile` in a `0.24` spec yields the existing `spec/not-supported`, naming `0.25`
 — the standard upgrade path, no new code.
 
-### 0.20 — identity, network, approval, durable runs (5 codes)
+### 0.26 — identity, network, approval, durable runs (5 codes)
 
 | Code | Sev | Message | Hint |
 | --- | --- | --- | --- |
@@ -560,7 +560,7 @@ Also: writing `profile` in a `0.18` spec yields the existing `spec/not-supported
 | `ir/agents-state-store` | error | `the state gate rejected "claims_adjudicator": it can call issue_refund, which has side effects, and it declares no durable state, so a paused run cannot outlive the process` | `add state with kind and urlEnv, or remove the write tool` |
 | `ir/approval-step-tool` | error | `the approval gate rejected "refund": step 2 sets requiresApproval on "lookup_policy", which has no side effects` | `set requiresApproval only on tools whose sideEffects is write or destructive` |
 
-### 0.21 — trajectory metrics, cost fallback, export (4 codes)
+### 0.27 — trajectory metrics, cost fallback, export (4 codes)
 
 | Code | Sev | Message | Hint |
 | --- | --- | --- | --- |
@@ -574,7 +574,7 @@ support in this phase; if any remain unimplemented for a specific target, the re
 `ir/eval-metric-unmeasured` in the gate layer with the same reason text, so the honesty survives
 the move.
 
-### 0.22 — self-improvement (5 codes)
+### 0.28 — self-improvement (5 codes)
 
 | Code | Sev | Message | Hint |
 | --- | --- | --- | --- |
@@ -584,7 +584,7 @@ the move.
 | `ir/feedback-pii` | error | `the feedback gate rejected "claims-triage": signal "correction" stores free text under pii.redact entries that do not cover national-id, and the store is declared as persistent` | `add national-id to observability.feedback.pii.redact, or set retentionDays to 0` |
 | `ir/promotion-approval` | error (enterprise) | `the promotion gate rejected "triage": profile "enterprise" requires a recorded approval for a promotion, and the candidate declares none` | `record an approval for this candidate, or promote under profile: standard` |
 
-### 0.23 — overlays (4 codes, new `overlay/` namespace)
+### 0.29 — overlays (4 codes, new `overlay/` namespace)
 
 | Code | Sev | Message | Hint |
 | --- | --- | --- | --- |
@@ -602,11 +602,11 @@ change is `app/business/`, `aid eject` flips any file. New artifacts per phase:
 
 | Phase | `app/generated/` | `app/business/` | Infra / CI |
 | --- | --- | --- | --- |
-| 0.19 | `profile.py` reconciliation record; `region`/`audit` threaded into the deployment descriptor | — | region variable into the module set; audit sink resource (`aws_cloudwatch_log_group` / `google_logging_project_sink`); `--confirm-prod` unchanged |
-| 0.20 | `approvals.py` pause/resume plumbing; `run_state.py` state-store interface (SQLite default); `Approval` typed contract; resume route | `approval_policy.py` (the decision); `run_state` override hook | approval gate on the prod environment in generated CI; private-network flags in the module set |
-| 0.21 | trajectory metric wiring; `observability.py` gains exporter setup reading env | `judge.py` (unchanged) | dashboards-as-code for the supported clouds; `aid report` reads files |
-| 0.22 | promotion report writer; feedback intake route | `feedback.py` (what a signal *means*) | promotion gate job in generated CI; approval record for enterprise |
-| 0.23 | resolved spec (a build artifact, not code) | — | per-customer env roots; `aid fleet` reads them |
+| 0.25 | `generated_capabilities()` gains `profile` and a `placements` record (cloud, region, audit) — threaded into the existing capabilities record, not a new file | — | an environment-scoped `modules/audit/` module (tofu) and a parallel `cdk/audit.cjs` construct; one `module "audit"` call and one `output "audit_destination"` in the env root; `--confirm-prod` unchanged. **Region is not module content** — design §12.2 forbids baking account/region/CIDR into generated output, so the provider decides where the environment lands |
+| 0.26 | `approvals.py` pause/resume plumbing; `run_state.py` state-store interface (SQLite default); `Approval` typed contract; resume route | `approval_policy.py` (the decision); `run_state` override hook | approval gate on the prod environment in generated CI; private-network flags in the module set |
+| 0.27 | trajectory metric wiring; `observability.py` gains exporter setup reading env | `judge.py` (unchanged) | dashboards-as-code for the supported clouds; `aid report` reads files |
+| 0.28 | promotion report writer; feedback intake route | `feedback.py` (what a signal *means*) | promotion gate job in generated CI; approval record for enterprise |
+| 0.29 | resolved spec (a build artifact, not code) | — | per-customer env roots; `aid fleet` reads them |
 
 Every generated file above is added to the manifest with hashes, to the byte-asserted fixtures,
 and to the eject table for both targets.
@@ -617,11 +617,11 @@ and to the eject table for both targets.
 
 | Phase | specVersion | Breaking for existing specs? | IR version | Migration note |
 | --- | --- | --- | --- | --- |
-| 1 | 0.18 → **0.19** | No. `profile` absent = `standard`; `cloud`/`region`/`audit` are new optional keys, and a spec with no `cloud` keeps consulting `--cloud` exactly as today. | 0.1.0 → **0.2.0** (IR gains `profile`) | Note that `cloud` may now live in the spec, and that a spec pinning it refuses a conflicting `--cloud` (`ir/cloud-conflict`). |
-| 2 | 0.19 → **0.20** | No. New optional keys. | → 0.3.0 | None. |
-| 3 | 0.20 → **0.21** | No. Two meaning changes, both widening: the generator refusals for `tool-trace`/`cost`/`latency` become measurements (a spec previously rejected now generates), and `evals.*.target` admits `agent:` as well as `pipeline:`. | → 0.4.0 | Note that those refusals are lifted and what now enforces them (`ir/eval-metric-unmeasured`), plus the `agent:` target. |
-| 4 | 0.21 → **0.22** | No. New optional keys, plus `ir/prompt-version-stale`, which can refuse a spec that passes today if its template drifted without a version bump. | → 0.5.0 | Note the prompt-version rule explicitly, naming the diagnostic. |
-| 5 | 0.22 → **0.23** | No. Overlays are a new artifact type; the spec gains only `overridable`. | → 0.6.0 | None. |
+| 1 | 0.24 → **0.25** | No. `profile` absent = `standard`; `cloud`/`region`/`audit` are new optional keys, and a spec with no `cloud` keeps consulting `--cloud` exactly as today. | 0.1.0 → **0.2.0** (IR gains `profile`) | Note that `cloud` may now live in the spec, and that a spec pinning it refuses a conflicting `--cloud` (`ir/cloud-conflict`). |
+| 2 | 0.25 → **0.26** | No. New optional keys. | → 0.3.0 | None. |
+| 3 | 0.26 → **0.27** | No. Two meaning changes, both widening: the generator refusals for `tool-trace`/`cost`/`latency` become measurements (a spec previously rejected now generates), and `evals.*.target` admits `agent:` as well as `pipeline:`. | → 0.4.0 | Note that those refusals are lifted and what now enforces them (`ir/eval-metric-unmeasured`), plus the `agent:` target. |
+| 4 | 0.27 → **0.28** | No. New optional keys, plus `ir/prompt-version-stale`, which can refuse a spec that passes today if its template drifted without a version bump. | → 0.5.0 | Note the prompt-version rule explicitly, naming the diagnostic. |
+| 5 | 0.28 → **0.29** | No. Overlays are a new artifact type; the spec gains only `overridable`. | → 0.6.0 | None. |
 
 `IR_VERSION` bumps are mechanical (both in-repo generators declare an `irRange`), and the IR
 goldens (`packages/ir/test/__golden__/full.ir.json`, `retrieval.ir.json`) are regenerated
@@ -644,7 +644,7 @@ Unchanged, and re-stated because the brief asks for it to stay honest:
   you with an application, not a dependency on AID.
 - **No auto-deploy from self-improvement.** Promotion is a merged PR that passed a gate. Under
   `enterprise`, it also carries a recorded approval.
-- **No model hosting, no fine-tuning** in phases 0.19–0.24 (unchanged from `design.md` Phase 4).
+- **No model hosting, no fine-tuning** in phases 0.25–0.29 (unchanged from `design.md` Phase 4).
 - **No secrets in specs.** Identity issuers and audit sinks are references and names.
 - **No Azure or Kubernetes in these phases.** That is a capability-matrix phase with its own
   refusals, and smuggling it into profiles would make an "enterprise" spec quietly
@@ -659,11 +659,11 @@ tests, docs, features-page data and a walkthrough — the phase-exit definition 
 
 | # | Phase | Value | Effort | Smallest shippable increment |
 | --- | --- | --- | --- | --- |
-| **1** | **`profile` + `cloud` + region + audit + guardrail requirement (0.19)** | Establishes the tier concept and the first "acceptable *for this class of customer*" gate. Unlocks every later phase's enterprise controls. | **4–5 d** | `profile: enterprise` refuses a spec with no region pin, no audit sink, or a served pipeline missing an input or output guardrail — with the fix in the hint. |
-| 2 | Identity, private network, approval policy, durable runs, step approval (0.20) | The enterprise control set is complete enough to pass a security review; long-running runs survive a restart. | 8–10 d | `state` (`kind` + `urlEnv`) + `ir/agents-state-store`; `requiresApproval` on a pipeline write step. |
-| 3 | Trajectory evals, per-agent coverage, fallback pricing, OTel export + `aid report` (0.21) | Agents become measurable; fleets become comparable without a backend. | 10–12 d | `tool-trace` measured end-to-end for one agent, replacing the generator refusal. |
-| 4 | Feedback signals + promotion gate (0.22) | The self-improving loop closes, gated and approved. | 8–10 d | `aid eval --compare baseline candidate` writes a report a gate can read. |
-| 5 | Overlays, `aid resolve`, `aid fleet`, two templates (0.23) | Twenty customers, one base spec. | 10–12 d | One overlay with one overridable path, resolved by `aid gen --overlay`. |
+| **1** | **`profile` + `cloud` + region + audit + guardrail requirement (0.25)** | Establishes the tier concept and the first "acceptable *for this class of customer*" gate. Unlocks every later phase's enterprise controls. | **4–5 d** | `profile: enterprise` refuses a spec with no region pin, no audit sink, or a served pipeline missing an input or output guardrail — with the fix in the hint. |
+| 2 | Identity, private network, approval policy, durable runs, step approval (0.26) | The enterprise control set is complete enough to pass a security review; long-running runs survive a restart. | 8–10 d | `state` (`kind` + `urlEnv`) + `ir/agents-state-store`; `requiresApproval` on a pipeline write step. |
+| 3 | Trajectory evals, per-agent coverage, fallback pricing, OTel export + `aid report` (0.27) | Agents become measurable; fleets become comparable without a backend. | 10–12 d | `tool-trace` measured end-to-end for one agent, replacing the generator refusal. |
+| 4 | Feedback signals + promotion gate (0.28) | The self-improving loop closes, gated and approved. | 8–10 d | `aid eval --compare baseline candidate` writes a report a gate can read. |
+| 5 | Overlays, `aid resolve`, `aid fleet`, two templates (0.29) | Twenty customers, one base spec. | 10–12 d | One overlay with one overridable path, resolved by `aid gen --overlay`. |
 
 **Total: ~42–49 days.** Sequences chosen so each phase is independently valuable and
 independently revertable.
@@ -673,7 +673,7 @@ independently revertable.
 The smallest thing that is genuinely shippable and not a stub:
 
 1. **Schema** — `profile` enum (`standard`, `enterprise`), `deployments[].cloud`,
-   `deployments[].region`, `deployments[].audit`; `specVersion` `0.19`. Valid/invalid fixtures both
+   `deployments[].region`, `deployments[].audit`; `specVersion` `0.25`. Valid/invalid fixtures both
    directions.
 2. **IR** — `profile` on `IR`, `cloud`/`region`/`audit` on the deployment shape; `IR_VERSION` →
    `0.2.0`; goldens regenerated as a reviewable diff.
@@ -682,7 +682,7 @@ The smallest thing that is genuinely shippable and not a stub:
 4. **Generators** — thread `cloud`/`region`/`audit` into the deployment descriptor for both targets;
    emit the audit sink resource in the AWS and GCP module sets, and honour the spec's `cloud` over
    `--cloud` (refusing a conflict). Byte-asserted fixtures.
-5. **Docs** — `spec.md` entries; `features.md` with `since: 0.19` and the five refusals;
+5. **Docs** — `spec.md` entries; `features.md` with a `since` release and the refusal;
    `site/scripts/features-data.mjs` additions (the page does not build without them);
    `support.md` regenerated.
 6. **Walkthrough** — `docs/walkthroughs/enterprise-profile.md`: start from a spec that
@@ -713,14 +713,51 @@ For the CLI reference and the features page, at the end of this RFC:
 
 | Construct / command | Status |
 | --- | --- |
-| `profile`, `deployments[].cloud`, `.region`, `.audit` | proposed, 0.19, not built |
-| `deployments[].identity`, `.network`, `.approvals` | proposed, 0.20, not built |
-| `agents[].state`, step `requiresApproval` | proposed, 0.20, not built |
-| `tool-trace` / `cost` / `latency` measured | declarable, **refused at generation today**; proposed 0.21 |
-| `observability` as a spec section, `.export: otlp` | **no spec section today** (IR-only); proposed 0.21 |
-| `observability.feedback`, `evals[].gate.promotion` | proposed, 0.22, not built |
-| `prompts[].version` | **exists and is required**, and forms `prompt:<name>@<version>`; the staleness gate is proposed 0.22 |
-| `overridable`, overlays, `aid resolve`, `aid fleet`, `--template` | proposed, 0.23, not built |
+| `profile`, `deployments[].cloud`, `.region`, `.audit` | **built in 0.25** (see §10.1) |
+| `deployments[].identity`, `.network`, `.approvals` | proposed, 0.26, not built |
+| `agents[].state`, step `requiresApproval` | proposed, 0.26, not built |
+| `tool-trace` / `cost` / `latency` measured | declarable, **refused at generation today**; proposed 0.27 |
+| `observability` as a spec section, `.export: otlp` | **no spec section today** (IR-only); proposed 0.27 |
+| `observability.feedback`, `evals[].gate.promotion` | proposed, 0.28, not built |
+| `prompts[].version` | **exists and is required**, and forms `prompt:<name>@<version>`; the staleness gate is proposed 0.28 |
+| `overridable`, overlays, `aid resolve`, `aid fleet`, `--template` | proposed, 0.29, not built |
+
+### 10.1 Phase 1, as shipped
+
+Recorded here so the reference pages and the features page quote the repo, not this RFC.
+
+Built and gated:
+
+- `specVersion` `0.25`; `profile` (`standard` | `enterprise`, absent means `standard`);
+  `deployments[].cloud` (`aws` | `gcp`), `.region` (checked against that cloud's region set),
+  `.audit` (`sink` one of `cloudwatch` | `s3` | `gcs` | `bigquery`, optional `retentionDays`).
+- `IR_VERSION` 0.2.0: `IR.profile` is required, and the deployment shape carries the three
+  placement fields. IR JSON schema is `ir-0.2.json`.
+- Gate `profile` (18th), with five diagnostics: `ir/profile-region`, `ir/profile-audit`,
+  `ir/profile-guardrail`, `ir/region-target`, `ir/audit-conflict`. `ir/cloud-conflict` and the CLI's
+  `infra/infra-cloud-conflict` cover the two different disagreements (deployments with each other,
+  versus a spec pin against `--cloud`).
+- `CLOUDS` region sets: 29 AWS regions, 39 GCP regions.
+- Generated output: `generated_capabilities()` gains `profile` and `placements`; an
+  environment-scoped `modules/audit/` tofu module covering all four sinks, and a parallel
+  `cdk/audit.cjs` construct, both gated on a pinned audit so an unpinned spec generates
+  byte-identical output to 0.24.
+- `aid infra` refuses `--cloud` when the spec pins a different one; with no spec pin, `--cloud`
+  or `aws` behaves exactly as before.
+
+Deliberately **not** built in Phase 1, and refused rather than implied:
+
+- The enterprise profile does not require identity, private networking or approval policy.
+  There is no construct to satisfy such a requirement, so requiring it would make
+  `profile: enterprise` unpassable. It requires exactly the three controls that exist: a region
+  pin on every deployment, an audit sink on every deployment, and at least one guardrail whose
+  stages include `output`. Input guardrails are already forced onto every HTTP pipeline that
+  feeds caller text into a prompt by `ir/security-input-guardrail`, so the profile does not
+  restate a rule the security gate already owns.
+- `audit.retentionDays` is enforced as part of a destination's identity (two deployments naming
+  the same sink with different retention conflict, `ir/audit-conflict`) and is honoured by all
+  four sinks, but is not yet validated against a per-cloud minimum or maximum.
+- No `aid report`, no overlay, no `--template`. Nothing in this phase adds a hosted component.
 
 ---
 
@@ -751,8 +788,11 @@ For the CLI reference and the features page, at the end of this RFC:
 
 ## 12. Decision requested
 
+**Status: approved and implemented.** Phase 1 shipped as specified here, with §10.1 recording
+exactly what landed. Phase 2 is the next increment and is not started.
+
 Approve Phase 1 as described in §9.1 (`profile` + `cloud` + region + audit + guardrail
-requirement, `specVersion` 0.19, `IR_VERSION` 0.2.0, five diagnostics, both generators, fixtures,
+requirement, `specVersion` 0.25, `IR_VERSION` 0.2.0, five diagnostics, both generators, fixtures,
 docs, features page, one walkthrough) and I will implement it end to end on this branch. Or redirect
 the sequencing — for example to Phase 5's overlays first if multi-customer throughput is worth more
 right now than tier enforcement. I recommend Phase 1 first, for the reason in §9.1: it proves the
