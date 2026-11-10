@@ -1165,7 +1165,9 @@ function specChangelogPage() {
   lines.push('');
   lines.push('| Version | What it adds |');
   lines.push('| --- | --- |');
-  for (const entry of SPEC_VERSIONS) {
+  // Newest first so the current version is the first row, not something to scroll past every
+  // older version to find. `SPEC_VERSIONS` stays ascending to mirror the schema enum.
+  for (const entry of [...SPEC_VERSIONS].reverse()) {
     lines.push(`| \`${entry.version}\` | ${cell(entry.adds)} |`);
   }
   lines.push('');

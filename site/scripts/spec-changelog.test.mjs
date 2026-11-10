@@ -49,9 +49,11 @@ describe('the spec version changelog', () => {
     expect(page).toContain('[spec version changelog](./spec-changelog.md)');
   });
 
-  it('renders one table row per version', () => {
+  it('renders one table row per version, newest first', () => {
     const page = read('docs/reference/spec-changelog.md');
     const rows = [...page.matchAll(/^\| `([0-9]+\.[0-9]+)` \|/gm)].map((match) => match[1]);
-    expect(rows).toEqual(SPEC_VERSIONS.map((entry) => entry.version));
+    expect(rows).toEqual([...SPEC_VERSIONS].map((entry) => entry.version).reverse());
+    expect(rows[0]).toBe('0.24');
+    expect(rows[rows.length - 1]).toBe('0.1');
   });
 });
