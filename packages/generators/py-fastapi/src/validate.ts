@@ -1149,11 +1149,6 @@ function checkRetrieverDeclaration(
         'runtime rebuilds the whole index on every ingest',
     );
   }
-  if ((retriever.filters ?? []).length > 0) {
-    refuse(
-      `retriever '${retriever.id}' declares filters, which the runtime does not implement yet`,
-    );
-  }
   const store = ir.stores.find((entry) => entry.id === retriever.store);
   if (store === undefined) {
     problems.push(

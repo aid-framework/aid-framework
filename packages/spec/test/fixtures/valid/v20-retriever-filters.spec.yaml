@@ -1,0 +1,44 @@
+specVersion: "0.20"
+
+project:
+  name: filtered-knowledge
+  namespace: aid.examples.filters
+  description: Narrows a retrieval to one tenant's passages before ranking them.
+  targets:
+    - py-fastapi
+
+models:
+  embed:
+    provider: fake
+    modelId: text-embedding-3-small
+    capabilities: [embeddings]
+
+stores:
+  docs:
+    kind: memory
+    dimensions: 1536
+
+retrievers:
+  knowledge:
+    source:
+      kind: file
+      uri: ./docs
+      glob: "**/*.md"
+    chunking:
+      strategy: recursive
+      size: 800
+      overlap: 100
+      keepMetadata: [tenant, locale, section]
+    embedModel: embed
+    store: docs
+    index:
+      metric: cosine
+    topK: 5
+    filters:
+      - "tenant == 'acme'"
+      - "locale != 'de'"
+      - "section ^= 'api/'"
+      - "uri $= '.md'"
+      - "title *= 'pricing'"
+    refresh:
+      mode: full

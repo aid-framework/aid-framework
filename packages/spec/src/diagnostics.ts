@@ -53,6 +53,7 @@ export const DIAGNOSTIC_CODES = {
   runtimePlatformConflict: 'spec/runtime-platform-conflict',
   runtimeInvocationRoutes: 'spec/runtime-invocation-routes',
   runtimePort: 'spec/runtime-port',
+  filterExpression: 'spec/filter-expression',
 } as const;
 
 /** Codes are namespaced `<layer>/<slug>`. This layer's own codes are `spec/*`. */

@@ -154,6 +154,7 @@ def binding(
     store_uri: str | None = None,
     dimensions: int = DIMENSIONS,
     refresh_mode: RefreshMode = RefreshMode.FULL,
+    filters: Sequence[str] | None = None,
 ) -> RetrieverBinding:
     """A binding built the way generated code builds one: through the IR."""
     return binding_from_spec(
@@ -168,6 +169,7 @@ def binding(
             keep_metadata=keep_metadata,
             metric=metric,
             refresh_mode=refresh_mode,
+            filters=filters,
         ),
         embedding=embedding_spec(dimensions=dimensions),
         store=store_spec(kind=store_kind, uri=store_uri, dimensions=dimensions),

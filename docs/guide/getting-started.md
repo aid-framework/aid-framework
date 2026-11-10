@@ -62,6 +62,7 @@ original surface - and you raise it when you use a later construct:
 | `0.17` | `deployments[].image.registry: aws.ecr`, which assumes a role with OIDC and derives its host from the account and region. |
 | `0.18` | `deployments[].image.registry: gcp.artifact-registry`, which federates through Workload Identity and prefixes the repository with the project. |
 | `0.19` | `retrievers[].refresh.mode: incremental`, which embeds only chunks the index does not already hold and deletes the vectors of documents the corpus no longer contains. |
+| `0.20` | `retrievers[].filters`, field/operator/value expressions that narrow a query to the passages a tenant or classification allows. |
 
 A section or construct that needs a later version is reported as `spec/not-supported` with
 the version it needs, so you get told rather than silently ignored. Raise the value yourself;

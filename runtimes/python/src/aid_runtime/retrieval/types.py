@@ -29,6 +29,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from aid_runtime.errors import ConfigurationError, FeatureDeferredError
+from aid_runtime.retrieval.filters import metadata_fields
 from aid_runtime.types import CostProfile
 
 __all__ = [
@@ -302,6 +303,7 @@ class RetrieverBinding(BaseModel):
     index: IndexSpec
     top_k: int = Field(gt=0)
     rerank: RerankSpec | None = None
+    filters: tuple[str, ...] = ()
     refresh_mode: RefreshMode = RefreshMode.FULL
     traits: tuple[str, ...] = ()
 
@@ -525,6 +527,10 @@ def binding_from_spec(
     ``store`` names a *stores entry id*. Both are checked here rather than
     trusted, because a mistyped reference in generated code would otherwise
     surface as an empty or mis-scored corpus far from its cause.
+
+    A declared filter also widens ``chunking.keepMetadata``: a chunk carries only the
+    metadata that field names, so filtering on a key it omits would match nothing. The
+    union is done here so the spec does not have to state the same key twice.
     """
     if spec.embed_model != embedding.id:
         raise ConfigurationError(
@@ -535,13 +541,13 @@ def binding_from_spec(
         raise ConfigurationError(
             f"retriever {spec.id!r} names store {spec.store!r} but store {store.id!r} was supplied"
         )
-    if spec.filters:
-        # The spec validator already refuses filters; the runtime checks too,
-        # because generated code is reachable without the validator having run.
-        raise FeatureDeferredError(
-            f"retriever {spec.id!r} declares filters, which spec v0.1 does not implement: a "
-            "filter would have to be pushed into every store adapter's query"
-        )
+    filters = tuple(spec.filters or ())
+    chunking = spec.chunking
+    if filters:
+        # Parse now: a malformed selector is a configuration fault, and generated
+        # code is reachable without the spec validator having run.
+        keep = tuple(dict.fromkeys((*chunking.keep_metadata, *metadata_fields(filters))))
+        chunking = chunking.model_copy(update={"keep_metadata": keep})
     pinned = pinned_embedding(embedding, alias=spec.embed_model, dimensions=dimensions)
     if store.dimensions is not None and store.dimensions != pinned.dimensions:
         raise ConfigurationError(
@@ -552,7 +558,7 @@ def binding_from_spec(
     return RetrieverBinding(
         retriever_id=spec.id,
         source=spec.source,
-        chunking=spec.chunking,
+        chunking=chunking,
         embed_model=spec.embed_model,
         embedding=pinned,
         store=spec.store,
@@ -561,6 +567,7 @@ def binding_from_spec(
         index=spec.index,
         top_k=spec.top_k,
         rerank=spec.rerank,
+        filters=filters,
         refresh_mode=spec.refresh.mode,
         traits=spec.traits,
     )

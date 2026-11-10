@@ -17,9 +17,10 @@
  *   alone and nothing is resolved at run time.
  */
 
-import { ConfigurationError, FeatureDeferredError } from '../errors.js';
+import { ConfigurationError } from '../errors.js';
 import { repr, sha256Parts } from '../internal/json.js';
 import { CostProfile } from '../types.js';
+import { metadataFields } from './filters.js';
 
 /** `retriever.index.metric`. */
 export type DistanceMetric = 'cosine' | 'dot' | 'l2';
@@ -342,6 +343,7 @@ export class RetrieverBinding {
   readonly topK: number;
   readonly rerank: RerankSpec | null;
   readonly refreshMode: RefreshMode;
+  readonly filters: readonly string[];
   readonly traits: readonly string[];
 
   constructor(init: {
@@ -357,6 +359,7 @@ export class RetrieverBinding {
     readonly topK: number;
     readonly rerank?: RerankSpec | null;
     readonly refreshMode?: RefreshMode;
+    readonly filters?: readonly string[];
     readonly traits?: readonly string[];
   }) {
     this.retrieverId = requireNonEmpty(init.retrieverId, 'retrieverId');
@@ -371,6 +374,7 @@ export class RetrieverBinding {
     this.topK = requirePositiveInt(init.topK, 'retriever topK');
     this.rerank = init.rerank ?? null;
     this.refreshMode = init.refreshMode ?? 'full';
+    this.filters = [...(init.filters ?? [])];
     this.traits = [...(init.traits ?? [])];
   }
 }
@@ -499,13 +503,19 @@ export function bindingFromSpec(
         `${repr(store.id)} was supplied`,
     );
   }
-  if (spec.filters !== null && spec.filters.length > 0) {
-    // The spec validator already refuses filters; the runtime checks too, because
-    // generated code is reachable without the validator having run.
-    throw new FeatureDeferredError(
-      `retriever ${repr(spec.id)} declares filters, which spec v0.1 does not implement: a ` +
-        "filter would have to be pushed into every store adapter's query",
-    );
+  let chunking = spec.chunking;
+  const filters = [...(spec.filters ?? [])];
+  if (filters.length > 0) {
+    // Parse now: a malformed selector is a configuration fault, and generated code
+    // is reachable without the spec validator having run. `metadataFields` parses,
+    // so a bad expression throws here rather than matching nothing later.
+    const keep = [...new Set([...chunking.keepMetadata, ...metadataFields(filters)])];
+    chunking = new ChunkingSpec({
+      strategy: chunking.strategy,
+      size: chunking.size,
+      overlap: chunking.overlap,
+      keepMetadata: keep,
+    });
   }
   const pinned = pinnedEmbedding(embedding, {
     alias: spec.embedModel,
@@ -521,7 +531,7 @@ export function bindingFromSpec(
   return new RetrieverBinding({
     retrieverId: spec.id,
     source: spec.source,
-    chunking: spec.chunking,
+    chunking,
     embedModel: spec.embedModel,
     embedding: pinned,
     store: spec.store,
@@ -531,6 +541,7 @@ export function bindingFromSpec(
     topK: spec.topK,
     rerank: spec.rerank,
     refreshMode: spec.refresh.mode,
+    filters,
     traits: spec.traits,
   });
 }

@@ -215,6 +215,15 @@ export {
   OpenAICompatibleEmbedder,
   VertexEmbedder,
 } from './retrieval/embedding.js';
+export {
+  compileFilters,
+  FILTER_OPERATORS,
+  Filter,
+  matches,
+  matchesAll,
+  metadataFields,
+  parseFilter,
+} from './retrieval/filters.js';
 export { RetrievalGate } from './retrieval/gate.js';
 export {
   bm25Scores,

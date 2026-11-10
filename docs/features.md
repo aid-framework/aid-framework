@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.19`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.20`.
 
 ## Deployment targets
 
