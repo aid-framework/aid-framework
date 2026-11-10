@@ -134,21 +134,21 @@ describe('buildDeployPlan', () => {
     });
   });
 
-  it('projects memory off where the platform cannot create a bank', () => {
+  it('projects memory onto a GCP runtime, where the engine carries the bank', () => {
     const { plan } = planOf({
-      specVersion: '0.13',
+      specVersion: '0.24',
       deployments: {
         api: {
           target: 'container',
           secrets: [],
-          runtime: { platform: 'gcp-agent-platform' },
+          runtime: { platform: 'gcp-agent-platform', memory: { shortTerm: true } },
         },
       },
     });
     expect(plan.services[0]?.runtime).toEqual({
       platform: 'gcp-agent-platform',
       cloud: 'gcp',
-      memory: { shortTerm: false },
+      memory: { shortTerm: true },
       session: { ttlMinutes: 480 },
     });
   });

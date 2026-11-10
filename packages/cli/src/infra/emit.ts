@@ -829,8 +829,8 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
     ...(modules.agentRuntime
       ? [
           cloud === 'gcp'
-            ? '| `modules/agent-runtime/` | The Vertex AI reasoning engine + service account a `gcp-agent-platform` deployment runs on. |'
-            : '| `modules/agent-runtime/` | The Bedrock AgentCore runtime, memory bank and IAM role an `aws-agentcore` deployment runs on. |',
+            ? '| `modules/agent-runtime/` | The Vertex AI reasoning engine + service account a `gcp-agent-platform` deployment runs on, carrying a Memory Bank on the engine when `memory.shortTerm` is set. |'
+            : '| `modules/agent-runtime/` | The Bedrock AgentCore runtime, AgentCore Memory and IAM role an `aws-agentcore` deployment runs on. |',
         ]
       : []),
     ...(modules.knowledgeBase
@@ -1032,10 +1032,11 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
                   'streaming route answers in one piece through the platform: streams stay',
                   'incremental only when the app is called directly over HTTP.',
                   'Each declared secret gets one `secretAccessor` grant on its',
-                  'Secret Manager id; `memory` is refused at plan time, because the provider has',
-                  'no resource for a memory bank and a memory the plan does not create would be a',
-                  'promise the first apply breaks. The engine name and service account are',
-                  'exported as `reasoning_engines` and `service_accounts`.',
+                  'Secret Manager id. Managed memory is configured on the engine itself through',
+                  '`context_spec.memory_bank_config`: a generation model, an embedding model and',
+                  'a 30-day TTL, attached to the engine rather than created as a separate',
+                  'resource, so there is no memory id to export. The engine name and service',
+                  'account are exported as `reasoning_engines` and `service_accounts`.',
                   '',
                 ]
               : [

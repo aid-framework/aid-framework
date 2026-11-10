@@ -49,7 +49,6 @@ export const DIAGNOSTIC_CODES = {
   knowledgeBaseRefresh: 'spec/knowledge-base-refresh',
   runtimeWithoutContainer: 'spec/runtime-without-container',
   runtimeSessionTtl: 'spec/runtime-session-ttl',
-  runtimeMemoryOnPlatform: 'spec/runtime-memory-on-platform',
   runtimePlatformConflict: 'spec/runtime-platform-conflict',
   runtimeInvocationRoutes: 'spec/runtime-invocation-routes',
   runtimePort: 'spec/runtime-port',

@@ -1330,19 +1330,6 @@ function runtimeDiagnostics(
       }
     }
 
-    const memory = asRecord(runtime.memory);
-    if (named === 'gcp-agent-platform' && memory.shortTerm !== undefined) {
-      diagnostics.push(
-        errorDiagnostic({
-          code: DIAGNOSTIC_CODES.runtimeMemoryOnPlatform,
-          message: `deployment '${id}' asks for managed memory on 'gcp-agent-platform', which has no Terraform resource for a memory bank in v1`,
-          path: [...path, 'memory'],
-          hint: 'drop `memory`; AgentCore Memory is the only managed memory this module creates, and a memory the plan cannot create would be a promise the deploy breaks',
-        }),
-      );
-      reported.add(JSON.stringify([...path, 'memory']));
-    }
-
     const port = (Array.isArray(deployment.env) ? deployment.env : [])
       .map(asRecord)
       .find((entry) => entry.name === 'PORT');
