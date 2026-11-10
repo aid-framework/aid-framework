@@ -17,16 +17,28 @@
  * cloud, and one environment has one audit destination, so a second value would silently
  * be generated for the wrong provider or dropped in favour of the first.
  *
- * What this gate deliberately does not do: it does not require identity, private
- * networking, or an approval policy, because no spec construct expresses them yet.
- * Requiring a key that cannot be set would be an unsatisfiable gate, and refusing a
- * document for the absence of a feature the language does not have is precisely the
- * approximation this layer exists to avoid.
+ * From spec 0.26 the enterprise bundle also owns the controls that make a deployment
+ * defensible in a review: it names the identity provider that callers authenticate
+ * against, it places the workload in a private network, and it records who has to sign
+ * off before a change lands. Those three are enforced only for documents that declare
+ * `specVersion: "0.26"` or later, because a 0.25 document has no key to satisfy them
+ * with; requiring them there would be an unsatisfiable gate, which is the same
+ * approximation this layer refuses. A document that upgrades to 0.26 is told exactly
+ * which control it is missing.
+ *
+ * What this gate deliberately does not do: it does not verify that the declared identity
+ * provider exists, that the private network has been peered, or that the named reviewers
+ * are real people. Those are properties of the customer's platform, not of the document,
+ * and a build that guessed at them would be claiming a check it cannot run.
  */
 
+import { specVersionAtLeast } from '@aid-framework/spec';
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
 import { CLOUD_AUDIT_SINKS, CLOUD_REGIONS, type IR, type SpecCloud } from '../shapes.js';
 import { type GateOptions, type GateResult, NO_SUPPRESSIONS, reporter } from './contract.js';
+
+/** The spec version that first let a deployment declare the enterprise control set. */
+export const DELIVERY_CONTROLS_MIN_VERSION = '0.26';
 
 /** Where a region has to be checked against, once a cloud is named. */
 function regionHint(cloud: string, regions: readonly string[]): string {
@@ -38,6 +50,9 @@ export function profileGate(ir: IR, options: GateOptions): GateResult {
   const diagnostics: IrDiagnostic[] = [];
   const report = reporter(options);
   const enterprise = ir.profile === 'enterprise';
+  // A 0.25 document cannot spell `identity`, `network` or `approvals` at all, so demanding
+  // them from it would be a gate no edit to that document could satisfy.
+  const delivery = specVersionAtLeast(ir.specVersion, DELIVERY_CONTROLS_MIN_VERSION);
 
   // One module set targets one cloud, and `aid infra` drives one cloud per invocation, so
   // a document that pins two would generate the second deployment's resources for the
@@ -143,6 +158,41 @@ export function profileGate(ir: IR, options: GateOptions): GateResult {
           message: `the profile gate rejected "${id}": the enterprise profile requires every deployment to pin an audit sink`,
           path: ['deployments', id],
           hint: 'add `audit: { sink: cloudwatch }` (or the sink your cloud provides) so the record has a destination',
+        }),
+      );
+    }
+
+    if (!delivery) continue;
+
+    if (deployment.identity === undefined) {
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.profileIdentity,
+          message: `the profile gate rejected "${id}": the enterprise profile requires a declared identity integration, so the deployment knows whose token it is checking`,
+          path: ['deployments', id],
+          hint: 'add `identity: { kind: oidc, issuer: https://<your-idp> }` so callers arrive with a verifiable principal',
+        }),
+      );
+    }
+
+    if (deployment.network === undefined || !deployment.network.private) {
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.profileNetwork,
+          message: `the profile gate rejected "${id}": the enterprise profile requires private networking, and this deployment does not place the workload in one`,
+          path: ['deployments', id, 'network'],
+          hint: 'add `network: { private: true }`, or set `profile: standard` if the workload is meant to be internet-reachable directly',
+        }),
+      );
+    }
+
+    if (deployment.approvals === undefined) {
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.profileApprovals,
+          message: `the profile gate rejected "${id}": the enterprise profile requires an approval policy for production changes`,
+          path: ['deployments', id],
+          hint: 'add `approvals: { require: [<team>], minApprovers: 1 }` so a change to this environment waits for a human',
         }),
       );
     }

@@ -59,6 +59,7 @@
     "stores": { "type": "array", "items": { "$ref": "#/$defs/vectorStore" } },
     "memory": { "type": "array", "items": { "$ref": "#/$defs/memory" } },
     "agents": { "type": "array", "items": { "$ref": "#/$defs/agent" } },
+    "state": { "$ref": "#/$defs/agentState" },
     "guardrails": { "type": "array", "items": { "$ref": "#/$defs/guardrail" } },
     "decisions": { "type": "array", "items": { "$ref": "#/$defs/decision" } },
     "deployments": { "type": "array", "items": { "$ref": "#/$defs/deployment" } },
@@ -496,7 +497,11 @@
             "kind": { "const": "tool" },
             "tool": { "$ref": "#/$defs/identifier" },
             "input": { "$ref": "#/$defs/stepInput" },
-            "as": { "$ref": "#/$defs/identifier" }
+            "as": { "$ref": "#/$defs/identifier" },
+            "requiresApproval": {
+              "description": "Whether the run pauses for a human before this step executes. The gate refuses it on a tool with no side effects and on a document with no durable store to hold the pause.",
+              "type": "boolean"
+            }
           }
         },
         {
@@ -1279,6 +1284,7 @@
             "channel": { "type": "string" }
           }
         },
+        "state": { "$ref": "#/$defs/agentState" },
         "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
       }
     },
@@ -1415,6 +1421,59 @@
         "traits": { "type": "array", "items": { "$ref": "#/$defs/trait" } }
       }
     },
+    "agentState": {
+      "description": "A durable run store. `urlEnv` names an environment variable, never a connection string, so no credential enters the IR.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "urlEnv"],
+      "properties": {
+        "kind": { "enum": ["postgres", "sqlite"] },
+        "urlEnv": {
+          "description": "An environment variable name, uppercase by convention like `apiKeyEnv`, never a connection string.",
+          "type": "string",
+          "minLength": 1
+        },
+        "ttlHours": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "deploymentIdentity": {
+      "description": "The identity provider a deployment checks tokens against. A reference -- issuer URL and claim names -- so signature verification stays with the keys the customer's IdP owns.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "issuer"],
+      "properties": {
+        "kind": { "enum": ["oidc", "saml"] },
+        "issuer": { "type": "string", "minLength": 1 },
+        "audience": { "type": "string", "minLength": 1 },
+        "rolesClaim": { "type": "string", "minLength": 1 },
+        "scopesClaim": { "type": "string", "minLength": 1 }
+      }
+    },
+    "deploymentNetwork": {
+      "description": "Where the workload runs and what it may reach. `private` is required so the IR never implies a placement the spec did not ask for.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["private"],
+      "properties": {
+        "private": { "type": "boolean" },
+        "egress": { "enum": ["declared-only", "open"] }
+      }
+    },
+    "deploymentApprovals": {
+      "description": "Change control, not runtime human-in-the-loop: who must sign off before a change to this environment lands. Both fields are required so a policy cannot name no one.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["require", "minApprovers"],
+      "properties": {
+        "require": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "minApprovers": { "type": "integer", "minimum": 1 },
+        "environments": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
     "audit": {
       "description": "Where a deployment's audit trail is written. The sink vocabulary is wider than any one cloud on purpose; the `region` and `audit` gates pair it with the cloud actually selected.",
       "type": "object",
@@ -1455,6 +1514,9 @@
           "minLength": 1
         },
         "audit": { "$ref": "#/$defs/audit" },
+        "identity": { "$ref": "#/$defs/deploymentIdentity" },
+        "network": { "$ref": "#/$defs/deploymentNetwork" },
+        "approvals": { "$ref": "#/$defs/deploymentApprovals" },
         "env": {
           "type": "array",
           "items": {
