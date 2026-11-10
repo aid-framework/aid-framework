@@ -33,6 +33,7 @@
     "docs:head": "pnpm --filter @aid-framework/docs check:head",
     "docs:links": "pnpm --filter @aid-framework/docs check:links",
     "docs:a11y": "pnpm --filter @aid-framework/docs check:a11y",
+    "docs:browser": "pnpm --filter @aid-framework/docs check:browser",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "prepare": "lefthook install"
   },

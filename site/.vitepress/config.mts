@@ -162,6 +162,12 @@ export default defineConfig({
     hostname: `${SITE_ORIGIN}${BASE}`,
   },
   themeConfig: {
+    /**
+     * VitePress names the not-found link "go to home" but draws it as "Take me home",
+     * so the accessible name does not contain the visible text (WCAG 2.5.3). Naming it
+     * after its own text closes the gap; `check-browser-a11y.mjs` verifies it.
+     */
+    notFound: { linkLabel: 'Take me home' },
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'Usage', link: '/usage' },
@@ -246,7 +252,13 @@ export default defineConfig({
     },
   },
   markdown: {
-    theme: { light: 'github-light', dark: 'github-dark' },
+    /**
+     * The default GitHub themes put comments and punctuation below 4.5:1 on the code
+     * block background. The high-contrast variants keep the same hues and raise the
+     * foregrounds; `check-browser-a11y.mjs` measures every page in both themes, so a
+     * later theme change cannot quietly regress this.
+     */
+    theme: { light: 'github-light-high-contrast', dark: 'github-dark-high-contrast' },
     /**
      * Substitute the release version into the prose. A Vue interpolation would not work:
      * Vite's `define` does not reach a render function generated from Markdown, so the

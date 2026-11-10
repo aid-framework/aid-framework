@@ -47,3 +47,23 @@
     position: static;
   }
 }
+
+/**
+ * Contrast, measured in the browser by `check-browser-a11y.mjs`:
+ *
+ *   --vp-button-brand-bg   white on #5672cd      4.48:1   light, needs 4.5:1
+ *   --vp-code-lang-color   #929295 on #f6f6f7    2.87:1   light
+ *   --vp-code-lang-color   #6a6a71 on #161618    3.37:1   dark
+ *
+ * `--vp-c-text-2` is the token the surrounding chrome already uses for secondary
+ * text, so the language label stops being the one tertiary value on the page; it
+ * measures 5.21:1 in light and 6.31:1 in dark. The hero button needs a shade between
+ * the default brand and the darker active colour, which keeps the states distinct.
+ */
+:root {
+  --vp-code-lang-color: var(--vp-c-text-2);
+}
+
+html:not(.dark) {
+  --vp-button-brand-bg: #4d67c4;
+}
