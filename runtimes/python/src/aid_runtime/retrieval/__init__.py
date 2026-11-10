@@ -41,6 +41,8 @@ from aid_runtime.retrieval.citations import (
 from aid_runtime.retrieval.connectors import (
     Connector,
     FileConnector,
+    HttpConnector,
+    S3Connector,
     SourceDocument,
     open_connector,
 )
@@ -161,6 +163,7 @@ __all__ = [
     "FixedChunker",
     "FixtureKnowledgeBaseClient",
     "GeminiEmbedder",
+    "HttpConnector",
     "InMemoryVectorStore",
     "IndexSpec",
     "IngestReport",
@@ -196,6 +199,7 @@ __all__ = [
     "Retriever",
     "RetrieverBinding",
     "RetrieverSpec",
+    "S3Connector",
     "ScoredChunk",
     "SearchHit",
     "SourceDocument",

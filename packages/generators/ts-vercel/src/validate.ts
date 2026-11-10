@@ -574,12 +574,12 @@ export function checkRetrievers(ir: IR): PlanProblem[] {
         ),
       );
     }
-    if (retriever.source.kind !== 'file') {
+    if (retriever.source.kind === 'db' || retriever.source.kind === 'mcp') {
       problems.push(
         problem(
           'retriever-source-unsupported',
           at,
-          `source kind ${retriever.source.kind} is not wired; the runtime ships a file connector only`,
+          `source kind ${retriever.source.kind} is still reserved; s3 and http shipped in spec 0.21`,
         ),
       );
     }

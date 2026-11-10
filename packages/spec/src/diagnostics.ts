@@ -54,6 +54,7 @@ export const DIAGNOSTIC_CODES = {
   runtimeInvocationRoutes: 'spec/runtime-invocation-routes',
   runtimePort: 'spec/runtime-port',
   filterExpression: 'spec/filter-expression',
+  invalidValue: 'spec/invalid-value',
 } as const;
 
 /** Codes are namespaced `<layer>/<slug>`. This layer's own codes are `spec/*`. */

@@ -202,8 +202,14 @@ export {
   RetrievalResult,
   RetrievedItem,
 } from './retrieval/citations.js';
-export type { Connector } from './retrieval/connectors.js';
-export { FileConnector, openConnector, SourceDocument } from './retrieval/connectors.js';
+export type { Connector, RemoteFetch, RemoteResponse } from './retrieval/connectors.js';
+export {
+  FileConnector,
+  HttpConnector,
+  openConnector,
+  S3Connector,
+  SourceDocument,
+} from './retrieval/connectors.js';
 export type { Embedder } from './retrieval/embedding.js';
 export {
   BedrockEmbedder,

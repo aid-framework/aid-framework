@@ -353,6 +353,15 @@ export const SHIPPED_FEATURES = [
     href: './reference/spec.md#kind-decision',
     since: '0.1.91',
   },
+  {
+    id: 'retrieval-remote-sources',
+    title: 'S3 and HTTP corpus sources',
+    detail:
+      'A retriever indexes an `s3://` prefix or one `http(s)://` document instead of a local directory, under the same glob grammar, with document ids relative to the prefix.',
+    declaredBy: 'retrievers[].source.kind',
+    href: './reference/spec.md#retriever',
+    since: '0.1.134',
+  },
 ];
 
 /**
@@ -446,11 +455,12 @@ export const CAPABILITY_FAMILIES = [
     id: 'retrieval',
     title: 'Retrieval and memory',
     pitch:
-      'Retrieved items carry the path and offsets an answer cites, and a managed knowledge base or a local store is the same declaration.',
+      'Retrieved items carry the path and offsets an answer cites, and a managed knowledge base, an S3 prefix, an HTTP document or a local store is the same declaration.',
     declaredBy: 'retrievers[], stores[]',
     href: './reference/spec.md#retriever',
     featureIds: [
       'retrieval-citations',
+      'retrieval-remote-sources',
       'memory',
       'semantic-cache',
       'bedrock-knowledge-base',

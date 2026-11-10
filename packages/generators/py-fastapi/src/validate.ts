@@ -1130,10 +1130,11 @@ function checkRetrieverDeclaration(
     checkManagedRetrieverDeclaration(ir, retriever, path, problems);
     return;
   }
-  if (retriever.source.kind !== 'file') {
+  if (retriever.source.kind === 'db' || retriever.source.kind === 'mcp') {
     refuse(
-      `retriever '${retriever.id}' indexes a '${retriever.source.kind}' source, which the ` +
-        "runtime's connector does not implement; Phase 1 indexes a local 'file' source",
+      `retriever '${retriever.id}' indexes a '${retriever.source.kind}' source, which is ` +
+        'still reserved: the s3 and http loaders shipped in spec 0.21, and db and mcp ' +
+        'remain part of the design but unimplemented',
     );
   }
   if (retriever.chunking.strategy === 'semantic') {

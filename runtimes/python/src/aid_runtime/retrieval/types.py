@@ -88,8 +88,9 @@ class DistanceMetric(StrEnum):
 class SourceKind(StrEnum):
     """``retriever.source.kind``.
 
-    ``FILE`` is the only kind the Phase 1 connector implements; the rest are part
-    of the IR contract and fail loudly rather than silently indexing nothing.
+    ``FILE``, ``S3`` and ``HTTP`` are implemented; ``S3`` and ``HTTP`` shipped in spec
+    0.21. ``DB`` and ``MCP`` are part of the IR contract and fail loudly rather than
+    silently indexing nothing.
     """
 
     FILE = "file"

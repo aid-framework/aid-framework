@@ -338,7 +338,7 @@ a generic schema failure:
 
 | Deferred | Why it is not in this surface |
 | --- | --- |
-| `source.kind` other than `file` (`s3`, `http`, `db`, `mcp`) | reserved; only a local file source is implemented |
+| `source.kind` other than `file`, `s3`, `http` (`db`, `mcp`) | reserved; the `s3` and `http` loaders shipped in 0.21, and a database or MCP-server corpus still has no loader |
 | `chunking.strategy: semantic` | needs an embedder-driven splitter, which is ingestion runtime |
 | `refresh.schedule` | needs a scheduler the compiler does not emit; `incremental` mode itself ships in 0.19 |
 | `filters` a store evaluates itself | the compiler evaluates a fixed five-operator grammar in the retriever (0.20), so a selector never depends on which store an adapter targets; pushing a richer language into `pgvector` would make the same spec mean different things per store |

@@ -1,0 +1,36 @@
+specVersion: "0.21"
+
+project:
+  name: http-knowledge
+  namespace: aid.examples.http
+  description: Indexes exactly one document fetched over http.
+  targets:
+    - py-fastapi
+
+models:
+  embed:
+    provider: fake
+    modelId: text-embedding-3-small
+    capabilities: [embeddings]
+
+stores:
+  docs:
+    kind: memory
+    dimensions: 1536
+
+retrievers:
+  knowledge:
+    source:
+      kind: http
+      uri: https://handbook.example.com/guides/pricing.md
+    chunking:
+      strategy: recursive
+      size: 800
+      overlap: 100
+    embedModel: embed
+    store: docs
+    index:
+      metric: cosine
+    topK: 5
+    refresh:
+      mode: full

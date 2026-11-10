@@ -192,6 +192,43 @@ embedding model's width at build time.
 Ingestion is a pipeline of its own - chunk, embed, index, cite - which is why `aid ingest`
 exists as a command rather than a hidden side effect.
 
+### Where a corpus comes from
+
+`source.kind` names where the documents are read from. Three kinds are implemented, and the
+other two are reserved:
+
+| `kind` | `uri` | Yields | Since |
+| --- | --- | --- | --- |
+| `file` | a directory, relative to the spec | one document per file matching `glob` | 0.1 |
+| `s3` | `s3://<bucket>[/<prefix>]` | one document per object under the prefix matching `glob` | 0.21 |
+| `http` | one absolute `http://` or `https://` url | exactly one document | 0.21 |
+| `db` | - | reserved | - |
+| `mcp` | - | reserved | - |
+
+`glob` is the same grammar for `file` and `s3` - `*`, `**`, `?`, literal otherwise - and it
+matches the object keys *relative to the prefix*. An `http` source refuses `glob`, because a
+`glob` describes a set and an `http` source is one document. A `uri` whose scheme does not
+match its kind is refused rather than deferred.
+
+A document's id is its path relative to the source: a key with the prefix stripped, POSIX
+separators, no leading slash. For `http` it is the last path segment, or `index` when the url
+ends at the host. That id is what an eval's `expectDocs` names and what a citation reports.
+
+```yaml
+retrievers:
+  handbook:
+    source:
+      kind: s3
+      uri: s3://acme-handbook/guides
+      glob: "**/*.md"
+```
+
+The `s3` loader signs its requests with SigV4 from `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, an optional `AWS_SESSION_TOKEN`, and a region from `AWS_REGION` or
+`AWS_DEFAULT_REGION` - a missing region is a `ConfigurationError` naming the variable rather
+than a silent default. `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL` points it at a
+compatible endpoint, using path-style addressing.
+
 ## `guardrails`
 
 ```yaml
