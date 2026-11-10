@@ -209,9 +209,9 @@ class Retriever:
                 "which ingests from its data source inside the engine; there is no local "
                 "index to fill, and writing one would be read by nothing"
             )
-        incremental = self._binding.refresh_mode is RefreshMode.INCREMENTAL
-        source_documents = tuple(documents) if documents is not None else await self._read_source()
         local = self._local
+        incremental = local.refresh_mode is RefreshMode.INCREMENTAL
+        source_documents = tuple(documents) if documents is not None else await self._read_source()
         chunker = chunker_for(local.chunking)
         chunks = [chunk for document in source_documents for chunk in chunker.chunk(document)]
 

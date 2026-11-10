@@ -99,7 +99,6 @@ class VectorStore(Protocol):
         identity: it compares this set with the ids the source currently yields, and
         fetching every vector to learn a key would cost what the mode exists to save.
         """
-        ...
 
     async def delete(self, chunk_ids: Sequence[str]) -> int:
         """Remove records by ``chunk_id``. Returns the number actually removed.
@@ -107,7 +106,6 @@ class VectorStore(Protocol):
         Deleting an absent id is not an error -- a caller reconciling an index with a
         source may name a chunk another run already removed.
         """
-        ...
 
     async def aclose(self) -> None: ...
 

@@ -229,7 +229,7 @@ class PgVectorStore:
         connection = await self._connect()
         async with connection.cursor() as cursor:
             await cursor.execute(_DELETE, {"chunk_ids": list(chunk_ids)})
-            removed = cursor.rowcount
+            removed = int(cursor.rowcount)
         await connection.commit()
         return max(removed, 0)
 

@@ -156,7 +156,9 @@ async def test_deleting_a_chunk_that_is_not_stored_is_not_an_error() -> None:
     store = InMemoryVectorStore()
     await store.upsert([store_record("a", (1.0,))])
 
-    assert await store.delete(["not-a-real-chunk-id"]) == 0
+    removed = await store.delete(["not-a-real-chunk-id"])
+
+    assert removed == 0
     assert len(await store.corpus()) == 1
 
 
@@ -164,7 +166,9 @@ async def test_deleting_nothing_is_a_no_op() -> None:
     store = InMemoryVectorStore()
     await store.upsert([store_record("a", (1.0,))])
 
-    assert await store.delete([]) == 0
+    removed = await store.delete([])
+
+    assert removed == 0
     assert len(await store.corpus()) == 1
 
 
@@ -316,7 +320,9 @@ async def test_deleting_nothing_does_not_reach_for_the_driver() -> None:
     # deletions, and that run must not open a connection to say so.
     store = PgVectorStore(uri=URI, dimensions=DIMENSIONS)
 
-    assert await store.delete([]) == 0
+    removed = await store.delete([])
+
+    assert removed == 0
 
 
 async def test_a_missing_driver_is_a_configuration_error_that_names_the_extra() -> None:

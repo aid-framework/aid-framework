@@ -405,9 +405,7 @@ async def test_incremental_refresh_reconciles_a_changed_document() -> None:
     retriever = make_incremental_retriever()
 
     first = await retriever.ingest([document("a.md", "alpha"), document("b.md", "beta")])
-    second = await retriever.ingest(
-        [document("a.md", "alpha, revised"), document("b.md", "beta")]
-    )
+    second = await retriever.ingest([document("a.md", "alpha, revised"), document("b.md", "beta")])
 
     stored = {record.chunk.chunk_id for record in await retriever.store.corpus()}
     assert len(stored) == 2
