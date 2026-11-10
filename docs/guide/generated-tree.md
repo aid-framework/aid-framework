@@ -338,7 +338,7 @@ is the secret the module creates.
 | `batch_sizing` | vCPU, memory, attempts and the run timeout are a budget decision; GCP reads the same input as a Cloud Run job's CPU, memory, retries and task timeout. |
 | `batch_subnet_ids`, `batch_security_group_ids` | A batch task runs in a network you own; the module refuses an empty subnet list rather than guessing a default VPC. |
 | `batch_assign_public_ip`, `batch_max_vcpus`, `batch_log_retention_days` | Public addressing, queue ceiling and log retention are operator decisions. |
-| `edge_zip_path` | The function's archive is built from the app; where it lands is a build decision, and the module refuses to plan without it. |
+| `edge_zip_path` | The archive `aid package edge` writes; where it lands is a build decision, and the module refuses to plan without it. Copy it into the environment root, where the default `"edge.zip"` is resolved from. |
 | `edge_sizing` | Memory and timeout are a budget decision; Lambda@Edge caps the timeout at 30 seconds. |
 | `edge_aliases`, `edge_certificate_arn` | A hostname and its certificate belong to a domain you own. |
 | `edge_price_class` | Which CloudFront edge locations serve the app is a cost decision. |

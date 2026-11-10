@@ -25,6 +25,7 @@ import { infra } from './commands/infra.js';
 import { ingest } from './commands/ingest.js';
 import { init } from './commands/init.js';
 import { migrate } from './commands/migrate.js';
+import { packageEdge } from './commands/package.js';
 import { trace } from './commands/trace.js';
 import { validate } from './commands/validate.js';
 import type { CliContext } from './context.js';
@@ -290,6 +291,28 @@ export const COMMANDS: readonly Command[] = [
         cloud: args.values.get('cloud'),
         confirmProd: args.booleans.has('confirm-prod'),
         json: args.booleans.has('json'),
+      }),
+  },
+  {
+    name: 'package',
+    summary: 'build the archive an `edge` deployment hands to Lambda@Edge',
+    usage: 'package <edge> [spec] [--target <name>] [--out <file>]',
+    maxPositionals: 2,
+    flags: [
+      valueFlag(
+        'out',
+        'file',
+        'archive to write, relative to the working directory; defaults to `edge.zip`',
+      ),
+      TARGET_FLAG,
+      JSON_FLAG,
+    ],
+    run: (context, args) =>
+      packageEdge(context, {
+        subcommand: args.positionals[0],
+        spec: args.positionals[1],
+        target: args.values.get('target'),
+        out: args.values.get('out'),
       }),
   },
 ];

@@ -29,6 +29,7 @@ Every command accepts `-h` / `--help` for its own usage. All except `dev` accept
 | [`doctor`](#doctor) | diagnose the tree against the spec: drift, versions, missing files |
 | [`eject`](#eject) | take ownership of a generated file: move it to business/ and stop generating it |
 | [`infra`](#infra) | derive the deployment wiring from the spec and drive OpenTofu or AWS CDK |
+| [`package`](#package) | build the archive an `edge` deployment hands to Lambda@Edge |
 
 ## `init`
 
@@ -233,6 +234,21 @@ aid infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--ia
 | `--cloud <aws\|gcp>` | which cloud the module set targets, and so which env root an action runs in; defaults to aws |
 | `--confirm-prod` | required to apply to prod |
 | `--force` | gen: overwrite generated files that were edited by hand |
+| `--json` | print one JSON document on stdout |
+| `-h`, `--help` | print this command's usage |
+
+## `package`
+
+build the archive an `edge` deployment hands to Lambda@Edge
+
+```sh
+aid package <edge> [spec] [--target <name>] [--out <file>]
+```
+
+| Option | Description |
+| --- | --- |
+| `--out <file>` | archive to write, relative to the working directory; defaults to `edge.zip` |
+| `--target <name>` | generator target; one of py-fastapi, ts-vercel |
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |
 

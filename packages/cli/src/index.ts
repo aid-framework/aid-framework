@@ -34,6 +34,8 @@ export type { InitOptions } from './commands/init.js';
 export { init, projectNameFor, starterSpec } from './commands/init.js';
 export type { MigrateOptions } from './commands/migrate.js';
 export { migrate } from './commands/migrate.js';
+export type { PackageOptions } from './commands/package.js';
+export { packageEdge } from './commands/package.js';
 export type { TraceOptions } from './commands/trace.js';
 export { trace } from './commands/trace.js';
 export type { ValidateOptions } from './commands/validate.js';
@@ -42,6 +44,26 @@ export type { CliContext, Spawn, SpawnOptions, SpawnResult } from './context.js'
 export { createContext } from './context.js';
 export type { CliDiagnostic, CliDiagnosticCode, CliDiagnosticInit } from './diagnostics.js';
 export { CLI_DIAGNOSTIC_CODES, cliError, cliWarning } from './diagnostics.js';
+export type {
+  EdgeArchive,
+  HelperScript,
+  StepResult,
+} from './edge-zip.js';
+export {
+  EDGE_PLATFORM,
+  EDGE_PYTHON_VERSION,
+  EDGE_REQUIREMENTS_FILE,
+  EDGE_STAGE_FILES,
+  extractRequirements,
+  installWheels,
+  missingStageInputs,
+  REQUIREMENTS_HELPER,
+  runHelper,
+  stageApplication,
+  wheelInstallArgs,
+  writeArchive,
+  ZIP_HELPER,
+} from './edge-zip.js';
 export type { ExitCode } from './exit.js';
 export { EXIT_FAILURE, EXIT_OK, EXIT_USAGE } from './exit.js';
 export type { InfraFile } from './infra/emit.js';
@@ -66,9 +88,12 @@ export { compile, lowerSpec, provenanceFor, readManifest, readSpec } from './pip
 export {
   DEV_PROBE,
   discoverInterpreter,
+  discoverStdlibInterpreter,
   INTERPRETERS,
   interpreterCommand,
   invoke,
+  STDLIB_PROBE,
+  stdlibCommand,
 } from './python.js';
 export type { Target, TargetDev } from './targets.js';
 export {

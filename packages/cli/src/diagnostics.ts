@@ -112,6 +112,21 @@ export const CLI_DIAGNOSTIC_CODES = {
   // `--out` is the only path the CLI lets a caller choose, so naming one outside the
   // project is an invocation error (exit 2) rather than something the tree can express.
   migrateOutEscapes: 'cli/migrate-out-escapes',
+  // `aid package` builds the archive a deployment hands to the cloud. Its refusals fall
+  // into three groups, and they need different fixes: a wrong invocation (the first two),
+  // a spec that has nothing to package, and an environment that cannot build. The last
+  // group is split further because "no uv", "this dependency has no wheel" and "the
+  // manifest has no dependency list" are three different edits.
+  packageSubcommandRequired: 'cli/package-subcommand-required',
+  packageUnknownSubcommand: 'cli/package-unknown-subcommand',
+  packageNoEdgeDeployment: 'cli/package-no-edge-deployment',
+  packageStageMissing: 'cli/package-stage-missing',
+  packageNoInterpreter: 'cli/package-no-interpreter',
+  packageDependenciesMissing: 'cli/package-dependencies-missing',
+  packageDependenciesInvalid: 'cli/package-dependencies-invalid',
+  packageHelperFailed: 'cli/package-helper-failed',
+  packageUvMissing: 'cli/package-uv-missing',
+  packageWheelsUnavailable: 'cli/package-wheels-unavailable',
 } as const;
 
 export type CliDiagnosticCode = (typeof CLI_DIAGNOSTIC_CODES)[keyof typeof CLI_DIAGNOSTIC_CODES];
