@@ -24,7 +24,6 @@ input yields identical ids and a no-op diff.
 
 from __future__ import annotations
 
-import asyncio
 import math
 from pathlib import Path
 
