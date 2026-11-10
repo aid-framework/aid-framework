@@ -342,7 +342,7 @@ A top-level `profile` names a bundle of required controls -- `standard` is the d
 
 - **Turned on by:** `profile, deployments[].cloud, deployments[].region, deployments[].audit`
 - **Reference:** [spec](./reference/spec.md#top-level-keys)
-- **Since:** `0.1.141`
+- **Since:** `0.1.142`
 
 ## Refused, on purpose
 

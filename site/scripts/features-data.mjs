@@ -396,7 +396,7 @@ export const SHIPPED_FEATURES = [
       'A top-level `profile` names a bundle of required controls -- `standard` is the default and `enterprise` is the regulated one -- and a deployment can pin the `cloud`, `region` and `audit` sink it lands in, so the placement and the audit record are properties of the customer rather than of whoever ran the apply. The `profile` gate refuses an `enterprise` spec that omits a region pin, an audit sink, or a guardrail that runs on output.',
     declaredBy: 'profile, deployments[].cloud, deployments[].region, deployments[].audit',
     href: './reference/spec.md#top-level-keys',
-    since: '0.1.141',
+    since: '0.1.142',
   },
 ];
 
