@@ -34,8 +34,13 @@
         "0.21",
         "0.22",
         "0.23",
-        "0.24"
+        "0.24",
+        "0.25"
       ]
+    },
+    "profile": {
+      "description": "The operating profile: a named bundle of defaults and required controls, not a mode. `standard` is the default and is what an absent `profile` means, so every spec written before 0.25 keeps exactly the behaviour it had. `enterprise` requires the controls a regulated deployment cannot go without, and the profile gate refuses a spec that declares it and then omits them: a region pin on every deployment, an audit sink on every deployment, and at least one guardrail that runs on output. A requirement that a spec could not satisfy is never added to a profile, so `enterprise` is always passable. Declarable from spec v0.25.",
+      "enum": ["standard", "enterprise"]
     },
     "project": { "$ref": "#/$defs/project" },
     "types": {
@@ -1791,6 +1796,19 @@
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
         },
+        "cloud": {
+          "description": "The cloud this deployment lands in. Spec 0.25. Before 0.25 the cloud was only a CLI flag (`aid infra --cloud`, defaulting to `aws`), which put a property of the customer's deployment in whoever's shell happened to run the apply. When the spec declares it, the spec wins and an agreeing `--cloud` is ignored, while a disagreeing one is refused with `cli/infra-cloud-conflict` rather than silently dropped. When the spec omits it, `--cloud` decides, and `aws` when that is absent too -- byte-identical to the behaviour before this key existed. Deployments that pin *different* clouds are refused separately, by `ir/cloud-conflict`, because one module set targets one cloud.",
+          "enum": ["aws", "gcp"]
+        },
+        "region": {
+          "description": "The region the deployment is placed in, and the residency pin. Spec 0.25. A deployment scalar rather than a project one, because one project may place `prod` and `dev` in different regions. Validated against the region set of the deployment's cloud, so a region that belongs to the other cloud is `ir/region-target` at validate time rather than a module that fails at apply time.",
+          "type": "string",
+          "pattern": "^[a-z]{2,}(-[a-z]+)*(-?[0-9]+)$"
+        },
+        "audit": {
+          "description": "Where this deployment's audit record lands. Spec 0.25. The sink names a service the customer already owns; AID emits the log group or sink, never its contents. `enterprise` requires one on every deployment.",
+          "$ref": "#/$defs/audit"
+        },
         "image": {
           "description": "Where the image is published. Spec 0.4, and only on a `target: container` deployment: another target builds no image to publish.",
           "$ref": "#/$defs/image"
@@ -1855,6 +1873,23 @@
         "gateway": {
           "description": "Name of a `gateways` entry this runtime reaches over MCP. Spec 0.24, `aws-agentcore` only: the gateway is an AgentCore resource and the Google platform has no counterpart. Presence does two things and nothing else: the emitted module exports the gateway URL into the runtime's environment and grants the runtime role `bedrock-agentcore:InvokeGateway` on exactly that gateway. The app keeps its own tool list -- a gateway adds tools it does not own, it does not replace one it does.",
           "$ref": "#/$defs/name"
+        }
+      }
+    },
+    "audit": {
+      "description": "The audit destination for a deployment: a service the customer already runs, named rather than configured here. Each sink belongs to one cloud, and a sink named for the other cloud is refused (`ir/audit-target`) instead of emitted as a resource the deploy cannot create.",
+      "type": "object",
+      "required": ["sink"],
+      "additionalProperties": false,
+      "properties": {
+        "sink": {
+          "description": "The log destination. `cloudwatch` and `s3` are AWS; `gcs` and `bigquery` are Google Cloud.",
+          "enum": ["cloudwatch", "s3", "gcs", "bigquery"]
+        },
+        "retentionDays": {
+          "description": "How long the record is kept, in days. Omitted means the sink's own default, which is the honest answer: AID does not invent a retention policy for an operator's log store, and no lifecycle rule is emitted at all rather than one guessed. When the document does name one, every sink honours it, each in its own provider's terms: a CloudWatch log group via `retention_in_days`, an S3 archive via a lifecycle expiration, a GCS bucket via a lifecycle rule, and a partitioned BigQuery dataset via a partition expiration. Two deployments naming the same sink with different retention are different destinations, and `ir/audit-conflict` refuses them.",
+          "type": "integer",
+          "minimum": 1
         }
       }
     },

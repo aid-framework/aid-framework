@@ -1,0 +1,21 @@
+specVersion: "0.25"
+
+project:
+  name: enterprise-copilot
+  namespace: aid.examples.enterprise
+  description: Places a support copilot in a pinned region with an audit sink the customer owns.
+  targets:
+    - py-fastapi
+
+profile: enterprise
+
+deployments:
+  prod:
+    target: container
+    streaming: false
+    secrets: [OPENAI_API_KEY]
+    cloud: aws
+    region: eu-central-1
+    audit:
+      sink: cloudwatch
+      retentionDays: 400
