@@ -246,6 +246,7 @@ const TOPICAL: DecisionDefinition = {
   model: 'jev-1.14.0',
   instructions: 'Is this message about our product',
   criteria: ['off_topic', 'product'],
+  onError: 'block',
 };
 
 /** The guardrail that asks it: no policies, so every verdict comes from the decision. */
@@ -388,5 +389,47 @@ describe('a guardrail answered by a decision', () => {
     await expect(engine.checkInputAsync([decided()], 'anything')).rejects.toThrow(
       /could not answer: connection refused/,
     );
+  });
+
+  it('lets the payload through when the declared posture is allow and the client cannot answer', async () => {
+    // Dropping the flag would make this indistinguishable from the default, which is
+    // exactly the bug this pair of tests exists to catch.
+    const engine = decisionEngine(new Error('connection refused'), {
+      ...TOPICAL,
+      onError: 'allow',
+    });
+
+    const verdict = await engine.checkInputAsync([decided()], 'anything');
+
+    expect(verdict.action).toBeUndefined();
+    expect(verdict.records).toEqual([]);
+    expect(verdict.text).toBe('anything');
+  });
+
+  it('still blocks a present answer the declared posture cannot excuse', async () => {
+    // `onError` governs whether an answer arrived, never what a present answer means.
+    const engine = decisionEngine(
+      { type: 'choice', choice: 'unmapped' },
+      {
+        ...TOPICAL,
+        onError: 'allow',
+      },
+    );
+
+    await expect(engine.checkInputAsync([decided()], 'anything')).rejects.toThrow(/does not map/);
+  });
+
+  it('still blocks under the confidence floor when the declared posture is allow', async () => {
+    const engine = decisionEngine(
+      { type: 'choice', choice: 'product', confidence: 0.2 },
+      {
+        ...TOPICAL,
+        onError: 'allow',
+      },
+    );
+
+    await expect(
+      engine.checkInputAsync([decided({ minConfidence: 0.8 })], 'anything'),
+    ).rejects.toThrow(/below the declared minimum/);
   });
 });

@@ -524,10 +524,14 @@ export class GuardrailEngine {
   /**
    * Ask one `choice` decision and turn its label into a record, or `undefined`.
    *
-   * Everything that is not a usable answer is a {@link GuardrailBlockedError}: an
-   * undeclared decision, an unmapped label, a confidence below the declared floor, or a
-   * call that raised. That is the same rule the policy path follows -- there is no path
-   * from "the check could not run" to "no violation found".
+   * An undeclared decision, an unmapped label, an unknown outcome, or a confidence
+   * below the declared floor is a {@link GuardrailBlockedError}: an answer the guardrail
+   * can read but cannot act on blocks. A call that produced no label at all -- it threw,
+   * named no answer, or carried no choice -- follows the decision's `onError` instead:
+   * `allow` returns `undefined` so an advisory check does not stop traffic, and `block`
+   * (the default) throws. `onError` governs whether the answer arrived, never what a
+   * present answer means, so the policy path's rule holds: there is no path from "the
+   * check could not run" to "no violation found" unless the spec declares one.
    */
   async #askDecision(
     guardrail: GuardrailDefinition,
@@ -565,6 +569,7 @@ export class GuardrailEngine {
         questions: { [name]: question },
       });
     } catch (error) {
+      if (definition.onError === 'allow') return undefined;
       const detail = error instanceof Error ? error.message : String(error);
       throw new GuardrailBlockedError(
         guardrail.id,
@@ -575,6 +580,7 @@ export class GuardrailEngine {
 
     const answer = response.answers[name];
     if (answer === undefined) {
+      if (definition.onError === 'allow') return undefined;
       throw new GuardrailBlockedError(
         guardrail.id,
         stage,
@@ -583,6 +589,7 @@ export class GuardrailEngine {
     }
     const label = answer.choice;
     if (label === undefined) {
+      if (definition.onError === 'allow') return undefined;
       throw new GuardrailBlockedError(
         guardrail.id,
         stage,
