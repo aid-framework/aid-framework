@@ -29,6 +29,8 @@ export interface EnvRootModules {
   readonly agentRuntime?: boolean;
   /** Optional for the same reason: "no managed guardrail template" unless a caller says so. */
   readonly modelArmor?: boolean;
+  /** Optional for the same reason: "no audit destination" unless a caller says so. */
+  readonly audit?: boolean;
 }
 
 /** The plan-shaped variables every env root declares, so the generated tfvars binds. */
@@ -74,6 +76,31 @@ const SECRET_ARNS = [
 ];
 
 const TAGS = ['', 'variable "tags" {', '  type    = map(string)', '  default = {}', '}'];
+
+/**
+ * The audit destination, declared only when the document pins one.
+ *
+ * `audit` is otherwise a plan-shaped variable and would be declared beside the rest, but a
+ * project that names no sink must be handed no input it would never set -- and the README
+ * prints the env root verbatim, so an unconditional block would change the generated tree
+ * for every project that never asked for audit.
+ */
+const AUDIT_INPUTS = [
+  '',
+  'variable "audit" {',
+  '  description = "The audit destination the document pins. Present exactly when the plan pinned one."',
+  '  type = object({',
+  '    sink           = string',
+  '    retention_days = optional(number)',
+  '  })',
+  '}',
+  '',
+  'variable "audit_bucket_name" {',
+  '  description = "Globally unique name for the audit archive. Required when the sink is s3 or gcs, ignored otherwise."',
+  '  type        = string',
+  '  default     = ""',
+  '}',
+];
 
 /** GCP: Secret Manager ids, not ARNs, and no network inputs -- Cloud Run needs none. */
 const GCP_SECRET_IDS = [
@@ -362,7 +389,9 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   const secrets = modules.serverless || modules.container || modules.batch === true;
   // A runtime may call Bedrock too, so the regional override is not tied to compute.
   const bedrock = secrets || runtime;
-  const any = images || edge || modules.knowledgeBase === true || modules.gateway === true;
+  const audit = modules.audit === true;
+  // An audit-only root still needs the tag map, because the module tags the destination.
+  const any = images || edge || modules.knowledgeBase === true || modules.gateway === true || audit;
 
   const variables = [
     ...PLAN_VARIABLES,
@@ -374,11 +403,26 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
     ...(modules.container ? CONTAINER_INPUTS : []),
     ...(modules.batch === true ? BATCH_INPUTS : []),
     ...(edge ? EDGE_INPUTS : []),
+    ...(audit ? AUDIT_INPUTS : []),
     ...(any ? TAGS : []),
   ];
 
   const calls: string[][] = [];
   const outputs: string[][] = [];
+
+  // One destination for the environment, so it is called once here rather than by every
+  // module that reads the tfvar. No `region` input: on AWS the provider decides it.
+  if (audit) {
+    calls.push(
+      moduleCall('audit', [
+        'project           = var.project',
+        'audit             = var.audit',
+        'audit_bucket_name = var.audit_bucket_name',
+        'tags              = var.tags',
+      ]),
+    );
+    outputs.push(['output "audit_destination" {', '  value = module.audit.destination', '}']);
+  }
 
   // A managed base is created by its own module, so the compute modules read the ids it
   // returned. Without one the plan's map passes straight through, which is the case that
@@ -561,10 +605,11 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   const corpus = modules.knowledgeBase === true;
   const runtime = modules.agentRuntime === true;
   const armor = modules.modelArmor === true;
+  const audit = modules.audit === true;
   // A corpus-only root still needs the project, region, tags and provider, but no image
   // or secret inputs: nothing runs. `compute` keeps those tied to a module that reads them.
   const compute = run || job || runtime;
-  const any = compute || corpus || armor;
+  const any = compute || corpus || armor || audit;
 
   const variables = [
     ...PLAN_VARIABLES,
@@ -575,11 +620,26 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
     ...(run ? GCP_CLOUDRUN_INPUTS : []),
     ...(job ? GCP_JOB_INPUTS : []),
     ...(run || job ? GCP_DELETION_PROTECTION : []),
+    ...(audit ? AUDIT_INPUTS : []),
     ...(any ? TAGS : []),
   ];
 
   const calls: string[][] = [];
   const outputs: string[][] = [];
+
+  if (audit) {
+    calls.push(
+      moduleCall('audit', [
+        'project           = var.project',
+        'audit             = var.audit',
+        'audit_bucket_name = var.audit_bucket_name',
+        'project_id        = var.gcp_project',
+        'region            = var.region',
+        'tags              = var.tags',
+      ]),
+    );
+    outputs.push(['output "audit_destination" {', '  value = module.audit.destination', '}']);
+  }
 
   // A managed corpus is created by its own module, so the compute modules read the name it
   // returned. Without one the plan's map passes straight through, which is the case that

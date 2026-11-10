@@ -39,9 +39,10 @@ import { cdkRoot, classifyCdk, runCdk } from '../infra/cdk.js';
 import {
   CLOUDS,
   type Cloud,
-  DEFAULT_CLOUD,
   isCloud,
   KNOWLEDGE_BASE_CLOUDS,
+  pinnedCloud,
+  resolveCloud,
   unsupportedGateways,
   unsupportedKnowledgeBases,
   unsupportedRuntimes,
@@ -165,8 +166,7 @@ export function infra(context: CliContext, options: InfraOptions): CommandOutcom
     });
   }
 
-  const cloud = options.cloud ?? DEFAULT_CLOUD;
-  if (!isCloud(cloud)) {
+  if (options.cloud !== undefined && !isCloud(options.cloud)) {
     return outcome({
       command: 'infra',
       exitCode: EXIT_USAGE,
@@ -179,6 +179,26 @@ export function infra(context: CliContext, options: InfraOptions): CommandOutcom
       ],
     });
   }
+
+  // The cloud is a spec fact now, so it is resolved once here rather than in each
+  // subcommand: `gen` writes `infra/envs/gcp-<env>` for a GCP pin, and `plan`/`apply`/
+  // `drift` have to look for it in the same place. A spec that cannot be read or lowered
+  // pins nothing, which leaves the flag and the `aws` default exactly as they were.
+  const resolved = resolveCloud(pinnedFromSpec(context, options.spec), options.cloud);
+  if (!resolved.ok) {
+    return outcome({
+      command: 'infra',
+      exitCode: EXIT_USAGE,
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.infraCloudConflict,
+          message: resolved.message,
+          hint: resolved.hint,
+        }),
+      ],
+    });
+  }
+  const cloud = resolved.cloud;
 
   // An empty CDK app is worse than a refusal: it would synth cleanly and deploy nothing.
   if (cloud === 'gcp' && options.iac === 'cdk') {
@@ -198,6 +218,23 @@ export function infra(context: CliContext, options: InfraOptions): CommandOutcom
   return options.subcommand === 'gen'
     ? generate(context, options, cloud)
     : action(context, options, options.subcommand as InfraAction, cloud);
+}
+
+/**
+ * The cloud the spec pins, or `undefined` when it pins none or cannot be read.
+ *
+ * Reading is best-effort on purpose: `gen` reports why a spec does not lower, and
+ * `plan`/`apply`/`drift` are routinely run in a generated tree with no spec at all. A
+ * failure here therefore means "no pin", never a diagnostic -- otherwise `infra apply`
+ * would start refusing documents it used to ignore.
+ */
+function pinnedFromSpec(context: CliContext, spec: string | undefined): Cloud | undefined {
+  const specPath = spec ?? DEFAULT_SPEC_PATH;
+  const read = readSpec(context, specPath);
+  if (!read.ok) return undefined;
+  const lowered = lowerSpec(read.text, specPath);
+  if (!lowered.ok) return undefined;
+  return pinnedCloud(lowered.ir.deployments);
 }
 
 function generate(context: CliContext, options: InfraOptions, cloud: Cloud): CommandOutcome {

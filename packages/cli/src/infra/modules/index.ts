@@ -12,6 +12,7 @@ import { type Cloud, DEFAULT_CLOUD } from '../cloud.js';
 import type { ModuleFile } from './hcl.js';
 
 export { AGENT_RUNTIME_MODULE_DIR, emitAgentRuntimeModule } from './agent-runtime.js';
+export { AUDIT_MODULE_DIR, emitAuditModule } from './audit.js';
 export { BATCH_MODULE_DIR, emitBatchModule } from './batch.js';
 export {
   CDK_BATCH_MODULE,
@@ -42,6 +43,7 @@ export { emitServerlessModule, SERVERLESS_MODULE_DIR } from './serverless.js';
 export { emitVertexRagModule, VERTEX_RAG_MODULE_DIR } from './vertex-rag.js';
 
 import { emitAgentRuntimeModule } from './agent-runtime.js';
+import { emitAuditModule } from './audit.js';
 import { emitBatchModule } from './batch.js';
 import { emitCdkModules } from './cdk.js';
 import { emitCloudRunModule } from './cloudrun.js';
@@ -80,6 +82,8 @@ export function modulesOf(
   agentRuntime: boolean;
   /** A Model Armor template this plan owns, which only a GCP plan can. */
   modelArmor: boolean;
+  /** An audit destination the document pinned, which both clouds can create. */
+  audit: boolean;
 } {
   const managed = (service: DeployPlan['services'][number]) =>
     service.runtime !== undefined && service.runtime !== null;
@@ -110,6 +114,9 @@ export function modulesOf(
     modelArmor:
       cloud === 'gcp' &&
       plan.services.some((service) => service.managedGuardrail?.engine === 'model-armor'),
+    // Not cloud-gated: `profileGate` has already refused a sink the pinned cloud cannot
+    // create, so by here the plan's destination is one this cloud has a module for.
+    audit: plan.audit !== undefined,
   };
 }
 
@@ -122,6 +129,7 @@ export function emitProviderModules(plan: DeployPlan, cloud: Cloud = DEFAULT_CLO
         ...emitVertexRagModule(plan),
         ...emitModelArmorModule(plan),
         ...emitAgentRuntimeModule(plan, cloud),
+        ...emitAuditModule(plan, cloud),
       ]
     : [
         ...emitServerlessModule(plan),
@@ -132,5 +140,6 @@ export function emitProviderModules(plan: DeployPlan, cloud: Cloud = DEFAULT_CLO
         ...emitGatewayModule(plan),
         ...emitAgentRuntimeModule(plan, cloud),
         ...emitCdkModules(plan, cloud),
+        ...emitAuditModule(plan, cloud),
       ];
 }

@@ -1556,6 +1556,98 @@ pipelines:
     expect(made.walk()).not.toContain(TFVARS);
   });
 
+  /** 0.25's story: the deployment pins its own cloud, so a flag cannot move it. */
+  const GCP_PINNED = `specVersion: "0.25"
+project:
+  name: ping
+  namespace: aid.test
+  targets: [py-fastapi]
+models:
+  small:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  answer:
+    version: 1
+    model: small
+    template: "Answer the request."
+    output:
+      kind: text
+guardrails:
+  inbound:
+    engine: model-armor
+    stages: [input, output]
+    action: block
+    onFail:
+      message: rejected.
+      log: true
+deployments:
+  api:
+    target: container
+    cloud: gcp
+    region: europe-west1
+    secrets: [OPENAI_API_KEY]
+evals:
+  answers:
+    target: pipeline:ping
+    dataset:
+      source: file
+      uri: datasets/ping.jsonl
+    metrics:
+      - kind: contains
+        field: reply
+        value: pong
+    gate:
+      ci: true
+pipelines:
+  ping:
+    trigger:
+      http:
+        method: get
+        path: /ping
+    steps:
+      - generate:
+          prompt: answer
+          as: reply
+`;
+
+  it('generates for the cloud the spec pins when no flag is given', () => {
+    const made = scratchSpec(GCP_PINNED);
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+
+    expect(made.walk()).toContain('infra/generated/modules/cloudrun/main.tf');
+    expect(made.walk()).not.toContain('infra/generated/modules/container/main.tf');
+    expect(made.read(`${GENERATED}/README.md`)).toContain('infra/envs/gcp-dev');
+  });
+
+  it('refuses a --cloud that disagrees with the pin instead of silently overriding it', () => {
+    const made = scratchSpec(GCP_PINNED);
+    const run = aid(made, ['infra', 'gen', '--cloud', 'aws', '--json']);
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run).map((d) => d.code)).toEqual(['cli/infra-cloud-conflict']);
+    expect(diagnosticsOf(run)[0]?.message).toContain('pins cloud "gcp"');
+    expect(diagnosticsOf(run)[0]?.hint).toContain('Drop --cloud');
+    expect(made.walk()).not.toContain(TFVARS);
+  });
+
+  it('accepts a --cloud that agrees with the pin', () => {
+    const made = scratchSpec(GCP_PINNED);
+    expect(aid(made, ['infra', 'gen', '--cloud', 'gcp']).code).toBe(0);
+  });
+
+  it('refuses cdk for a pinned gcp even when no --cloud was passed', () => {
+    // The pin is resolved before the backend check, so `--iac cdk` cannot slip past it
+    // just because the flag that would have named gcp was omitted.
+    const made = scratchSpec(GCP_PINNED);
+    const run = aid(made, ['infra', 'gen', '--iac', 'cdk', '--json']);
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run).map((d) => d.code)).toEqual(['cli/infra-cloud-backend-unsupported']);
+  });
+
   it('emits Cloud Run for the example, and no AWS module', () => {
     const made = scratch();
     expect(aid(made, ['infra', 'gen', '--cloud', 'gcp']).code).toBe(0);

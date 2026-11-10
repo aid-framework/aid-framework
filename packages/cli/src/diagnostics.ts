@@ -58,6 +58,7 @@ export const CLI_DIAGNOSTIC_CODES = {
   infraUnknownSubcommand: 'cli/infra-unknown-subcommand',
   infraUnknownIac: 'cli/infra-unknown-iac',
   infraUnknownCloud: 'cli/infra-unknown-cloud',
+  infraCloudConflict: 'cli/infra-cloud-conflict',
   infraCloudBackendUnsupported: 'cli/infra-cloud-backend-unsupported',
   infraCloudTargetUnsupported: 'cli/infra-cloud-target-unsupported',
   infraGuardrailUnsupported: 'cli/infra-guardrail-unsupported',

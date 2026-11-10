@@ -1,10 +1,16 @@
 /**
  * Which cloud the generated module set targets.
  *
- * A cloud is an environment fact, not a spec fact: one project may run in an AWS account
- * and a GCP project at the same time, and the spec has no business knowing which. So it is
- * a CLI choice (`--cloud`) rather than a YAML field, and `aws` is the default so every
- * existing invocation emits exactly the bytes it emitted before this existed.
+ * A spec may pin it (`deployments[].cloud`), because a profile that promises data
+ * residency or an audit sink cannot leave the provider to whoever happens to run
+ * `aid infra` -- a region is only meaningful against a named cloud.
+ *
+ * The `--cloud` flag remains for documents that do not pin one, and `aws` remains the
+ * default, so every invocation that worked before the pin existed emits exactly the bytes
+ * it emitted before. When a document pins a cloud and the flag disagrees, the pin wins:
+ * it is the reviewed, committed artifact, while the flag is a one-off at a terminal. The
+ * disagreement is refused rather than resolved silently, because overriding either one
+ * would deploy into an environment the caller or the reviewer did not ask for.
  */
 
 export const CLOUDS = ['aws', 'gcp'] as const;
@@ -15,6 +21,43 @@ export const DEFAULT_CLOUD: Cloud = 'aws';
 
 export function isCloud(value: string): value is Cloud {
   return (CLOUDS as readonly string[]).includes(value);
+}
+
+/**
+ * The cloud a document pins, or `undefined` when it pins none.
+ *
+ * Deployments may pin different clouds, which the `profile` gate already refuses, so this
+ * reads the first pinned deployment and leaves any disagreement to that gate rather than
+ * inventing a second, conflicting answer here.
+ */
+export function pinnedCloud(deployments: readonly { cloud?: string }[]): Cloud | undefined {
+  for (const deployment of deployments) {
+    if (deployment.cloud !== undefined && isCloud(deployment.cloud)) return deployment.cloud;
+  }
+  return undefined;
+}
+
+/** Either the cloud to target, or the refusal explaining why there is not one. */
+export type CloudResolution =
+  | { readonly ok: true; readonly cloud: Cloud }
+  | { readonly ok: false; readonly message: string; readonly hint: string };
+
+/**
+ * Reconcile a pinned cloud with `--cloud`.
+ *
+ * `flag` is not re-validated here: the `infra` dispatcher refuses an unknown `--cloud`
+ * before any command runs, so a value reaching this function is one of {@link CLOUDS}.
+ */
+export function resolveCloud(pinned: Cloud | undefined, flag: string | undefined): CloudResolution {
+  if (pinned === undefined) {
+    return { ok: true, cloud: flag !== undefined && isCloud(flag) ? flag : DEFAULT_CLOUD };
+  }
+  if (flag === undefined || flag === pinned) return { ok: true, cloud: pinned };
+  return {
+    ok: false,
+    message: `The spec pins cloud "${pinned}", but --cloud names "${flag}".`,
+    hint: `Drop --cloud to deploy the cloud the spec pins, or change the spec's \`cloud:\` to "${flag}" if the pin is stale.`,
+  };
 }
 
 /**

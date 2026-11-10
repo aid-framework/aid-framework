@@ -16,6 +16,7 @@ import type {
   BedrockContentFilter,
   BedrockContentStrength,
   BedrockPiiEntity,
+  DeployAudit,
   DeployManagedGuardrail,
   DeployPlan,
   DeployTask,
@@ -366,6 +367,11 @@ export interface DeployTfvars {
   >;
   readonly tasks: readonly DeployTaskSpelling[];
   readonly alarms: readonly { id: string; metric: string; source: string }[];
+  /**
+   * The audit destination the document pinned, or absent when it pinned none. Spelled
+   * with the module's snake_case key, like every other tfvar.
+   */
+  readonly audit?: { readonly sink: DeployAudit['sink']; readonly retention_days?: number };
 }
 
 /**
@@ -469,6 +475,8 @@ export interface DeployContext {
   >;
   readonly tasks: readonly DeployTaskSpelling[];
   readonly alarms: readonly { id: string; metric: string; source: string }[];
+  /** The audit destination the document pinned, or absent when it pinned none. */
+  readonly audit?: DeployAudit;
 }
 
 /**
@@ -630,6 +638,16 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
       metric: alarm.metric,
       source: alarm.source,
     })),
+    ...(plan.audit === undefined
+      ? {}
+      : {
+          audit: {
+            sink: plan.audit.sink,
+            ...(plan.audit.retentionDays === undefined
+              ? {}
+              : { retention_days: plan.audit.retentionDays }),
+          },
+        }),
   };
 }
 
@@ -771,6 +789,16 @@ export function cdkContext(plan: DeployPlan): DeployContext {
     stores,
     tasks: spelled.tasks.map((task) => ({ ...task })),
     alarms: spelled.alarms.map((alarm) => ({ ...alarm })),
+    ...(spelled.audit === undefined
+      ? {}
+      : {
+          audit: {
+            sink: spelled.audit.sink,
+            ...(spelled.audit.retention_days === undefined
+              ? {}
+              : { retentionDays: spelled.audit.retention_days }),
+          },
+        }),
   };
 }
 
@@ -840,11 +868,19 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
             : '| `modules/knowledge-base/` | The OpenSearch Serverless collection + Bedrock knowledge base a `knowledgeBases:` entry deploys into. |',
         ]
       : []),
+    ...(modules.audit
+      ? [
+          cloud === 'gcp'
+            ? '| `modules/audit/` | The audit destination a `deployment.audit` sink pins: a log sink into a GCS archive bucket or a BigQuery dataset. |'
+            : '| `modules/audit/` | The audit destination a `deployment.audit` sink pins: a CloudWatch log group or an S3 archive bucket. |',
+        ]
+      : []),
     ...((modules.serverless ||
       modules.container ||
       modules.batch ||
       modules.edge ||
-      modules.knowledgeBase) &&
+      modules.knowledgeBase ||
+      modules.audit) &&
     cloud === 'aws'
       ? [
           ...(modules.serverless
@@ -870,6 +906,11 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
           ...(modules.knowledgeBase
             ? [
                 '| `cdk/knowledge-base.cjs` | The CDK construct an `aws-bedrock` knowledge base is created by (AWS only). |',
+              ]
+            : []),
+          ...(modules.audit
+            ? [
+                '| `cdk/audit.cjs` | The CDK construct that creates the pinned audit destination: a CloudWatch log group or an S3 archive bucket (AWS only). |',
               ]
             : []),
         ]
