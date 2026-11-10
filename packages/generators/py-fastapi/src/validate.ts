@@ -1143,12 +1143,6 @@ function checkRetrieverDeclaration(
         'chunks by size (fixed, recursive, code)',
     );
   }
-  if (retriever.refresh.mode !== 'full') {
-    refuse(
-      `retriever '${retriever.id}' declares a '${retriever.refresh.mode}' refresh, and the ` +
-        'runtime rebuilds the whole index on every ingest',
-    );
-  }
   const store = ir.stores.find((entry) => entry.id === retriever.store);
   if (store === undefined) {
     problems.push(
