@@ -175,10 +175,15 @@ export function storeSpec(
 }
 
 export function chunkingSpec(
-  overrides: { size?: number; overlap?: number; keepMetadata?: readonly string[] } = {},
+  overrides: {
+    strategy?: 'fixed' | 'recursive' | 'semantic' | 'code';
+    size?: number;
+    overlap?: number;
+    keepMetadata?: readonly string[];
+  } = {},
 ): ChunkingSpec {
   return new ChunkingSpec({
-    strategy: 'fixed',
+    strategy: overrides.strategy ?? 'fixed',
     size: overrides.size ?? 400,
     overlap: overrides.overlap ?? 0,
     keepMetadata: overrides.keepMetadata ?? [],

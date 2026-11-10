@@ -25,6 +25,7 @@ input yields identical ids and a no-op diff.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -38,14 +39,19 @@ from aid_runtime import (
 from aid_runtime.cost import CostLedger
 from aid_runtime.evals.gate import EvalBaseline, EvalRun, MetricRun, Threshold
 from aid_runtime.retrieval import (
+    ChunkingStrategy,
     DistanceMetric,
+    Embedder,
+    EmbeddingBatch,
     FakeDeterministicEmbedder,
     InMemoryVectorStore,
+    PinnedEmbedding,
     RefreshMode,
     RetrievalGate,
     Retriever,
     retrieval_metrics,
 )
+from aid_runtime.types import TokenUsage
 from retrieval_support import (
     EMBED_ID,
     MODEL_ID,
@@ -86,6 +92,31 @@ def make_retriever(
     )
 
 
+class RecordingEmbedder:
+    """Wraps the fake and records every batch, so a test can see the boundary pass."""
+
+    def __init__(self) -> None:
+        self._inner = FakeDeterministicEmbedder()
+        self.name = self._inner.name
+        self.batches: list[TokenUsage] = []
+
+    async def embed(self, texts: Sequence[str], *, model: PinnedEmbedding) -> EmbeddingBatch:
+        batch = await self._inner.embed(texts, model=model)
+        self.batches.append(batch.usage)
+        return batch
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+def make_semantic_retriever(embedder: Embedder | None = None) -> Retriever:
+    return Retriever(
+        binding(strategy=ChunkingStrategy.SEMANTIC, size=60),
+        embedder=embedder or FakeDeterministicEmbedder(),
+        store=InMemoryVectorStore(),
+    )
+
+
 def make_gate() -> RetrievalGate:
     thresholds = [
         Threshold(metric=name, max_regression=0.05)
@@ -108,6 +139,41 @@ async def test_ingest_reports_what_it_read_chunked_and_wrote() -> None:
     assert report.tokens > 0
     assert report.cost_usd > 0.0
     assert not report.is_empty
+
+
+async def test_a_semantic_ingest_reports_its_boundary_pass() -> None:
+    # The boundary pass embeds every unit before a cut exists, so its tokens are spent
+    # by this ingest and have to appear in the report rather than vanish.
+    embedder = RecordingEmbedder()
+    retriever = make_semantic_retriever(embedder)
+
+    report = await retriever.ingest([document("a.md", EXPECTED_TEXT)])
+
+    boundary = embedder.batches[0].input_tokens
+    assert boundary > 0
+    assert report.tokens == sum(batch.input_tokens for batch in embedder.batches)
+    assert report.tokens > boundary
+    assert report.cost_usd > 0.0
+
+
+async def test_a_multi_document_ingest_reports_every_boundary_pass() -> None:
+    # The chunker reports one document's boundary work and resets per document, so the
+    # retriever has to sum. With the reset unsummed this would report the last
+    # document alone and still pass a one-document test.
+    alpha = document("a.md", EXPECTED_TEXT)
+    beta = document("b.md", OTHER_TEXT * 8)
+
+    single_alpha = await make_semantic_retriever().ingest([alpha])
+    single_beta = await make_semantic_retriever().ingest([beta])
+    both = await make_semantic_retriever().ingest([alpha, beta])
+
+    assert both.tokens == single_alpha.tokens + single_beta.tokens
+    assert both.tokens > single_alpha.tokens
+    assert both.tokens > single_beta.tokens
+    # Strict rather than equal: each charge is rounded to six decimals, so two single
+    # ingests and one corpus ingest do not round identically.
+    assert both.cost_usd > single_alpha.cost_usd
+    assert both.cost_usd > single_beta.cost_usd
 
 
 async def test_the_reported_chunk_ids_are_sorted() -> None:

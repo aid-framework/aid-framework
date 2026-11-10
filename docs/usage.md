@@ -134,10 +134,20 @@ eval's `expectDocs` and a citation name the same thing whichever kind indexed it
 loader signs with SigV4 from the AWS environment variables and refuses a missing region by
 name rather than defaulting one.
 
+`chunking.strategy: semantic` cuts a document where its topic changes instead of at a character
+count, and needs `specVersion: "0.22"`. The retriever's own embedder does the work, so no second
+model, field or call path appears: the source is split into units at paragraph, newline and
+sentence boundaries, the units are embedded, and a boundary goes wherever the cosine similarity
+between neighbouring units dips below 0.72. That boundary pass embeds the whole source before
+the chunks are embedded, so its tokens and cost are counted in the ingest report rather than
+left out. `fixed`, `recursive` and `code` still cut by size and produce the same chunks and ids
+they did before.
+
 Covers:
 
 - **Retrieval with citations**
 - **S3 and HTTP corpus sources**
+- **Semantic chunking**
 - **Memory tiers**
 - **Semantic cache**
 - **Bedrock knowledge bases**

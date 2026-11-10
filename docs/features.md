@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.21`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.22`.
 
 ## Deployment targets
 
@@ -311,6 +311,14 @@ A retriever indexes an `s3://` prefix or one `http(s)://` document instead of a 
 - **Turned on by:** `retrievers[].source.kind`
 - **Reference:** [spec](./reference/spec.md#retriever)
 - **Since:** `0.1.134`
+
+### Semantic chunking
+
+A retriever cuts a document where the cosine similarity between adjacent units dips, so a boundary follows the topic rather than a character count; the units are embedded before the chunks are, and that boundary pass is priced into the ingest report.
+
+- **Turned on by:** `retrievers[].chunking.strategy: semantic`
+- **Reference:** [spec](./reference/spec.md#retriever)
+- **Since:** `0.1.135`
 
 ## Refused, on purpose
 

@@ -28,6 +28,7 @@ from aid_runtime.retrieval.chunking import (
     CodeChunker,
     FixedChunker,
     RecursiveChunker,
+    SemanticChunker,
     chunk_document,
     chunker_for,
 )
@@ -202,6 +203,7 @@ __all__ = [
     "S3Connector",
     "ScoredChunk",
     "SearchHit",
+    "SemanticChunker",
     "SourceDocument",
     "SourceKind",
     "SourceSpec",

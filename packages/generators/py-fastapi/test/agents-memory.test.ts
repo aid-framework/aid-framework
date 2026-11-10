@@ -686,6 +686,14 @@ describe('the pre-P7b example', () => {
    * a no-op for the specs this emitter runs on -- it only emits ingest modules for local
    * retrievers -- but it is what keeps the module type-checking against the wider return type.
    * Leaving the pin behind is the point -- a further file moving still fails.
+   *
+   * The digest of `retrieval/ingest/<id>.py` was re-recorded a third time by spec 0.22, and this
+   * is again the only file that layer touched here. A semantic retriever makes the dry run's
+   * chunk count a paid operation -- choosing the boundaries embeds the whole source -- so `_plan`
+   * now refuses `ChunkingStrategy.SEMANTIC` with a message saying so, and imports the enum to
+   * name it. The chunk pass below that refusal is unchanged: `await chunker.chunk(document)`
+   * gained an `await` because the seam is asynchronous now, and no byte of the counting logic
+   * moved with it.
    */
   const DECLARATION_ONLY = 'app/generated/observability.py';
 

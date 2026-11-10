@@ -15,6 +15,7 @@ import asyncio
 import sys
 
 from aid_runtime import (
+    ChunkingStrategy,
     ConfigurationError,
     CostLedger,
     FeatureDeferredError,
@@ -47,7 +48,9 @@ def _parser() -> argparse.ArgumentParser:
 async def _plan(retriever_id: str) -> tuple[int, int]:
     """The document and chunk counts a run would write, without building a store. That is what makes
     a dry run cheap and offline: the chunking is applied, so the counts are the ones a real run
-    would report, but no embedder is called and no store is opened.
+    would report, but no embedder is called and no store is opened. A semantic strategy is refused
+    rather than counted wrong: choosing its boundaries embeds the whole source, which is exactly the
+    work a dry run exists to avoid.
     """
 
     binding = build_binding(retriever_id)
@@ -55,13 +58,21 @@ async def _plan(retriever_id: str) -> tuple[int, int]:
         raise ConfigurationError(
             f"retriever {retriever_id!r} ingests inside its knowledge base, not here"
         )
+    if binding.chunking.strategy is ChunkingStrategy.SEMANTIC:
+        raise ConfigurationError(
+            "a dry run cannot count semantic chunks: choosing the boundaries embeds the "
+            "whole source, which is the work --dry-run exists to avoid; run the ingest"
+        )
     connector = open_connector(binding.source, base_dir=APP_ROOT)
     try:
         documents = await connector.documents()
     finally:
         await connector.aclose()
     chunker = chunker_for(binding.chunking)
-    return len(documents), sum(len(chunker.chunk(document)) for document in documents)
+    chunks = 0
+    for document in documents:
+        chunks += len(await chunker.chunk(document))
+    return len(documents), chunks
 
 
 async def _run(retriever_id: str) -> IngestReport:
