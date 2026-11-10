@@ -416,6 +416,12 @@ A change-control policy is what makes a production apply reviewable, so an `ente
 
 - **Enforced by:** `ir/profile-approvals`
 
+### An approval policy that names fewer reviewers than it requires
+
+`approvals.require: [security, platform]` with `minApprovers: 3` is not stricter, it is dead: every change would wait forever. The profile gate refuses it and quotes both numbers back, rather than emitting a workflow binding that reads as governance and behaves as an outage.
+
+- **Enforced by:** `ir/profile-approvals`
+
 ### An agent that can write, with no durable store
 
 An agent that can call a writing tool can be paused mid-write, and a paused run with no store dies with the process, leaving a write the operator cannot account for. So the `state` gate refuses an `enterprise` agent that reaches a `write` or `destructive` tool and declares no state.

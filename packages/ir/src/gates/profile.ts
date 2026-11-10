@@ -175,13 +175,24 @@ export function profileGate(ir: IR, options: GateOptions): GateResult {
       );
     }
 
-    if (deployment.network === undefined || !deployment.network.private) {
+    if (deployment.network === undefined) {
       diagnostics.push(
         report.error({
           code: IR_DIAGNOSTIC_CODES.profileNetwork,
           message: `the profile gate rejected "${id}": the enterprise profile requires private networking, and this deployment does not place the workload in one`,
           path: ['deployments', id, 'network'],
           hint: 'add `network: { private: true }`, or set `profile: standard` if the workload is meant to be internet-reachable directly',
+        }),
+      );
+    } else if (!deployment.network.private) {
+      // Declared `false` rather than omitted, so the refusal names what was written instead
+      // of what is missing -- the operator's fix is to change a value, not to add a key.
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.profileNetwork,
+          message: `the profile gate rejected "${id}": the enterprise profile requires private networking, and this deployment declares \`network.private: false\``,
+          path: ['deployments', id, 'network', 'private'],
+          hint: 'set `network.private: true`, or set `profile: standard` if the workload is meant to be internet-reachable directly',
         }),
       );
     }
@@ -193,6 +204,18 @@ export function profileGate(ir: IR, options: GateOptions): GateResult {
           message: `the profile gate rejected "${id}": the enterprise profile requires an approval policy for production changes`,
           path: ['deployments', id],
           hint: 'add `approvals: { require: [<team>], minApprovers: 1 }` so a change to this environment waits for a human',
+        }),
+      );
+    } else if (deployment.approvals.minApprovers > deployment.approvals.require.length) {
+      // A policy that asks for more approvals than it names can never be satisfied, so it
+      // is refused here rather than emitted as a workflow binding that blocks every change.
+      const { minApprovers, require: named } = deployment.approvals;
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.profileApprovals,
+          message: `the profile gate rejected "${id}": \`approvals.minApprovers\` is ${minApprovers} but \`approvals.require\` names ${named.length} (${named.map((who) => `"${who}"`).join(', ')}), so no change could ever be approved`,
+          path: ['deployments', id, 'approvals', 'minApprovers'],
+          hint: `set minApprovers to at most ${named.length}, or name ${minApprovers} reviewers in \`require\``,
         }),
       );
     }

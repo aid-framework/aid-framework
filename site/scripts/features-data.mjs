@@ -492,6 +492,13 @@ export const REFUSALS = [
     code: 'ir/profile-approvals',
   },
   {
+    id: 'unsatisfiable-approval-policy',
+    title: 'An approval policy that names fewer reviewers than it requires',
+    reason:
+      '`approvals.require: [security, platform]` with `minApprovers: 3` is not stricter, it is dead: every change would wait forever. The profile gate refuses it and quotes both numbers back, rather than emitting a workflow binding that reads as governance and behaves as an outage.',
+    code: 'ir/profile-approvals',
+  },
+  {
     id: 'enterprise-agent-writing-with-no-store',
     title: 'An agent that can write, with no durable store',
     reason:

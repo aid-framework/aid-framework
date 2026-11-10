@@ -199,7 +199,36 @@ describe('profile', () => {
     const ir = mutateIR(CONTROLS);
     first(ir.deployments).network = { private: false };
 
-    expect(codesOf(gate(ir).diagnostics)).toEqual([IR_DIAGNOSTIC_CODES.profileNetwork]);
+    const diagnostic = onlyDiagnosticWith(gate(ir).diagnostics, IR_DIAGNOSTIC_CODES.profileNetwork);
+    // The message says what was declared rather than what is missing, because the fix is
+    // to change a value and not to add a key.
+    expect(diagnostic.message).toContain('declares `network.private: false`');
+    expect(diagnostic.message).not.toContain('does not place the workload in one');
+    expect(diagnostic.path).toEqual(['deployments', 'prod', 'network', 'private']);
+    expect(diagnostic.hint).toContain('set `network.private: true`');
+  });
+
+  it('refuses an approval policy that can never be satisfied', () => {
+    // Two reviewers, three required: every change would wait forever, which reads as
+    // governance and behaves as an outage.
+    const ir = mutateIR(CONTROLS);
+    first(ir.deployments).approvals = { require: ['security', 'platform'], minApprovers: 3 };
+
+    const diagnostic = onlyDiagnosticWith(
+      gate(ir).diagnostics,
+      IR_DIAGNOSTIC_CODES.profileApprovals,
+    );
+    expect(diagnostic.message).toContain('`approvals.minApprovers` is 3');
+    expect(diagnostic.message).toContain('names 2 ("security", "platform")');
+    expect(diagnostic.path).toEqual(['deployments', 'prod', 'approvals', 'minApprovers']);
+    expect(diagnostic.hint).toContain('at most 2');
+  });
+
+  it('accepts an approval policy that asks for exactly as many as it names', () => {
+    const ir = mutateIR(CONTROLS);
+    first(ir.deployments).approvals = { require: ['security', 'platform'], minApprovers: 2 };
+
+    expect(gate(ir).diagnostics).toEqual([]);
   });
 
   it('leaves egress policy to the deployment rather than to the profile', () => {
