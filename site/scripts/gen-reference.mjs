@@ -28,6 +28,7 @@ import {
   REFUSALS,
   SHIPPED_FEATURES,
 } from './features-data.mjs';
+import { SPEC_VERSIONS } from './spec-changelog-data.mjs';
 import { loadSupportData } from './support-data.mjs';
 
 const siteRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -238,10 +239,15 @@ function specPage() {
   lines.push('| Key | Type | Description |');
   lines.push('| --- | --- | --- |');
   for (const [key, value] of Object.entries(properties)) {
-    lines.push(
-      `| \`${key}\` | ${cell(typeLabel(value))} | ${descriptionCell(value.description)} |`,
-    );
+    // `specVersion` is the one enum whose entries are a release history rather than a value
+    // domain: rendering all 24 versions fills a table cell, so the changelog page names them.
+    const type = key === 'specVersion' ? '`string`' : typeLabel(value);
+    lines.push(`| \`${key}\` | ${cell(type)} | ${descriptionCell(value.description)} |`);
   }
+  lines.push('');
+  lines.push(
+    '`specVersion` must be one of the versions in the [spec version changelog](./spec-changelog.md), which lists what each version adds.',
+  );
   lines.push('');
 
   const order = Object.keys(defs).filter((name) => {
@@ -1137,6 +1143,39 @@ function homepagePage() {
   );
 }
 
+/**
+ * The versions `specVersion` accepts, one row each, with the history that used to crowd the
+ * `specVersion` row on the spec reference.
+ *
+ * @returns {string}
+ */
+function specChangelogPage() {
+  const schema = readJson('packages/spec/src/schema/spec.schema.json');
+  if (schema === undefined) return '';
+
+  const versions = schema?.properties?.specVersion?.enum ?? [];
+  const current = versions[versions.length - 1] ?? '';
+  const lines = [];
+
+  lines.push('# Spec version changelog');
+  lines.push('');
+  lines.push(
+    `A spec declares its language version with \`specVersion\`. The current version is \`${current}\`, and each row below lists what that version adds.`,
+  );
+  lines.push('');
+  lines.push('| Version | What it adds |');
+  lines.push('| --- | --- |');
+  for (const entry of SPEC_VERSIONS) {
+    lines.push(`| \`${entry.version}\` | ${cell(entry.adds)} |`);
+  }
+  lines.push('');
+  lines.push(
+    'A section or construct that needs a later version is reported as `spec/not-supported` with the version it needs, rather than as an unknown key.',
+  );
+  lines.push('');
+  return lines.join('\n');
+}
+
 /** @type {[string, string][]} */
 const pages = [
   [
@@ -1144,6 +1183,13 @@ const pages = [
     withDescription(
       'Every spec key, type and constraint, generated from the JSON Schema that aid validate enforces.',
       specPage(),
+    ),
+  ],
+  [
+    'docs/reference/spec-changelog.md',
+    withDescription(
+      'What each spec language version adds, from the original surface through the current version.',
+      specChangelogPage(),
     ),
   ],
   [
