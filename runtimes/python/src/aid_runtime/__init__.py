@@ -310,7 +310,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.132"
+__version__ = "0.1.133"
 
 __all__ = [
     "ANTHROPIC_VERSION",

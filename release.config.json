@@ -43,6 +43,12 @@
       "reason": "repository plumbing; ships nothing to a consumer"
     }
   ],
+  "derived": [
+    {
+      "pattern": "^pnpm-lock[.]yaml$",
+      "reason": "records the resolution of the workspace manifests; it can only change what ships through a manifest that also changed"
+    }
+  ],
   "packages": [
     { "name": "@aid-framework/spec", "path": "packages/spec", "registry": "npm" },
     { "name": "@aid-framework/ir", "path": "packages/ir", "registry": "npm" },

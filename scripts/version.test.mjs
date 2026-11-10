@@ -56,6 +56,14 @@ describe('the committed release config', () => {
       expect(rule.reason, `rule ${rule.pattern} has no reason`).not.toBe('');
     }
   });
+
+  it('treats the lockfile as derived and says why', () => {
+    const lockfile = (config.derived ?? []).find((rule) =>
+      new RegExp(rule.pattern).test('pnpm-lock.yaml'),
+    );
+    expect(lockfile, 'pnpm-lock.yaml must be listed under "derived"').toBeDefined();
+    expect(lockfile?.reason).not.toBe('');
+  });
 });
 
 describe('the first release', () => {
@@ -123,6 +131,29 @@ describe('path-based release gating', () => {
       decideFor(['package.json', 'docs/contributing.md', 'site/scripts/check-a11y.mjs']).release,
     ).toBe(false);
     expect(matchingRule('package.json', config.nonReleasable)?.pattern).toBe('^package[.]json$');
+  });
+
+  it('ignores the lockfile when nothing releasable changed beside it', () => {
+    // A docs PR that adds a site dependency touches site/package.json and the lockfile.
+    // Counting the lockfile made every such PR mint a version that no consumer could
+    // observe — the same failure the root-manifest rule above fixed.
+    const decision = decideFor(['site/package.json', 'pnpm-lock.yaml', 'site/scripts/x.mjs']);
+
+    expect(decision.release).toBe(false);
+    expect(decision.reason).toContain('derived path(s) ignored');
+    expect(decision.releasablePaths).toEqual([]);
+  });
+
+  it('still releases for a lockfile-only change', () => {
+    // Manifests untouched but the resolution moved: what ships can change, so the
+    // gate must stay open. This is why the derived file is not simply denylisted.
+    expect(decideFor(['pnpm-lock.yaml']).release).toBe(true);
+  });
+
+  it('still releases when a releasable path changed beside the lockfile', () => {
+    expect(decideFor(['packages/cli/package.json', 'pnpm-lock.yaml']).release).toBe(true);
+    expect(decideFor(['packages/cli/src/index.ts', 'site/package.json']).release).toBe(true);
+    expect(decideFor(['package.json', 'pnpm-lock.yaml']).release).toBe(false);
   });
 
   it('keeps a package manifest releasable even though the root one is not', () => {
@@ -258,6 +289,14 @@ describe('config validation', () => {
 
   it('rejects a non-array packages table', () => {
     expect(() => parseConfig({ ...baseConfig(), packages: {} })).toThrow(/packages/);
+  });
+
+  it('rejects a malformed derived table', () => {
+    expect(() => parseConfig({ ...baseConfig(), derived: {} })).toThrow(/derived/);
+    expect(() => parseConfig({ ...baseConfig(), derived: [{ pattern: '[' }] })).toThrow(
+      /regular expression/,
+    );
+    expect(parseConfig({ ...baseConfig(), derived: [] }).derived).toEqual([]);
   });
 });
 

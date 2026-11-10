@@ -181,6 +181,12 @@ Consequences worth knowing before you merge:
 - To cut a release with nothing releasable merged (a re-run, or a recovery), dispatch `release.yml` by hand
   with `force_release`.
 
+A lockfile is *derived*, so it is judged against the paths beside it: it counts as releasable only when a
+releasable path changed with it. `site/package.json` plus `pnpm-lock.yaml` ships nothing to a consumer and
+does not release, because the lockfile only describes manifests that did not change. `pnpm-lock.yaml` on its
+own still releases, because the resolution moved while the manifests stood still, which can change what
+installs. `release.config.json`'s `derived` table lists these files.
+
 ### Bumping the manifests first
 
 The tag's version and the manifests' versions must agree. `release.yml` refuses to create the tag when they
