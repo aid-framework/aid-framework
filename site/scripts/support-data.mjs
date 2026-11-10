@@ -98,6 +98,48 @@ export function parseSpecVersions(schema) {
 }
 
 /**
+ * `*_MIN_VERSION` — the spec version each gate demands. The support page renders
+ * these as the "Since" column, so a page cannot promise a version the compiler
+ * does not enforce, or lag behind one it does.
+ *
+ * @param {string} source
+ * @returns {Record<string, string>}
+ */
+export function parseVersionFloors(source) {
+  /** @type {Record<string, string>} */
+  const floors = {};
+  for (const match of source.matchAll(
+    /export const ([A-Z0-9_]+_MIN_VERSION): SpecVersion = '([0-9]+(?:\.[0-9]+)*)';/g,
+  )) {
+    floors[match[1] ?? ''] = match[2] ?? '';
+  }
+  if (Object.keys(floors).length === 0) {
+    throw new Error('cannot parse any spec version floor from the spec validator');
+  }
+  return floors;
+}
+
+/**
+ * The `retrievers[].chunking.strategy` enum, in declaration order.
+ *
+ * The support page renders a row per strategy, so a strategy cannot ship in the
+ * schema without appearing in the matrix, and the matrix cannot name one the
+ * compiler rejects.
+ *
+ * @param {any} schema
+ * @returns {string[]}
+ */
+export function parseChunkingStrategies(schema) {
+  const strategies = /** @type {string[]} */ (
+    schema?.$defs?.retriever?.properties?.chunking?.properties?.strategy?.enum ?? []
+  );
+  if (strategies.length === 0) {
+    throw new Error('cannot parse the chunking strategy enum from the spec JSON Schema');
+  }
+  return strategies;
+}
+
+/**
  * `ADAPTER_CAPABILITIES` — what each provider adapter can do at all, as
  * `Capability` member names (`TOOL_CALLING`, not `tool-calling`).
  *
@@ -266,6 +308,8 @@ export function parseProviderCatalog(models) {
  *   targets: string[],
  *   specVersions: string[],
  *   latestSpecVersion: string,
+ *   chunkingStrategies: string[],
+ *   versionFloors: Record<string, string>,
  *   diagnostics: string[],
  *   corpus: { cases: number, operations: number },
  * }}
@@ -277,6 +321,7 @@ export function loadSupportData() {
   const names = readText('packages/generators/py-fastapi/src/names.ts');
   const diagnostics = readText('packages/ir/src/diagnostics.ts');
   const cliDiagnostics = readText('packages/cli/src/diagnostics.ts');
+  const specValidator = readText('packages/spec/src/validate.ts');
   const schema = readJsonFile('packages/spec/src/schema/spec.schema.json');
   const corpus = readJsonFile('conformance/corpus.json');
   const models = readJsonFile('packages/ir/src/catalog/models.json');
@@ -299,6 +344,8 @@ export function loadSupportData() {
     targets: targetIds(),
     specVersions,
     latestSpecVersion: specVersions[specVersions.length - 1] ?? '',
+    chunkingStrategies: parseChunkingStrategies(schema),
+    versionFloors: parseVersionFloors(specValidator),
     diagnostics: [
       ...new Set([...parseDiagnosticCodes(diagnostics), ...parseDiagnosticCodes(cliDiagnostics)]),
     ],

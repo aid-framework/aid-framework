@@ -61,6 +61,7 @@ module "batch" {
   log_retention_days = var.batch_log_retention_days
   bedrock_region     = var.bedrock_region
   knowledge_bases    = module.knowledge-base.knowledge_bases
+  tasks              = var.tasks
   tags               = var.tags
 }
 

@@ -860,6 +860,49 @@ function supportPage() {
   );
   lines.push('');
 
+  const floors = data.versionFloors;
+  const originalVersion = data.specVersions[0] ?? '';
+  // A strategy's floor is the version its gate demands, and the three size cutters
+  // are the original surface. A strategy the schema gains without either stops the
+  // build instead of rendering a guessed version.
+  const CHUNKING_FLOORS = {
+    semantic: floors.RETRIEVAL_SEMANTIC_CHUNKING_MIN_VERSION ?? '',
+  };
+  const ORIGINAL_CHUNKING_STRATEGIES = ['fixed', 'recursive', 'code'];
+
+  lines.push('Retriever chunking strategies are all implemented in both runtimes:');
+  lines.push('');
+  lines.push('| `chunking.strategy` | Python | TypeScript | Since |');
+  lines.push('| --- | --- | --- | --- |');
+  for (const strategy of data.chunkingStrategies) {
+    const floor = CHUNKING_FLOORS[strategy] ?? originalVersion;
+    if (
+      CHUNKING_FLOORS[strategy] === undefined &&
+      !ORIGINAL_CHUNKING_STRATEGIES.includes(strategy)
+    ) {
+      throw new Error(
+        `chunking strategy \`${strategy}\` has no version floor: name its \`*_MIN_VERSION\` in supportPage()`,
+      );
+    }
+    lines.push(`| \`${strategy}\` | yes | yes | ${floor} |`);
+  }
+  lines.push('');
+
+  const scheduleFloor = floors.REFRESH_SCHEDULE_MIN_VERSION ?? '';
+  lines.push(
+    `A retriever the application ingests itself can declare \`refresh.schedule\` since ${scheduleFloor}: a five-field cron read as UTC, which the plan turns into a scheduler rather than a second ingestion path. A retriever bound to a managed knowledge base still refuses \`refresh\` entirely, because the managed engine owns ingestion.`,
+  );
+  lines.push('');
+  lines.push('| `refresh.schedule` | `aws` | `gcp` |');
+  lines.push('| --- | --- | --- |');
+  lines.push('| Scheduler | `aws_scheduler_schedule` | `google_cloud_scheduler_job` |');
+  lines.push('| Run it starts | `aws_batch_job_definition` | `google_cloud_run_v2_job` |');
+  lines.push('| Cron dialect | EventBridge `cron(...)`, UTC | five-field cron, `Etc/UTC` |');
+  lines.push(
+    '| Also required | a `target: batch` deployment that ingests the retriever | the same |',
+  );
+  lines.push('');
+
   lines.push('## Conformance');
   lines.push('');
   lines.push(

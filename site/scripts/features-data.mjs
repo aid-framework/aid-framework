@@ -371,6 +371,15 @@ export const SHIPPED_FEATURES = [
     href: './reference/spec.md#retriever',
     since: '0.1.135',
   },
+  {
+    id: 'retrieval-refresh-schedule',
+    title: 'Scheduled re-ingestion',
+    detail:
+      "A retriever the application ingests itself declares a five-field cron read as UTC, and the generated module emits a cloud scheduler that submits the job running that retriever's ingest.",
+    declaredBy: 'retrievers[].refresh.schedule',
+    href: './reference/spec.md#retriever',
+    since: '0.1.136',
+  },
 ];
 
 /**
@@ -471,6 +480,7 @@ export const CAPABILITY_FAMILIES = [
       'retrieval-citations',
       'retrieval-remote-sources',
       'retrieval-semantic-chunking',
+      'retrieval-refresh-schedule',
       'memory',
       'semantic-cache',
       'bedrock-knowledge-base',

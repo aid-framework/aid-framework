@@ -2,6 +2,7 @@
 
 import type { ErrorObject } from 'ajv';
 import { Ajv2020 } from 'ajv/dist/2020.js';
+import { CRON_FIELD_LIST, CRON_SYNTAX, cronScheduleProblem } from './cron.js';
 import {
   DIAGNOSTIC_CODES,
   type Diagnostic,
@@ -70,6 +71,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.20',
   '0.21',
   '0.22',
+  '0.23',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -260,6 +262,19 @@ export const RETRIEVAL_REMOTE_SOURCE_MIN_VERSION: SpecVersion = '0.21';
  * document that declares it is told the version it needs.
  */
 export const RETRIEVAL_SEMANTIC_CHUNKING_MIN_VERSION: SpecVersion = '0.22';
+
+/**
+ * The first spec version whose compiler emits a scheduler for
+ * `retrievers[].refresh.schedule`.
+ *
+ * Before 0.23 the key was refused outright whatever the version, because a schedule the
+ * compiler does not wire is a refresh that never runs: the spec read as if the index were
+ * kept warm while nothing triggered it. 0.23 emits the scheduler resource for it, so a
+ * 0.22 document that declares one is told the version it needs. A retriever that binds a
+ * managed knowledge base still refuses `refresh` entirely -- the managed engine owns
+ * ingestion -- which is why the schedule check below runs only for local retrievers.
+ */
+export const REFRESH_SCHEDULE_MIN_VERSION: SpecVersion = '0.23';
 
 /** The version gate for every provider id that arrived after the spec that introduced it. */
 const PROVIDER_MIN_VERSIONS: Readonly<Record<string, SpecVersion>> = {
@@ -2300,6 +2315,21 @@ function isFilterExpression(value: string): boolean {
   return raw.length > 0;
 }
 
+/**
+ * True when some deployment in `spec` runs on `batch`.
+ *
+ * A `refresh.schedule` is emitted as a scheduler resource pointed at the batch job that
+ * runs the ingest, so the retriever needs a batch deployment to point at. The spec has no
+ * per-deployment `ingest` list -- `buildDeployPlan` spells `service.ingest` for every
+ * deployment as the specification's retriever ids -- so "named in some batch deployment's
+ * ingest list" is exactly "this specification declares a `target: batch` deployment".
+ */
+function hasBatchDeployment(spec: Record<string, unknown>): boolean {
+  return Object.values(asRecord(spec.deployments)).some(
+    (deployment) => asRecord(deployment).target === 'batch',
+  );
+}
+
 function retrievalDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnostic[]): void {
   const retrievers = asRecord(spec.retrievers);
   const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
@@ -2405,14 +2435,49 @@ function retrievalDiagnostics(spec: Record<string, unknown>, diagnostics: Diagno
       );
     }
     if (refresh.schedule !== undefined) {
-      diagnostics.push(
-        errorDiagnostic({
-          code: DIAGNOSTIC_CODES.notSupported,
-          message: `'retrievers.${name}.refresh.schedule' is defined by the AID design but is not implemented in any supported spec version`,
-          path: at('refresh', 'schedule'),
-          hint: 'spec 0.19 reconciles a refresh when it is asked to; triggering one on a clock needs a scheduler the compiler does not emit',
-        }),
-      );
+      const belowVersion =
+        declared !== undefined &&
+        known &&
+        !specVersionAtLeast(declared, REFRESH_SCHEDULE_MIN_VERSION);
+      if (belowVersion) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.notSupported,
+            message: `'retrievers.${name}.refresh.schedule' requires specVersion ${REFRESH_SCHEDULE_MIN_VERSION}, but this specification declares version ${declared}`,
+            path: at('refresh', 'schedule'),
+            hint: `set specVersion: "${REFRESH_SCHEDULE_MIN_VERSION}"; documents that refresh without a schedule are unchanged`,
+          }),
+        );
+      }
+      if (typeof refresh.schedule === 'string') {
+        // The grammar is version-independent, so it is checked here and not in the
+        // version branch above: a 0.22 document with an unreadable expression learns
+        // both facts in one pass instead of one edit apart.
+        const problem = cronScheduleProblem(refresh.schedule);
+        if (problem !== undefined) {
+          diagnostics.push(
+            errorDiagnostic({
+              code: DIAGNOSTIC_CODES.invalidValue,
+              message: `'retrievers.${name}.refresh.schedule' is not a five-field UTC cron expression: ${problem}`,
+              path: at('refresh', 'schedule'),
+              hint: `write the five UTC fields ${CRON_FIELD_LIST}; ${CRON_SYNTAX}. Six-field expressions, @-macros and \`?\`, \`L\`, \`W\`, \`#\` are refused`,
+            }),
+          );
+        } else if (!belowVersion && !hasBatchDeployment(spec)) {
+          // The schedule becomes a scheduler resource that submits the batch job running
+          // this retriever's ingest, so a specification with no batch deployment has
+          // nothing to submit to. Emitting the scheduler anyway would leave a cron firing
+          // at a job that does not exist, which is the silent no-op 0.23 removed.
+          diagnostics.push(
+            errorDiagnostic({
+              code: DIAGNOSTIC_CODES.invalidValue,
+              message: `'retrievers.${name}.refresh.schedule' needs a \`target: batch\` deployment to trigger, and this specification declares none`,
+              path: at('refresh', 'schedule'),
+              hint: "add a `deployments.<id>` with `target: batch`; the emitted scheduler submits that job with this retriever's ingest entry point, and a schedule nothing runs would never refresh the index",
+            }),
+          );
+        }
+      }
     }
 
     if (Array.isArray(retriever.filters) && retriever.filters.length > 0) {

@@ -104,6 +104,73 @@ deployments:
 `;
 
 /**
+ * A retriever the application ingests itself, refreshed on a clock at 0.23. The batch
+ * deployment is what a scheduler submits to, so the two must agree.
+ */
+const SCHEDULED_SPEC = `specVersion: "0.23"
+project:
+  name: nightly
+  namespace: aid.test.nightly
+  targets: [py-fastapi]
+models:
+  embed:
+    provider: fake
+    modelId: e
+    capabilities: [embeddings]
+  fast:
+    provider: fake
+    modelId: fake-deterministic-1
+    capabilities: [json-schema]
+prompts:
+  draft:
+    version: 1
+    model: fast
+    template: "Summarise {{ subject }}."
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: text
+stores:
+  docs:
+    kind: memory
+    dimensions: 8
+retrievers:
+  docs:
+    source:
+      kind: file
+      uri: ./docs
+    chunking:
+      strategy: recursive
+      size: 512
+      overlap: 64
+    embedModel: embed
+    store: docs
+    index:
+      metric: cosine
+    topK: 4
+    refresh:
+      mode: full
+      schedule: "0 3 * * 1-5"
+pipelines:
+  brief:
+    trigger:
+      manual: true
+    steps:
+      - generate:
+          prompt: draft
+          input:
+            subject: "{{ event.subject }}"
+          as: brief
+deployments:
+  nightly:
+    target: batch
+    pipeline: brief
+    secrets: []
+`;
+
+/**
  * A managed guardrail: the spec names the policy, the provider names the enums, and
  * `emit.ts` is the one seam between them.
  */
@@ -752,6 +819,58 @@ describe('infra gen', () => {
     const unknown = aid(made, ['infra', 'deploy', '--json']);
     expect(unknown.code).toBe(2);
     expect(diagnosticsOf(unknown).map((d) => d.code)).toEqual(['cli/infra-unknown-subcommand']);
+  });
+});
+
+describe('refresh schedules in generated infra', () => {
+  it('carries the schedule to the batch module that submits it', () => {
+    const made = scratchSpec(SCHEDULED_SPEC);
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+
+    const tfvars = JSON.parse(made.read(TFVARS));
+    expect(tfvars.tasks).toEqual([
+      {
+        id: 'ingest-docs',
+        kind: 'ingest',
+        source: 'docs',
+        // The spec's expression is kept for diagnostics; the AWS dialect is what the
+        // scheduler reads, and `1-5` must survive as a weekday range, not a renumber.
+        schedule: '0 3 * * 1-5',
+        // EventBridge numbers the days 1-7 from Sunday, so Monday-Friday is 2-6. The
+        // translation is the module's job; the spec never sees this dialect.
+        schedule_aws: 'cron(0 3 ? * 2-6 *)',
+        // The same module `aid ingest docs` runs, so a scheduled refresh and a manual
+        // one cannot diverge.
+        module: 'app.generated.retrieval.ingest.docs',
+        deployment: 'nightly',
+      },
+    ]);
+    expect(made.read(`${GENERATED}/modules/batch/main.tf`)).toContain(
+      'resource "aws_scheduler_schedule" "refresh"',
+    );
+  });
+
+  it('carries the same schedule to the Cloud Run job scheduler', () => {
+    const made = scratchSpec(SCHEDULED_SPEC);
+    expect(aid(made, ['infra', 'gen', '--cloud', 'gcp']).code).toBe(0);
+
+    const tfvars = JSON.parse(made.read(TFVARS));
+    // Cloud Scheduler speaks the same five-field grammar, so no dialect field is needed.
+    expect(tfvars.tasks[0].schedule).toBe('0 3 * * 1-5');
+    expect(tfvars.tasks[0].deployment).toBe('nightly');
+    expect(made.read(`${GENERATED}/modules/cloudrunjob/main.tf`)).toContain(
+      'resource "google_cloud_scheduler_job" "refresh"',
+    );
+  });
+
+  it('leaves an un-scheduled task exactly as it was', () => {
+    const made = scratchSpec(SCHEDULED_SPEC.replace('      schedule: "0 3 * * 1-5"\n', ''));
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+
+    // Three keys, not six: a plan that schedules nothing yields the document it always did.
+    expect(JSON.parse(made.read(TFVARS)).tasks).toEqual([
+      { id: 'ingest-docs', kind: 'ingest', source: 'docs' },
+    ]);
   });
 });
 

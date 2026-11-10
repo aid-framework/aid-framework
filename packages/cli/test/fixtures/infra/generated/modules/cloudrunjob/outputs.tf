@@ -10,3 +10,8 @@ output "job_names" {
 output "service_accounts" {
   value = { for id, account in google_service_account.job : id => account.email }
 }
+
+output "refresh_schedules" {
+  description = "Task id -> the scheduler this module created to refresh that retriever."
+  value       = { for id, schedule in google_cloud_scheduler_job.refresh : id => schedule.id }
+}

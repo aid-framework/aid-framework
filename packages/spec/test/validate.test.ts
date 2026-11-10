@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CRON_FIELD_LIST } from '../src/cron.js';
 import {
   checkSpecText,
   DEFERRED_SECTIONS,
@@ -1205,6 +1206,24 @@ describe('managed knowledge bases', () => {
     expect(diagnostics[0]?.hint).toContain('README names the ingestion command');
   });
 
+  it('refuses a schedule on a managed retriever, so a clock cannot bypass the engine', () => {
+    // Layer boundary: scheduling a managed ingestion is the engine's decision, not the
+    // spec's, so 0.23 must not open this door. Exactly one diagnostic proves the schedule
+    // gate is never reached for a managed binding.
+    const diagnostics = validateSpec({
+      ...managed(),
+      retrievers: {
+        docs: {
+          knowledgeBase: 'docs',
+          topK: 4,
+          refresh: { mode: 'full', schedule: '0 3 * * *' },
+        },
+      },
+    });
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.knowledgeBaseRefresh]);
+    expect(paths(diagnostics)).toEqual(['retrievers.docs.refresh']);
+  });
+
   it('allows filters on a managed retriever, which both engines evaluate natively', () => {
     const diagnostics = validateSpec({
       ...managed(),
@@ -2000,9 +2019,9 @@ describe('incremental retrieval', () => {
     );
   });
 
-  it('still refuses a schedule at 0.19', () => {
-    // Scheduling is the part that needs a runner the compiler does not emit, so the
-    // mode shipping must not take the reservation with it.
+  it('still refuses a schedule at 0.19, below the version that implements it', () => {
+    // Incremental mode shipped at 0.19 and scheduling at 0.23, so the older gate must not
+    // take the newer construct with it: a 0.19 document names the version it needs.
     const withSchedule = doc('0.19');
     withSchedule.retrievers.docs.refresh = {
       mode: 'incremental',
@@ -2013,5 +2032,112 @@ describe('incremental retrieval', () => {
 
     expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
     expect(paths(diagnostics)).toEqual(['retrievers.docs.refresh.schedule']);
+  });
+});
+
+describe('refresh schedules', () => {
+  const STEPS = [
+    { generate: { prompt: 'draft', input: { subject: '{{ event.subject }}' }, as: 'answer' } },
+    { emit: { event: 'Reply' } },
+  ];
+  const NIGHTLY = { target: 'batch', pipeline: 'ingest', secrets: [] };
+  const CONTAINER = { target: 'container', secrets: [] };
+
+  function doc(
+    specVersion: string,
+    {
+      schedule = '0 3 * * *',
+      deployments = { nightly: NIGHTLY },
+    }: { schedule?: string; deployments?: Record<string, unknown> } = {},
+  ) {
+    return {
+      specVersion,
+      project: { name: 'p' },
+      types: {
+        Reply: { kind: 'struct', fields: { summary: { type: 'string', required: true } } },
+      },
+      models: {
+        embed: { provider: 'fake', modelId: 'e', capabilities: ['embeddings'] },
+        fast: {
+          provider: 'fake',
+          modelId: 'fake-deterministic-1',
+          capabilities: ['json-schema'],
+        },
+      },
+      prompts: {
+        draft: {
+          version: 1,
+          model: 'fast',
+          template: 'Summarise this ticket: {{ subject }}',
+          variables: { subject: { type: 'string', required: true } },
+          output: { kind: 'structured', schema: 'Reply' },
+        },
+      },
+      stores: { docs: { kind: 'memory', dimensions: 8 } },
+      retrievers: {
+        docs: {
+          source: { kind: 'file', uri: './docs' },
+          chunking: { strategy: 'recursive', size: 512, overlap: 64 },
+          embedModel: 'embed',
+          store: 'docs',
+          index: { metric: 'cosine' },
+          topK: 4,
+          refresh: { mode: 'full', schedule },
+        },
+      },
+      pipelines: { ingest: { trigger: { manual: true }, steps: STEPS } },
+      deployments,
+    };
+  }
+
+  it('accepts a UTC cron at 0.23, with a batch deployment to trigger', () => {
+    expect(validateSpec(doc('0.23'))).toEqual([]);
+  });
+
+  it('accepts the whole five-field grammar the docs promise', () => {
+    for (const schedule of ['*/15 * * * *', '30 9 * * 1-5', '0 0 1,15 * *']) {
+      expect(validateSpec(doc('0.23', { schedule })), schedule).toEqual([]);
+    }
+  });
+
+  it('refuses a schedule below 0.23 and names the version it needs', () => {
+    const diagnostics = validateSpec(doc('0.22'));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['retrievers.docs.refresh.schedule']);
+    expect(diagnostics[0]?.message).toContain(
+      "'retrievers.docs.refresh.schedule' requires specVersion 0.23",
+    );
+    expect(diagnostics[0]?.hint).toContain('set specVersion: "0.23"');
+  });
+
+  it('refuses an expression the providers would read differently, naming the field', () => {
+    const diagnostics = validateSpec(doc('0.23', { schedule: '0 0 3 * * 2027' }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.invalidValue]);
+    expect(paths(diagnostics)).toEqual(['retrievers.docs.refresh.schedule']);
+    expect(diagnostics[0]?.message).toContain('five-field UTC cron expression');
+    expect(diagnostics[0]?.message).toContain('6 fields');
+    expect(diagnostics[0]?.hint).toContain(CRON_FIELD_LIST);
+  });
+
+  it('refuses a schedule no deployment would run', () => {
+    // A scheduler with nothing to submit to fires at a job that does not exist, which is
+    // the silent no-op this construct exists to avoid.
+    const diagnostics = validateSpec(doc('0.23', { deployments: { api: CONTAINER } }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.invalidValue]);
+    expect(paths(diagnostics)).toEqual(['retrievers.docs.refresh.schedule']);
+    expect(diagnostics[0]?.message).toContain('needs a `target: batch` deployment');
+    expect(diagnostics[0]?.hint).toContain('add a `deployments.<id>` with `target: batch`');
+  });
+
+  it('reports the version and the unreadable expression in one pass', () => {
+    const diagnostics = validateSpec(doc('0.22', { schedule: '@daily' }));
+
+    expect(codes(diagnostics)).toEqual([
+      DIAGNOSTIC_CODES.notSupported,
+      DIAGNOSTIC_CODES.invalidValue,
+    ]);
   });
 });

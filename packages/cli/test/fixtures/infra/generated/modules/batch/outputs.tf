@@ -14,3 +14,8 @@ output "job_definition_arns" {
 output "log_groups" {
   value = { for id, group in aws_cloudwatch_log_group.job : id => group.name }
 }
+
+output "refresh_schedules" {
+  description = "Task id -> the scheduler this module created to refresh that retriever."
+  value       = { for id, schedule in aws_scheduler_schedule.refresh : id => schedule.arn }
+}

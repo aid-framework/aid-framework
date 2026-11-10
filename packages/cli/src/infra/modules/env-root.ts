@@ -472,6 +472,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         'log_retention_days = var.batch_log_retention_days',
         'bedrock_region     = var.bedrock_region',
         `knowledge_bases    = ${knowledgeBases}`,
+        'tasks              = var.tasks',
         'tags               = var.tags',
       ]),
     );
@@ -624,6 +625,7 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         'deletion_protection   = var.deletion_protection',
         `knowledge_bases       = ${knowledgeBases}`,
         `model_armor_templates = ${armorTemplates}`,
+        'tasks                 = var.tasks',
         'tags                  = var.tags',
       ]),
     );

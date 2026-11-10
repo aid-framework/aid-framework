@@ -32,6 +32,19 @@ variable "services" {
   }))
 }
 
+variable "tasks" {
+  description = "The plan tasks, verbatim. Only one carrying a schedule reaches a scheduler."
+  type = list(object({
+    id         = string
+    kind       = string
+    source     = string
+    schedule   = optional(string)
+    module     = optional(string)
+    deployment = optional(string)
+  }))
+  default = []
+}
+
 variable "image_uris" {
   description = "Business input: the container image each job runs."
   type        = map(string)
