@@ -325,7 +325,9 @@ def _split_units(text: str, size: int) -> list[tuple[int, int]]:
 
 
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
-    dot = sum(a * b for a, b in zip(left, right))
+    # Both operands are embeddings from the same pinned model, so a length
+    # disagreement is a real fault rather than something to truncate away.
+    dot = sum(a * b for a, b in zip(left, right, strict=True))
     left_norm = sqrt(sum(a * a for a in left))
     right_norm = sqrt(sum(b * b for b in right))
     if left_norm == 0.0 or right_norm == 0.0:
@@ -336,13 +338,11 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
 def _is_valley(similarities: Sequence[float], index: int) -> bool:
     """True when the similarity at ``index`` is a local low below the threshold."""
     score = similarities[index]
-    if score >= SEMANTIC_SIMILARITY_THRESHOLD:
-        return False
-    if index > 0 and similarities[index - 1] < score:
-        return False
-    if index + 1 < len(similarities) and similarities[index + 1] < score:
-        return False
-    return True
+    return (
+        score < SEMANTIC_SIMILARITY_THRESHOLD
+        and (index == 0 or similarities[index - 1] >= score)
+        and (index + 1 == len(similarities) or similarities[index + 1] >= score)
+    )
 
 
 class SemanticChunker:
@@ -424,9 +424,7 @@ class SemanticChunker:
         for start, end in spans:
             window = text[start:end]
             if window.strip():
-                chunks.append(
-                    _build_chunk(document, len(chunks), start, end, window, self._keep)
-                )
+                chunks.append(_build_chunk(document, len(chunks), start, end, window, self._keep))
         return tuple(chunks)
 
     def _carry(
@@ -449,9 +447,7 @@ class SemanticChunker:
         return carried
 
 
-def _merge_runts(
-    spans: list[tuple[int, int]], floor: int, size: int
-) -> list[tuple[int, int]]:
+def _merge_runts(spans: list[tuple[int, int]], floor: int, size: int) -> list[tuple[int, int]]:
     """Fold any chunk shorter than ``floor`` into a neighbour where the result fits.
 
     A size overflow can leave a short chunk in the middle of a document, not only at

@@ -220,9 +220,7 @@ class Retriever:
         local = self._local
         incremental = local.refresh_mode is RefreshMode.INCREMENTAL
         source_documents = tuple(documents) if documents is not None else await self._read_source()
-        chunker = chunker_for(
-            local.chunking, embedder=self._embedder, model=local.embedding
-        )
+        chunker = chunker_for(local.chunking, embedder=self._embedder, model=local.embedding)
         chunks: list[Chunk] = []
         # A chunker reports one document's boundary work, so a corpus has to be summed
         # here: reading `chunker.usage` after the loop would report only the last

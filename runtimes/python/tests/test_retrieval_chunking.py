@@ -1,4 +1,4 @@
-﻿"""The implemented chunking strategies.
+"""The implemented chunking strategies.
 
 The load-bearing assertions are the coverage ones: a chunker that drops a sentence
 produces a corpus that retrieves nothing for a query that should have matched, and
@@ -20,19 +20,17 @@ from itertools import pairwise
 
 import pytest
 
-from aid_runtime import ConfigurationError, FeatureDeferredError
+from aid_runtime import ConfigurationError
 from aid_runtime.retrieval import (
     Chunk,
     Chunker,
     ChunkingSpec,
     ChunkingStrategy,
     CodeChunker,
-    Embedder,
     EmbeddingBatch,
     FixedChunker,
     PinnedEmbedding,
     RecursiveChunker,
-    SemanticChunker,
     chunk_document,
     chunk_id_for,
     chunker_for,
@@ -62,9 +60,7 @@ async def chunks_of(text: str, spec: ChunkingSpec) -> tuple[Chunk, ...]:
     return await chunk_document(document("a.md", text), spec)
 
 
-def spec_for(
-    strategy: ChunkingStrategy, *, size: int = 80, overlap: int = 0
-) -> ChunkingSpec:
+def spec_for(strategy: ChunkingStrategy, *, size: int = 80, overlap: int = 0) -> ChunkingSpec:
     return ChunkingSpec(strategy=strategy, size=size, overlap=overlap, keepMetadata=())
 
 
@@ -354,9 +350,7 @@ async def test_semantic_bounds_every_chunk_by_the_size() -> None:
 
 
 async def test_semantic_carries_the_previous_units_for_the_overlap() -> None:
-    produced = await semantic_chunks(
-        FOUR_SENTENCES, VectorEmbedder(two_topics), overlap=10
-    )
+    produced = await semantic_chunks(FOUR_SENTENCES, VectorEmbedder(two_topics), overlap=10)
 
     assert produced[1].start < produced[0].end
     assert produced[1].text.startswith("beta two. ")
@@ -386,9 +380,7 @@ async def test_semantic_ids_are_deterministic_across_runs() -> None:
 
     assert [item.chunk_id for item in second] == [item.chunk_id for item in first]
     assert [item.text for item in second] == [item.text for item in first]
-    assert all(
-        item.chunk_id == chunk_id_for("a.md", item.index, item.text) for item in first
-    )
+    assert all(item.chunk_id == chunk_id_for("a.md", item.index, item.text) for item in first)
 
 
 async def test_semantic_reports_the_boundary_pass_usage() -> None:
