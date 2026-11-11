@@ -11,17 +11,19 @@
  * the trail the profile promises. Both checks are scoped to spec 0.27 and above, because
  * a 0.26 document has no `observability` key to satisfy them with.
  *
- * The trajectory gate is the honest-maturity gate, and it is deliberately narrow: it
- * refuses `tool-trace` and nothing else. That kind exists for exactly one purpose -- to
- * compare the tool calls a run made against an expectation -- and nothing in this build
- * compares them, so declaring it promises a score that will never be produced. `cost` and
- * `latency` are *not* refused here even though the eval harness cannot score them either,
- * because each carries a second meaning this build does honour: a `cost` ceiling becomes
- * the eval's `costBudget` and is checked against a static estimate by the cost gate, and a
- * `latency` ceiling becomes `latencyBudgetP95Ms` and reaches the deploy plan. Refusing
- * them here would delete a working check to make a point. They stay refused at generation,
- * where they have always been refused. Moving the `tool-trace` refusal from codegen to the
- * IR is the point -- `aid validate` now says it before a generator is ever entered.
+ * The trajectory gate covers the two things a 0.27 document can say about a run that this
+ * build cannot honour, and it refuses each with its own reason. An `agent:` target is
+ * expressible so a spec can state what it means, but no generator emits an agent eval --
+ * the runner drives one prediction per case through a prompt, and an agent run has no such
+ * single subject. A `tool-trace` metric compares tool calls, which nothing here compares,
+ * so declaring one promises a score that will never be produced. `cost` and `latency` are
+ * *not* refused even though the runner cannot score them either, because each carries a
+ * second meaning this build does honour: a `cost` ceiling becomes the eval's `costBudget`
+ * and is checked against a static estimate by the cost gate, and a `latency` ceiling
+ * becomes `latencyBudgetP95Ms` and reaches the deploy plan. Refusing them would delete a
+ * working check to make a point; they stay refused at generation, where they always were.
+ * Refusing the rest here rather than in codegen is the point -- `aid validate` says it
+ * before a generator is ever entered.
  */
 
 import { specVersionAtLeast } from '@aid-framework/spec';
@@ -75,32 +77,37 @@ export function evalTrajectoryGate(ir: IR, options: GateOptions): GateResult {
   const report = reporter(options);
 
   for (const evalShape of ir.evals) {
-    evalShape.metrics.forEach((metric, index) => {
-      if (metric.kind !== 'tool-trace') return;
-      const target = evalShape.target;
+    const target = evalShape.target;
 
-      if (target.kind !== 'agent') {
-        diagnostics.push(
-          report.error({
-            code: IR_DIAGNOSTIC_CODES.evalTrajectory,
-            message: `the trajectory gate rejected "${evalShape.id}": metric ${index} compares tool calls, and "${target.qualified}" returns a response with no tool calls to compare`,
-            path: ['evals', evalShape.id, 'metrics', index],
-            hint: 'point the eval at an agent with `target: agent:<id>`, or score the response with exact, contains, json-schema, llm-judge or assert',
-          }),
-        );
-        return;
-      }
-
+    // An `agent:` target is expressible from 0.27 so a document can say what it means,
+    // but no generator emits an agent eval: the runner drives one prediction per case
+    // through a prompt, and an agent run has no such single subject. Refusing here rather
+    // than at generation is the whole point of the gate -- `aid validate` says it before a
+    // generator is entered, and it names the missing piece instead of pretending the agent
+    // is undeclared.
+    if (target.kind === 'agent') {
       diagnostics.push(
         report.error({
           code: IR_DIAGNOSTIC_CODES.evalTrajectory,
-          message: `the trajectory gate rejected "${evalShape.id}": metric ${index} compares tool calls, which spec 0.27 lets you declare on "${target.qualified}" but this build does not measure yet`,
+          message: `the trajectory gate rejected "${evalShape.id}": target "${target.qualified}" names an agent, and this build emits evals over a prompt, not over an agent run`,
+          path: ['evals', evalShape.id, 'target'],
+          hint: `evaluate the pipeline that runs the agent (\`target: pipeline:<id>\`) for now; an agent eval needs a runner that carries a trajectory, which is not built yet`,
+        }),
+      );
+      continue;
+    }
+
+    evalShape.metrics.forEach((metric, index) => {
+      if (metric.kind !== 'tool-trace') return;
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.evalTrajectory,
+          message: `the trajectory gate rejected "${evalShape.id}": metric ${index} compares tool calls, and "${target.qualified}" returns a response with no tool calls to compare`,
           path: ['evals', evalShape.id, 'metrics', index],
-          hint: 'the eval runner hands its metrics a response string and no trajectory, so this metric would be reported as unmeasured; score the response instead until trajectory measurement ships',
+          hint: 'no metric in this build inspects a trajectory; score the response with exact, contains, json-schema, llm-judge or assert',
         }),
       );
     });
   }
-
   return { diagnostics, suppressed: NO_SUPPRESSIONS };
 }

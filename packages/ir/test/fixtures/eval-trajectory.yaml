@@ -69,8 +69,8 @@ evals:
         ordered: true
     gate:
       ci: true
-  agent_latency:
-    target: agent:support
+  pipeline_latency:
+    target: pipeline:handle_ticket
     dataset:
       source: file
       uri: datasets/tickets.jsonl

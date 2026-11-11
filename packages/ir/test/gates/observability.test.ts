@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { IR_DIAGNOSTIC_CODES, runGates } from '../../src/index.js';
+import { evalSubject, IR_DIAGNOSTIC_CODES, runGates } from '../../src/index.js';
 import { buildFixture, codesOf, gateFixture, mutateIR, onlyDiagnosticWith } from '../helpers.js';
 
 const OTLP = 'v27-observability.yaml';
@@ -109,6 +109,21 @@ describe('eval targets', () => {
     expect(target?.valid).toBe(true);
   });
 
+  it('reports an agent target as an agent, never as an undeclared pipeline', () => {
+    // The gate refuses the target before a generator is entered, so this branch is
+    // unreachable through `aid gen`; it exists so a caller that builds an IR directly
+    // cannot be told an agent it just read is missing.
+    const { ir } = buildFixture(TRAJECTORY);
+    const evaluation = ir.evals.find((entry) => entry.id === 'agent_tool_calls');
+    if (evaluation === undefined) throw new Error('fixture lost agent_tool_calls');
+    const subject = evalSubject(ir, evaluation);
+    expect(subject.ok).toBe(false);
+    if (subject.ok) return;
+    expect(subject.code).toBe('unsupported-eval-target');
+    expect(subject.message).not.toContain('is not declared');
+    expect(subject.message).toContain('trajectory');
+  });
+
   it('reports an agent target naming no declared agent', () => {
     const ir = mutateIR(TRAJECTORY);
     for (const entry of ir.evals) {
@@ -128,13 +143,13 @@ describe('trajectory metrics', () => {
     const diagnostic = onlyDiagnosticWith(diagnostics, IR_DIAGNOSTIC_CODES.evalTrajectory);
     expect(diagnostic.path).toEqual(['evals', 'pipeline_tool_calls', 'metrics', 0]);
     expect(diagnostic.message).toContain('no tool calls to compare');
-    expect(diagnostic.hint).toContain('target: agent:<id>');
+    expect(diagnostic.hint).toContain('no metric in this build inspects a trajectory');
   });
 
-  it('refuses only the tool traces, on both target kinds', () => {
+  it('refuses the agent target once, at the target, and the tool trace on a pipeline', () => {
     const diagnostics = trajectoryGate(mutateIR(TRAJECTORY)).diagnostics;
     expect(diagnostics.map((entry) => entry.path.join('.'))).toEqual([
-      'evals.agent_tool_calls.metrics.0',
+      'evals.agent_tool_calls.target',
       'evals.pipeline_tool_calls.metrics.0',
     ]);
     for (const diagnostic of diagnostics) {
@@ -142,14 +157,18 @@ describe('trajectory metrics', () => {
     }
   });
 
-  it('says an agent trajectory is declared but unmeasured rather than wrong', () => {
+  it('refuses an agent target with the reason it is refused, not as undeclared', () => {
     const ir = mutateIR(TRAJECTORY);
     const diagnostic = onlyDiagnosticWith(
       trajectoryGate(ir).diagnostics.filter((entry) => entry.message.includes('agent_tool_calls')),
       IR_DIAGNOSTIC_CODES.evalTrajectory,
     );
-    expect(diagnostic.message).toContain('this build does not measure yet');
-    expect(diagnostic.hint).toContain('reported as unmeasured');
+    expect(diagnostic.path).toEqual(['evals', 'agent_tool_calls', 'target']);
+    expect(diagnostic.message).toContain('emits evals over a prompt, not over an agent run');
+    // The agent *is* declared; saying otherwise would send the author looking for a typo
+    // in a name that is spelled correctly.
+    expect(diagnostic.message).not.toContain('is not declared');
+    expect(diagnostic.hint).toContain('target: pipeline:<id>');
   });
 
   it('accepts a cost or latency ceiling, which set a budget this build honours', () => {
@@ -160,14 +179,17 @@ describe('trajectory metrics', () => {
     const ir = mutateIR(TRAJECTORY);
     const paths = trajectoryGate(ir).diagnostics.map((entry) => entry.path.join('.'));
     expect(paths).not.toContain('evals.pipeline_cost.metrics.0');
-    expect(paths).not.toContain('evals.agent_latency.metrics.0');
+    expect(paths).not.toContain('evals.pipeline_latency.metrics.0');
     const cost = ir.evals.find((entry) => entry.id === 'pipeline_cost');
-    const latency = ir.evals.find((entry) => entry.id === 'agent_latency');
+    const latency = ir.evals.find((entry) => entry.id === 'pipeline_latency');
     expect(cost?.costBudget).toBe(0.25);
     expect(latency?.latencyBudgetP95Ms).toBe(4000);
   });
 
-  it('accepts the measurable metrics a 0.27 document can actually score', () => {
-    expect(trajectoryGate(mutateIR(OTLP)).diagnostics).toEqual([]);
+  it('refuses only the agent target in a 0.27 document, leaving its pipeline eval alone', () => {
+    const diagnostics = trajectoryGate(mutateIR(OTLP)).diagnostics;
+    expect(diagnostics.map((entry) => entry.path.join('.'))).toEqual([
+      'evals.adjudicator_exact.target',
+    ]);
   });
 });
