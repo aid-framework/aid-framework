@@ -46,7 +46,7 @@ describe('the version the site reports', () => {
     expect(homepage).not.toMatch(/at version \*\*\d+\.\d+\.\d+\*\*/);
   });
 
-  it('names the current spec language version on the homepage', () => {
+  it('keeps the spec language version off the sales page, where the reference states it', () => {
     // The newest version is the last entry of the array the validator reads, not a
     // hand-maintained constant: the constant was `0.6` while the build already read `0.8`.
     const source = readFileSync(join(repoRoot, 'packages', 'spec', 'src', 'validate.ts'), 'utf8');
@@ -54,7 +54,11 @@ describe('the version the site reports', () => {
     const versions = [...block.matchAll(/'([0-9]+\.[0-9]+)'/g)].map((match) => match[1]);
     expect(versions.length).toBeGreaterThan(0);
     const latest = versions[versions.length - 1];
+    // The homepage sells what ships; release and spec numbers are a reference concern, so
+    // the band, cards and prose stay free of them and the reference carries them instead.
     const homepage = readFileSync(join(repoRoot, 'docs', 'index.md'), 'utf8');
-    expect(homepage).toContain(`\`${latest}\``);
+    expect(homepage).not.toContain('`0.');
+    const reference = readFileSync(join(repoRoot, 'docs', 'reference', 'support.md'), 'utf8');
+    expect(reference).toContain(`The current spec language version is \`${latest}\``);
   });
 });
