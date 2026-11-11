@@ -704,10 +704,26 @@ tests, docs, features-page data and a walkthrough — the phase-exit definition 
 | 4 | Feedback signals + promotion gate (0.28) | The self-improving loop closes, gated and approved. | 8–10 d | `observability.feedback` + `evals[].gate.promotion`, with `aid eval --compare <accepted> <candidate>` as the half that judges a candidate — **shipped as that**, with cost left declared and reported as unjudged. |
 | 5 | Overlays, `aid resolve`, `aid fleet`, two templates (0.29) | Twenty customers, one base spec. | 10–12 d | One overlay with one overridable path, resolved by `aid gen --overlay`. |
 
-**Phases 1–4 are shipped** (spec 0.25–0.28, `IR_VERSION` 0.5.0). Phase 5 is the remaining scope.
+**All five phases are shipped** (spec 0.25–0.29, `IR_VERSION` still 0.5.0). Each landed as its own
+pull request with the full phase-exit loop — schema, IR or resolver, gates with named diagnostics,
+byte-asserted fixtures, tests, reference docs, features page and one walkthrough:
 
-**Total: ~42–49 days.** Sequences chosen so each phase is independently valuable and
-independently revertable.
+| Phase | Pull request | Spec | What locked it in |
+| --- | --- | --- | --- |
+| 1 | #171 | 0.25 | `profile` + `cloud` + region + audit, and the first "acceptable *for this class of customer*" gate |
+| 2 | #172 | 0.26 | Identity, network, approval policy, durable runs, step approval |
+| 3 | #174 | 0.27 | Trajectory metrics, per-agent coverage, fallback pricing, OTel export intent |
+| 4 | #175 | 0.28 | Feedback signals and the promotion gate |
+| 5 | #176 | 0.29 | Overlays, `aid resolve`, `aid fleet`, two templates |
+
+**Total: ~42–49 days** as estimated, and no phase needed a second one to finish it. Sequences were
+chosen so each phase was independently valuable and independently revertable, which held: no phase
+had to be reverted, and the only cross-phase fix was Phase 5's discovery that a `gate.ci` flag could
+be removed independently of its eval (§10.5).
+
+The four things this RFC specifies but deliberately does not build are inventoried in §10 and
+repeated in §12 — an OTel exporter, generated dashboards and alerts, a generated feedback route and
+promotion job, and measurement of `cost`/`latency` metrics.
 
 ### 9.1 Recommended first increment (Phase 1, detailed)
 
@@ -764,7 +780,7 @@ For the CLI reference and the features page, at the end of this RFC:
 | `prompts[].version` | **exists and is required**, and forms `prompt:<name>@<version>`; `ir/prompt-version-stale` refuses a promotion whose declared version is not strictly greater than the baseline's (§10.4) |
 | `allowedCostIncrease` judged | **not built**: no runtime measures cost, so `aid eval --compare` reports the ceiling as unjudged (§10.4) |
 | generated feedback route, feedback storage, promotion job, `aid trace` export | proposed 0.28, **not built** (§10.4) |
-| `overridable`, overlays, `aid resolve`, `aid fleet`, `--template` | proposed, 0.29, not built |
+| `overridable`, overlays, `aid resolve`, `aid fleet`, `--template` | **built in 0.29** — declared, resolved and gated from files (§10.5) |
 
 ### 10.1 Phase 1, as shipped
 
@@ -989,38 +1005,61 @@ Deliberately **not** built in Phase 5, and stated rather than implied:
 
 ## 11. Open questions for review
 
+Each question below is answered by what shipped; the resolution is recorded inline rather than
+deleted, because the reasoning is part of the design record.
+
 1. **Is `profile` the right word?** The alternatives are `tier` and `class`. `profile` reads best
    next to "an overlay selects the profile per customer," but it collides slightly with
    `onBudgetExhausted`'s "cost profile" in `ir/cost-profile-unknown`. Acceptable, or rename?
+   **Settled: kept as `profile`.** The collision is mild and local, the word appears in five spec
+   surfaces and every diagnostic since 0.25, and renaming it now would be a breaking spec change
+   that buys readability the docs already provide.
 2. **Should `standard` be forbidden from enterprise-only keys?** My recommendation is *no* — a
    standard-profile spec may declare region and audit (it is stricter than required, which is
    fine) — but the alternative (standard must not) makes the profile a real mutual exclusion.
+   **Settled: as recommended.** No gate refuses a `standard` spec for declaring a region or an
+   audit sink. Every `ir/profile-*` code only ever *adds* requirements to `enterprise`, so a
+   standard spec that is stricter than its tier is simply a stricter spec.
 3. **Should the enterprise guardrail requirement be expressed per pipeline or per stage?** The
    audit settled this one by constraint rather than preference: guardrails are declared globally
    with `stages` and are *not* attached to pipelines (`pipeline` has only `description`, `trigger`,
    `steps`), so the enforceable form is "the spec declares at least one `input` guardrail and at
    least one `output` guardrail." Per-pipeline attachment would be a schema change of its own and
    is not proposed here. Confirm that global-stage is the intended reading of the requirement.
+   **Settled: global-stage**, exactly as constrained. `ir/profile-guardrail` asks the spec for one
+   of each, not the pipeline, and per-pipeline attachment remains unbuilt and unproposed.
 4. **Overlay scope.** I have overlays touching five path families (name, region, audit sink,
    `models.*.modelId`, budget). Is *tool allowlist* likewise overridable per customer, or is that
    the line where a fork is the honest answer?
+   **Settled by the allowlist, not by a special case.** A base author *can* open a tool allowlist
+   — the resolver treats it as an ordinary path — but the shipped templates deliberately leave it
+   closed, because a per-customer tool allowlist changes what the agent can do rather than how it
+   is operated, and it is not covered by the weakening tables. Keeping it closed is the recommended
+   default, not an enforced rule.
 5. **`aid fleet` output.** Table, JSON, or both? It has to be readable in CI logs and machine
    readable for a platform team's own dashboard.
+   **Settled: both.** The table is the default, because a fleet review happens in a pull request
+   and in a log; `--json` is for the dashboard, and prints the same facts (it is the same
+   derivation, serialized).
 6. **Where does the promotion approval record live?** A file in the repo next to the candidate, or
    an entry in the customer overlay? The file is simpler; the overlay would make "who approved
    what for whom" one query.
+   **Settled: a committed file.** `evals[].gate.promotion.approval` is `{ by, record }`, and
+   `ir/promotion-approval` checks both are present and non-empty — so "who approved what" is
+   answered by `git blame` on the record, and by `aid fleet` for which customer it belongs to.
 
 ---
 
 ## 12. Decision requested
 
-**Status: approved and implemented.** Phase 1 shipped as specified here, with §10.1 recording
-exactly what landed. Phase 2 is the next increment and is not started.
+**Status: all five phases are shipped.** Spec 0.25 through 0.29, `IR_VERSION` still 0.5.0, and each
+phase's "as shipped" section (§10.1–§10.5) records exactly what landed, what was narrower than
+proposed, and what was deliberately left unbuilt. The roadmap above is now history rather than a
+plan; the honest inventory of what remains unbuilt is §10.
 
-Approve Phase 1 as described in §9.1 (`profile` + `cloud` + region + audit + guardrail
-requirement, `specVersion` 0.25, `IR_VERSION` 0.2.0, five diagnostics, both generators, fixtures,
-docs, features page, one walkthrough) and I will implement it end to end on this branch. Or redirect
-the sequencing — for example to Phase 5's overlays first if multi-customer throughput is worth more
-right now than tier enforcement. I recommend Phase 1 first, for the reason in §9.1: it proves the
-full phase-exit loop on the smallest surface, and every later phase extends its requirement list
-rather than inventing a new one.
+Nothing in the six capability areas is left unaddressed, but four things are declared, gated and
+deliberately not generated — an OTel exporter in the runtimes, generated dashboards and alerts, a
+generated feedback route and promotion job, and any measurement of `cost` or `latency` metrics.
+Each of those needs a runtime decision that AID has not made (which collector, which signal
+schema, which scheduler), and guessing one would break the reproducibility guarantee. They stay
+listed as unbuilt until a phase can ship them with a gate and a byte-asserted fixture.
