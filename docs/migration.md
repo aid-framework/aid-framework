@@ -174,11 +174,11 @@ to approve a read teaches them to approve without reading, which is worse than n
 Where a deployment's spans belong, and an eval that can name an agent. Both keys are additive, so a
 0.26 document is still a 0.26 document.
 
-> **What 0.27 declares but does not yet send.** `export: otlp` states that the spans belong in a
-> collector. AID installs no OpenTelemetry exporter, adds no dependency to a generated project and
-> writes no collector configuration, so the spans are still dropped. `/features` says so on the row
-> itself. The declaration is enforced rather than decorative: the gate refuses a document whose
-> export contradicts its tracing.
+> **What 0.27 declared but did not send, until 0.1.150.** `export: otlp` states that the spans
+> belong in a collector. 0.27 declared that without installing anything, so the spans were still
+> dropped; release 0.1.150 added the exporter, in the runtime and behind an explicit call. See
+> [0.1.150: the exporter 0.27 declared but did not install](#otel-exporter-release).
+> No `specVersion` changed for it, because it changed no spec language.
 
 ### What 0.27 adds
 
@@ -404,6 +404,61 @@ judge a file the same run just wrote. The CLI refuses the pair with
 
 A regression names the metric, both means and the allowance it was measured against, so the refusal
 is a number rather than an adjective.
+
+## 0.1.150: the exporter 0.27 declared but did not install {#otel-exporter-release}
+
+This one is a **release**, not a spec version. `specVersion` stays `0.30`, and that is the point:
+nothing that validated before is refused now, so nothing needs migrating. The declarations are the
+same; what changed is that one of them can now be honoured.
+
+### What changed
+
+| Before | Now |
+| --- | --- |
+| `export: otlp` named a destination. Nothing was installed, so the spans were dropped. | `aid gen` for py-fastapi emits `tracing_export_status()` into `app/generated/observability.py`. Call it at startup and the spans go to the collector named by `endpointEnv`. |
+| `ts-vercel` accepted `export: otlp` and dropped the spans. | `ts-vercel` refuses it with `observability-export-unsupported`, because it installs no exporter. It still records spans in-process. |
+
+### What you have to do
+
+If you generate with **py-fastapi** and declare `export: otlp`, add one line to your own entrypoint:
+
+```python
+from app.generated.observability import tracing_export_status
+
+tracing_export_status("support-copilot")
+```
+
+Then install the extra, which is a separate dependency because not every deployment exports:
+
+```console
+pip install "aid-runtime-python[otlp]"
+```
+
+Regenerating does not write that line and does not need to: the ASGI entrypoint is yours. That is
+the ownership boundary holding, not a gap — the generator emits the call *shape*, your `main.py`
+makes the call. If you never call it, nothing is installed and behaviour is exactly what it was
+before 0.1.150.
+
+If you generate with **ts-vercel** and declare `export: otlp`, the build now refuses. Two ways out,
+and the diagnostic names both: generate the document with py-fastapi, or declare `export: none`
+and keep the spans in the process on purpose. Nothing silently changes behaviour — a document that
+generated before still generates, unless it was declaring an export the target could never honour.
+
+### Why the call is yours and not the generated app's
+
+A library that installed a global tracer provider on import would decide telemetry for every
+application embedding it, and `set_tracer_provider` cannot be undone. So the runtime installs an
+exporter only when called, and the generated app exposes the call rather than making it. The cost
+is one line in `main.py`; the alternative is a dependency that changes the behaviour of everything
+that imports it.
+
+### Why there is no `specVersion` bump
+
+A version bump is owed to a **spec language change**. This added no key, no enum value and no
+constraint — the JSON schema's only edits were descriptions, which the reference page quotes. A
+document at `0.30` that validated before still validates, unchanged. Bumping the spec version here
+would force every document to edit a line to gain nothing, which is exactly the "bump on principle"
+this page tells you not to do.
 
 | Spec | Backward compatible | What it added |
 | --- | --- | --- |

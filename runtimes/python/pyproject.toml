@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aid-runtime-python"
-version = "0.1.149"
+version = "0.1.150"
 description = "The AID Framework Python runtime: model gateway with pinning and cost budgets, prompt registry, tool executor, OTel GenAI tracing, plain-async pipeline, and an eval harness that gates on statistical regression against a stored baseline."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -43,8 +43,20 @@ pgvector = ["psycopg[binary]>=3.1,<4"]
 # copies must move together, which is why the version is a single literal here and a
 # single literal there rather than a constraint that could silently widen.
 deepagents = ["deepagents==0.7.32"]
+# The OTLP/HTTP span exporter. Deliberately an extra and not a core dependency:
+# `opentelemetry-api` alone is enough to *write* spans, and a service that has
+# not asked for an export destination should not pay for protobuf or a network
+# client at import time. `aid_runtime.telemetry.configure_export` names this
+# extra in the status it returns when the exporter is absent, so the fix is in
+# the message rather than in a traceback.
+otlp = ["opentelemetry-exporter-otlp-proto-http>=1.24,<2"]
 dev = [
   "mypy>=1.11,<3",
+  # Both the SDK and the OTLP exporter, so the `configured` path is covered by a
+  # real install rather than a stubbed import -- the exporter is a separate
+  # distribution from the SDK and shipping without it is the failure mode this
+  # extra exists to prevent.
+  "opentelemetry-exporter-otlp-proto-http>=1.24,<2",
   "opentelemetry-sdk>=1.24,<2",
   "pytest>=8,<10",
   "pytest-asyncio>=0.24,<2",

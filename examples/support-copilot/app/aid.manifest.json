@@ -145,7 +145,7 @@
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/observability.py",
-      "sha256": "5a2d0bdbc48454bf5e4266cca0d922e5540d4e19660aeb02f4860d83b70d191f"
+      "sha256": "7a1da834145ad851cdedf95038811c768705e653a69a107171ca5ee58d30dd90"
     },
     {
       "generator": "@aid-framework/generator-py-fastapi",

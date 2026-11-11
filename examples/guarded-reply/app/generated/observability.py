@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from aid_runtime.telemetry import ExportStatus, configure_export
+
 
 def generated_capabilities() -> dict[str, Any]:
     """The generator identity, the reconciliation of every declared capability, the profile and
@@ -53,8 +55,28 @@ def generated_capabilities() -> dict[str, Any]:
             "advertised": {"fast": ["Capability.STRUCTURED_OUTPUT", "Capability.TOOL_CALLING"]},
             "unrepresentable": {"fast": []},
         },
-        "observability": {"redact": [], "trace": True},
+        "observability": {
+            "endpointEnv": "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "export": "none",
+            "redact": [],
+            "trace": True,
+        },
         "placements": [{"id": "api"}],
         "profile": "standard",
         "target": "py-fastapi",
     }
+
+
+def tracing_export_status(service_name: str) -> ExportStatus:
+    """Install the span exporter this document declared, and report what happened. Call it once at
+    startup, before serving, from the entrypoint this app owns -- the generator cannot make the call
+    for you because it does not own that file. Nothing here raises: an unset endpoint or an
+    uninstalled exporter comes back as a status whose `detail` names the fix, because telemetry that
+    cannot start must not stop the service from serving.
+    """
+
+    return configure_export(
+        service_name=service_name,
+        declared="none",
+        endpoint_env="OTEL_EXPORTER_OTLP_ENDPOINT",
+    )

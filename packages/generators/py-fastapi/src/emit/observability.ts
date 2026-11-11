@@ -27,6 +27,13 @@ import { pythonDoc } from './text.js';
 
 export const OBSERVABILITY_PATH = `${GENERATED_ROOT}/observability.py`;
 
+/**
+ * The variable named when a document declares no `endpointEnv`. Only reachable when
+ * `export` is not `otlp` -- the schema requires the two together -- so it is the name the
+ * helper would read if a caller ever asked, never an address that gets used.
+ */
+const FALLBACK_ENDPOINT_ENV = 'OTEL_EXPORTER_OTLP_ENDPOINT';
+
 export function emitObservability(ir: IR): EmittedFile {
   const advertised: Record<string, string[]> = {};
   const unrepresentable: Record<string, string[]> = {};
@@ -38,13 +45,24 @@ export function emitObservability(ir: IR): EmittedFile {
     unrepresentable[model.id] = mapped.dropped;
   }
 
+  // Stated rather than omitted, unlike the IR: this module is a report a consumer reads,
+  // and "absent" would leave every reader to supply the same default. The IR keeps the
+  // distinction because it records what a document said.
+  const declaredExport = ir.observability.export ?? 'none';
+  const endpointEnv = ir.observability.endpointEnv ?? FALLBACK_ENDPOINT_ENV;
+
   const report = {
     capabilities: capabilityReport(PY_FASTAPI_MANIFEST.capabilities),
     emitsAgainst: PY_FASTAPI_MANIFEST.emitsAgainst,
     generator: { name: GENERATOR_NAME, version: GENERATOR_VERSION },
     irVersion: ir.irVersion,
     models: { advertised, unrepresentable },
-    observability: { redact: ir.observability.redact, trace: ir.observability.trace },
+    observability: {
+      export: declaredExport,
+      endpointEnv,
+      redact: ir.observability.redact,
+      trace: ir.observability.trace,
+    },
     placements: ir.deployments.map((deployment) => {
       const placement: Record<string, unknown> = { id: deployment.id };
       if (deployment.cloud !== undefined) placement.cloud = deployment.cloud;
@@ -55,6 +73,26 @@ export function emitObservability(ir: IR): EmittedFile {
     profile: ir.profile,
     target: PY_FASTAPI_TARGET,
   };
+
+  const helpers = [
+    'def tracing_export_status(service_name: str) -> ExportStatus:',
+    pythonDoc(
+      'Install the span exporter this document declared, and report what happened. Call ' +
+        'it once at startup, before serving, from the entrypoint this app owns -- the ' +
+        'generator cannot make the call for you because it does not own that file. ' +
+        'Nothing here raises: an unset endpoint or an uninstalled exporter comes back as ' +
+        'a status whose `detail` names the fix, because telemetry that cannot start must ' +
+        'not stop the service from serving.',
+      INDENT,
+    ),
+    [
+      `${INDENT}return configure_export(`,
+      `${INDENT}${INDENT}service_name=service_name,`,
+      `${INDENT}${INDENT}declared=${JSON.stringify(declaredExport)},`,
+      `${INDENT}${INDENT}endpoint_env=${JSON.stringify(endpointEnv)},`,
+      `${INDENT})`,
+    ].join('\n'),
+  ].join('\n');
 
   const body = [
     'def generated_capabilities() -> dict[str, Any]:',
@@ -76,7 +114,8 @@ export function emitObservability(ir: IR): EmittedFile {
           'declaration landed.',
       ),
       importFrom('typing', ['Any']),
-      body,
+      importFrom('aid_runtime.telemetry', ['ExportStatus', 'configure_export']),
+      `${body}\n\n\n${helpers}`,
     ]),
   );
 }

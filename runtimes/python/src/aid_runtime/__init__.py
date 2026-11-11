@@ -280,6 +280,14 @@ from aid_runtime.structured import (
     repair_prompt,
     run_structured,
 )
+from aid_runtime.telemetry import (
+    DEFAULT_ENDPOINT_ENV,
+    EXPORT_KINDS,
+    OTLP_EXTRA,
+    ExportReason,
+    ExportStatus,
+    configure_export,
+)
 from aid_runtime.tools import Tool, ToolExecutor
 from aid_runtime.tracing import (
     ATTRIBUTES,
@@ -315,7 +323,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.149"
+__version__ = "0.1.150"
 
 __all__ = [
     "ANTHROPIC_VERSION",
@@ -324,12 +332,14 @@ __all__ = [
     "DEFAULT_ANTHROPIC_BASE_URL",
     "DEFAULT_BASE_URL",
     "DEFAULT_CANDIDATE_FACTOR",
+    "DEFAULT_ENDPOINT_ENV",
     "DEFAULT_GEMINI_BASE_URL",
     "DEFAULT_SYNC_TIMEOUT_SECONDS",
     "DEFAULT_TYPESAFE_BASE_URL",
     "DEFAULT_VERTEX_LOCATION",
     "DEPTH_KEY",
     "EMITTED_KEY",
+    "EXPORT_KINDS",
     "GEMINI_API_KEY_ENV",
     "GEN_AI_OPERATION_CHAT",
     "INDEX_KEY",
@@ -339,6 +349,7 @@ __all__ = [
     "LIMITER_KEY",
     "MAX_STEP_DEPTH",
     "METADATA_TOKEN_URL",
+    "OTLP_EXTRA",
     "PRINCIPAL_KEY",
     "REDUCED_KEY",
     "RESERVED_KEYS",
@@ -398,6 +409,8 @@ __all__ = [
     "EvalRun",
     "ExactMatch",
     "Example",
+    "ExportReason",
+    "ExportStatus",
     "FakeDeterministicEmbedder",
     "FakeProvider",
     "FeatureDeferredError",
@@ -535,6 +548,7 @@ __all__ = [
     "chunk_id_for",
     "chunker_for",
     "cite",
+    "configure_export",
     "create_store",
     "decision_cost_usd",
     "decision_key",

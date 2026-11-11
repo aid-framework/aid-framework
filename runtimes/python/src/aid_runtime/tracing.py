@@ -6,9 +6,11 @@ the conventions do not cover -- which pinned alias produced the call, and what i
 cost -- are namespaced under ``aid.*`` rather than smuggled into a ``gen_ai.*``
 key with the wrong meaning.
 
-Only the OpenTelemetry *API* is a runtime dependency. With no tracer provider
-installed every call here is a no-op, which is the correct behaviour for a library
-that must not decide a host application's telemetry setup for it.
+Only the OpenTelemetry *API* is a runtime dependency, so every call here is a no-op in a
+process that installed no provider. That is deliberate: a library must not decide a host
+application's telemetry destination. Installing an exporter is the application's decision
+and happens through :func:`aid_runtime.telemetry.configure_export`, which is what makes the
+spans written here leave the process.
 """
 
 from __future__ import annotations
