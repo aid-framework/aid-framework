@@ -12,7 +12,12 @@
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { projectNameFor } from '../src/index.js';
-import { TEMPLATE_NAMES, TEMPLATE_SUMMARIES, templateSpec } from '../src/templates.js';
+import {
+  TEMPLATE_NAMES,
+  TEMPLATE_SUMMARIES,
+  templateFiles,
+  templateSpec,
+} from '../src/templates.js';
 import { aid, diagnosticsOf, emptyProject } from './helpers.js';
 
 const created: ReturnType<typeof emptyProject>[] = [];
@@ -36,10 +41,13 @@ describe('aid init --template', () => {
       expect(made.exists('README.md')).toBe(true);
 
       const spec = made.read('app/app.spec.yaml');
-      expect(spec).toContain('specVersion: "0.29"');
+      expect(spec).toContain('specVersion: "0.30"');
       // A template is the base half of the overlay workflow, so it has to declare the
-      // contract an overlay is checked against.
+      // contract an overlay is checked against, and ship an overlay that uses it.
       expect(spec).toContain('overridable:');
+      for (const overlay of templateFiles(name, 'app/app.spec.yaml')) {
+        expect(made.exists(overlay.path)).toBe(true);
+      }
       // The project name is derived from the directory, not shipped in the template.
       expect(spec).toContain(`name: ${projectNameFor(made.root)}`);
 
@@ -51,6 +59,37 @@ describe('aid init --template', () => {
       expect(made.exists('app/generated')).toBe(true);
     });
   }
+
+  it('scaffolds an overlay that resolves, so `aid fleet` works on a fresh project', () => {
+    for (const name of TEMPLATE_NAMES) {
+      const made = scratch();
+      expect(aid(made, ['init', '.', '--template', name]).code).toBe(0);
+      const fleet = aid(made, ['fleet', '--json']);
+      expect(fleet.code).toBe(0);
+      expect(fleet.json<{ counts: object }>().counts).toEqual({
+        customers: 1,
+        ok: 1,
+        refused: 0,
+      });
+    }
+  });
+
+  it('documents an overlay the gate accepts, with `base` relative to the overlay', () => {
+    const made = scratch();
+    expect(aid(made, ['init', '.', '--template', 'support-copilot']).code).toBe(0);
+    // The README is the only place a reader learns the overlay shape, and the shape it
+    // used to teach -- `base: app/app.spec.yaml` -- was refused with `overlay/base-missing`
+    // because the path is resolved from the overlay's own directory. Run the block it
+    // prints, at the path it prints, so the example cannot drift from the gate again.
+    const block = /```yaml\n([\s\S]*?)```/.exec(made.read('README.md'));
+    expect(block, 'the README no longer shows an overlay').not.toBeNull();
+    made.write('customers/acme-eu.yaml', block?.[1] ?? '');
+
+    const resolved = aid(made, ['resolve', 'customers/acme-eu.yaml']);
+    expect(resolved.code, `${resolved.stdout}${resolved.stderr}`).toBe(0);
+    expect(resolved.stdout).toContain('region: eu-west-1');
+    expect(resolved.stdout).toContain('maxCostBudget: 0.01');
+  });
 
   it('gives each template the profile it is named for', () => {
     expect(templateSpec('support-copilot', 'demo')).toContain('profile: standard');

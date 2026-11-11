@@ -46,7 +46,7 @@ export function isTemplateName(value: string): value is TemplateName {
 }
 
 function supportCopilotSpec(projectName: string): string {
-  return `specVersion: "0.29"
+  return `specVersion: "0.30"
 
 project:
   name: ${projectName}
@@ -176,7 +176,7 @@ deployments:
 }
 
 function enterpriseApprovalsSpec(projectName: string): string {
-  return `specVersion: "0.29"
+  return `specVersion: "0.30"
 
 project:
   name: ${projectName}
@@ -412,21 +412,25 @@ function supportCopilotReadme(projectName: string): string {
     'aid eval            # run the eval gate',
     '```',
     '',
-    'To serve several customers from this one definition, write an overlay beside it:',
+    'This project ships one customer already, `customers/acme-eu.yaml`, and it moves only a',
+    'region and a spend ceiling:',
     '',
     '```yaml',
-    'base: app/app.spec.yaml',
-    'customer: acme',
-    'profile: standard',
+    'base: ../app/app.spec.yaml',
+    'customer: acme-eu',
     'overrides:',
     '  deployments.api.region: eu-west-1',
-    '  models.fast.modelId: gpt-4.1-mini',
+    '  agents.triage_agent.maxCostBudget: 0.01',
     '```',
     '',
-    '`aid resolve customers/acme.yaml --out customers/acme.spec.yaml` writes the resolved',
-    'spec, and `aid fleet` lists every overlay with its profile, models, region, ceiling and',
-    'gate status. An overlay that weakens a control the base does not mark `allowWeaken` is',
-    'refused.',
+    'A second customer is that file with a different name, a different region and the same',
+    '`base`. Keep `base: ../app/app.spec.yaml` unchanged: the path is relative to the overlay',
+    'file, not to the project root, which is the one mistake `aid resolve` cannot guess.',
+    '',
+    '`aid resolve customers/acme-eu.yaml --out customers/acme-eu.spec.yaml` writes the',
+    'resolved spec, and `aid fleet` lists every overlay with its profile, models, region,',
+    'ceiling and gate status. An overlay that weakens a control the base does not mark',
+    '`allowWeaken` is refused.',
     '',
   ].join('\n');
 }
@@ -476,6 +480,9 @@ function enterpriseApprovalsReadme(projectName: string): string {
     '',
     'A per-customer overlay may move a region, a model, an agent budget, or an audit',
     'retention, and nothing else: `aid resolve` refuses a path the base does not list.',
+    'This project ships one at `customers/contoso-us.yaml`, which moves only the region, so',
+    '`aid fleet` already reports a customer whose profile, region, ceiling and gate status',
+    'you can read at a glance.',
     '',
   ].join('\n');
 }
@@ -490,4 +497,51 @@ export function templateReadme(name: TemplateName, projectName: string): string 
   return name === 'support-copilot'
     ? supportCopilotReadme(projectName)
     : enterpriseApprovalsReadme(projectName);
+}
+
+/** A file a template scaffolds beside the spec, as a project-relative POSIX path. */
+export interface TemplateFile {
+  readonly path: string;
+  readonly text: string;
+}
+
+/**
+ * The files a template writes besides its spec and README.
+ *
+ * Both templates ship one customer overlay, because a template is the base half of the
+ * multi-customer workflow and a base with no overlay is a demo that stops one command
+ * short: `aid fleet` over a fresh scaffold had nothing to read and failed with a hint
+ * telling the reader to run the command they had just run. The overlay stays inside the
+ * base's own `overridable` block -- it moves a region, and for the mid-size template
+ * tightens a budget -- so it resolves on the day it ships and doubles as the worked
+ * example the `overridable` contract is explained with.
+ */
+export function templateFiles(name: TemplateName, specPath: string): readonly TemplateFile[] {
+  // An overlay at `customers/<name>.yaml` reaches the spec the same way a reader does, by
+  // one level up from the overlay's own directory.
+  const base = `../${specPath}`;
+  const customer = name === 'support-copilot' ? 'acme-eu' : 'contoso-us';
+  const overlay =
+    name === 'support-copilot'
+      ? [
+          `# One customer on the standard template: a different region for data residency`,
+          `# and a tighter spend ceiling. Nothing else moves, because nothing else is`,
+          `# listed under \`overridable\` in the base spec.`,
+          `base: ${base}`,
+          `customer: ${customer}`,
+          'overrides:',
+          '  deployments.api.region: eu-west-1',
+          '  agents.triage_agent.maxCostBudget: 0.01',
+        ]
+      : [
+          `# One enterprise customer on its own placement. The region is the only path`,
+          `# moved, so the identity, network, audit and approval controls the profile`,
+          `# requires stay exactly as the base declares them.`,
+          `base: ${base}`,
+          `customer: ${customer}`,
+          'profile: enterprise',
+          'overrides:',
+          '  deployments.prod.region: us-east-1',
+        ];
+  return [{ path: `customers/${customer}.yaml`, text: `${overlay.join('\n')}\n` }];
 }

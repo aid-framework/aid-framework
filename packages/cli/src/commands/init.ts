@@ -35,7 +35,13 @@ import { absolutePath, parentPath } from '../paths.js';
 import { lowerSpec, readSpec } from '../pipeline.js';
 import type { Target } from '../targets.js';
 import { resolveTarget, unknownTargetDiagnostic } from '../targets.js';
-import { isTemplateName, TEMPLATE_NAMES, templateReadme, templateSpec } from '../templates.js';
+import {
+  isTemplateName,
+  TEMPLATE_NAMES,
+  templateFiles,
+  templateReadme,
+  templateSpec,
+} from '../templates.js';
 import { generate } from './gen.js';
 
 export interface InitOptions {
@@ -255,6 +261,21 @@ export function init(context: CliContext, options: InitOptions): CommandOutcome 
     written.push('README.md');
   } else {
     skipped.push('README.md');
+  }
+
+  // A template's extra files are scaffolding, not the caller's work, so they follow the
+  // spec rather than the README: written once, never replaced by a later `--force`, and
+  // reported as skipped so a re-run does not look like it did nothing.
+  if (options.template !== undefined) {
+    for (const file of templateFiles(options.template, specPath)) {
+      const absolute = absolutePath(root, file.path);
+      mkdirSync(absolutePath(root, parentPath(file.path)), { recursive: true });
+      if (createExclusively(absolute, file.text)) {
+        written.push(file.path);
+      } else {
+        skipped.push(file.path);
+      }
+    }
   }
 
   // The generation runs against the scaffolded project root, not the caller's working

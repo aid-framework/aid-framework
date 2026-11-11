@@ -351,6 +351,16 @@ What is refused:
 - An agent declaring `humanInTheLoop` where a pipeline step runs it, because a step has no
   checkpoint to hand back.
 
+The two controls that keep a run accountable are worth naming separately, because they are
+what an enterprise review asks for:
+
+- **Step-level human approval**: a tool marked `requiresConfirmation` pauses the run where it
+  stands, and the approval resumes from that step rather than replaying the ones before it.
+  Under the enterprise profile a side-effecting tool without one is refused.
+- **Durable run state**: the checkpoint goes to the store the spec names, so a paused run
+  outlives the process that started it. An agent that can call a tool with side effects is
+  refused when it declares no store, because the approval would otherwise wait nowhere.
+
 A gateway federates tools that already exist behind one managed MCP endpoint: the platform
 hosts the endpoint, each target keeps owning its own tool list, and the app reaches a single
 URL instead of bundling every tool (spec `0.24`, AWS only).

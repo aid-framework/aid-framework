@@ -208,6 +208,22 @@ An agent declares its model, instructions, tools, retrievers and budget; a hando
 - **Reference:** [spec](./reference/spec.md#agent)
 - **Since:** `0.1.19`
 
+### Step-level human approval
+
+A tool that writes something pauses the run for a person, and the approved run continues from the same step instead of starting over; a side-effecting tool with no approval policy is refused under the enterprise profile.
+
+- **Turned on by:** `agents[].humanInTheLoop, tools[].requiresConfirmation`
+- **Reference:** [spec](./reference/spec.md#agent-humanintheloop)
+- **Since:** `0.1.27`
+
+### Durable run state
+
+A paused or long-running run outlives the process that started it: the checkpoint goes to the store the spec names, and an agent that can call a side-effecting tool is refused without one.
+
+- **Turned on by:** `state, agents[].state`
+- **Reference:** [spec](./reference/spec.md#agentstate)
+- **Since:** `0.1.143`
+
 ### Memory tiers
 
 What is remembered, for how long, within what token budget, and where it lives.
