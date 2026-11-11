@@ -218,10 +218,68 @@ against a static estimate by the cost gate; a `latency` ceiling becomes `latency
 reaches the deploy plan. Refusing them here would delete a working check to make a rhetorical
 point. `tool-trace` has no second meaning and no consumer at all, so it is refused.
 
-## Version history
+## 0.27 to 0.28: promoting a candidate, and the feedback that starts a loop
+
+What a document is allowed to do with a candidate, and which feedback it takes back from its users.
+Both keys are additive, so a 0.27 document is still a 0.27 document.
+
+> **What 0.28 declares but does not do.** `evals[].gate.promotion` states the policy a candidate
+> must satisfy. Nothing promotes itself and nothing auto-deploys: `aid eval --compare` prints a
+> verdict, and the merge that carries the bumped prompt version is the promotion. AID generates no
+> feedback endpoint and stores no signal, and no runtime measures cost, so a declared
+> `allowedCostIncrease` is reported as unjudged on every comparison rather than checked against
+> nothing.
+
+### What 0.28 adds
+
+| Construct | What it says |
+| --- | --- |
+| `observability.feedback` | The signals a service takes back (`thumbs`, `correction`, `escalation`), the fields they may carry (`pii.redact`), and how long they are kept (`retentionDays`, `persistent`). |
+| `evals[].gate.promotion` | `allowedQualityDrop`, `allowedCostIncrease`, the `baseline` prompt version being replaced, and the `approval` an `enterprise` promotion requires. |
+
+### Nothing to do for 0.27 documents
+
+Both blocks are optional, and both gates are scoped to `specVersion: "0.28"` and above, so a 0.27
+document keeps passing with neither key. Neither block is inherited by a pipeline: `feedback`
+describes the process that serves the app, not one route through it.
+
+### What a 0.28 document must declare
+
+| Refusal | What is missing | The fix |
+| --- | --- | --- |
+| `ir/prompt-version-stale` | `gate.promotion.baseline` names the version already in force, so nothing was bumped. | Bump `prompts.<id>.version` above the baseline, or move the baseline up once the new version is accepted. |
+| `ir/prompt-version-stale` | The declared prompt version is behind the baseline: a rollback wearing the name of a promotion. | Roll back deliberately; a promotion is forward. |
+| `ir/promotion-regression` | `allowedQualityDrop` on an eval whose metrics are all `cost` or `latency`, so no quality metric can spend it. | Record a quality metric, or drop the allowance. |
+| `ir/promotion-cost` | `allowedCostIncrease` on an eval that records no `cost` metric, so there is no baseline cost to increase. | Add a `cost` metric with a `max` ceiling, or drop the ceiling. |
+| `ir/promotion-approval` | An `enterprise` promotion with no recorded approval. | Declare `approval: { by: [...], record: <path> }` and commit the record. |
+| `ir/feedback-pii` | A persistent feedback store with no `retentionDays`, which keeps everything forever. | Set `retentionDays`, or `persistent: false`. |
+| `ir/feedback-pii` | A `correction` signal, persistent, with a `pii.redact` list that misses a field the spec marks sensitive. | Add the field to `pii.redact`, or stop storing the text. |
+
+### Why `baseline` is required
+
+The IR cannot see what the previous version's template said, so "the template changed without a
+bump" is undetectable from one document. Requiring `baseline: { prompt, version }` makes the claim
+explicit and checkable: the declared version must be **strictly greater** than the baseline. A
+default would let a policy pass while describing no candidate at all.
+
+### Why `aid eval --compare` takes two runs
+
+`--baseline` replaces the accepted side of the comparison, so combining it with `--compare` would
+judge a file the same run just wrote. The CLI refuses the pair with
+`cli/eval-compare-pair-required` instead of silently letting one win.
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | The candidate is promotable under the policy |
+| `1` | Refused: a regression beyond the allowance, or a required approval record that is missing or empty |
+| `2` | Nothing was judged: no policy, an ambiguous policy, a half pair, an unreadable baseline, or two different datasets |
+
+A regression names the metric, both means and the allowance it was measured against, so the refusal
+is a number rather than an adjective.
 
 | Spec | Backward compatible | What it added |
 | --- | --- | --- |
+| 0.28 | Yes | `observability.feedback` (`signals`, `pii.redact`, `retentionDays`, `persistent`); `evals[].gate.promotion` |
 | 0.27 | Yes | `observability` (`trace`, `redact`, `export: otlp`, `endpointEnv`); `evals[].target` widened to `agent:<id>` |
 | 0.26 | Yes | `state`; `deployments[].identity`, `.network`, `.approvals`; `requiresApproval` on a pipeline tool step |
 | 0.25 | Yes | `profile`; `deployments[].cloud`, `.region`, `.audit` |

@@ -258,10 +258,60 @@ What is refused:
   to a stored baseline.
 - A decision-backed metric on an eval that declares no decision, instead of scoring nothing.
 
+**Promotion policy for a candidate.** An eval may declare what a replacement must prove before it
+takes over from the version already in force.
+
+```yaml
+evals:
+  classify_quality:
+    gate:
+      promotion:
+        allowedQualityDrop: 0.01
+        allowedCostIncrease: 0.1
+        baseline: { prompt: classify_quality, version: 1 }
+        approval: { by: [platform-lead], record: app/approvals/quality.md }
+```
+
+`aid eval --compare accepted.json --candidate candidate.json` reads the policy, compares two
+recorded baselines and prints `verdict: promotable` or `verdict: refused`; exit `2` means nothing
+was judged, which is not the same as a pass. Nothing promotes itself: the merge that carries the
+bumped prompt version is the promotion, and under `profile: enterprise` the policy must name a
+committed approval record that exists and has content.
+
+What is refused:
+
+- A policy whose `baseline.version` is not below the version the document declares, because an
+  unchanged version means nothing has been bumped and a lower one is a rollback.
+- `allowedQualityDrop` on an eval that scores no quality metric, so the allowance governs nothing.
+- `allowedCostIncrease` on an eval with no `cost` metric, so there is no baseline cost to rise.
+
+**Declared feedback signals.** What the app takes back from the people who use it, and what
+happens to the text they send.
+
+```yaml
+observability:
+  feedback:
+    signals:
+      rating: { kind: thumbs }
+      correction: { kind: correction }
+    pii:
+      redact: [subject]
+    retentionDays: 90
+    persistent: true
+```
+
+`correction` is the only kind that stores prose, so it is the only kind the redaction rule
+applies to: the gate refuses a persistent store whose `pii.redact` misses a field the spec
+already marks sensitive, and refuses `persistent: true` with no `retentionDays`, because keeping
+every signal forever is not a policy a spec may leave unstated. This build declares the intake
+and gates it; it generates no feedback route and stores nothing.
+
 Covers:
 
 - **Eval coverage**
 - **A decision eval metric**
+- **Promotion policy for a candidate**
+- **Declared feedback signals**
 
 ## Agents and tools
 

@@ -57,6 +57,10 @@ bumps `specVersion` to `0.25` additively (absent `profile` means `standard`, and
 
 ### 0.2 Verified current state (the numbers this RFC holds itself to)
 
+The table below is the audit snapshot taken **before Phase 1**, kept unchanged so the gap analysis
+can be re-read against what was true when it was written. Current numbers are in §10.1–§10.4:
+spec `0.28`, `IR_VERSION` `0.5.0`, **25** gates, **90** `ir/` codes.
+
 | Fact | Value | Source of truth |
 | --- | --- | --- |
 | Spec language version | `0.24` | `packages/spec/src/schema/spec.schema.json` |
@@ -443,50 +447,80 @@ specVersion: "0.28"
 
 observability:                 # the section introduced at 0.27
   trace: true
+  export: otlp
+  endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT
   feedback:                    # NEW (0.28). Declared signals, with PII rules.
-    signals: [thumbs, correction, escalation-outcome]
-    stateUrlEnv: DATABASE_URL  # a name, not a value
+    signals:
+      rating:
+        kind: thumbs           # thumbs | correction | escalation
+      correction:
+        kind: correction       # the only kind that stores text
+      handoff:
+        kind: escalation
     pii:
-      redact: [email, phone, national-id]
-      retentionDays: 90
+      redact: [subject]        # fields stripped before a signal is persisted
+    retentionDays: 90
+    persistent: true           # true demands retentionDays
 
 prompts:
-  triage:
-    version: 4                 # already required, and already a pinned identity
+  classify_claim:
+    version: 2                 # already required, and already a pinned identity
     model: fast                # prompt:<name>@<version>
     template: |
       Decide the claim and record the outcome.
-    output:
-      kind: text
 
 evals:
   triage_regression:
-    target: pipeline:answer_ticket
+    target: pipeline:triage
     dataset:
       source: file
-      uri: evals/triage_regression.json
+      uri: evals/triage.jsonl
     metrics:
       - kind: exact
         field: category
+      - kind: cost
+        max: 0.4
     gate:
       ci: true
       maxRegression: 0.05
       promotion:               # NEW (0.28). Refuses a candidate that regresses.
         allowedQualityDrop: 0.01
-        maxCostIncrease: 0.10
-        requireApproval: true  # enterprise: always true
+        allowedCostIncrease: 0.1
+        baseline:
+          prompt: classify_claim
+          version: 1           # the version already in force
+        approval:              # required under profile: enterprise
+          by: [platform-lead]
+          record: app/approvals/triage.md
 ```
 
-Pinning is **half-built already**, and the RFC is more useful for saying exactly which half.
-`prompts.<name>.version` is required, and `normalize.ts` builds the node identity as
-`promptIdentity(id, version)` — so the registry key exists and a prompt revision does not move the IR
-node id. What is missing is the other half: **no gate compares the template text to the version**, so
-a template can be edited with the version left at `4` and nothing refuses it. `0.28` adds
-`ir/prompt-version-stale`, which hashes each template (the manifest already hashes generated files)
-and refuses a changed hash at an unchanged version. That is the promotion gate applied to the
-cheapest artifact in the spec, and it is the prerequisite for the eval-budget promotion below.
+**Pinning was half-built, and 0.28 finishes the half that can be finished from one document.**
+`prompts.<name>.version` is required and `promptIdentity(id, version)` gives a prompt revision a
+stable IR node id, so the registry key already existed. What did not exist was any gate that could
+say a candidate is worse than what it replaces.
 
-`feedback.stateUrlEnv` follows the same name-not-value rule as `state.urlEnv` above.
+The first design attempt was `ir/prompt-version-stale` refusing a template whose hash changed at an
+unchanged version — the promotion gate applied to the cheapest artifact in the spec. It cannot work
+in this architecture: the IR is built from one document and sees no previous template, so the hash
+has nothing to compare against, and adding a committed lock file would introduce a second source of
+truth the `aid validate` path does not read. The shipped rule inverts the burden instead: the
+policy **must** name the `baseline` version it replaces, and
+`ir/prompt-version-stale` refuses unless the declared version is **strictly greater** than it.
+Equality reads as "nothing has been bumped"; anything below reads as a rollback rather than a
+promotion. Both are refused, and neither needs history.
+
+`observability.feedback` is optional and process-wide: a signal describes what the served app takes
+back from its users, not one route through it, so a pipeline does not inherit it. `correction` is
+the only signal kind that carries text, so it is the only one that pulls in the redaction rule —
+`thumbs` and `escalation` record an outcome and no prose. `persistent: true` without
+`retentionDays` is a gate refusal rather than a schema rule, so the fix can say what is being kept
+and for how long.
+
+`allowedCostIncrease` is **declared and not judged**. A recorded baseline carries quality metrics
+only, because no runtime measures cost (`metrics.ts` returns `measured: false` for a `cost` metric),
+so `aid eval --compare` prints the ceiling as unjudged on every run rather than comparing it against
+nothing. `allowedQualityDrop` is enforced, and its refusal names the metric, both means and the
+allowance.
 
 ### 4.7 Overlays and templates (0.29) — capability F
 
@@ -578,11 +612,14 @@ the move.
 
 | Code | Sev | Message | Hint |
 | --- | --- | --- | --- |
-| `ir/prompt-version-stale` | error | `the promotion gate rejected "triage": the template changed since version 4 was recorded, and the version was not bumped, so two different prompts share one identity` | `bump prompts.triage.version to 5, or revert the template` |
-| `ir/promotion-regression` | error | `the promotion gate rejected "triage": candidate version 5 loses 0.031 on triage_regression against baseline version 4, and allowedQualityDrop is 0.010` | `improve the candidate, or raise allowedQualityDrop with a recorded reason` |
-| `ir/promotion-cost` | error | `the promotion gate rejected "triage": candidate version 5 costs 0.42 per run against a 0.40 ceiling, an increase of 12% over allowedCostIncrease 10%` | `reduce the candidate's cost or raise maxCostIncrease` |
-| `ir/feedback-pii` | error | `the feedback gate rejected "claims-triage": signal "correction" stores free text under pii.redact entries that do not cover national-id, and the store is declared as persistent` | `add national-id to observability.feedback.pii.redact, or set retentionDays to 0` |
-| `ir/promotion-approval` | error (enterprise) | `the promotion gate rejected "triage": profile "enterprise" requires a recorded approval for a promotion, and the candidate declares none` | `record an approval for this candidate, or promote under profile: standard` |
+| `ir/prompt-version-stale` | error | `the promotion gate rejected "triage_regression": baseline names prompt "classify_claim", which this document does not declare` | `declare prompts.classify_claim, or name the prompt whose accepted version this candidate replaces` |
+| `ir/prompt-version-stale` | error | `the promotion gate rejected "triage_regression": baseline records "prompts.classify_claim" at version 1, and the document declares version 1 is the accepted baseline, so nothing has been bumped -- two different templates would share one identity` | `bump prompts.classify_claim.version above 1 for the candidate, or move the baseline up once the new version is accepted` |
+| `ir/prompt-version-stale` | error | `… and the document declares version 1 is behind the accepted baseline 2, which is a rollback rather than a promotion` | as above |
+| `ir/promotion-regression` | error | `the promotion gate rejected "triage_regression": allowedQualityDrop is 0.01 but the eval measures no quality metric, so the allowance governs nothing` | `add a metric that scores the answer (exact, contains, json-schema, llm-judge, decision, retrieval or assert), or drop the promotion policy` |
+| `ir/promotion-cost` | error | `the promotion gate rejected "triage_regression": allowedCostIncrease is 0.1 but the eval measures no cost, so there is no baseline cost for the candidate to increase and the ceiling would be enforced against nothing` | ``add a `cost` metric with a `max` ceiling so both baselines record a cost, or drop allowedCostIncrease`` |
+| `ir/promotion-approval` | error | `the promotion gate rejected "triage_regression": profile "enterprise" requires a recorded approval for a promotion, and the candidate declares none` | ``add `approval: { by: [<who>], record: <committed path> }`, or promote under `profile: standard` `` |
+| `ir/feedback-pii` | error | `the feedback gate rejected this document: signal "correction" stores free text under pii.redact entries that do not cover email, and the store is declared as persistent` | ``add email to observability.feedback.pii.redact, or take the text signal out of the persistent store`` |
+| `ir/feedback-pii` | error | `the feedback gate rejected this document: the feedback store is declared persistent with no retentionDays, so every signal it receives is kept indefinitely` | ``set a retentionDays limit, or `persistent: false` to keep feedback for the request only`` |
 
 ### 0.29 — overlays (4 codes, new `overlay/` namespace)
 
@@ -605,7 +642,7 @@ change is `app/business/`, `aid eject` flips any file. New artifacts per phase:
 | 0.25 | `generated_capabilities()` gains `profile` and a `placements` record (cloud, region, audit) — threaded into the existing capabilities record, not a new file | — | an environment-scoped `modules/audit/` module (tofu) and a parallel `cdk/audit.cjs` construct; one `module "audit"` call and one `output "audit_destination"` in the env root; `--confirm-prod` unchanged. **Region is not module content** — design §12.2 forbids baking account/region/CIDR into generated output, so the provider decides where the environment lands |
 | 0.26 | `approvals.py` pause/resume plumbing; `run_state.py` state-store interface (SQLite default); `Approval` typed contract; resume route | `approval_policy.py` (the decision); `run_state` override hook | approval gate on the prod environment in generated CI; private-network flags in the module set |
 | 0.27 | trajectory metric wiring; `observability.py` gains exporter setup reading env | `judge.py` (unchanged) | dashboards-as-code for the supported clouds; `aid report` reads files |
-| 0.28 | promotion report writer; feedback intake route | `feedback.py` (what a signal *means*) | promotion gate job in generated CI; approval record for enterprise |
+| 0.28 | nothing new: `observability.feedback` and `gate.promotion` are enforced entirely at validate/gen time by `ir/feedback-pii`, `ir/prompt-version-stale`, `ir/promotion-regression` and `ir/promotion-cost` | — | nothing. No feedback route, no feedback storage, no promotion job and no approval file are generated, because a generated promotion job would be a hosted control plane in a trench coat: the verdict comes from `aid eval --compare` in the pipeline the customer already runs |
 | 0.29 | resolved spec (a build artifact, not code) | — | per-customer env roots; `aid fleet` reads them |
 
 Every generated file above is added to the manifest with hashes, to the byte-asserted fixtures,
@@ -620,7 +657,7 @@ and to the eject table for both targets.
 | 1 | 0.24 → **0.25** | No. `profile` absent = `standard`; `cloud`/`region`/`audit` are new optional keys, and a spec with no `cloud` keeps consulting `--cloud` exactly as today. | 0.1.0 → **0.2.0** (IR gains `profile`) | Note that `cloud` may now live in the spec, and that a spec pinning it refuses a conflicting `--cloud` (`ir/cloud-conflict`). |
 | 2 | 0.25 → **0.26** | No. New optional keys. | → 0.3.0 | None. |
 | 3 | 0.26 → **0.27** | No. Two meaning changes, both widening: the generator refusals for `tool-trace`/`cost`/`latency` become measurements (a spec previously rejected now generates), and `evals.*.target` admits `agent:` as well as `pipeline:`. | → 0.4.0 | Note that those refusals are lifted and what now enforces them (`ir/eval-metric-unmeasured`), plus the `agent:` target. |
-| 4 | 0.27 → **0.28** | No. New optional keys, plus `ir/prompt-version-stale`, which can refuse a spec that passes today if its template drifted without a version bump. | → 0.5.0 | Note the prompt-version rule explicitly, naming the diagnostic. |
+| 4 | 0.27 → **0.28** | No. Both blocks are new and optional, and both gates are scoped to `specVersion: "0.28"`, so a 0.27 document keeps passing. The one rule that can surprise is inside a *new* block: `gate.promotion.baseline` is required alongside `promotion`, and the prompt version must be strictly greater than it. | → 0.5.0 | Note the baseline rule explicitly, naming `ir/prompt-version-stale`, and record the two deferrals (`allowedCostIncrease` unjudged, and no generated feedback route or store). |
 | 5 | 0.28 → **0.29** | No. Overlays are a new artifact type; the spec gains only `overridable`. | → 0.6.0 | None. |
 
 `IR_VERSION` bumps are mechanical (both in-repo generators declare an `irRange`), and the IR
@@ -662,8 +699,10 @@ tests, docs, features-page data and a walkthrough — the phase-exit definition 
 | **1** | **`profile` + `cloud` + region + audit + guardrail requirement (0.25)** | Establishes the tier concept and the first "acceptable *for this class of customer*" gate. Unlocks every later phase's enterprise controls. | **4–5 d** | `profile: enterprise` refuses a spec with no region pin, no audit sink, or a served pipeline missing an input or output guardrail — with the fix in the hint. |
 | 2 | Identity, private network, approval policy, durable runs, step approval (0.26) | The enterprise control set is complete enough to pass a security review; long-running runs survive a restart. | 8–10 d | `state` (`kind` + `urlEnv`) + `ir/agents-state-store`; `requiresApproval` on a pipeline write step. |
 | 3 | Trajectory evals, per-agent coverage, fallback pricing, OTel export + `aid report` (0.27) | Agents become measurable; fleets become comparable without a backend. | 10–12 d | `tool-trace` measured end-to-end for one agent, replacing the generator refusal. |
-| 4 | Feedback signals + promotion gate (0.28) | The self-improving loop closes, gated and approved. | 8–10 d | `aid eval --compare baseline candidate` writes a report a gate can read. |
+| 4 | Feedback signals + promotion gate (0.28) | The self-improving loop closes, gated and approved. | 8–10 d | `observability.feedback` + `evals[].gate.promotion`, with `aid eval --compare <accepted> <candidate>` as the half that judges a candidate — **shipped as that**, with cost left declared and reported as unjudged. |
 | 5 | Overlays, `aid resolve`, `aid fleet`, two templates (0.29) | Twenty customers, one base spec. | 10–12 d | One overlay with one overridable path, resolved by `aid gen --overlay`. |
+
+**Phases 1–4 are shipped** (spec 0.25–0.28, `IR_VERSION` 0.5.0). Phase 5 is the remaining scope.
 
 **Total: ~42–49 days.** Sequences chosen so each phase is independently valuable and
 independently revertable.
@@ -719,8 +758,10 @@ For the CLI reference and the features page, at the end of this RFC:
 | `tool-trace` / `cost` / `latency` measured | `tool-trace` is **refused by the gate in 0.27**; `cost` and `latency` stay **refused at generation**; measuring any of them is not built (§10.3) |
 | `observability` as a spec section, `.export: otlp` | **built in 0.27, as export intent only** (§10.3) |
 | OTel exporter, generated dashboards/alerts, `aid report` | proposed 0.27, **not built** (§10.3) |
-| `observability.feedback`, `evals[].gate.promotion` | proposed, 0.28, not built |
-| `prompts[].version` | **exists and is required**, and forms `prompt:<name>@<version>`; the staleness gate is proposed 0.28 |
+| `observability.feedback`, `evals[].gate.promotion` | **built in 0.28** — declared, gated and compared from files (§10.4) |
+| `prompts[].version` | **exists and is required**, and forms `prompt:<name>@<version>`; `ir/prompt-version-stale` refuses a promotion whose declared version is not strictly greater than the baseline's (§10.4) |
+| `allowedCostIncrease` judged | **not built**: no runtime measures cost, so `aid eval --compare` reports the ceiling as unjudged (§10.4) |
+| generated feedback route, feedback storage, promotion job, `aid trace` export | proposed 0.28, **not built** (§10.4) |
 | `overridable`, overlays, `aid resolve`, `aid fleet`, `--template` | proposed, 0.29, not built |
 
 ### 10.1 Phase 1, as shipped
@@ -853,6 +894,45 @@ Deliberately **not** built in Phase 3, and stated rather than implied:
 - `observability` is a document-level block, not a per-pipeline one. One process exports one way,
   and a per-pipeline exporter would be a claim about a second process this compiler does not
   generate.
+
+### 10.4 Phase 4, as shipped
+
+Spec `0.28`, `IR_VERSION` 0.5.0, 25 gates (up from 23), 90 diagnostic codes (up from 85), and 8
+new `cli/eval-compare-*` codes.
+
+- `observability.feedback` -- `signals.<name>.{kind,description}` where `kind` is `thumbs`,
+  `correction` or `escalation`; `pii.redact`; `retentionDays`; `persistent`.
+- `evals[].gate.promotion` -- `allowedQualityDrop`, `allowedCostIncrease`, a required
+  `baseline: { prompt, version }`, and an optional `approval: { by, record }`.
+- Gate `promotion` (24th) with `ir/prompt-version-stale`, `ir/promotion-regression`,
+  `ir/promotion-cost` and `ir/promotion-approval`; gate `observability/feedback-pii` (25th, inside
+  the existing `observability` module) with `ir/feedback-pii`.
+- `aid eval --compare <accepted> --candidate <candidate>` judges a candidate against the policy
+  and prints `verdict: promotable` or `verdict: refused`. Exit 0 promotable, 1 refused, 2 nothing
+  judged. `promotable`/`refused` for the pair is a per-run verdict, not a merge.
+
+Every refusal names the construct it read, the value it found and the value the policy allows, so
+the fix is arithmetic rather than interpretation. The staleness refusal is reported **alone** and
+short-circuits the rest of the policy: every other complaint would describe a candidate that
+cannot be named.
+
+Deliberately **not** built in Phase 4, and stated rather than implied:
+
+- **No feedback route and no feedback storage.** `observability.feedback` declares which signals a
+  service takes back and what happens to their text; no endpoint is generated and no store is
+  written. `retentionDays` is therefore a declared policy a gate enforces, not a runtime timer.
+- **No cost comparison.** `allowedCostIncrease` is declared, and every `--compare` run prints
+  `cli/eval-compare-cost-unjudged` saying it was not judged, because `metrics.ts` returns
+  `measured: false` for a `cost` metric and a recorded baseline carries quality metrics only.
+  Reporting the ceiling as checked would be the single most misleading line this phase could
+  print.
+- **No prompt version history.** `ir/prompt-version-stale` compares the declared version to the
+  declared baseline, so a template edited without a bump is caught *by the promotion policy* --
+  not by a general "this file changed" check, which the IR cannot perform from one document.
+- **No auto-promotion, no `aid trace` export to a dataset, no approval workflow.** The promoted
+  artifact is the merge that carries the bumped prompt version; the approval is a committed file
+  whose presence and non-emptiness are checked, so an enterprise promotion records *who* approved
+  *what* in git rather than in a service.
 
 ---
 
