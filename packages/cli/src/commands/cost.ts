@@ -47,7 +47,7 @@ export interface CostOptions {
  * A budget is a plain non-negative decimal. `Number('')` is `0` and `Number('0x10')` is
  * `16`, so the accepted shape is pinned here rather than left to the constructor.
  */
-function parseBudget(raw: string): number | undefined {
+export function parseBudget(raw: string): number | undefined {
   const text = raw.trim();
   if (!/^(\d+(\.\d+)?|\.\d+)$/.test(text)) return undefined;
   return Number(text);

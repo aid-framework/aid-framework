@@ -775,7 +775,8 @@ For the CLI reference and the features page, at the end of this RFC:
 | `agents[].state`, step `requiresApproval` | **declared and gated in 0.26, generation pending** (§10.2) |
 | `tool-trace` / `cost` / `latency` measured | `tool-trace` is **refused by the gate in 0.27**; `cost` and `latency` stay **refused at generation**; measuring any of them is not built (§10.3) |
 | `observability` as a spec section, `.export: otlp` | **built in 0.27, as export intent only** (§10.3) |
-| OTel exporter, generated dashboards/alerts, `aid report` | proposed 0.27, **not built** (§10.3) |
+| OTel exporter, generated dashboards/alerts | proposed 0.27, **not built** (§10.3) |
+| `aid report` | **built** — aggregates trace sinks and recorded baselines from a directory of deployments, no backend (§10.6) |
 | `observability.feedback`, `evals[].gate.promotion` | **built in 0.28** — declared, gated and compared from files (§10.4) |
 | `prompts[].version` | **exists and is required**, and forms `prompt:<name>@<version>`; `ir/prompt-version-stale` refuses a promotion whose declared version is not strictly greater than the baseline's (§10.4) |
 | `allowedCostIncrease` judged | **not built**: no runtime measures cost, so `aid eval --compare` reports the ceiling as unjudged (§10.4) |
@@ -1000,6 +1001,62 @@ Deliberately **not** built in Phase 5, and stated rather than implied:
   what makes an overlay reviewable in the same diff as the spec it narrows.
 - **No merge-patch semantics.** The only deletion is an explicit `null` at a listed path, and a
   deletion is a weakening, so it needs `allowWeaken` -- except for the two CI-gate forms above.
+
+### 10.6 `aid report`, as shipped
+
+Capability D asked for a command that "aggregates cost/eval/trace summaries from files so a team can
+compare many customer deployments without a hosted backend". §10.3 recorded that the spec-level half
+shipped in 0.27 (traces and `observability.export` as intent) while the command did not. It now does.
+
+`aid report <dir>` reads one directory of deployments: each immediate child is a customer, holding
+that customer's trace sink `.jsonl` files and, optionally, a `<name>.baseline.json` written by
+`aid eval --baseline`. Nothing new was invented -- both formats already existed and are already read
+by `aid cost` and `aid eval --compare`, which is what keeps the report honest about what it is
+summarising.
+
+No spec change and no IR change: the command is a reader over artifacts the earlier phases already
+produce, so `specVersion` stays at `0.29` and `IR_VERSION` stays at `0.5.0`.
+
+Five diagnostics, in two classes:
+
+- Refusals of the input shape -- `cli/report-dir-unreadable` (the argument is not a directory) and
+  `cli/cost-budget-invalid` (the ceiling is not a positive number), both exit `2`, both checked before
+  any file is read.
+- Answers that are empty or incomplete but true -- `cli/report-no-deployments` (no child
+  directories), `cli/report-baseline-invalid` (a `*.baseline.json` without a `dataset` or without a
+  numeric `metrics[].mean`) and `cli/cost-over-budget` (the measured total exceeds the ceiling), at
+  exit `0`, `0` and `1` respectively. The first two warn while still printing, because "we read
+  nothing" and "we read something unusable" are both facts the reader has to see.
+
+Four decisions came from building it rather than from the design:
+
+- **An unmeasured deployment shows a dash, not `$0.00`.** `DeploymentReport.summary` is optional for
+  this reason: zero and "we never collected a span" are different answers, and only one is safe to
+  put in a budget conversation. The total line says `2 of 3 deployment(s)` so the aggregate carries
+  its own coverage.
+- **Only immediate children are read.** A recursive walk would attribute a nested span to whichever
+  ancestor it met first -- a silently wrong answer about a named customer.
+- **A recorded mean is printed at four significant digits, not a fixed number of decimals.** A metric
+  mean has no declared unit: `exact_match` is a ratio, `cost_usd` is dollars per run. Three decimals
+  printed a `0.0042` cost as `0.004`. This was found by reading the walkthrough's own output, not by
+  a test.
+- **Baselines are listed, never averaged.** Averaging an `exact_match` and a `cost_usd` produces a
+  number that means nothing, and averaging two customers' baselines over different datasets is worse.
+
+Deliberately **not** built, and stated rather than implied:
+
+- **No join to the repository's overlays.** `aid fleet` answers the repository question by naming
+  convention; `aid report` answers the operations question from a directory that may be a CI
+  download with no spec in it. Joining them would make the report refuse whenever the two names
+  disagreed.
+- **No dashboards, no alerts, no exporter.** §10.3's `observability.export` is still intent, so there
+  is still nothing that emits OTLP from a generated runtime -- and the report reads files, so it does
+  not depend on that half.
+- **`cost` and `latency` as spec-level metrics stay refused at generation.** The report measures both
+  from traces; the gate still refuses to let a spec *declare* them, because no generated runtime
+  measures them. Those are different claims and the difference is the whole point of §10's table.
+- **No `--since`/`--until` window.** The trace reader supports one, but a fleet report over a download
+  has one window already: whatever the download contains.
 
 ---
 

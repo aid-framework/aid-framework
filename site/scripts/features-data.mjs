@@ -421,6 +421,15 @@ export const SHIPPED_FEATURES = [
     since: '0.1.145',
   },
   {
+    id: 'fleet-report',
+    title: 'A report across every deployment',
+    detail:
+      '`aid report <dir>` reads one directory of deployments -- each holding the `*.jsonl` files that deployment\'s trace sink wrote and any `*.baseline.json` it committed -- and prints spans, traces, measured cost, p95 latency, errors and baseline scores side by side, then a fleet total. A deployment with no trace files shows a dash rather than `$0.000000`, because "nothing was measured" and "measured zero" are different answers. Nothing is uploaded and nothing is joined to the repository, so the same command runs on a CI artifact download; `--budget` turns the total into a ceiling that fails the job.',
+    declaredBy: 'aid report',
+    href: './reference/cli.md#report',
+    since: '0.1.148',
+  },
+  {
     id: 'feedback-signals',
     title: 'Declared feedback signals',
     detail:
@@ -793,9 +802,9 @@ export const CAPABILITY_FAMILIES = [
     title: 'Observability and cost',
     pitch:
       'A trace records what each step did, a cost metric reports what it spent, and the `observability` block says whether those spans may leave the process at all.',
-    declaredBy: 'traces[], observability, aid cost',
+    declaredBy: 'traces[], observability, aid cost, aid report',
     href: './reference/cli.md#trace',
-    featureIds: ['traces', 'cost-metric', 'observability-export'],
+    featureIds: ['traces', 'cost-metric', 'observability-export', 'fleet-report'],
   },
   {
     id: 'fleet',

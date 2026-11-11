@@ -28,6 +28,7 @@ import { init } from './commands/init.js';
 import { kb } from './commands/kb.js';
 import { migrate } from './commands/migrate.js';
 import { packageEdge } from './commands/package.js';
+import { report } from './commands/report.js';
 import { resolve } from './commands/resolve.js';
 import { trace } from './commands/trace.js';
 import { validate } from './commands/validate.js';
@@ -290,6 +291,20 @@ export const COMMANDS: readonly Command[] = [
         run: args.positionals[0],
         dir: args.values.get('dir'),
         all: args.booleans.has('all'),
+      }),
+  },
+  {
+    name: 'report',
+    summary: 'compare many deployments from their trace sinks and recorded eval baselines',
+    usage: 'report <dir> [--budget <usd>]',
+    flags: [
+      valueFlag('budget', 'usd', 'fail when the fleet total exceeds this ceiling'),
+      JSON_FLAG,
+    ],
+    run: (context, args) =>
+      report(context, {
+        dir: args.positionals[0],
+        budget: args.values.get('budget'),
       }),
   },
   {
