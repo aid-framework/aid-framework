@@ -95,6 +95,14 @@ export {
   STDLIB_PROBE,
   stdlibCommand,
 } from './python.js';
+export type {
+  BadBaseline,
+  BaselineMetric,
+  DeploymentReport,
+  EvalBaseline,
+  FleetReport,
+} from './report.js';
+export { BASELINE_SUFFIX, isDirectory, parseEvalBaseline, readFleetReport } from './report.js';
 export type { Target, TargetDev } from './targets.js';
 export {
   DEFAULT_SPEC_PATH,

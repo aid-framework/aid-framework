@@ -168,6 +168,13 @@ export const CLI_DIAGNOSTIC_CODES = {
   fleetDirUnreadable: 'cli/fleet-dir-unreadable',
   initTemplateUnknown: 'cli/init-template-unknown',
   initTemplateConflict: 'cli/init-template-conflict',
+  // `aid report` compares many deployments from files. A wrong invocation (`2`) is a
+  // missing or non-directory root; an empty root is a true answer and only warns. A
+  // `*.baseline.json` that is not a recorded baseline is a warning because the traces in
+  // the same directory are still worth reporting -- one bad file must not hide them.
+  reportDirUnreadable: 'cli/report-dir-unreadable',
+  reportNoDeployments: 'cli/report-no-deployments',
+  reportBaselineInvalid: 'cli/report-baseline-invalid',
 } as const;
 
 export type CliDiagnosticCode = (typeof CLI_DIAGNOSTIC_CODES)[keyof typeof CLI_DIAGNOSTIC_CODES];
