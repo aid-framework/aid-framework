@@ -166,14 +166,14 @@ describe('ir/promotion-regression', () => {
 });
 
 describe('ir/promotion-cost', () => {
-  it('refuses a cost ceiling on an eval that measures no cost', () => {
+  it('refuses a cost allowance on an eval that declares no cost ceiling', () => {
     const ir = mutateIR(SPEC);
     refundEval(ir).metrics = [{ kind: 'exact', field: 'text' }];
     refundEval(ir).costBudget = undefined;
 
     const diagnostic = only(runGates(ir).byGate['evals/promotion'].diagnostics);
     expect(diagnostic.code).toBe(IR_DIAGNOSTIC_CODES.promotionCost);
-    expect(diagnostic.message).toContain('measures no cost');
+    expect(diagnostic.message).toContain('declares no cost ceiling');
   });
 
   it('accepts a cost ceiling when the eval records a cost', () => {

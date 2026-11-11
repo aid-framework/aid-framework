@@ -1,12 +1,14 @@
 /**
  * The IR's eval metric vocabulary mapped onto the runtime's metrics.
  *
- * The mapping is deliberately partial. Of the IR's nine kinds, seven reach a runtime
- * metric here; the other two are *rejected* rather than silently dropped, because a
- * metric that is declared but not measured makes a baseline report a passing gate over
- * an unmeasured claim, which is worse than refusing to generate -- and each rejection
- * carries the reason it cannot be measured. `tool-trace`, `cost`, and `latency` have no
- * runtime implementation in Phase 0.
+ * The mapping is partial in its kinds and in its options. Of the IR's ten kinds, `tool-trace`
+ * is rejected here; the other nine reach a runtime metric. And a declaration the runtime
+ * cannot honour is *rejected* rather than silently dropped, because a metric that is
+ * declared but not measured makes a baseline report a passing gate over an unmeasured
+ * claim, which is worse than refusing to generate -- and every rejection carries its reason.
+ * `cost` and `latency` are measured from the numbers the harness already collects around
+ * each case; `tool-trace` is refused because no generated runner reports the tool calls a
+ * case made.
  *
  * `retrieval` is measured, but not by the prediction-per-case harness: the runtime scores
  * a ranked, cited retrieved set with `RetrievalGate` over the family `retrieval_metrics`
@@ -112,21 +114,31 @@ export function mapMetric(metric: MetricShape): MetricMapping {
         expression: `LlmJudge(judge_call, rubric=${pythonString(metric.rubric)})`,
       };
     case 'cost':
+      // The harness already reads the gateway ledger around each case, so the declared
+      // ceiling is enforced as a per-case budget rather than a separate accounting pass.
       return {
-        measured: false,
-        reason:
-          'the runtime has no cost metric; cost ceilings belong to ModelGateway budgets, which a ' +
-          'generated eval does not wire',
+        measured: true,
+        name: 'cost',
+        deterministic: true,
+        expression: `CostCeiling(max_usd=${metric.max})`,
       };
     case 'latency':
       return {
-        measured: false,
-        reason: 'the runtime has no latency metric; a p95 budget is a declared Phase 0 deferral',
+        measured: true,
+        name: 'latency',
+        deterministic: true,
+        expression: `LatencyCeiling(max_ms=${metric.maxMs})`,
       };
     case 'tool-trace':
+      // The runtime can compare a trajectory (`ToolTrace`), but nothing generated carries
+      // one: an `agent:` target is refused by the trajectory gate and a pipeline response
+      // has no tool calls to record. Emitting the metric here would produce a module that
+      // raises on its first case, so the refusal names the missing half instead.
       return {
         measured: false,
-        reason: 'the runtime records tool calls but no metric compares them',
+        reason:
+          'no generated runner reports the tool calls a case made, so the runtime trace metric ' +
+          'would have no trajectory to compare',
       };
     case 'retrieval':
       return {

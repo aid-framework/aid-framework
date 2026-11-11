@@ -247,8 +247,8 @@ What comes out:
 - `aid eval --baseline` writes the baseline; `aid eval` exits non-zero when the run drops below
   `maxRegression` against it, so the exit code is the contract CI reads.
 - `.github/workflows/evals.yml`, scaffolded for exactly the evals that gate CI.
-- A cost-ceiling job built from the same priced profiles, so a budget is enforced in CI
-  rather than in a dashboard.
+- A cost-and-latency ceiling built from the same priced profiles and the same measured runs,
+  so a budget is enforced in CI rather than in a dashboard.
 
 What is refused:
 
@@ -663,7 +663,7 @@ What is refused:
 Covers:
 
 - **Local trace capture**
-- **A cost ceiling in CI**
+- **Cost and latency ceilings in CI**
 - **A declared place for the spans, and an exporter that reaches it**
 - **Alarms as generated infrastructure**
 - **The series the alarms watch, recorded and exported**

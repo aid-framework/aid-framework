@@ -168,6 +168,12 @@ the capability vocabulary needs to distinguish *records spans* from *exports spa
 
 ### Check 4 — Agent evals are refused, not silently degraded: PASS
 
+> **Read as a snapshot of the audit, not as current state.** Phase 3 (below, §5.3) shipped the
+> runtime half this check found missing: `CaseOutcome` now carries an optional `Trajectory`, a
+> runner may return `RunOutput`, and `cost` and `latency` are measured per case. What remains
+> true is the refusal itself, on narrower grounds — no *generated* runner reports tool calls —
+> and the `Runner` and `metrics.ts` line numbers quoted below have moved.
+
 The gate works exactly as documented. `evalTrajectoryGate`
 (`packages/ir/src/gates/observability.ts:79-118`) refuses `target.kind === 'agent'` with
 `ir/eval-trajectory`, message *"names an agent, and this build emits evals over a prompt, not
@@ -365,32 +371,38 @@ tool-trace expectation: no tool named \"issue_refund\" exists"*), so the referen
 trajectory evals is already enforced and Phase 3 inherits it rather than building it.
 
 Runtime shape: a `Trajectory` value carried on the outcome rather than replacing it.
+**Built**, and narrower than drafted: the metric only needs the ordered tool names, so the
+record keeps names and nothing else. Arguments, per-step cost and per-step latency stay on
+`StepRecord`, which `Trajectory` is derived from — duplicating them into a second model would
+create two sources of truth for the same run.
 
 ```python
 class Trajectory(BaseModel):
-    steps: tuple[Step, ...]           # each with tool name, args digest, status
-    tool_calls: tuple[str, ...]       # ordered, what `tool-trace` compares
-    cost_usd: float
-    tokens: int
-    latency_ms: int
-    status: str                       # completed | refused | degraded | awaiting_approval
-    approvals: tuple[Approval, ...]
+    calls: tuple[str, ...]              # ordered, flattened from each step's tool_names
+
+class RunOutput(BaseModel):
+    text: str                           # what a text metric scores
+    trajectory: Trajectory = Trajectory()   # the opt-in; `Runner` may still return `str`
 
 class CaseOutcome(BaseModel):
-    case_id: str
-    prediction: str
-    scores: tuple[MetricResult, ...] = ()
-    trajectory: Trajectory | None = None   # additive; None for prompt-only evals
+    ...
+    trajectory: Trajectory | None = None   # additive; None when the runner reported none
 ```
 
 Additive field, prompt-only evals unchanged, existing baselines still load. `tool-trace`
-compares `trajectory.tool_calls` against `expect` with `ordered` honoured; `cost` and
-`latency` read the numbers the run already computed. This is also what unblocks
-`gate.promotion.allowedCostIncrease` (§0).
+compares `trajectory.calls` against `expect` with `ordered` honoured. `cost` and `latency` did
+**not** need the trajectory, so they shipped first: the harness already measures both around
+the runner call.
 
-`tool-trace` matching needs a semantic decision before implementation: `expect` is a set of
-names, `ordered: true` means the order counts. Does a run that calls a tool twice fail an
-`expect` naming it once? §11, open question 3.
+Two details worth recording, because each is a place a gate could have gone wrong:
+
+- `trajectory is None` (the runner reported nothing) is *not* the same as an empty
+  trajectory (the run called no tools). `tool-trace` refuses the first and scores the second.
+  Conflating them would let a trace assertion pass on every case by having nothing to compare.
+- `cost` refuses an unmetered run rather than reading its `cost_usd` of `0.0`, because a
+  ceiling that trusted that number would pass forever over a run it never measured.
+
+`tool-trace` matching needed a semantic decision, resolved in §11 (open question 3).
 
 ### 4.4 Trace → dataset (CLI only)
 
@@ -432,8 +444,17 @@ the series, or remove the alerts block"*.
 
 ### 5.3 `ir/eval-trajectory` (shipped — narrowed, then lifted)
 
-Not deleted. Once a trajectory-carrying runner exists for `agent:` targets, the refusal
-narrows to the case where the agent declares no ceiling to score against:
+**Status after Phase 3's first increment: the runtime half is built, the generator half is
+not, so the gate is unchanged.** `Trajectory`, `RunOutput` and `tool-trace` exist in
+`aid-runtime` and are tested (`tests/test_evals_trajectory.py`), and a hand-written runner
+can return a `RunOutput` to satisfy a `tool-trace` metric. What does not exist is a
+*generated* runner that carries a trajectory: `evalSubject` in `@aid-framework/ir` still
+refuses every `agent:` target, and a pipeline response still has no tool calls. Narrowing
+this gate before that runner exists would let `aid validate` pass a spec that generation
+then has to refuse, which moves the refusal rather than removing it. So the gate keeps its
+current messages, and §5.3's narrowing moves to the increment that emits an agent eval.
+
+To be done when the agent-eval emitter lands:
 
 - **Codes:** `evalTrajectory` (unchanged code, new reason)
 - **Message:** `the trajectory gate rejected "{eval.id}": it scores an agent run over its steps, and agent "{agent.id}" declares no maxSteps, so the trajectory has no ceiling to be measured against`
@@ -444,9 +465,11 @@ narrows to the case where the agent declares no ceiling to score against:
 For `pipeline:` targets the `tool-trace` refusal remains, with its existing hint, because a
 pipeline response still carries no tool calls.
 
-### 5.4 `ir/eval-coverage` (proposed, Phase 3)
+### 5.4 `ir/eval-coverage` (proposed, deferred)
 
-A profile obligation, matching the pattern `ir/profile-approvals` already sets.
+Deferred with §5.3: an obligation to measure trajectories that nothing can emit would refuse
+every enterprise spec that declares an agent, which is the opposite of the intended effect.
+It lands in the same increment as the agent-eval emitter.
 
 - **Codes:** `evalCoverage`
 - **Message:** `the eval coverage gate rejected this deployment: profile enterprise requires a trajectory eval for every agent, and {n} agent(s) have none ({ids})`
@@ -458,11 +481,18 @@ A profile obligation, matching the pattern `ir/profile-approvals` already sets.
 Scoped to spec 0.30 and above, like the other profile gates. `standard` profile: no
 requirement.
 
-### 5.5 `ir/promotion-cost` (shipped, and currently unsatisfiable)
+### 5.5 `ir/promotion-cost` (shipped; the warning is reworded, not removed)
 
-No new diagnostic. The existing refusal at `ir/src/gates/promotion.ts:134` and the warning at
-`cli/src/commands/eval-compare.ts:412` become satisfiable when §4.3 lands, and the warning
-should then be removed rather than left to warn about a deferral that has shipped.
+**Corrected.** This section originally said the `allowedCostIncrease` warning should be
+deleted once §4.3 landed. It cannot be, and deleting it would have been the dishonest move.
+A recorded baseline (`eval-compare.ts:39-52`) stores `metric`, `runs`, `mean` and `stdev` per
+metric — a **pass rate**, never a dollar total — so "candidate spend rose by more than N%"
+is not computable from the two files the comparison reads, whatever the runtime measures.
+`cost` is compared like any other metric: as the *rate at which the declared ceiling held*.
+
+What changed: the warning now says that, instead of claiming the runtime measures no cost
+metric. Comparing dollars between baseline and candidate remains on the not-built list in
+§10 and on the features page.
 
 ## 6. Generated artifacts, per addition
 
@@ -524,7 +554,7 @@ and fixtures. Ranges are honest uncertainty, not padding.
 | --- | --- | --- | --- |
 | **1. Accuracy sweep** | Registry gains the three agent constructs, both templates move to 0.30, `support-copilot` gains a `customers/acme.yaml`, plus a test asserting every template validates and `aid fleet` succeeds | **S, 0.5–1 d** | — |
 | **2. Make alarms real** | `configure_metrics()` + the four recording points + `metrics_export_status()`, with `ir/alerts-unproduced` and the corrected hint | **M, 3–4 d** | Phase 1 (docs) |
-| **3. Trajectory evals** | `Trajectory` on `CaseOutcome`, `tool-trace` implemented, `ir/eval-trajectory` narrowed to the no-`maxSteps` case, `cost`/`latency` measured | **L, 1.5–2 wk** | Phase 2 (cost instrument) |
+| **3. Trajectory evals** | *(partially shipped)* `cost`/`latency` measured end to end, plus `Trajectory`/`RunOutput`/`tool-trace` in the runtime with tests. Still open: the agent-eval emitter, `ir/eval-trajectory` narrowing, `ir/eval-coverage` | **L, 1.5–2 wk** | Phase 2 (cost instrument) |
 | **4. Trace → dataset** | `aid trace export --dataset` writes a valid dataset from one agent's spans | **M, 4–6 d** | Phase 3 |
 | **5. Delivery playbook** | `docs/guide/delivery.md`: template → overlay → fleet → report → improvement loop, with the enterprise checklist per control | **S, 1–2 d** | Phase 1 |
 
@@ -544,19 +574,31 @@ it is.
 
 - **Metric emission.** Proposed in §4.1. Today: `export: otlp` exports spans only.
 - **Any collector artifact or `spanmetrics` configuration.** Not built, not proposed.
-- **Trajectory-carrying eval runs.** Proposed in §4.3. Today: `Runner` returns `str`.
-- **`tool-trace`, `cost` and `latency` eval metrics.** In the schema, refused at generation.
-- **`gate.promotion.allowedCostIncrease` end to end.** Declarable, gated both ways, unusable.
+- **A generated agent eval.** The runtime half of §4.3 is built — `Runner` may return a
+  `RunOutput` carrying a `Trajectory`, `CaseOutcome` records it, and `tool-trace` scores it —
+  but nothing emits one: `evalSubject` refuses every `agent:` target, so a spec cannot declare
+  a trajectory eval that generation would honour.
+- **`tool-trace` in a generated eval module.** Built in the runtime, refused by the generator
+  for the reason above. `cost` and `latency` *are* measured from the numbers the harness
+  collects around each case.
+- **`gate.promotion.allowedCostIncrease` comparing dollars.** Declarable, gated both ways,
+  still not computable: a recorded baseline stores a pass rate per metric, not a total. The
+  warning now says that rather than describing a later phase.
 - **`aid trace export`, `aid eval --from-traces`.** Proposed in §4.4.
-- **`ir/alerts-unproduced`, `ir/eval-coverage`.** Proposed in §5.
+- **`ir/eval-coverage`.** Proposed in §5.4. Deferred with the agent-eval emitter: it would
+  otherwise refuse every enterprise spec that declares an agent.
 - **Percentile alarms on a backend that cannot compute them from a histogram.** Unverified.
 - **Azure and Kubernetes targets.** Not built, not proposed.
 - **Generated dashboards.** Nothing exists; `aid report` is the fleet view and it reads files.
 
 Shipped and verified this round, for contrast: templates end to end; overlays with
 `aid resolve` and `aid fleet`; `aid report`; profile gates; HITL pause and resume; agent
-budgets; the ts-vercel OTLP refusal; `ir/eval-trajectory`; the promotion quality policy;
-alarms-as-infrastructure generation (correct resources, no producer).
+budgets; the ts-vercel OTLP refusal; `ir/eval-trajectory`; `ir/alerts-unproduced`; the
+promotion quality policy; alarms-as-infrastructure generation with real producers;
+`cost`/`latency` eval metrics measured end to end.
+
+Built in `aid-runtime` but not yet reachable from a spec: `Trajectory`, `RunOutput` and the
+`tool-trace` metric.
 
 ## 11. Open questions for review
 
@@ -567,18 +609,20 @@ alarms-as-infrastructure generation (correct resources, no producer).
    compute a percentile. CloudWatch and Cloud Monitoring differ here and neither was
    verified. Should an unsupported pairing be refused by name (`ir/alerts-percentile`) or
    documented? Recommend verifying first, then refusing only where clearly unsupported.
-3. **`tool-trace` matching semantics.** With `expect: [a, b]` and `ordered: true`, does a run
-   that calls `a` twice fail? Does an unlisted extra tool fail? Recommend: `expect` is a
-   subsequence when `ordered`, a set otherwise, and extra tools are tolerated unless a new
-   `exact: true` is added. This needs a decision before Phase 3 starts.
-4. **`Trajectory` on `CaseOutcome` versus a subclass.** Adding an optional field keeps one
-   model and one baseline format; a subclass splits the type surface. Recommend the optional
-   field.
-5. **What baseline identity does an agent eval promote against?** `gate.promotion.baseline`
+3. **`tool-trace` matching semantics.** **Resolved, in code.** `expect` is a subsequence
+   when `ordered`, a set otherwise; extra tools are tolerated either way; a tool called twice
+   satisfies an `expect` naming it once. The rationale is in the `ToolTrace` docstring: extra
+   work is more than the minimum, so failing it would benchmark one exact transcript rather
+   than a capability, and "how often" is a budget question `cost` answers. No `exact: true`
+   was added — nothing asked for it.
+4. **`Trajectory` on `CaseOutcome` versus a subclass.** **Resolved: the optional field.** It
+   keeps one model and one baseline format, and it makes "the runner reported no trajectory"
+   a state the metric can refuse rather than a type that cannot be constructed.
+5. **What baseline identity does an agent eval promote against?** Still open, and it blocks
+   nothing shipped this round: no generated agent eval exists yet. `gate.promotion.baseline`
    is `{ prompt, version }`, and an agent run is not a prompt. Options: allow
    `baseline: { agent: <id>, version: <n> }`, or key agent evals on the prompt the agent's
-   first step uses. Needs a decision before Phase 3 ships promotion for agents; Phase 3's
-   eval scoring does not depend on it.
+   first step uses. It must be decided in the increment that emits an agent eval.
 6. **Retract or fix forward on alarms** — §12.
 
 ## 12. Decision requested

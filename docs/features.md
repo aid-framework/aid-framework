@@ -280,13 +280,13 @@ Every generated project ships the workflow that runs its evals, so the gate trav
 - **Reference:** [cli](./reference/cli.md#gen)
 - **Since:** `0.1.59`
 
-### A cost ceiling in CI
+### Cost and latency ceilings in CI
 
-Cost is an eval metric, and the generated workflow exits non-zero when a run exceeds the recorded budget.
+A cost or latency budget is an eval metric the harness measures around every case, so the generated workflow exits non-zero when a run spends or takes more than the spec allowed.
 
 - **Turned on by:** `evals[].metrics[].kind: cost`
 - **Reference:** [spec](./reference/spec.md#kind-cost)
-- **Since:** `0.1.65`
+- **Since:** `0.1.153`
 
 ### A Dockerfile and an image
 
@@ -532,7 +532,7 @@ An agent run has no single response to score: the eval runner calls one predicti
 
 ### A `tool-trace` metric
 
-Comparing the tool calls a run made needs a trajectory the eval runner does not carry, so the metric is refused rather than reported as unmeasured. `cost` and `latency` ceilings are still accepted, because each also sets a budget the cost gate and the deploy plan already check.
+Comparing the tool calls a run made needs a runner that reports them. `aid-runtime-python` can — a runner may return a `RunOutput` carrying a `Trajectory`, and the `tool-trace` metric scores it — but no generated eval does, because an `agent:` target is still refused. So the metric is refused at generation rather than reported as unmeasured. `cost` and `latency` ceilings are measured, and each also sets a budget the cost gate and the deploy plan check.
 
 - **Enforced by:** `ir/eval-trajectory`
 

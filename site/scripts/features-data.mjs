@@ -328,12 +328,12 @@ export const SHIPPED_FEATURES = [
   },
   {
     id: 'cost-metric',
-    title: 'A cost ceiling in CI',
+    title: 'Cost and latency ceilings in CI',
     detail:
-      'Cost is an eval metric, and the generated workflow exits non-zero when a run exceeds the recorded budget.',
+      'A cost or latency budget is an eval metric the harness measures around every case, so the generated workflow exits non-zero when a run spends or takes more than the spec allowed.',
     declaredBy: 'evals[].metrics[].kind: cost',
     href: './reference/spec.md#kind-cost',
-    since: '0.1.65',
+    since: '0.1.153',
   },
   {
     id: 'image',
@@ -632,7 +632,7 @@ export const REFUSALS = [
     id: 'tool-trace-metric',
     title: 'A `tool-trace` metric',
     reason:
-      'Comparing the tool calls a run made needs a trajectory the eval runner does not carry, so the metric is refused rather than reported as unmeasured. `cost` and `latency` ceilings are still accepted, because each also sets a budget the cost gate and the deploy plan already check.',
+      'Comparing the tool calls a run made needs a runner that reports them. `aid-runtime-python` can — a runner may return a `RunOutput` carrying a `Trajectory`, and the `tool-trace` metric scores it — but no generated eval does, because an `agent:` target is still refused. So the metric is refused at generation rather than reported as unmeasured. `cost` and `latency` ceilings are measured, and each also sets a budget the cost gate and the deploy plan check.',
     code: 'ir/eval-trajectory',
   },
   {

@@ -96,7 +96,7 @@ export function evalTrajectoryGate(ir: IR, options: GateOptions): GateResult {
           code: IR_DIAGNOSTIC_CODES.evalTrajectory,
           message: `the trajectory gate rejected "${evalShape.id}": target "${target.qualified}" names an agent, and this build emits evals over a prompt, not over an agent run`,
           path: ['evals', evalShape.id, 'target'],
-          hint: `evaluate the pipeline that runs the agent (\`target: pipeline:<id>\`) for now; an agent eval needs a runner that carries a trajectory, which is not built yet`,
+          hint: `evaluate the pipeline that runs the agent (\`target: pipeline:<id>\`) for now; the runtime carries a trajectory, but no generator emits an agent eval yet`,
         }),
       );
       continue;
@@ -109,7 +109,7 @@ export function evalTrajectoryGate(ir: IR, options: GateOptions): GateResult {
           code: IR_DIAGNOSTIC_CODES.evalTrajectory,
           message: `the trajectory gate rejected "${evalShape.id}": metric ${index} compares tool calls, and "${target.qualified}" returns a response with no tool calls to compare`,
           path: ['evals', evalShape.id, 'metrics', index],
-          hint: 'no metric in this build inspects a trajectory; score the response with exact, contains, json-schema, llm-judge or assert',
+          hint: `this build scores a trajectory (\`ToolTrace\`), but no generated runner reports the tool calls a case made: score the response with exact, contains, json-schema, llm-judge or assert`,
         }),
       );
     });

@@ -110,7 +110,7 @@ export const SPEC_VERSIONS = [
   },
   {
     version: '0.27',
-    adds: 'Adds the top-level `observability` block, whose `export: otlp` states where spans go and names the variable holding the collector address instead of leaving the destination to a shell; and widens `evals[].target` to accept `agent:<id>`, which the spec language parses and the IR refuses until a runner carries a trajectory.',
+    adds: 'Adds the top-level `observability` block, whose `export: otlp` states where spans go and names the variable holding the collector address instead of leaving the destination to a shell; and widens `evals[].target` to accept `agent:<id>`, which the spec language parses and the IR refuses, because no generator emits an agent eval yet.',
   },
   {
     version: '0.28',

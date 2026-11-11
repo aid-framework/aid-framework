@@ -143,7 +143,7 @@ describe('trajectory metrics', () => {
     const diagnostic = onlyDiagnosticWith(diagnostics, IR_DIAGNOSTIC_CODES.evalTrajectory);
     expect(diagnostic.path).toEqual(['evals', 'pipeline_tool_calls', 'metrics', 0]);
     expect(diagnostic.message).toContain('no tool calls to compare');
-    expect(diagnostic.hint).toContain('no metric in this build inspects a trajectory');
+    expect(diagnostic.hint).toContain('no generated runner reports the tool calls');
   });
 
   it('refuses the agent target once, at the target, and the tool trace on a pipeline', () => {
@@ -171,11 +171,11 @@ describe('trajectory metrics', () => {
     expect(diagnostic.hint).toContain('target: pipeline:<id>');
   });
 
-  it('accepts a cost or latency ceiling, which set a budget this build honours', () => {
-    // The eval runner cannot score either ceiling, but both survive as declared
-    // budgets: the cost gate checks `costBudget` against a static estimate and the
-    // deploy plan carries `latencyBudgetP95Ms`. Refusing them would delete a working
-    // check, so they stay accepted here and are still refused at generation.
+  it('accepts a cost or latency ceiling, which this build measures per case', () => {
+    // Both are scored by the harness around every case (`CostCeiling`, `LatencyCeiling`), and
+    // both also survive as declared budgets: the cost gate checks `costBudget` against a
+    // static estimate and the deploy plan carries `latencyBudgetP95Ms`. The trajectory gate
+    // has nothing to say about them, which is what this pins.
     const ir = mutateIR(TRAJECTORY);
     const paths = trajectoryGate(ir).diagnostics.map((entry) => entry.path.join('.'));
     expect(paths).not.toContain('evals.pipeline_cost.metrics.0');

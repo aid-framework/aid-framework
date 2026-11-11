@@ -11,16 +11,16 @@
  *
  * **Why the policy is read from the spec, not from flags.** `evals.<id>.gate.promotion`
  * is the declared contract, and a build gate already refuses a policy that governs no
- * quality metric (`ir/promotion-regression`) or claims a cost ceiling on an eval that
- * measures no cost (`ir/promotion-cost`). This layer therefore applies the policy and only
+ * quality metric (`ir/promotion-regression`) or claims a cost allowance on an eval that
+ * declares no cost ceiling (`ir/promotion-cost`). This layer therefore applies the policy and only
  * applies it: it invents no allowance, and the allowance a reader sees in the output is the
  * one in the YAML.
  *
- * **What it refuses to pretend.** No runtime measures a `cost` or `latency` metric today,
- * so a recorded baseline carries quality scores only. A policy that declares
- * `allowedCostIncrease` therefore gets a warning naming that deferral rather than a silent
- * pass, because a promotion gate that reports a cost ceiling it never checked is worse than
- * one that says it could not check it.
+ * **What it refuses to pretend.** A recorded baseline stores a mean pass rate per metric,
+ * never a dollar total, so a `cost` row is a pass rate against its ceiling rather than
+ * spend. A policy that declares `allowedCostIncrease` therefore gets a warning naming that
+ * deferral rather than a silent pass, because a promotion gate that reports a cost ceiling
+ * it never checked is worse than one that says it could not check it.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -270,9 +270,9 @@ function parseBaseline(payload: unknown): RecordedBaseline | undefined {
  * Metric kinds that record spend or time rather than quality.
  *
  * `allowedQualityDrop` is a budget over a quality metric, so a cost or latency row is
- * excluded from the comparison rather than measured against it: `cost` is a total that
- * rises when a candidate does more work, which is not a regression in the sense the
- * allowance means. The cost ceiling has its own field and its own (not built) check.
+ * excluded from the comparison rather than measured against it: both report a pass rate
+ * against a declared ceiling, so a change in that rate is a change in how often the budget
+ * held, not a drop in quality the allowance is meant to bound.
  */
 const NON_QUALITY_METRICS = new Set(['cost', 'latency']);
 
@@ -403,15 +403,16 @@ export function compareBaselines(
     );
   }
 
-  // The cost ceiling is a declared intent this layer cannot check, because no runtime
-  // records cost as a metric. Saying so is the difference between a gate and a decoration.
+  // The cost ceiling is a declared intent this layer cannot check, because a baseline
+  // records a pass rate per metric rather than a dollar total. Saying so is the difference
+  // between a gate and a decoration.
   if (chosen.policy.allowedCostIncrease !== undefined) {
     diagnostics.push(
       cliWarning({
         code: CLI_DIAGNOSTIC_CODES.compareCostUnjudged,
-        message: `allowedCostIncrease (${percent(chosen.policy.allowedCostIncrease)}) was not judged: a recorded baseline carries quality metrics only, because the runtime measures no cost metric yet.`,
+        message: `allowedCostIncrease (${percent(chosen.policy.allowedCostIncrease)}) was not judged: a recorded baseline stores a pass rate per metric, not a dollar total, so a percentage increase in spend cannot be computed from it.`,
         path: ['evals', chosen.evalId, 'gate', 'promotion', 'allowedCostIncrease'],
-        hint: 'Cost ceilings are enforced per request by the gateway budget the spec declares; the promotion cost check is listed as not built in docs/features.md.',
+        hint: 'Spend is bounded per case by the `cost` metric ceiling the spec declares, which is compared like any other metric. Comparing dollars between baseline and candidate is listed as not built in docs/features.md.',
       }),
     );
   }

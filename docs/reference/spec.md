@@ -342,7 +342,7 @@ An MCP server the gateway proxies: the app reaches one gateway URL and the platf
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `target` | `string` | yes | What the eval scores. `pipeline:&lt;id&gt;` scores a pipeline's HTTP response through its declared route. `agent:&lt;id&gt;` (0.27) names an agent run, which is what a trajectory metric would need; the syntax is accepted so a document can say what it means, and the `evals/trajectory` gate refuses it with `ir/eval-trajectory` until the eval runner carries a trajectory rather than a response string. |
+| `target` | `string` | yes | What the eval scores. `pipeline:&lt;id&gt;` scores a pipeline's HTTP response through its declared route. `agent:&lt;id&gt;` (0.27) names an agent run, which is what a trajectory metric needs; the syntax is accepted so a document can say what it means, and the `evals/trajectory` gate refuses it with `ir/eval-trajectory` because no generator emits an agent eval yet, even though the runtime can score a trajectory. |
 | `dataset` | object (fields below) | yes | — |
 | `metrics` | array of `metric` | yes | — |
 | `gate` | object (fields below) | no | How this eval's result is compared against the committed baseline. Never an equality check: sampling noise is expected, so the gate is a threshold on the regression relative to the baseline. |
@@ -365,17 +365,17 @@ How this eval's result is compared against the committed baseline. Never an equa
 | `maxRegression` | `number` | no | Largest tolerated absolute drop in the metric's score versus the baseline. |
 | `samples` | `integer` | no | Runs per case. More samples shrink the sampling-uncertainty term the gate also requires before it fails. |
 | `minMean` | `number` | no | Absolute floor: the eval fails whenever the mean score falls below this value, regardless of maxRegression. A 0/1 metric (such as `assert`) needs it, because the regression allowance can otherwise absorb a drop it must never absorb. Required to be 1 when an `assert` metric is present. |
-| `promotion` | object (fields below) | no | The policy a candidate release must satisfy before it replaces the accepted baseline for this eval. Declarable from spec v0.28. The quality and cost numbers are not measured at build time: `aid eval --compare` applies this policy to two recorded baselines and refuses a candidate that loses more than the allowance or costs more than the increase permits. Nothing promotes automatically -- the refusal is a failed check in CI, and the promotion is still a merged pull request. |
+| `promotion` | object (fields below) | no | The policy a candidate release must satisfy before it replaces the accepted baseline for this eval. Declarable from spec v0.28. `aid eval --compare` applies this policy to two recorded baselines and refuses a candidate whose quality drops more than the allowance permits. The cost allowance is not judged: a baseline records a pass rate per metric, not a dollar total, so the comparison warns that it could not compute the increase. Nothing promotes automatically -- the refusal is a failed check in CI, and the promotion is still a merged pull request. |
 
 #### `eval.gate.promotion`
 
-The policy a candidate release must satisfy before it replaces the accepted baseline for this eval. Declarable from spec v0.28. The quality and cost numbers are not measured at build time: `aid eval --compare` applies this policy to two recorded baselines and refuses a candidate that loses more than the allowance or costs more than the increase permits. Nothing promotes automatically -- the refusal is a failed check in CI, and the promotion is still a merged pull request.
+The policy a candidate release must satisfy before it replaces the accepted baseline for this eval. Declarable from spec v0.28. `aid eval --compare` applies this policy to two recorded baselines and refuses a candidate whose quality drops more than the allowance permits. The cost allowance is not judged: a baseline records a pass rate per metric, not a dollar total, so the comparison warns that it could not compute the increase. Nothing promotes automatically -- the refusal is a failed check in CI, and the promotion is still a merged pull request.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `baseline` | object (fields below) | yes | The prompt version this candidate is measured against. Declaring it is what makes the staleness rule checkable: a promotion that names the version already in the spec has nothing to promote, because two different templates would share one identity. |
 | `allowedQualityDrop` | `number` | yes | Largest tolerated absolute drop in any metric's mean between the accepted baseline and the candidate. |
-| `allowedCostIncrease` | `number` | no | Largest tolerated relative increase in cost per run, as a fraction of the baseline's cost. Only checked when both baselines record a `cost`; a candidate that records none is refused rather than assumed free. |
+| `allowedCostIncrease` | `number` | no | Largest tolerated relative increase in cost per run, as a fraction of the baseline's cost. A recorded baseline stores a mean pass rate per metric, never a dollar total, so this allowance is not judged: `aid eval --compare` warns that it could not compute the increase rather than passing silently. The per-case spend bound that does apply is the `cost` metric's `max` ceiling, which is compared like any other metric. |
 | `approval` | object (fields below) | no | The record a human approval leaves behind. Required under `profile: enterprise`, where a promotion with no named approver and no recorded decision is refused by `ir/promotion-approval`. |
 
 ##### `eval.gate.promotion.baseline`
@@ -430,13 +430,13 @@ A `metric` is exactly one of the 10 forms below; each form is recognised by its 
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `max` | `number` | yes | Maximum tolerated USD per case. |
+| `max` | `number` | yes | Maximum tolerated USD per case, measured by the eval harness from the gateway ledger around each case. |
 
 ### `kind` = `latency`
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `maxMs` | `integer` | yes | — |
+| `maxMs` | `integer` | yes | Maximum tolerated milliseconds per case, measured by the eval harness from the clock around each case. |
 
 ### `kind` = `llm-judge`
 

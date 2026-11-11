@@ -135,9 +135,9 @@ function policyDiagnostics(
     diagnostics.push(
       report.error({
         code: IR_DIAGNOSTIC_CODES.promotionCost,
-        message: `the promotion gate rejected "${evalShape.id}": allowedCostIncrease is ${promotion.allowedCostIncrease} but the eval measures no cost, so there is no baseline cost for the candidate to increase and the ceiling would be enforced against nothing`,
+        message: `the promotion gate rejected "${evalShape.id}": allowedCostIncrease is ${promotion.allowedCostIncrease} but the eval declares no cost ceiling, so neither baseline records a spend comparison the allowance could govern`,
         path: [...path, 'allowedCostIncrease'],
-        hint: 'add a `cost` metric with a `max` ceiling so both baselines record a cost, or drop allowedCostIncrease',
+        hint: 'add a `cost` metric with a `max` ceiling so both baselines score that ceiling, or drop allowedCostIncrease',
       }),
     );
   }
