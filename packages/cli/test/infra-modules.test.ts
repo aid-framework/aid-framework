@@ -1689,6 +1689,28 @@ describe('the validate fixture', () => {
     expect(aws).toContain('across the whole environment');
   });
 
+  it('escapes a backslash before the quote that follows it', () => {
+    // Escaping the quote alone leaves the backslash live, so a label carrying one would
+    // either shift the text a human reads or escape the attribute's own closing quote.
+    const escaped: DeployPlan = {
+      ...ALERTS,
+      alerts: [
+        {
+          id: 'odd_source',
+          metric: 'agent.cost',
+          window: '15m',
+          aggregate: 'sum',
+          threshold: 1,
+          unit: 'usd',
+          source: 'a\\b',
+        },
+      ],
+    };
+    const aws = mainOf(emitAlertsModule(escaped));
+    expect(aws).toContain('a\\\\b');
+    expect(aws.includes('a\\b')).toBe(false);
+  });
+
   it('does not treat missing data as healthy', () => {
     // The default would mark an alarm OK the moment the pipeline stops reporting, which
     // is exactly the failure an alarm is supposed to make visible.
