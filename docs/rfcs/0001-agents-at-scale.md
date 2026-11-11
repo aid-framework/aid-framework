@@ -775,7 +775,7 @@ For the CLI reference and the features page, at the end of this RFC:
 | `agents[].state`, step `requiresApproval` | **declared and gated in 0.26, generation pending** (§10.2) |
 | `tool-trace` / `cost` / `latency` measured | `tool-trace` is **refused by the gate in 0.27**; `cost` and `latency` stay **refused at generation**; measuring any of them is not built (§10.3) |
 | `observability` as a spec section, `.export: otlp` | **built in 0.27, as export intent only** (§10.3) |
-| OTel exporter, generated dashboards/alerts | proposed 0.27, **not built** (§10.3) |
+| OTel exporter, generated dashboards/alerts | proposed 0.27; **alerts built in 0.30** (§10.7), exporter and dashboards **not built** (§10.3) |
 | `aid report` | **built** — aggregates trace sinks and recorded baselines from a directory of deployments, no backend (§10.6) |
 | `observability.feedback`, `evals[].gate.promotion` | **built in 0.28** — declared, gated and compared from files (§10.4) |
 | `prompts[].version` | **exists and is required**, and forms `prompt:<name>@<version>`; `ir/prompt-version-stale` refuses a promotion whose declared version is not strictly greater than the baseline's (§10.4) |
@@ -1058,6 +1058,51 @@ Deliberately **not** built, and stated rather than implied:
 - **No `--since`/`--until` window.** The trace reader supports one, but a fleet report over a download
   has one window already: whatever the download contains.
 
+### 10.7 Phase 7, generated alarms, as shipped at 0.30
+
+The narrowest shippable half of Â§10.3's "dashboards/alerts where feasible": **alerts**, not
+dashboards.
+
+- `specVersion` `0.30`; `observability.alerts` -- an array of
+  `{ id, metric, window, aggregate, threshold, source? }`, `minItems: 1`. All three vocabularies are
+  closed enums, which is what makes the gate able to refuse rather than approximate.
+- `metric` is exactly the four series the deploy plan already derives
+  (`agent.cost`, `agent.tokens`, `eval.cost`, `eval.latency.p95`). Not a fifth. An alarm over a
+  series nothing produces is expressible and permanently silent, and no-data reads as healthy.
+  Guardrail hit rate and approval latency are deliberately **excluded**: the runtime records both as
+  span *events*, no metric derivation reads events, so an alert over either would be a knob that
+  could never page anyone.
+- Gate `observability/alerts` (26th) with three codes: `ir/alerts-unexported` (an alert with no
+  `export: otlp`), `ir/alerts-aggregate` (a reduction the metric cannot answer, `p95` iff latency),
+  `ir/alerts-source` (a `source` naming no declared agent or eval).
+- `packages/ir/src/deploy-plan.ts` gains `alerts: DeployAlert[]` and `alertUnit(metric)`, so the
+  unit a page displays is derived from the metric rather than trusted from the author. `alerts` is
+  distinct from `alarms`: a budget *existing* and a human asking to be *paged* are different
+  questions.
+- `modules/alerts/` in the OpenTofu tree and `alerts.cjs` in the CDK app: one
+  `aws_cloudwatch_metric_alarm` or `google_monitoring_alert_policy` per entry. The env root gains
+  `alert_channel_ids`, defaulting to `[]`, so a generated alarm notifies nobody until an operator
+  names a channel.
+- Three emitter decisions worth recording: `period` **is** the window with `evaluation_periods = 1`
+  (so the alarm measures the span the author wrote, not a longer one); missing data is
+  `treat_missing_data = "missing"` rather than healthy; and a percentile goes in
+  `extended_statistic`, not `statistic` -- CloudWatch's `statistic` enum has no percentiles, so the
+  first draft's `statistic = "p95"` was a real emitter bug the walkthrough surfaced.
+- A second real bug surfaced the same way: `normalizeObservability()` did not carry `alerts`, so the
+  normalize gate refused every 0.30 document that declared one. That is the case for byte-asserted
+  fixtures and a walkthrough per phase -- the gate unit tests construct IR directly and never took
+  the full chain, so only the CLI found it.
+
+Deliberately **not** built:
+
+- **No generated dashboards.** Alerts are a closed list with a numeric threshold; a dashboard is an
+  open-ended layout, and a generated one that guessed at the panel that matters would be worse than
+  the console click it replaced. Â§12 keeps it listed as unbuilt.
+- **No collector, no exporter.** `export: otlp` is still intent; `alert_channel_ids` defaults to
+  empty for the same reason -- the compiler does not know your account ids and will not invent them.
+- **No paging integration.** The alarm action list is a variable the operator sets, not a channel
+  the compiler creates.
+
 ---
 
 ## 11. Open questions for review
@@ -1109,14 +1154,16 @@ deleted, because the reasoning is part of the design record.
 
 ## 12. Decision requested
 
-**Status: all five phases are shipped.** Spec 0.25 through 0.29, `IR_VERSION` still 0.5.0, and each
-phase's "as shipped" section (§10.1–§10.5) records exactly what landed, what was narrower than
+**Status: all seven phases are shipped.** Spec 0.25 through 0.30, `IR_VERSION` still 0.5.0, and each
+phase's "as shipped" section (§10.1–§10.7) records exactly what landed, what was narrower than
 proposed, and what was deliberately left unbuilt. The roadmap above is now history rather than a
 plan; the honest inventory of what remains unbuilt is §10.
 
 Nothing in the six capability areas is left unaddressed, but four things are declared, gated and
-deliberately not generated — an OTel exporter in the runtimes, generated dashboards and alerts, a
+deliberately not generated — an OTel exporter in the runtimes, generated dashboards, a
 generated feedback route and promotion job, and any measurement of `cost` or `latency` metrics.
 Each of those needs a runtime decision that AID has not made (which collector, which signal
 schema, which scheduler), and guessing one would break the reproducibility guarantee. They stay
-listed as unbuilt until a phase can ship them with a gate and a byte-asserted fixture.
+listed as unbuilt until a phase can ship them with a gate and a byte-asserted fixture. Alerts were
+also on this list and are now built (§10.7), precisely because they needed no runtime decision: the
+series were already derived, so the alarm could be generated without AID guessing at a collector.

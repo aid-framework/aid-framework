@@ -483,6 +483,17 @@ export const SHIPPED_FEATURES = [
     href: './reference/cli.md#init',
     since: '0.1.147',
   },
+  {
+    id: 'generated-alarms',
+    title: 'Alarms as generated infrastructure',
+    detail:
+      'Spec 0.30 lets a document declare `observability.alerts`: a metric, a window, a reduction and a threshold, optionally scoped to one agent or eval. The infra planner turns each one into a real alarm -- a CloudWatch alarm in the Terraform env root, a Cloud Monitoring policy on GCP, a `CfnAlarm` in the CDK app -- that pages `alert_channel_ids` and treats missing data as `missing` rather than healthy. The metric list is closed to the four series the deploy plan already derives (`agent.cost`, `agent.tokens`, `eval.cost`, `eval.latency.p95`), so an alarm cannot watch a number nothing produces. The unit comes from the metric rather than the author, so the description and the threshold cannot disagree.',
+    declaredBy: 'observability.alerts',
+    href: './reference/spec.md#observability',
+    // Alarms are emitted and byte-asserted; dashboards are not, and this row must not
+    // imply them.
+    since: '0.1.149',
+  },
 ];
 
 /**
@@ -685,6 +696,27 @@ export const REFUSALS = [
     code: 'overlay/value-out-of-bounds',
   },
   {
+    id: 'alert-without-an-export',
+    title: 'An alarm over spans that never leave the process',
+    reason:
+      'An alarm watches a metric, and the runtime publishes no metrics at all: the only telemetry it emits is spans. A document that declares `observability.alerts` without `export: otlp` is therefore refused by the `observability/alerts` gate, because the emitted alarm would watch a series that is never produced and stay silent forever -- which reads as health.',
+    code: 'ir/alerts-unexported',
+  },
+  {
+    id: 'alert-over-a-series-nothing-produces',
+    title: 'An alarm whose reduction the series cannot answer',
+    reason:
+      'Alerts are limited to the four metrics the deploy plan derives, and each declares which reductions make sense for it. A `p95` over a cost total, or an `average` over a per-eval spend, is refused rather than emitted as an alarm that fires on a quantity nobody meant -- the diagnostic names the metric and the reductions it does support.',
+    code: 'ir/alerts-aggregate',
+  },
+  {
+    id: 'alert-naming-an-undeclared-source',
+    title: 'An alarm scoped to a name the document does not declare',
+    reason:
+      'An alarm may name the agent or eval it watches; that name becomes a metric dimension, so a typo would emit an alarm that filters on a value nothing writes and never fires. The gate resolves the name against the document and refuses an unknown one instead of letting it become a permanently silent alarm.',
+    code: 'ir/alerts-source',
+  },
+  {
     id: 'overlay-profile-mismatch',
     title: 'A customer overlay whose profile label disagrees with the spec it resolves to',
     reason:
@@ -801,10 +833,16 @@ export const CAPABILITY_FAMILIES = [
     id: 'observability',
     title: 'Observability and cost',
     pitch:
-      'A trace records what each step did, a cost metric reports what it spent, and the `observability` block says whether those spans may leave the process at all.',
+      'A trace records what each step did, a cost metric reports what it spent, the `observability` block says whether those spans may leave the process at all, and a declared alarm is generated as cloud infrastructure rather than described.',
     declaredBy: 'traces[], observability, aid cost, aid report',
     href: './reference/cli.md#trace',
-    featureIds: ['traces', 'cost-metric', 'observability-export', 'fleet-report'],
+    featureIds: [
+      'traces',
+      'cost-metric',
+      'observability-export',
+      'generated-alarms',
+      'fleet-report',
+    ],
   },
   {
     id: 'fleet',

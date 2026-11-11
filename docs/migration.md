@@ -293,6 +293,59 @@ relaxation. AID reports `overlay/value-out-of-bounds`, because the bound is the 
 answer and the weakening hint would advise setting `allowWeaken` -- a permission the base author
 may grant and which would still not admit the value.
 
+## 0.29 to 0.30: the alarms the plan was already able to derive
+
+`observability` said where spans go. 0.30 says who gets paged when the numbers move the wrong way,
+so the threshold lives in the diff instead of in a console click nobody reviewed.
+
+> **What 0.30 declares but does not do.** AID generates the alarm resource and wires it to
+> `alert_channel_ids`, which defaults to empty. Nothing pages anyone until an operator names a
+> channel, no collector is deployed, and no exporter is installed in the runtime. `export: otlp` is
+> still the declaration that a collector is in the path, not the collector itself.
+
+### What 0.30 adds
+
+| Construct | What it says |
+| --- | --- |
+| `observability.alerts` | One alarm per entry: `metric`, `window`, `aggregate`, `threshold`, and an optional `source` that narrows it to one agent or eval. |
+
+### Nothing to do for 0.29 documents
+
+The block is optional and the gate is scoped to `specVersion: "0.30"` and above, so a 0.29 document
+passes untouched. Nothing new reaches a generator unless an alert is declared, and the emitted
+OpenTofu and CDK trees for an earlier document are byte-identical: the module is only written when
+`plan.alerts` is non-empty.
+
+### What a 0.30 document must declare
+
+| Refusal | What is missing | The fix |
+| --- | --- | --- |
+| `ir/alerts-unexported` | An alert with no `observability.export: otlp`, so no collector publishes the series it watches. | Add `export: otlp` and `endpointEnv`, or remove the alerts block. |
+| `ir/alerts-aggregate` | A reduction the metric cannot answer, such as `p95` over a cost total. | Use `sum`, `average` or `max` for a quantity; `p95` only for a latency series. |
+| `ir/alerts-source` | A `source` naming no declared agent or eval. | Name a declared id, or omit `source` to watch the whole environment. |
+
+### Why the metric list is closed to four
+
+`agent.cost`, `agent.tokens`, `eval.cost` and `eval.latency.p95` are exactly the series the deploy
+plan already derives. Guardrail hit rate and approval latency are not on the list even though the
+runtime records both, because it records them as span **events** and no derivation reads events: an
+alert over either would validate, deploy and never fire. A closed enum is the only way to refuse
+that at build time rather than discover it during an incident.
+
+### Why `p95` is required for a latency and refused everywhere else
+
+CloudWatch's `statistic` enum has no percentiles -- a percentile belongs in `extended_statistic` --
+so a `p95` in the wrong field would be rejected by the provider at `tofu plan`, layers below the
+document. The gate decides instead of defaulting: `p95` is required if and only if the metric is a
+latency, so an alarm either names a reduction its metric has or does not build.
+
+### Why `alert_channel_ids` defaults to empty
+
+The compiler knows the metrics and the thresholds; it does not know your account ids. Inventing a
+channel would page a stranger, so a generated alarm notifies nobody until an operator sets the
+variable. This is documented rather than gated, because "not yet wired to a channel" is a normal
+state during a first deploy.
+
 ## 0.27 to 0.28: promoting a candidate, and the feedback that starts a loop
 
 What a document is allowed to do with a candidate, and which feedback it takes back from its users.
@@ -354,6 +407,7 @@ is a number rather than an adjective.
 
 | Spec | Backward compatible | What it added |
 | --- | --- | --- |
+| 0.30 | Yes | `observability.alerts`, the threshold each declared metric should page on |
 | 0.29 | Yes | `overridable`, the paths a customer overlay may set and the bound each may move within |
 | 0.28 | Yes | `observability.feedback` (`signals`, `pii.redact`, `retentionDays`, `persistent`); `evals[].gate.promotion` |
 | 0.27 | Yes | `observability` (`trace`, `redact`, `export: otlp`, `endpointEnv`); `evals[].target` widened to `agent:<id>` |
