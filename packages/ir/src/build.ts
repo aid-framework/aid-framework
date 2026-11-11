@@ -28,6 +28,10 @@ import {
   type AgentShape,
   type AgentStateKind,
   type AgentStateShape,
+  ALERT_AGGREGATES,
+  ALERT_METRICS,
+  ALERT_WINDOWS,
+  type AlertShape,
   AUDIT_SINKS,
   type AuditSink,
   BEDROCK_CONTENT_FILTERS,
@@ -80,6 +84,9 @@ import {
   type IR,
   IR_VERSION,
   imageRegistry,
+  isAlertAggregate,
+  isAlertMetric,
+  isAlertWindow,
   isFeedbackSignalKind,
   isGuardrailPolicyKind,
   isIndexMetric,
@@ -2015,6 +2022,8 @@ function buildObservability(
     if (endpointEnv !== undefined) shape.endpointEnv = endpointEnv;
     const feedback = buildFeedback(record.feedback);
     if (feedback !== undefined) shape.feedback = feedback;
+    const alerts = buildAlerts(record.alerts);
+    if (alerts !== undefined) shape.alerts = alerts;
   }
   return shape;
 }
@@ -2048,6 +2057,37 @@ function buildFeedback(raw: unknown): FeedbackShape | undefined {
   const persistent = asBoolean(record.persistent);
   if (persistent !== undefined) shape.persistent = persistent;
   return shape;
+}
+
+/**
+ * Alarm policies, written only when declared. Sorted by id so the IR and everything
+ * derived from it are deterministic, and so the emitted module and the fixture that
+ * asserts its bytes list the alarms in an order a reader can predict.
+ *
+ * Every field is schema-required, so the fallbacks here are unreachable for a document
+ * that passed validation; they exist so the IR stays total rather than trusting a cast.
+ * A metric outside the closed registry falls back to the first entry rather than being
+ * kept, because a metric the derivation cannot back must never reach an emitter.
+ */
+function buildAlerts(raw: unknown): AlertShape[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const alerts: AlertShape[] = raw.map((entry) => {
+    const record = asRecord(entry) ?? {};
+    const metric = asString(record.metric) ?? '';
+    const window = asString(record.window) ?? '';
+    const aggregate = asString(record.aggregate) ?? '';
+    const alert: AlertShape = {
+      id: asString(record.id) ?? '',
+      metric: isAlertMetric(metric) ? metric : ALERT_METRICS[0],
+      window: isAlertWindow(window) ? window : ALERT_WINDOWS[0],
+      aggregate: isAlertAggregate(aggregate) ? aggregate : ALERT_AGGREGATES[0],
+      threshold: asNumber(record.threshold) ?? 0,
+    };
+    const source = asString(record.source);
+    if (source !== undefined) alert.source = source;
+    return alert;
+  });
+  return alerts.sort((left, right) => left.id.localeCompare(right.id));
 }
 
 /**

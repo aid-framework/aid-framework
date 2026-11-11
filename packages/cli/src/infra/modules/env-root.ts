@@ -31,6 +31,8 @@ export interface EnvRootModules {
   readonly modelArmor?: boolean;
   /** Optional for the same reason: "no audit destination" unless a caller says so. */
   readonly audit?: boolean;
+  /** Optional for the same reason: "no declared alarm policies" unless a caller says so. */
+  readonly alerts?: boolean;
 }
 
 /** The plan-shaped variables every env root declares, so the generated tfvars binds. */
@@ -99,6 +101,23 @@ const AUDIT_INPUTS = [
   '  description = "Globally unique name for the audit archive. Required when the sink is s3 or gcs, ignored otherwise."',
   '  type        = string',
   '  default     = ""',
+  '}',
+];
+
+/**
+ * The alarm channels, declared only when the document declares an alert.
+ *
+ * Same reason as `AUDIT_INPUTS`: a root that calls no `alerts` module must not be handed
+ * an input it would never set. The value is an operator's account detail -- a CloudWatch
+ * action ARN or a Monitoring channel id -- so it arrives from tfvars exactly as
+ * `audit_bucket_name` does, and an empty list creates the alarms without a destination.
+ */
+const ALERT_INPUTS = [
+  '',
+  'variable "alert_channel_ids" {',
+  '  description = "CloudWatch action ARNs or Monitoring channel ids the alarms notify. An empty list creates them without a destination."',
+  '  type        = list(string)',
+  '  default     = []',
   '}',
 ];
 
@@ -390,8 +409,11 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   // A runtime may call Bedrock too, so the regional override is not tied to compute.
   const bedrock = secrets || runtime;
   const audit = modules.audit === true;
-  // An audit-only root still needs the tag map, because the module tags the destination.
-  const any = images || edge || modules.knowledgeBase === true || modules.gateway === true || audit;
+  const alerts = modules.alerts === true;
+  // An audit-only or alerts-only root still needs the tag map, because both modules tag
+  // what they create.
+  const any =
+    images || edge || modules.knowledgeBase === true || modules.gateway === true || audit || alerts;
 
   const variables = [
     ...PLAN_VARIABLES,
@@ -404,6 +426,7 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
     ...(modules.batch === true ? BATCH_INPUTS : []),
     ...(edge ? EDGE_INPUTS : []),
     ...(audit ? AUDIT_INPUTS : []),
+    ...(alerts ? ALERT_INPUTS : []),
     ...(any ? TAGS : []),
   ];
 
@@ -422,6 +445,23 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
       ]),
     );
     outputs.push(['output "audit_destination" {', '  value = module.audit.destination', '}']);
+  }
+
+  // Alarms are environment-wide: one policy per declared alert, watching the one namespace
+  // the collector publishes into. Called once here so two compute modules cannot create
+  // two alarms for the same alert.
+  if (alerts) {
+    calls.push(
+      moduleCall('alerts', [
+        'project           = var.project',
+        'alert_channel_ids = var.alert_channel_ids',
+        'tags              = var.tags',
+      ]),
+    );
+    outputs.push(
+      ['output "alert_metric_namespace" {', '  value = module.alerts.metric_namespace', '}'],
+      ['output "alarm_arns" {', '  value = module.alerts.alarm_arns', '}'],
+    );
   }
 
   // A managed base is created by its own module, so the compute modules read the ids it
@@ -606,10 +646,11 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
   const runtime = modules.agentRuntime === true;
   const armor = modules.modelArmor === true;
   const audit = modules.audit === true;
+  const alerts = modules.alerts === true;
   // A corpus-only root still needs the project, region, tags and provider, but no image
   // or secret inputs: nothing runs. `compute` keeps those tied to a module that reads them.
   const compute = run || job || runtime;
-  const any = compute || corpus || armor || audit;
+  const any = compute || corpus || armor || audit || alerts;
 
   const variables = [
     ...PLAN_VARIABLES,
@@ -621,6 +662,7 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
     ...(job ? GCP_JOB_INPUTS : []),
     ...(run || job ? GCP_DELETION_PROTECTION : []),
     ...(audit ? AUDIT_INPUTS : []),
+    ...(alerts ? ALERT_INPUTS : []),
     ...(any ? TAGS : []),
   ];
 
@@ -639,6 +681,23 @@ function gcpEnvRoot(modules: EnvRootModules): { variables: string; main: string 
       ]),
     );
     outputs.push(['output "audit_destination" {', '  value = module.audit.destination', '}']);
+  }
+
+  // Same reasoning as AWS: an alert is a property of the environment, not of whichever
+  // compute module happens to be deployed, so the policy is created once here.
+  if (alerts) {
+    calls.push(
+      moduleCall('alerts', [
+        'project           = var.project',
+        'project_id        = var.gcp_project',
+        'alert_channel_ids = var.alert_channel_ids',
+        'tags              = var.tags',
+      ]),
+    );
+    outputs.push(
+      ['output "alert_metric_prefix" {', '  value = module.alerts.metric_prefix', '}'],
+      ['output "alarm_ids" {', '  value = module.alerts.alarm_ids', '}'],
+    );
   }
 
   // A managed corpus is created by its own module, so the compute modules read the name it

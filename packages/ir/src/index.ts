@@ -60,6 +60,7 @@ export {
 } from './catalog/index.js';
 export type {
   DeployAlarm,
+  DeployAlert,
   DeployAudit,
   DeployEndpoint,
   DeployEnvVar,
@@ -72,6 +73,7 @@ export type {
   DeployTask,
 } from './deploy-plan.js';
 export {
+  alertUnit,
   buildDeployPlan,
   DEPLOY_PLAN_VERSION,
   gatewayEnvName,
@@ -272,6 +274,12 @@ export {
   AGENT_ON_BUDGET_EXHAUSTED,
   AGENT_RUNTIME_PLATFORMS,
   type AgentRuntimePlatform,
+  ALERT_AGGREGATES,
+  ALERT_METRICS,
+  ALERT_WINDOWS,
+  type AlertAggregate,
+  type AlertMetric,
+  type AlertWindow,
   BEDROCK_CONTENT_FILTERS,
   BEDROCK_CONTENT_STRENGTHS,
   BEDROCK_PII_ENTITIES,

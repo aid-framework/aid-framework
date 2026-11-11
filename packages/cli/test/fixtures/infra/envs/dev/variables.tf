@@ -162,6 +162,12 @@ variable "edge_price_class" {
   default     = "PriceClass_100"
 }
 
+variable "alert_channel_ids" {
+  description = "CloudWatch action ARNs or Monitoring channel ids the alarms notify. An empty list creates them without a destination."
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

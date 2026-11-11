@@ -51,7 +51,7 @@ const ir = buildFixture('full.yaml').ir;
 describe('ir/* diagnostics', () => {
   it('names every code ir/<slug>, distinct from the spec namespace', () => {
     const codes = Object.values(IR_DIAGNOSTIC_CODES);
-    expect(codes.length).toBe(90);
+    expect(codes.length).toBe(93);
     expect(new Set(codes).size).toBe(codes.length);
     for (const code of codes) {
       expect(code).toMatch(/^ir\/[a-z0-9-]+$/);
@@ -86,7 +86,7 @@ describe('ir/* diagnostics', () => {
 });
 
 describe('the capability vocabulary', () => {
-  it('is one normative list carrying the §8.1 names', () => {
+  it('is one normative list carrying the Â§8.1 names', () => {
     expect(new Set(REQUIRED_CAPABILITIES).size).toBe(REQUIRED_CAPABILITIES.length);
     for (const name of ['streaming', 'tool-calling', 'cursor-memory', 'otel']) {
       expect(REQUIRED_CAPABILITIES as readonly string[]).toContain(name);
@@ -269,6 +269,7 @@ describe('the gate contract', () => {
       'evals/trajectory',
       'evals/promotion',
       'feedback',
+      'observability/alerts',
     ]);
     const result = gateFixture('eval-uncovered.yaml');
     expect(Object.keys(result.byGate)).toEqual(Object.keys(GATES));

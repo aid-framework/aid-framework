@@ -12,7 +12,7 @@
  * keeps overlays under `tenants/`; the file format is already the convention.
  *
  * `status` is the answer *now*, not a remembered verdict: every overlay is resolved and put
- * through `buildIR` and all 25 gates, so a table that says `ok` means the specification
+ * through `buildIR` and all 26 gates, so a table that says `ok` means the specification
  * this customer would be built from passes today. A stale committed marker would let the
  * table claim a green build for a base that has since changed underneath it.
  */

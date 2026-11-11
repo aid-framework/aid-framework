@@ -12,9 +12,11 @@ import { type Cloud, DEFAULT_CLOUD } from '../cloud.js';
 import type { ModuleFile } from './hcl.js';
 
 export { AGENT_RUNTIME_MODULE_DIR, emitAgentRuntimeModule } from './agent-runtime.js';
+export { ALERTS_MODULE_DIR, emitAlertsModule } from './alerts.js';
 export { AUDIT_MODULE_DIR, emitAuditModule } from './audit.js';
 export { BATCH_MODULE_DIR, emitBatchModule } from './batch.js';
 export {
+  CDK_ALERTS_MODULE,
   CDK_BATCH_MODULE,
   CDK_CONTAINER_MODULE,
   CDK_DIR,
@@ -43,6 +45,7 @@ export { emitServerlessModule, SERVERLESS_MODULE_DIR } from './serverless.js';
 export { emitVertexRagModule, VERTEX_RAG_MODULE_DIR } from './vertex-rag.js';
 
 import { emitAgentRuntimeModule } from './agent-runtime.js';
+import { emitAlertsModule } from './alerts.js';
 import { emitAuditModule } from './audit.js';
 import { emitBatchModule } from './batch.js';
 import { emitCdkModules } from './cdk.js';
@@ -84,6 +87,8 @@ export function modulesOf(
   modelArmor: boolean;
   /** An audit destination the document pinned, which both clouds can create. */
   audit: boolean;
+  /** At least one declared alert, which both clouds can create. */
+  alerts: boolean;
 } {
   const managed = (service: DeployPlan['services'][number]) =>
     service.runtime !== undefined && service.runtime !== null;
@@ -117,6 +122,12 @@ export function modulesOf(
     // Not cloud-gated: `profileGate` has already refused a sink the pinned cloud cannot
     // create, so by here the plan's destination is one this cloud has a module for.
     audit: plan.audit !== undefined,
+
+    // Not cloud-gated either: `observability/alerts` has already refused an alert on a
+    // document that exports nothing, and a spec that declares any alert therefore asks
+    // for one. The threshold lives on the plan, so the module needs no operator input to
+    // know what it is watching.
+    alerts: plan.alerts.length > 0,
   };
 }
 
@@ -130,6 +141,7 @@ export function emitProviderModules(plan: DeployPlan, cloud: Cloud = DEFAULT_CLO
         ...emitModelArmorModule(plan),
         ...emitAgentRuntimeModule(plan, cloud),
         ...emitAuditModule(plan, cloud),
+        ...emitAlertsModule(plan, cloud),
       ]
     : [
         ...emitServerlessModule(plan),
@@ -141,5 +153,6 @@ export function emitProviderModules(plan: DeployPlan, cloud: Cloud = DEFAULT_CLO
         ...emitAgentRuntimeModule(plan, cloud),
         ...emitCdkModules(plan, cloud),
         ...emitAuditModule(plan, cloud),
+        ...emitAlertsModule(plan, cloud),
       ];
 }

@@ -39,7 +39,8 @@
         "0.26",
         "0.27",
         "0.28",
-        "0.29"
+        "0.29",
+        "0.30"
       ]
     },
     "profile": {
@@ -2103,6 +2104,43 @@
           "description": "The environment variable holding the collector's address. A name, never a URL: following `models.*.apiKeyEnv`, the address stays in the platform so a spec can move between environments without edit. Only meaningful with `export: otlp`, which the schema requires rather than defaulting.",
           "type": "string",
           "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "alerts": {
+          "description": "The alarm policies `aid infra gen` turns into provider resources. Declarable from spec v0.30. An alert is the one observability declaration with an operational cost when it is wrong: an alarm over a series nothing produces reports no data forever, which reads as healthy. So the gate refuses an alert whose `metric` no derived series backs, whose `aggregate` cannot interpret its `metric`, and -- above all -- an alert in a document whose spans never leave the process, because a collector cannot derive from what it is never sent. The `metric` values are exactly the alarm hooks the deploy plan already derives from declared budgets, so a threshold here and a ceiling there name the same measurement.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "metric", "window", "aggregate", "threshold"],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/name"
+              },
+              "metric": {
+                "description": "Which derived series the alert watches. The set is closed to what this build can back with a real series: `agent.cost` and `agent.tokens` come from the attribute the agent loop records on its span, `eval.cost` and `eval.latency.p95` from the eval runner's. Guardrail hits and approval latency are deliberately absent -- the runtime records both as span events, and no metric derivation reads events, so an alert over them would be expressible and always silent.",
+                "enum": ["agent.cost", "agent.tokens", "eval.cost", "eval.latency.p95"]
+              },
+              "window": {
+                "description": "The period the alarm evaluates. Fixed rather than free-form because each provider module maps exactly these to its own period spelling, and a window the module cannot spell would be silently rounded to one it can.",
+                "enum": ["5m", "15m", "1h", "6h", "24h"]
+              },
+              "aggregate": {
+                "description": "How the series is reduced over the window. A latency metric is a percentile and only a percentile can interpret it; a cost or token metric is a quantity and only sum, average or max can. The alerts gate refuses the crossing rather than producing a number nobody can read.",
+                "enum": ["sum", "average", "max", "p95"]
+              },
+              "threshold": {
+                "description": "The value the reduction is compared against, in the metric's own unit -- dollars for a cost metric, tokens for a token metric, milliseconds for a latency metric. A number is not a unit: the alarm carries the unit in its operator-facing description so the dashboard reader and the spec author are not left to infer it.",
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "source": {
+                "description": "The agent or eval whose series this watches, when the document has more than one. Omitted, the alert watches the series for the whole environment; the alerts gate refuses a source that names nothing declared.",
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
         },
         "feedback": {
           "description": "The signals the generated app accepts back from the people who use it, and the handling they require. Declarable from spec v0.28. A feedback signal is the input to the improvement loop, which is why it is declared here: `aid eval --compare` can turn two accepted baselines into a promotion decision, but nothing else in the build knows that a review comment is data about a person. `correction` stores free text by definition, so the feedback gate refuses one whose redaction set does not cover every field the spec already marks sensitive, or a persistent store that keeps it with no retention limit.",

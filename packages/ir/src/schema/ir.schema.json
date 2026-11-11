@@ -676,7 +676,25 @@
         "feedback": {
           "$ref": "#/$defs/feedback",
           "description": "The feedback intake. Declared once for the process, so a pipeline never carries one; absent unless a document declared it."
+        },
+        "alerts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/alert" },
+          "description": "The alarm policies the document declared. Absent unless it declared at least one, so a document that declared none keeps the IR it had."
         }
+      }
+    },
+    "alert": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "metric", "window", "aggregate", "threshold"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "metric": { "enum": ["agent.cost", "agent.tokens", "eval.cost", "eval.latency.p95"] },
+        "window": { "enum": ["5m", "15m", "1h", "6h", "24h"] },
+        "aggregate": { "enum": ["sum", "average", "max", "p95"] },
+        "threshold": { "type": "number", "exclusiveMinimum": 0 },
+        "source": { "type": "string" }
       }
     },
     "feedback": {

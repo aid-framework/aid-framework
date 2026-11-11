@@ -99,6 +99,22 @@ function normalizeObservability(
             ...(feedback.persistent === undefined ? {} : { persistent: feedback.persistent }),
           },
         }),
+    // An alert carries no default either: every field but `source` is required by the
+    // schema, so the block is carried through as written. Without this line the block
+    // would be dropped here and the normalize gate would refuse every document that
+    // declares one, which is how an unnormalized key hides a working generator.
+    ...(raw?.alerts === undefined
+      ? {}
+      : {
+          alerts: raw.alerts.map((alert) => ({
+            id: alert.id,
+            metric: alert.metric,
+            window: alert.window,
+            aggregate: alert.aggregate,
+            threshold: alert.threshold,
+            ...(alert.source === undefined ? {} : { source: alert.source }),
+          })),
+        }),
   };
 }
 

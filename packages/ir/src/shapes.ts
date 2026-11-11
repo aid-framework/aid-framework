@@ -470,6 +470,71 @@ export interface FeedbackShape {
   persistent?: boolean;
 }
 
+/**
+ * The reductions an alert may apply. A percentile interprets a latency series; a quantity
+ * reduction interprets a cost or token series; the alerts gate refuses the crossing.
+ */
+export const ALERT_AGGREGATES = ['sum', 'average', 'max', 'p95'] as const;
+export type AlertAggregate = (typeof ALERT_AGGREGATES)[number];
+
+/** The evaluation windows every provider module can spell, and no more. */
+export const ALERT_WINDOWS = ['5m', '15m', '1h', '6h', '24h'] as const;
+export type AlertWindow = (typeof ALERT_WINDOWS)[number];
+
+/**
+ * The derived series an alert can watch.
+ *
+ * This list is the single source of two things that must not drift: the schema's `metric`
+ * enum and `DeployAlarm['metric']`. A metric named here but not derived by the plan, or
+ * derived by the plan but not named here, is an alarm over a series nothing produces --
+ * which reports *no data*, and no data reads as healthy on a dashboard. A test asserts the
+ * two lists are equal.
+ *
+ * Guardrail hit rate and approval latency are deliberately absent. The runtime records
+ * both as span *events* (`aid.guardrail`, `aid.hitl`), and no metric derivation reads
+ * events, so an alert over either would be expressible and permanently silent.
+ */
+export const ALERT_METRICS = [
+  'agent.cost',
+  'agent.tokens',
+  'eval.cost',
+  'eval.latency.p95',
+] as const;
+export type AlertMetric = (typeof ALERT_METRICS)[number];
+
+/** Whether a metric is a percentile series rather than a quantity. */
+export function isLatencyMetric(metric: AlertMetric): boolean {
+  return metric === 'eval.latency.p95';
+}
+
+export function isAlertMetric(value: string): value is AlertMetric {
+  return (ALERT_METRICS as readonly string[]).includes(value);
+}
+
+export function isAlertWindow(value: string): value is AlertWindow {
+  return (ALERT_WINDOWS as readonly string[]).includes(value);
+}
+
+export function isAlertAggregate(value: string): value is AlertAggregate {
+  return (ALERT_AGGREGATES as readonly string[]).includes(value);
+}
+
+/**
+ * One alarm policy. `threshold` carries no unit of its own, exactly as a recorded eval
+ * mean carries none: dollars, tokens and milliseconds all land in the same `number`. The
+ * metric decides the unit, and the gate keeps the aggregate consistent with it so the
+ * number never means two things at once.
+ */
+export interface AlertShape {
+  id: string;
+  metric: AlertMetric;
+  window: AlertWindow;
+  aggregate: AlertAggregate;
+  threshold: number;
+  /** The agent or eval whose series this watches. Absent means the whole environment. */
+  source?: string;
+}
+
 export interface ObservabilityShape {
   trace: boolean;
   redact: string[];
@@ -483,6 +548,8 @@ export interface ObservabilityShape {
   endpointEnv?: string;
   /** The feedback intake declared at the top level, from spec 0.28. */
   feedback?: FeedbackShape;
+  /** Alarm policies, from spec 0.30. Absent means no alarms, which is every earlier document. */
+  alerts?: AlertShape[];
 }
 
 export interface PipelineShape {

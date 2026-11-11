@@ -6,7 +6,7 @@
  * refuses: the filesystem. It opens the overlay, opens the base the overlay names, feeds
  * the two through `applyOverlay`, and then asks the ordinary pipeline whether the result
  * is a specification the gates accept. That ordering is the whole design: the overlay is
- * judged by the same `buildIR` and the same 25 gates every other spec faces, so a
+ * judged by the same `buildIR` and the same 26 gates every other spec faces, so a
  * customer cannot buy a weaker specification by arriving through an overlay.
  *
  * `overlay/base-missing` is the one overlay diagnostic emitted here rather than in the
