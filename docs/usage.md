@@ -513,6 +513,12 @@ aid trace <run-id>      # span tree, timings, models, tokens, cost
 aid cost                # cost and latency from the local trace sink
 ```
 
+The `observability` block moves that decision into the spec: `trace`, `redact`, and — for a
+service whose spans belong somewhere other than the process — `export: otlp` with `endpointEnv`
+naming the variable that holds the collector address. AID installs no exporter, so the block
+records where spans belong rather than moving them; what it buys today is that the destination is
+declared, reviewable in a diff, and gated, instead of living in whoever's shell ran the deploy.
+
 What comes out:
 
 - `app/generated/observability.py`: the span writer each generated step calls, so a pipeline
@@ -524,11 +530,16 @@ What is refused:
 
 - A cost metric on an eval whose model resolves no profile, because the ceiling would be
   computed from nothing.
+- An `export: otlp` beside `trace: false`, because a destination for spans that are never
+  recorded is a contradiction.
+- An `enterprise` document whose spans stay inside the process, because the profile promises an
+  audit trail and this one ends with the process.
 
 Covers:
 
 - **Local trace capture**
 - **A cost ceiling in CI**
+- **A declared place for the spans**
 
 ---
 

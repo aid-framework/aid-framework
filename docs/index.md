@@ -78,7 +78,7 @@ priced and gated. The count is how much of that family has already shipped.
 | **[Quality gates](./reference/spec.md#eval)** | `evals[]` | An eval declares a regression budget over a dataset, `aid eval` exits non-zero when it is exceeded, and a pipeline with no CI eval is a build error. | 2 |
 | **[Agents and tools](./reference/spec.md#agent)** | `agents[], tools[]` | A tool loop is generated from the spec while the tool bodies stay yours in `app/business/`, so the plumbing is owned and the logic is not. | 2 |
 | **[Deployment and infrastructure](./reference/targets.md#capability-matrix)** | `deployments[], aid infra` | The same spec emits a Dockerfile, OpenTofu for AWS or GCP, a CDK app, and the project CI that re-runs every gate — then stops owning any of it. | 9 |
-| **[Observability and cost](./reference/cli.md#trace)** | `traces[], aid cost` | A trace records what each step did and a cost metric reports what it spent, both read from the same priced profiles the budget gate enforces. | 2 |
+| **[Observability and cost](./reference/cli.md#trace)** | `traces[], observability, aid cost` | A trace records what each step did, a cost metric reports what it spent, and the `observability` block says whether those spans may leave the process at all. | 3 |
 
 <!-- capability-band:end -->
 
@@ -135,7 +135,7 @@ shows every file `gen` wrote and serves the endpoint. You need Node.js 24 or new
 account, no email gate, nothing else to install.
 
 Seven packages on npm and one on PyPI ship together at version **{{ AID_VERSION }}**, with
-the spec language at `0.26`.
+the spec language at `0.27`.
 
 ## Support, read from the code
 

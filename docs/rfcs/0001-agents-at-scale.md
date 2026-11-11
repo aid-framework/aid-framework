@@ -716,8 +716,9 @@ For the CLI reference and the features page, at the end of this RFC:
 | `profile`, `deployments[].cloud`, `.region`, `.audit` | **built in 0.25** (see §10.1) |
 | `deployments[].identity`, `.network`, `.approvals` | **declared and gated in 0.26, generation pending** (§10.2) |
 | `agents[].state`, step `requiresApproval` | **declared and gated in 0.26, generation pending** (§10.2) |
-| `tool-trace` / `cost` / `latency` measured | declarable, **refused at generation today**; proposed 0.27 |
-| `observability` as a spec section, `.export: otlp` | **no spec section today** (IR-only); proposed 0.27 |
+| `tool-trace` / `cost` / `latency` measured | `tool-trace` is **refused by the gate in 0.27**; `cost` and `latency` stay **refused at generation**; measuring any of them is not built (§10.3) |
+| `observability` as a spec section, `.export: otlp` | **built in 0.27, as export intent only** (§10.3) |
+| OTel exporter, generated dashboards/alerts, `aid report` | proposed 0.27, **not built** (§10.3) |
 | `observability.feedback`, `evals[].gate.promotion` | proposed, 0.28, not built |
 | `prompts[].version` | **exists and is required**, and forms `prompt:<name>@<version>`; the staleness gate is proposed 0.28 |
 | `overridable`, overlays, `aid resolve`, `aid fleet`, `--template` | proposed, 0.29, not built |
@@ -795,6 +796,63 @@ Deliberately **not** built in Phase 2, and stated rather than implied:
 - `network.private` is schema-required rather than defaulted, so an omitted value is reported
   instead of read as `false`: whether traffic leaves a VPC is a decision about a customer's
   data, and a default would make it silently.
+
+### 10.3 Phase 3, as shipped
+
+The spec and IR are complete and gated; the *transport* is not, and the difference is the whole
+point of this phase's honesty. `export: otlp` says where a deployment's spans belong. It does not
+install anything that puts them there.
+
+Built and gated:
+
+- `specVersion` `0.27`; top-level `observability` (`trace` defaulting to `true`, `redact`, and the
+  new `export` -- `otlp` or `none` -- with `endpointEnv`, an environment variable name matching
+  `^[A-Z][A-Z0-9_]*$`). `export` and `endpointEnv` require each other: a destination with no
+  variable to read is a span that goes nowhere, and a variable with no destination is a string
+  nobody reads.
+- `evals[].target` widened from `^pipeline:…$` to `^(pipeline|agent):[a-z][a-z0-9_]{0,63}$`. The
+  pattern is not the only check: an `agent:` target is gated separately, because an alternation
+  carries one `minVersion` and the two branches do not share one.
+- `IR_VERSION` 0.4.0: `IR.observability.export` and `.endpointEnv`, written on the document's own
+  `observability` only -- the block is process-wide, so a pipeline never inherits an exporter --
+  and `EvalTargetShape.kind` gains `agent`, resolved by the referential gate into the `agents`
+  namespace so `agent:support` and a typo in it are different diagnostics.
+- Gate `observability/export` (22nd) with `ir/observability-export`, and gate `evals/trajectory`
+  (23rd) with `ir/eval-trajectory`. 85 diagnostic codes, up from 83.
+- The export gate refuses two contradictions. `export: otlp` beside `trace: false` promises a
+  destination for spans that are not recorded. `profile: enterprise` without `otlp` promises an
+  audit trail whose spans never leave the process -- the enterprise profile now requires an
+  export destination, alongside the region, audit sink, output guardrail, identity, private
+  network and approval policy it already required.
+- The trajectory gate refuses an `agent:` eval target, and refuses a `tool-trace` metric on a
+  pipeline. It does **not** refuse `cost` or `latency`, even though the runner cannot score them
+  either, because each carries a second meaning this build honours: a `cost` ceiling becomes the
+  eval's `costBudget` and is checked against a static estimate by the cost gate, and a `latency`
+  ceiling becomes `latencyBudgetP95Ms` and reaches the deploy plan. Refusing them would delete a
+  working check to make a point.
+
+Deliberately **not** built in Phase 3, and stated rather than implied:
+
+- **No exporter.** AID installs no OpenTelemetry SDK provider, adds no dependency to a generated
+  project, and generates no collector configuration. `runtimes/python/src/aid_runtime/tracing.py`
+  already emits its spans through the OpenTelemetry API with the full `gen_ai.*` / `aid.*`
+  attribute map, so the app is instrumented and the spans are dropped; `endpointEnv` names the
+  variable a provider would read once one is wired. Until then `export: otlp` is a declaration a
+  reviewer can check and a gate can refuse, not a runtime behaviour.
+- **No dashboards or alerts as code**, on any cloud. The schema and the gate are the increment;
+  emitting a Grafana or CloudWatch definition before an exporter exists would produce a dashboard
+  of nothing.
+- **No `aid report`.** Aggregating cost, eval and trace summaries across customer deployments
+  from files is proposed for a later phase and is not in this one.
+- **No trajectory measurement.** The eval runner's contract is
+  `Callable[[EvalCase], Awaitable[str]]`: it hands each metric a response string, so an eval can
+  compare no tool calls and no step count. An `agent:` target is therefore expressible -- so a
+  document can say what it means and get one clear refusal -- but not evaluable. The gate names
+  the missing runner rather than reporting the agent as undeclared, which is what codegen used to
+  say for an agent the document declares two sections earlier.
+- `observability` is a document-level block, not a per-pipeline one. One process exports one way,
+  and a per-pipeline exporter would be a claim about a second process this compiler does not
+  generate.
 
 ---
 

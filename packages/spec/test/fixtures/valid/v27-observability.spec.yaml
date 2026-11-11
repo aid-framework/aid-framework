@@ -3,7 +3,7 @@ specVersion: "0.27"
 project:
   name: claims-desk
   namespace: acme.claims
-  description: An enterprise claims adjudicator that states where its traces go and scores the trajectory of an agent rather than only its final text.
+  description: An enterprise claims adjudicator that states where its traces go and declares an eval over a named agent, which the spec language accepts from 0.27 while the IR refuses it until a runner carries a trajectory.
   targets:
     - py-fastapi
 
@@ -100,10 +100,9 @@ observability:
 evals:
   adjudicator_trajectory:
     # An agent target, declarable from 0.27. Before it, only `pipeline:` was parseable, so
-    # an agent could not be scored at all -- not even on the text it returns. Trajectory
-    # metrics (`tool-trace`, `cost`, `latency`) are also declarable here from 0.27 but are
-    # still refused at generation with `ir/eval-trajectory`, so this example scores what
-    # AID can measure today.
+    # an agent could not be named at all -- not even as the pipeline that runs it. The IR
+    # refuses this target with `ir/eval-trajectory` (no runner carries a trajectory), which
+    # is why this fixture only ever reaches spec validation.
     target: agent:claims_adjudicator
     dataset:
       source: file

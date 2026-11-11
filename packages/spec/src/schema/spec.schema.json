@@ -887,7 +887,7 @@
       "additionalProperties": false,
       "properties": {
         "target": {
-          "description": "What the eval scores. `pipeline:<id>` scores a pipeline's HTTP response through its declared route; `agent:<id>` (0.27) scores an agent run's trajectory rather than its text output, which is what `tool-trace`, `cost` and `latency` measure. `prompt:<id>` scores a prompt in isolation.",
+          "description": "What the eval scores. `pipeline:<id>` scores a pipeline's HTTP response through its declared route. `agent:<id>` (0.27) names an agent run, which is what a trajectory metric would need; the syntax is accepted so a document can say what it means, and the `evals/trajectory` gate refuses it with `ir/eval-trajectory` until the eval runner carries a trajectory rather than a response string.",
           "type": "string",
           "pattern": "^(pipeline|agent):[a-z][a-z0-9_]{0,63}$"
         },

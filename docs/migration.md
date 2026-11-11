@@ -169,10 +169,60 @@ neither `write` nor `destructive` — and refuses a pause in a document that dec
 because a run with nowhere to wait would never resume. It applies to every profile: asking a human
 to approve a read teaches them to approve without reading, which is worse than no pause at all.
 
+## 0.26 to 0.27: trace export and agent eval targets
+
+Where a deployment's spans belong, and an eval that can name an agent. Both keys are additive, so a
+0.26 document is still a 0.26 document.
+
+> **What 0.27 declares but does not yet send.** `export: otlp` states that the spans belong in a
+> collector. AID installs no OpenTelemetry exporter, adds no dependency to a generated project and
+> writes no collector configuration, so the spans are still dropped. `/features` says so on the row
+> itself. The declaration is enforced rather than decorative: the gate refuses a document whose
+> export contradicts its tracing.
+
+### What 0.27 adds
+
+| Construct | What it says |
+| --- | --- |
+| `observability` | A document-level block: `trace` (default `true`), `redact`, and `export` (`otlp` or `none`) with `endpointEnv`. |
+| `evals[].target: agent:<id>` | The eval scores an agent run rather than a pipeline response. |
+
+### Nothing to do for 0.26 documents
+
+The block is optional and absent means what it always meant — trace, redact nothing, export
+nowhere. The one new enterprise requirement is scoped to `specVersion: "0.27"`, so a 0.26
+enterprise document keeps passing with no `observability` section at all, because it has no key
+with which to satisfy a rule introduced after it. `evals[].target` accepts every value it accepted
+before.
+
+### What a 0.27 `enterprise` document must now declare
+
+| Refusal | What is missing | The fix |
+| --- | --- | --- |
+| `ir/observability-export` | Records spans but names no destination — an audit trail that dies with the process. | `observability: { export: otlp, endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT }` |
+| `ir/observability-export` | `export: otlp` beside `trace: false`, a destination for spans that are not recorded. | Record the spans, or drop the destination. |
+| `ir/eval-trajectory` | An `agent:` eval target. | Target the pipeline that runs the agent: `target: pipeline:<id>`. |
+| `ir/eval-trajectory` | A `tool-trace` metric. | Score the response with `exact`, `contains`, `json-schema`, `llm-judge` or `assert`. |
+
+### Why `export` and `endpointEnv` require each other
+
+A destination with no variable to read is a span that goes nowhere, and a variable with no
+destination is a string nobody reads. Neither is defaulted: `endpointEnv` names the variable, and
+guessing its name would generate an app that reads a variable the operator never set.
+
+### Why `cost` and `latency` are not refused alongside `tool-trace`
+
+The eval runner cannot score any of the three today, but `cost` and `latency` each carry a second
+meaning this build does honour. A `cost` ceiling becomes the eval's `costBudget` and is checked
+against a static estimate by the cost gate; a `latency` ceiling becomes `latencyBudgetP95Ms` and
+reaches the deploy plan. Refusing them here would delete a working check to make a rhetorical
+point. `tool-trace` has no second meaning and no consumer at all, so it is refused.
+
 ## Version history
 
 | Spec | Backward compatible | What it added |
 | --- | --- | --- |
+| 0.27 | Yes | `observability` (`trace`, `redact`, `export: otlp`, `endpointEnv`); `evals[].target` widened to `agent:<id>` |
 | 0.26 | Yes | `state`; `deployments[].identity`, `.network`, `.approvals`; `requiresApproval` on a pipeline tool step |
 | 0.25 | Yes | `profile`; `deployments[].cloud`, `.region`, `.audit` |
 | 0.24 | Yes | `gateways` and `deployments[].runtime.gateway`, tools federated behind an AgentCore Gateway |
