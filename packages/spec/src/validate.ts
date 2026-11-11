@@ -41,6 +41,7 @@ export const SUPPORTED_SECTIONS = [
   'evals',
   'observability',
   'pipelines',
+  'overridable',
 ] as const;
 
 /**
@@ -81,6 +82,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.26',
   '0.27',
   '0.28',
+  '0.29',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -103,6 +105,7 @@ export const SECTION_MIN_VERSION: Partial<
   profile: '0.25',
   state: '0.26',
   observability: '0.27',
+  overridable: '0.29',
 };
 
 /**
@@ -3018,6 +3021,89 @@ function deploymentDiagnostics(spec: Record<string, unknown>, diagnostics: Diagn
  * Validates an already-parsed spec value. Pure with respect to the filesystem:
  * position information is layered on afterwards once a `document` is supplied.
  */
+/**
+ * Structural checks on `overridable` itself. A path an overlay can never reach is
+ * indistinguishable from a path nobody declared, so a path that cannot address
+ * anything is refused here rather than discovered by the first customer whose
+ * override silently does nothing.
+ *
+ * Exactly two shapes are refused: a root that is not a section of this DSL, and a
+ * segment that descends into a list. A path whose *leaf* does not exist yet is
+ * accepted, because adding a key -- `deployments.prod.region` on a base that never
+ * pinned a region -- is exactly what an overlay is for. Whether the resulting
+ * document is valid is the gates' question, not this one's.
+ */
+function overridableDiagnostics(spec: Record<string, unknown>, diagnostics: Diagnostic[]): void {
+  const block = spec.overridable;
+  if (block === null || typeof block !== 'object' || Array.isArray(block)) {
+    return;
+  }
+
+  for (const key of Object.keys(block as Record<string, unknown>)) {
+    const segments = key.split('.');
+    const root = segments[0] ?? '';
+    if (!(SUPPORTED_SECTIONS as readonly string[]).includes(root)) {
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.overridableUnknownSection,
+          message: `'${key}' addresses '${root}', which is not a section of the specification`,
+          path: ['overridable', key],
+          hint: `overridable paths start at one of ${SUPPORTED_SECTIONS.join(', ')}`,
+        }),
+      );
+      continue;
+    }
+
+    const blocked = unaddressableSegment(spec[root], segments.slice(1));
+    if (blocked !== undefined) {
+      const where = blocked.path.join('.');
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.overridableDescendsIntoValue,
+          message:
+            blocked.kind === 'list'
+              ? `'${key}' descends into the list at '${where}', which an overlay cannot address`
+              : `'${key}' descends into '${where}', which holds a single value and no keys`,
+          path: ['overridable', key],
+          hint:
+            blocked.kind === 'list'
+              ? `an overlay replaces a whole list or nothing; mark '${where}' overridable to let it`
+              : `mark '${where}' overridable instead, or address one of its keys`,
+        }),
+      );
+    }
+  }
+}
+
+/**
+ * Walks `segments` from `node` and returns the path of the first value the walk
+ * cannot descend into, or `undefined` when it can be addressed. Ending on a list is
+ * legal (an overlay may replace a whole list); descending *through* one is not, and
+ * neither is descending through a scalar. A segment the document does not have ends
+ * the walk as addressable, because adding a key is what an overlay is for.
+ */
+function unaddressableSegment(
+  node: unknown,
+  segments: string[],
+): { path: string[]; kind: 'list' | 'scalar' } | undefined {
+  const walked: string[] = [];
+  let current: unknown = node;
+  for (const segment of segments) {
+    if (Array.isArray(current)) {
+      return { path: walked, kind: 'list' };
+    }
+    if (current === undefined || current === null) {
+      return undefined;
+    }
+    if (typeof current !== 'object') {
+      return { path: walked, kind: 'scalar' };
+    }
+    walked.push(segment);
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return undefined;
+}
+
 export function validateSpec(value: unknown, options: ValidateOptions = {}): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
 
@@ -3072,6 +3158,7 @@ export function validateSpec(value: unknown, options: ValidateOptions = {}): Dia
   decisionMetricDiagnostics(spec, diagnostics);
   retrievalDiagnostics(spec, diagnostics);
   deploymentDiagnostics(spec, diagnostics);
+  overridableDiagnostics(spec, diagnostics);
 
   return withPositions(diagnostics, options);
 }

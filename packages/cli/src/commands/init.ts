@@ -17,6 +17,10 @@
  * `--from <spec>` imports a spec rather than copying one: the imported text has to lower to
  * an IR and pass the gates before anything is written, so `aid init --from` cannot produce a
  * project that `aid validate` immediately rejects.
+ *
+ * `--template <name>` scaffolds one of the shipped golden paths. It goes through the same
+ * lowering, so a template cannot ship a project the gates would reject either; the two
+ * templates themselves are in `../templates.ts` and are re-validated by `templates.test.ts`.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -31,11 +35,13 @@ import { absolutePath, parentPath } from '../paths.js';
 import { lowerSpec, readSpec } from '../pipeline.js';
 import type { Target } from '../targets.js';
 import { resolveTarget, unknownTargetDiagnostic } from '../targets.js';
+import { isTemplateName, TEMPLATE_NAMES, templateReadme, templateSpec } from '../templates.js';
 import { generate } from './gen.js';
 
 export interface InitOptions {
   readonly dir: string | undefined;
   readonly from: string | undefined;
+  readonly template: string | undefined;
   readonly target: string | undefined;
   readonly force: boolean;
   readonly gen: boolean;
@@ -151,11 +157,50 @@ export function init(context: CliContext, options: InitOptions): CommandOutcome 
   const specPath = target.specPath;
   const displayed = options.dir ?? '.';
   const fields = { dir: displayed, target: target.name, spec: specPath };
+  const projectName = projectNameFor(root);
+
+  // `--from` and `--template` are two ways to answer the same question, so asking both is
+  // a usage error rather than a precedence rule nobody could remember. `--template` is
+  // resolved before anything is written, and an unknown name lists the ones that exist
+  // instead of falling back to the starter.
+  if (options.template !== undefined) {
+    if (options.from !== undefined) {
+      return outcome({
+        command,
+        exitCode: EXIT_USAGE,
+        fields,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.initTemplateConflict,
+            message: '--from and --template both choose the starter spec, and only one can.',
+            hint: 'Import an existing spec with --from, or scaffold a shipped one with --template.',
+          }),
+        ],
+      });
+    }
+    if (!isTemplateName(options.template)) {
+      return outcome({
+        command,
+        exitCode: EXIT_USAGE,
+        fields,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.initTemplateUnknown,
+            message: `"${options.template}" is not a template.`,
+            path: ['template'],
+            hint: `Pass one of ${TEMPLATE_NAMES.map((name) => `"${name}"`).join(', ')}, or run \`aid init\` with no --template for the minimal starter.`,
+          }),
+        ],
+      });
+    }
+  }
 
   const source =
-    options.from === undefined
-      ? { ok: true as const, text: starterSpec(target.name, projectNameFor(root)) }
-      : readSpec(context, options.from);
+    options.template === undefined
+      ? options.from === undefined
+        ? { ok: true as const, text: starterSpec(target.name, projectName) }
+        : readSpec(context, options.from)
+      : { ok: true as const, text: templateSpec(options.template, projectName) };
   if (!source.ok) {
     return outcome({ command, exitCode: EXIT_FAILURE, fields, diagnostics: source.diagnostics });
   }
@@ -202,7 +247,11 @@ export function init(context: CliContext, options: InitOptions): CommandOutcome 
   // routinely just to overwrite a spec. Replacing prose a person wrote as a side effect
   // of resetting a spec is not what `--force` was asked for.
   const readmeAbsolute = join(root, 'README.md');
-  if (createExclusively(readmeAbsolute, starterReadme(projectNameFor(root), target))) {
+  const readme =
+    options.template === undefined
+      ? starterReadme(projectName, target)
+      : templateReadme(options.template, projectName);
+  if (createExclusively(readmeAbsolute, readme)) {
     written.push('README.md');
   } else {
     skipped.push('README.md');

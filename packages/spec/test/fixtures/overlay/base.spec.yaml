@@ -1,0 +1,75 @@
+specVersion: "0.29"
+
+project:
+  name: claims-desk
+  namespace: acme.claims
+  description: The base half of the overlay fixture. A customer overlay may move only what this file lists under `overridable`.
+  targets:
+    - py-fastapi
+
+profile: enterprise
+
+models:
+  triage:
+    provider: openai
+    modelId: gpt-4.1-mini
+    prompt: classify_claim
+
+prompts:
+  classify_claim:
+    template: "Classify the claim: {{subject}}"
+    variables:
+      - subject
+
+agents:
+  triage_agent:
+    model: triage
+    maxSteps: 8
+    maxCostBudget: 2.5
+
+guardrails:
+  inbound:
+    stage: input
+    kind: prompt-injection
+    action: block
+
+evals:
+  triage_regression:
+    pipeline: triage
+    dataset: evals/triage.jsonl
+    metrics:
+      - json-schema:
+          schema: TicketClassification
+    gate:
+      ci: true
+      maxRegression: 0.05
+
+deployments:
+  prod:
+    target: container
+    cloud: aws
+    region: eu-central-1
+    streaming: false
+    audit:
+      sink: cloudwatch
+      retentionDays: 400
+    approvals:
+      - security
+      - platform
+    minApprovers: 2
+
+overridable:
+  models.triage.modelId:
+    from:
+      - gpt-4.1-mini
+      - gpt-4o-mini
+  deployments.prod.region:
+    from:
+      - eu-central-1
+      - us-east-1
+      - ap-southeast-2
+  agents.triage_agent.maxCostBudget:
+    max: 2.5
+  deployments.prod.audit.retentionDays:
+    max: 730
+    allowWeaken: true

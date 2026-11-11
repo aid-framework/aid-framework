@@ -4,10 +4,11 @@ description: "What each spec language version adds, from the original surface th
 
 # Spec version changelog
 
-A spec declares its language version with `specVersion`. The current version is `0.28`, and each row below lists what that version adds.
+A spec declares its language version with `specVersion`. The current version is `0.29`, and each row below lists what that version adds.
 
 | Version | What it adds |
 | --- | --- |
+| `0.29` | Adds the top-level `overridable` block, which is the only set of paths a per-customer overlay may touch and the bounds each may move within -- so one base spec serves many customers without forking, and an overlay that widens a guardrail, drops a CI-gating eval or exceeds a declared bound is refused by name. |
 | `0.28` | Adds `observability.feedback` (declared feedback signals, the fields they may carry and how long they are kept) and `evals[].gate.promotion` (a baseline prompt version, the quality drop and cost increase a candidate may not exceed, and who must record an approval) -- the parts of a self-improvement loop that can be gated from git alone. |
 | `0.27` | Adds the top-level `observability` block, whose `export: otlp` states where spans go and names the variable holding the collector address instead of leaving the destination to a shell; and widens `evals[].target` to accept `agent:&lt;id&gt;`, which the spec language parses and the IR refuses until a runner carries a trajectory. |
 | `0.26` | Adds the durable `state` store, `deployments[].identity`, `.network` and `.approvals`, and `requiresApproval` on a pipeline tool step -- the control surface an enterprise delivery needs before a run can pause, be audited and be resumed. |

@@ -213,6 +213,65 @@ function emitNested(owner, prefix, depth, lines) {
   }
 }
 
+/**
+ * One form of a `oneOf`, normalised for rendering.
+ *
+ * Three idioms appear in the schema. The branch's only key names the body
+ * (`step.generate`); the first key is a const marker and the remaining keys are the body
+ * (`metric.kind = exact` plus `field`); or the branch carries a `title`, which is how a
+ * value union is written -- `overridableRule` is `true` or one bounded object, has no
+ * discriminating key, and the branch itself is the body.
+ *
+ * @param {any} branch
+ * @param {any} [outer] The def declaring the forms, used to resolve a `true` marker.
+ * @returns {{
+ *   titled: boolean, tagged: boolean, label: string, path: string, description: string,
+ *   properties: Record<string, any>, required: Set<string>, body: any, value?: any,
+ * }}
+ */
+function branchForm(branch, outer) {
+  const inner = branch.properties ?? {};
+  const keys = Object.keys(inner);
+  const discriminator = keys[0];
+  const declared = inner[discriminator];
+  const marker = declared === true ? (outer?.properties?.[discriminator] ?? {}) : declared;
+  if (branch.title !== undefined) {
+    const label = /^[A-Za-z_][A-Za-z0-9_-]*$/.test(branch.title)
+      ? `\`${branch.title}\``
+      : branch.title;
+    return {
+      titled: true,
+      tagged: false,
+      label,
+      path: `${branch.title}`,
+      description: branch.description ?? '',
+      properties: inner,
+      required: new Set(branch.required ?? []),
+      body: branch,
+    };
+  }
+  // Reading an untagged marker's absent `properties` as the body is what reported
+  // "no other keys" for every `metric` form, so the marker is only a body when tagged.
+  const tagged = marker?.const !== undefined;
+  const body = tagged ? branch : (marker ?? {});
+  const properties = tagged
+    ? Object.fromEntries(Object.entries(inner).filter(([key]) => key !== discriminator))
+    : (marker?.properties ?? {});
+  const required = new Set(body.required ?? []);
+  required.delete(discriminator);
+  return {
+    titled: false,
+    tagged,
+    label: tagged ? `\`${discriminator}\` = \`${marker.const}\`` : `\`${discriminator}\``,
+    path: `${tagged ? marker.const : discriminator}`,
+    description: marker?.description ?? branch.description ?? '',
+    properties,
+    required,
+    body,
+    value: marker?.const,
+  };
+}
+
 /** Top-level keys, in the order the schema declares them. */
 function specPage() {
   const schema = readJson('packages/spec/src/schema/spec.schema.json');
@@ -265,50 +324,38 @@ function specPage() {
     }
 
     if (def.oneOf !== undefined) {
+      const forms = def.oneOf.map((branch) => branchForm(branch, def));
+      const discriminated = forms.some((form) => !form.titled);
+      const article = /^[aeiou]/i.test(name) ? 'An' : 'A';
       lines.push(
-        `A \`${name}\` is exactly one of the ${def.oneOf.length} forms below; each form is recognised by its discriminating key.`,
+        discriminated
+          ? `${article} \`${name}\` is exactly one of the ${forms.length} forms below; each form is recognised by its discriminating key.`
+          : `${article} \`${name}\` is exactly one of the ${forms.length} forms below.`,
       );
       lines.push('');
-      for (const branch of def.oneOf) {
-        const inner = branch.properties ?? {};
-        const keys = Object.keys(inner);
-        const discriminator = keys[0] ?? 'unknown';
-        const marker = inner[discriminator] ?? {};
-        // Two idioms appear in the schema: the branch's only key names the body
-        // (`step.generate`), or the first key is a const marker and the remaining keys are
-        // the body (`metric.kind = exact` plus `field`). Reading the marker's absent
-        // `properties` as the body would report "no other keys" for every `metric` form.
-        const tagged = marker.const !== undefined;
-        const bodyDef = tagged ? branch : marker;
-        const bodyProperties = tagged
-          ? Object.fromEntries(Object.entries(inner).filter(([key]) => key !== discriminator))
-          : (marker.properties ?? {});
-        const required = new Set(bodyDef.required ?? []);
-        required.delete(discriminator);
-        const formLabel = tagged
-          ? `\`${discriminator}\` = \`${marker.const}\``
-          : `\`${discriminator}\``;
-        const formPath = `${name}.${tagged ? marker.const : discriminator}`;
-        lines.push(`### ${formLabel}`);
+      for (const form of forms) {
+        lines.push(`### ${form.label}`);
         lines.push('');
-        if (marker.description) {
-          lines.push(protectBraces(marker.description));
+        if (form.description) {
+          lines.push(protectBraces(form.description));
           lines.push('');
         }
-        if (branch.description) {
-          lines.push(protectBraces(branch.description));
-          lines.push('');
-        }
-        if (Object.keys(bodyProperties).length === 0) {
-          lines.push(
-            `Takes the value \`${JSON.stringify(marker.const ?? '')}\` and no other keys.`,
-          );
-          lines.push('');
+        if (Object.keys(form.properties).length === 0) {
+          if (form.tagged) {
+            lines.push(
+              `Takes the value \`${JSON.stringify(form.value ?? '')}\` and no other keys.`,
+            );
+            lines.push('');
+          } else if (!form.titled) {
+            // The one-key form: the branch's single key names the value it holds.
+            lines.push(`Takes the single key \`${form.path}\`, holding ${typeLabel(form.body)}.`);
+            lines.push('');
+          }
           continue;
         }
-        lines.push(...fieldTable(bodyProperties, required));
+        lines.push(...fieldTable(form.properties, form.required));
         lines.push('');
-        emitNested(bodyDef, formPath, 1, lines);
+        emitNested(form.body, `${name}.${form.path}`, 1, lines);
       }
       continue;
     }

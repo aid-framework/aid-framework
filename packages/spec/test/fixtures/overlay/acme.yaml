@@ -1,0 +1,10 @@
+# One customer's overlay. Every path here is listed in the base's `overridable` block, so
+# this file resolves; the fixture's `.resolved.yaml` neighbour is the expected output.
+base: base.spec.yaml
+customer: acme-eu
+profile: enterprise
+overrides:
+  deployments.prod.region: ap-southeast-2
+  models.triage.modelId: gpt-4o-mini
+  agents.triage_agent.maxCostBudget: 1.5
+  deployments.prod.audit.retentionDays: 500

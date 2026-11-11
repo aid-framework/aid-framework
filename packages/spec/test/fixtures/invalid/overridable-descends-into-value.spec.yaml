@@ -1,0 +1,7 @@
+specVersion: "0.29"
+
+project:
+  name: overridable-descends-into-value
+
+overridable:
+  project.name.length: true

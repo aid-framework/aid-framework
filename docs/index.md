@@ -79,6 +79,7 @@ priced and gated. The count is how much of that family has already shipped.
 | **[Agents and tools](./reference/spec.md#agent)** | `agents[], tools[]` | A tool loop is generated from the spec while the tool bodies stay yours in `app/business/`, so the plumbing is owned and the logic is not. | 2 |
 | **[Deployment and infrastructure](./reference/targets.md#capability-matrix)** | `deployments[], aid infra` | The same spec emits a Dockerfile, OpenTofu for AWS or GCP, a CDK app, and the project CI that re-runs every gate — then stops owning any of it. | 9 |
 | **[Observability and cost](./reference/cli.md#trace)** | `traces[], observability, aid cost` | A trace records what each step did, a cost metric reports what it spent, and the `observability` block says whether those spans may leave the process at all. | 3 |
+| **[Fleet repeatability](./reference/cli.md#fleet)** | `overridable, aid resolve, aid fleet` | One base spec serves many customers: an overlay may only touch the paths the base opened, the resolved document is a reviewed file, and the whole fleet is one command over git. | 4 |
 
 <!-- capability-band:end -->
 
@@ -135,7 +136,7 @@ shows every file `gen` wrote and serves the endpoint. You need Node.js 24 or new
 account, no email gate, nothing else to install.
 
 Seven packages on npm and one on PyPI ship together at version **{{ AID_VERSION }}**, with
-the spec language at `0.28`.
+the spec language at `0.29`.
 
 ## Support, read from the code
 

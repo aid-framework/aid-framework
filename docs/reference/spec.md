@@ -34,6 +34,7 @@ Spec schema title: *AID Framework spec v0.6*.
 | `evals` | map of `eval` | — |
 | `observability` | `observability` | — |
 | `pipelines` | map of `pipeline` | — |
+| `overridable` | map of `overridableRule` | The contract a customer overlay may change: the document paths that are open to an overlay, and how far each may move. A path that is not listed here is not overridable, so a base spec that declares nothing accepts no override at all. Declarable from spec v0.29, and it is the only key an overlay can ever act on. |
 
 `specVersion` must be one of the versions in the [spec version changelog](./spec-changelog.md), which lists what each version adds.
 
@@ -265,11 +266,15 @@ A `gatewayOpenApiSchema` is exactly one of the 2 forms below; each form is recog
 
 ### `uri`
 
-Takes the value `""` and no other keys.
+`s3://` URI of the document. The pattern is the one the CloudFormation `S3Configuration.Uri` property documents, so an invalid URI is refused here rather than at apply time.
+
+Takes the single key `uri`, holding `string`.
 
 ### `inline`
 
-Takes the value `""` and no other keys.
+The document itself, for a schema too small or too changeable to publish to a bucket. Written verbatim into the target's `InlinePayload`.
+
+Takes the single key `inline`, holding `string`.
 
 ## `gatewayMcpServer`
 
@@ -892,6 +897,36 @@ Where the image for a `target: container` deployment is published. `ghcr.io` nee
 | `project` | `string` | no | The Google Cloud project that owns the repository. Required on `gcp.artifact-registry`, refused elsewhere; the emitted repository path is `&lt;project&gt;/&lt;name&gt;`. |
 | `workloadIdentityProvider` | `string` | no | The Workload Identity Provider the release workflow federates with. Required on `gcp.artifact-registry`, refused elsewhere. |
 | `serviceAccount` | `string` | no | The service account the federated identity impersonates. Required on `gcp.artifact-registry`, refused elsewhere. |
+
+## `overridableRule`
+
+How far an overlay may move one path. `true` accepts any value. `from` accepts only one of the listed values. `max` accepts a number no greater than the bound. `allowWeaken` is a separate, explicit permission: without it, an override that relaxes a control at this path is refused, whichever form the value takes. Removing a `gate.ci` eval is refused under every form, including `allowWeaken`.
+
+An `overridableRule` is exactly one of the 4 forms below.
+
+### `true`
+
+Any value of the right type is accepted at this path.
+
+### `from`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `from` | array of any | yes | The values this path may be set to. A closed set: a value outside it is refused even when `allowWeaken` is set. |
+| `allowWeaken` | `allowWeaken` | no | — |
+
+### `max`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `max` | `number` | yes | The largest number this path may be set to. A ceiling: a larger value is refused even when `allowWeaken` is set. |
+| `allowWeaken` | `allowWeaken` | no | — |
+
+### `allowWeaken`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `allowWeaken` | `allowWeaken` | yes | — |
 
 ---
 

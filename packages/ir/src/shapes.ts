@@ -1492,9 +1492,10 @@ export const POPULATED_COLLECTION_BY_SECTION = {
 export const IR_ONLY_COLLECTIONS = ['embeddings'] as const;
 
 /**
- * Supported spec sections that map to an IR object rather than a collection.
- * Together with `POPULATED_COLLECTION_BY_SECTION` these account for every
- * `SUPPORTED_SECTIONS` entry exactly once.
+ * Supported spec sections that do not become an IR collection. `specVersion`, `profile`,
+ * `project`, `state` and `observability` map to an IR object; `overridable` maps to nothing at
+ * all -- it states what an overlay may change, and an overlay is resolved into a document before
+ * `buildIR` runs, so the resolved spec carries no trace of the block that shaped it.
  */
 export const NON_COLLECTION_SECTIONS = [
   'specVersion',
@@ -1502,6 +1503,7 @@ export const NON_COLLECTION_SECTIONS = [
   'project',
   'state',
   'observability',
+  'overridable',
 ] as const;
 
 /**

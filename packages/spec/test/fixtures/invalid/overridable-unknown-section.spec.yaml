@@ -1,0 +1,9 @@
+specVersion: "0.29"
+
+project:
+  name: overridable-unknown-section
+
+# `colour` is not a section, so no path under it can be overridden -- the section is
+# checked before the path, because every later question about the path depends on it.
+overridable:
+  colour.accent: true

@@ -219,6 +219,7 @@ export default defineConfig({
             { text: 'Delivery controls', link: '/walkthroughs/delivery-controls' },
             { text: 'Trace export and agent evals', link: '/walkthroughs/observability-export' },
             { text: 'Promotion gate and feedback', link: '/walkthroughs/promotion-gate' },
+            { text: 'Overlays and the fleet table', link: '/walkthroughs/overlays-and-fleet' },
           ],
         },
       ],

@@ -19,6 +19,7 @@ import { dev } from './commands/dev.js';
 import { doctor } from './commands/doctor.js';
 import { eject } from './commands/eject.js';
 import { evaluate } from './commands/eval.js';
+import { fleet } from './commands/fleet.js';
 import { generate } from './commands/gen.js';
 import { guard } from './commands/guard.js';
 import { infra } from './commands/infra.js';
@@ -27,6 +28,7 @@ import { init } from './commands/init.js';
 import { kb } from './commands/kb.js';
 import { migrate } from './commands/migrate.js';
 import { packageEdge } from './commands/package.js';
+import { resolve } from './commands/resolve.js';
 import { trace } from './commands/trace.js';
 import { validate } from './commands/validate.js';
 import type { CliContext } from './context.js';
@@ -54,9 +56,14 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'init',
     summary: 'scaffold a project: a starter spec and a README',
-    usage: 'init [dir] [--from <spec>] [--target <name>] [--force] [--gen]',
+    usage: 'init [dir] [--from <spec>] [--template <name>] [--target <name>] [--force] [--gen]',
     flags: [
       valueFlag('from', 'spec', 'import an existing spec instead of writing the starter'),
+      valueFlag(
+        'template',
+        'name',
+        'scaffold a shipped golden path instead of the minimal starter',
+      ),
       TARGET_FLAG,
       booleanFlag('force', 'replace a spec or README that is already there'),
       booleanFlag('gen', 'generate immediately after scaffolding'),
@@ -66,6 +73,7 @@ export const COMMANDS: readonly Command[] = [
       init(context, {
         dir: args.positionals[0],
         from: args.values.get('from'),
+        template: args.values.get('template'),
         target: args.values.get('target'),
         force: args.booleans.has('force'),
         gen: args.booleans.has('gen'),
@@ -77,6 +85,29 @@ export const COMMANDS: readonly Command[] = [
     usage: 'validate [spec]',
     flags: [JSON_FLAG],
     run: (context, args) => validate(context, { spec: args.positionals[0] }),
+  },
+  {
+    name: 'resolve',
+    summary: 'resolve a customer overlay into the concrete spec it means',
+    usage: 'resolve <overlay> [--out <file>] [--check]',
+    flags: [
+      valueFlag('out', 'file', 'write the resolved spec here instead of printing it'),
+      booleanFlag('check', 'fail when the resolved spec in the tree does not match its overlay'),
+      JSON_FLAG,
+    ],
+    run: (context, args) =>
+      resolve(context, {
+        overlay: args.positionals[0],
+        out: args.values.get('out'),
+        check: args.booleans.has('check'),
+      }),
+  },
+  {
+    name: 'fleet',
+    summary: 'report every customer overlay, its profile, pins, ceilings and gate status',
+    usage: 'fleet [dir]',
+    flags: [JSON_FLAG],
+    run: (context, args) => fleet(context, { dir: args.positionals[0] }),
   },
   {
     name: 'gen',
