@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.28`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.29`.
 
 ## Deployment targets
 
@@ -376,6 +376,38 @@ Spec 0.28 states what a candidate is allowed to cost in quality and in spend: `e
 - **Reference:** [spec](./reference/spec.md#eval)
 - **Since:** `0.1.146`
 
+### A stated list of what a customer may change
+
+Spec 0.29 adds `overridable`: the base spec names every path an overlay may set and the bound each may move within -- a closed set of values (`from`) or a ceiling (`max`). A path that is not listed is not overridable, so "what may differ per customer" is a reviewable line in the base repo rather than a convention nobody wrote down. Listing a path does not open its children, and `allowWeaken` is a separate permission the base author grants per path.
+
+- **Turned on by:** `overridable`
+- **Reference:** [spec](./reference/spec.md#overridablerule)
+- **Since:** `0.1.147`
+
+### One base spec, one file per customer
+
+A per-customer overlay names its base and the paths it changes; `aid resolve` writes the concrete spec beside it, so the document that actually deploys is reviewed in the pull request like any other file. Six refusals stand between a customer file and a weakened control: an unlisted path, a relaxed guardrail action, a value outside its bound, a removed CI-gating eval, a profile that disagrees with the base, and a base that is not there. `aid resolve --check` fails in CI when the resolved artifact has drifted from its overlay.
+
+- **Turned on by:** `aid resolve`
+- **Reference:** [cli](./reference/cli.md#resolve)
+- **Since:** `0.1.147`
+
+### A fleet inventory computed from the tree
+
+`aid fleet` discovers every overlay in the repository and reports one row per customer -- profile, pinned models, region, cost ceiling and whether the resolved document still passes every gate today -- with `--json` for a script. Discovery is by content rather than by a directory convention, and the gates are re-run rather than trusted, so `ok` means "passes now" and not "passed once". There is no service to keep warm and no state to drift.
+
+- **Turned on by:** `aid fleet`
+- **Reference:** [cli](./reference/cli.md#fleet)
+- **Since:** `0.1.147`
+
+### Two shipped golden paths
+
+`aid init --template` scaffolds a spec that already passes the gates instead of an empty one: `support-copilot` is the mid-size path (standard profile, managed services, default budgets) and `enterprise-approvals` is the regulated one (identity, private network, audit sink, and a pause for a human before the write tool). The test suite scaffolds and compiles both, so a template that stops passing a gate breaks the build rather than onboarding someone into a broken spec.
+
+- **Turned on by:** `aid init`
+- **Reference:** [cli](./reference/cli.md#init)
+- **Since:** `0.1.147`
+
 ## Refused, on purpose
 
 An absent capability is stated once, here, with the diagnostic that enforces it, instead of being discovered during an apply or debugged in production.
@@ -517,6 +549,36 @@ The enterprise profile promises recorded change control. A promotion is a change
 A persistent feedback store with no `retentionDays` is refused, and so is one that collects `correction` text while its `pii.redact` list misses a field the spec already marks sensitive. Collected free text is the most likely place for a customer identifier to end up, so the gate asks both questions at build time rather than at audit time.
 
 - **Enforced by:** `ir/feedback-pii`
+
+### A customer overlay that edits a path the base never opened
+
+An overlay is a strict allowlist, not a merge patch: a path absent from the base `overridable` block is refused by name, so a customer file cannot quietly set a field the framework author never considered per-customer. Adding the path to the base is the fix, and it is a diff somebody reviews.
+
+- **Enforced by:** `overlay/path-not-overridable`
+
+### A customer overlay that relaxes a control
+
+Lowering a guardrail from `block` to `flag`, shortening an audit retention, or deleting a path is refused unless the base author wrote `allowWeaken: true` on that exact path -- so a weakened control is a decision recorded in the base repo rather than an edit buried in a customer file.
+
+- **Enforced by:** `overlay/weakens-control`
+
+### A customer overlay that deletes the eval gating CI
+
+No base can permit this one. `allowWeaken` buys a weaker value, never the absence of the check, so an overlay that removes an eval with `gate.ci: true` is refused before the value is even compared. Deleting the `gate.ci` flag and keeping the eval is refused the same way -- it removes the check, not a value.
+
+- **Enforced by:** `overlay/removes-eval`
+
+### A customer overlay that moves a value past its declared bound
+
+A `from` list is a closed set of values and a `max` is a ceiling, so a cost budget above the ceiling is refused even when the path is overridable and even when weakening is permitted: the bound is the answer, and the hint says which bound was hit.
+
+- **Enforced by:** `overlay/value-out-of-bounds`
+
+### A customer overlay whose profile label disagrees with the spec it resolves to
+
+An overlay's `profile` is a checked label, not a second source of truth: it must match what the resolved document actually declares, so a customer file cannot claim `enterprise` control over a base that imposes none. Raising one customer to `enterprise` means marking `profile` overridable in the base and setting it in the overlay, so the stronger controls are gated on the resolved document.
+
+- **Enforced by:** `overlay/profile-mismatch`
 
 ---
 

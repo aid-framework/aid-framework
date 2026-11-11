@@ -116,4 +116,8 @@ export const SPEC_VERSIONS = [
     version: '0.28',
     adds: 'Adds `observability.feedback` (declared feedback signals, the fields they may carry and how long they are kept) and `evals[].gate.promotion` (a baseline prompt version, the quality drop and cost increase a candidate may not exceed, and who must record an approval) -- the parts of a self-improvement loop that can be gated from git alone.',
   },
+  {
+    version: '0.29',
+    adds: 'Adds the top-level `overridable` block, which is the only set of paths a per-customer overlay may touch and the bounds each may move within -- so one base spec serves many customers without forking, and an overlay that widens a guardrail, drops a CI-gating eval or exceeds a declared bound is refused by name.',
+  },
 ];

@@ -591,6 +591,84 @@ Covers:
 - **A cost ceiling in CI**
 - **A declared place for the spans**
 
+## Fleet repeatability
+
+<!-- capability-family: fleet -->
+
+One agent definition, many customers. The alternative -- a fork per customer -- is how a fleet
+becomes twenty subtly different products that nobody can diff. AID splits the document in two: a
+**base spec** that holds the behaviour, and a small **overlay** per customer that holds the
+variables, with the base naming in advance which paths an overlay may touch.
+
+```yaml
+# base.spec.yaml
+specVersion: '0.29'
+profile: standard
+overridable:
+  deployments.main.region: { from: [us-east-1, eu-central-1] }
+  evals.answer.gate.promotion.allowedCostIncrease: { max: 0.1 }
+  observability.trace: { allowWeaken: true }
+```
+
+```yaml
+# customers/acme.yaml
+base: ../base.spec.yaml
+customer: acme
+profile: standard
+overrides:
+  deployments.main.region: eu-central-1
+```
+
+`overridable` is a closed allowlist, matched by exact path: a path that is not listed is not
+overridable, and listing a path does not open its children. The forms are a closed set of values
+(`from`), a ceiling (`max`), or `true` for any value of the right type. `allowWeaken` is a separate
+permission the base author grants, because "may differ per customer" and "may be made looser per
+customer" are different decisions.
+
+Resolution is a build step, not a runtime one:
+
+```sh
+aid resolve customers/acme.yaml            # writes acme.spec.yaml beside it
+aid resolve customers/acme.yaml --check    # non-zero if the artifact is stale
+aid fleet customers/                       # every customer, one table
+```
+
+The resolved document is a reviewed file, so `--check` in CI catches a base that moved without the
+customer artifacts following. `aid fleet` re-runs the gates over every resolved spec rather than
+trusting a cached verdict, so `ok` means "passes today". Nothing here contacts a server; the
+inventory is computed from the tree.
+
+`aid init <dir> --template support-copilot` and `--template enterprise-approvals` are the two
+shipped golden paths -- the first is a managed-retrieval support agent, the second an agent whose
+side-effecting tool stops for a human before it runs.
+
+What comes out:
+
+- `customers/acme.spec.yaml`: the base with the overlay applied, in the same schema `aid validate`
+  already reads, so no new tooling stands between a reviewer and the deploy.
+- An `aid fleet` row per customer: profile, pinned models, regions, cost ceiling, how many
+  overrides applied, and the gate verdict.
+
+What is refused:
+
+- An override at a path the base never opened, because an allowlist that silently grew would not
+  be an allowlist.
+- An override that relaxes a control at a path without `allowWeaken`, whichever form the value
+  takes -- including `null`, which is the only way to delete a base key.
+- A value outside its `from` set or above its `max`, even with `allowWeaken`: the bound is the more
+  specific answer, and a hint that suggested a permission that cannot help would be a lie.
+- The removal of an eval that `gate.ci` requires, under every form: no base can permit a customer
+  to buy their way out of a CI gate.
+- An overlay whose `profile` label disagrees with what the resolved document declares, because the
+  label is what `aid fleet` groups by and a wrong one under-sells the controls that apply.
+
+Covers:
+
+- **A stated list of what a customer may change**
+- **One base spec, one file per customer**
+- **A fleet inventory computed from the tree**
+- **Two shipped golden paths**
+
 ---
 
 Each section above is a family on the [capability band](index.md#what-the-compiler-writes-for-you).

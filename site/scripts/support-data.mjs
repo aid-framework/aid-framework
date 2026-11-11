@@ -228,8 +228,8 @@ export function parseSpecCapabilityEnum(source) {
  * @returns {string[]}
  */
 export function parseDiagnosticCodes(source) {
-  const block = source.match(/(?:IR|CLI)_DIAGNOSTIC_CODES = \{([\s\S]*?)\} as const;/);
-  const codes = [...(block?.[1] ?? '').matchAll(/'((?:ir|spec|cli)\/[a-z0-9-]+)'/g)].map(
+  const block = source.match(/(?:[A-Z]+_)?DIAGNOSTIC_CODES = \{([\s\S]*?)\} as const;/);
+  const codes = [...(block?.[1] ?? '').matchAll(/'((?:ir|spec|cli|overlay)\/[a-z0-9-]+)'/g)].map(
     (match) => match[1] ?? '',
   );
   if (codes.length === 0) {
@@ -321,6 +321,8 @@ export function loadSupportData() {
   const names = readText('packages/generators/py-fastapi/src/names.ts');
   const diagnostics = readText('packages/ir/src/diagnostics.ts');
   const cliDiagnostics = readText('packages/cli/src/diagnostics.ts');
+  const specDiagnostics = readText('packages/spec/src/diagnostics.ts');
+  const overlayDiagnostics = readText('packages/spec/src/overlay.ts');
   const specValidator = readText('packages/spec/src/validate.ts');
   const schema = readJsonFile('packages/spec/src/schema/spec.schema.json');
   const corpus = readJsonFile('conformance/corpus.json');
@@ -347,7 +349,12 @@ export function loadSupportData() {
     chunkingStrategies: parseChunkingStrategies(schema),
     versionFloors: parseVersionFloors(specValidator),
     diagnostics: [
-      ...new Set([...parseDiagnosticCodes(diagnostics), ...parseDiagnosticCodes(cliDiagnostics)]),
+      ...new Set([
+        ...parseDiagnosticCodes(diagnostics),
+        ...parseDiagnosticCodes(cliDiagnostics),
+        ...parseDiagnosticCodes(specDiagnostics),
+        ...parseDiagnosticCodes(overlayDiagnostics),
+      ]),
     ],
     corpus: {
       cases: cases.length,

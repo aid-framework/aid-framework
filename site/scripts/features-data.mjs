@@ -438,6 +438,42 @@ export const SHIPPED_FEATURES = [
     href: './reference/spec.md#eval',
     since: '0.1.146',
   },
+  {
+    id: 'overridable-contract',
+    title: 'A stated list of what a customer may change',
+    detail:
+      'Spec 0.29 adds `overridable`: the base spec names every path an overlay may set and the bound each may move within -- a closed set of values (`from`) or a ceiling (`max`). A path that is not listed is not overridable, so "what may differ per customer" is a reviewable line in the base repo rather than a convention nobody wrote down. Listing a path does not open its children, and `allowWeaken` is a separate permission the base author grants per path.',
+    declaredBy: 'overridable',
+    href: './reference/spec.md#overridablerule',
+    since: '0.1.147',
+  },
+  {
+    id: 'overlay-resolution',
+    title: 'One base spec, one file per customer',
+    detail:
+      'A per-customer overlay names its base and the paths it changes; `aid resolve` writes the concrete spec beside it, so the document that actually deploys is reviewed in the pull request like any other file. Six refusals stand between a customer file and a weakened control: an unlisted path, a relaxed guardrail action, a value outside its bound, a removed CI-gating eval, a profile that disagrees with the base, and a base that is not there. `aid resolve --check` fails in CI when the resolved artifact has drifted from its overlay.',
+    declaredBy: 'aid resolve',
+    href: './reference/cli.md#resolve',
+    since: '0.1.147',
+  },
+  {
+    id: 'fleet-summary',
+    title: 'A fleet inventory computed from the tree',
+    detail:
+      '`aid fleet` discovers every overlay in the repository and reports one row per customer -- profile, pinned models, region, cost ceiling and whether the resolved document still passes every gate today -- with `--json` for a script. Discovery is by content rather than by a directory convention, and the gates are re-run rather than trusted, so `ok` means "passes now" and not "passed once". There is no service to keep warm and no state to drift.',
+    declaredBy: 'aid fleet',
+    href: './reference/cli.md#fleet',
+    since: '0.1.147',
+  },
+  {
+    id: 'golden-path-templates',
+    title: 'Two shipped golden paths',
+    detail:
+      '`aid init --template` scaffolds a spec that already passes the gates instead of an empty one: `support-copilot` is the mid-size path (standard profile, managed services, default budgets) and `enterprise-approvals` is the regulated one (identity, private network, audit sink, and a pause for a human before the write tool). The test suite scaffolds and compiles both, so a template that stops passing a gate breaks the build rather than onboarding someone into a broken spec.',
+    declaredBy: 'aid init',
+    href: './reference/cli.md#init',
+    since: '0.1.147',
+  },
 ];
 
 /**
@@ -611,6 +647,41 @@ export const REFUSALS = [
       'A persistent feedback store with no `retentionDays` is refused, and so is one that collects `correction` text while its `pii.redact` list misses a field the spec already marks sensitive. Collected free text is the most likely place for a customer identifier to end up, so the gate asks both questions at build time rather than at audit time.',
     code: 'ir/feedback-pii',
   },
+  {
+    id: 'overlay-path-not-overridable',
+    title: 'A customer overlay that edits a path the base never opened',
+    reason:
+      'An overlay is a strict allowlist, not a merge patch: a path absent from the base `overridable` block is refused by name, so a customer file cannot quietly set a field the framework author never considered per-customer. Adding the path to the base is the fix, and it is a diff somebody reviews.',
+    code: 'overlay/path-not-overridable',
+  },
+  {
+    id: 'overlay-weakens-control',
+    title: 'A customer overlay that relaxes a control',
+    reason:
+      'Lowering a guardrail from `block` to `flag`, shortening an audit retention, or deleting a path is refused unless the base author wrote `allowWeaken: true` on that exact path -- so a weakened control is a decision recorded in the base repo rather than an edit buried in a customer file.',
+    code: 'overlay/weakens-control',
+  },
+  {
+    id: 'overlay-removes-eval',
+    title: 'A customer overlay that deletes the eval gating CI',
+    reason:
+      'No base can permit this one. `allowWeaken` buys a weaker value, never the absence of the check, so an overlay that removes an eval with `gate.ci: true` is refused before the value is even compared. Deleting the `gate.ci` flag and keeping the eval is refused the same way -- it removes the check, not a value.',
+    code: 'overlay/removes-eval',
+  },
+  {
+    id: 'overlay-value-out-of-bounds',
+    title: 'A customer overlay that moves a value past its declared bound',
+    reason:
+      'A `from` list is a closed set of values and a `max` is a ceiling, so a cost budget above the ceiling is refused even when the path is overridable and even when weakening is permitted: the bound is the answer, and the hint says which bound was hit.',
+    code: 'overlay/value-out-of-bounds',
+  },
+  {
+    id: 'overlay-profile-mismatch',
+    title: 'A customer overlay whose profile label disagrees with the spec it resolves to',
+    reason:
+      "An overlay's `profile` is a checked label, not a second source of truth: it must match what the resolved document actually declares, so a customer file cannot claim `enterprise` control over a base that imposes none. Raising one customer to `enterprise` means marking `profile` overridable in the base and setting it in the overlay, so the stronger controls are gated on the resolved document.",
+    code: 'overlay/profile-mismatch',
+  },
 ];
 
 /**
@@ -725,5 +796,19 @@ export const CAPABILITY_FAMILIES = [
     declaredBy: 'traces[], observability, aid cost',
     href: './reference/cli.md#trace',
     featureIds: ['traces', 'cost-metric', 'observability-export'],
+  },
+  {
+    id: 'fleet',
+    title: 'Fleet repeatability',
+    pitch:
+      'One base spec serves many customers: an overlay may only touch the paths the base opened, the resolved document is a reviewed file, and the whole fleet is one command over git.',
+    declaredBy: 'overridable, aid resolve, aid fleet',
+    href: './reference/cli.md#fleet',
+    featureIds: [
+      'overridable-contract',
+      'overlay-resolution',
+      'fleet-summary',
+      'golden-path-templates',
+    ],
   },
 ];

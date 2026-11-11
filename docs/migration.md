@@ -218,6 +218,81 @@ against a static estimate by the cost gate; a `latency` ceiling becomes `latency
 reaches the deploy plan. Refusing them here would delete a working check to make a rhetorical
 point. `tool-trace` has no second meaning and no consumer at all, so it is refused.
 
+## 0.28 to 0.29: one base spec, one overlay per customer
+
+Until 0.29 a spec was one document for one service. Delivering the same agent to twenty customers
+meant twenty documents, and nothing said which differences were intended and which were drift.
+0.29 adds the missing half: a base spec that names **what a customer may change**, and an overlay
+that does it. Additive, so a 0.28 document is still a 0.28 document.
+
+> **What 0.29 declares but does not do.** An overlay is a file, `aid resolve` is a local command,
+> and `aid fleet` is a table over the tree. There is no control plane and no registry service: a
+> customer deployment exists in git or it does not exist. `aid fleet` re-runs the gates over each
+> resolved document, so `ok` means "passes today", not "is deployed" -- AID still holds no
+> inventory of what is running.
+
+### What 0.29 adds
+
+| Construct | What it says |
+| --- | --- |
+| `overridable` | The exact document paths a customer overlay may set, and how far each may move: `true`, `from: [values]`, `max: <number>`, and a separate `allowWeaken` permission. |
+
+### Nothing to do for 0.28 documents
+
+`overridable` is an allowlist with no implicit entries, so a document that omits it accepts no
+override at all and reads exactly as before. It is consumed by `aid resolve` before the IR is
+built, so it reaches no generator and the generated output for every existing spec is unchanged:
+no migration is required either to upgrade or to ignore the key.
+
+### What a 0.29 base spec must declare to accept an overlay
+
+Nothing is overridable until it is listed. To let a customer pick a region:
+
+```yaml
+overridable:
+  deployments.main.region: { from: [us-east-1, eu-central-1] }
+```
+
+An overlay names the base it applies to, the customer, the profile, and the overrides:
+
+```yaml
+base: ../base.spec.yaml
+customer: acme
+profile: standard
+overrides:
+  deployments.main.region: eu-central-1
+```
+
+`aid validate` on an overlay reports the same diagnostics as on a resolved document, plus
+`overlay/base-missing` when the base path does not resolve. The other five refusals --
+`overlay/path-not-overridable`, `overlay/weakens-control`, `overlay/removes-eval`,
+`overlay/value-out-of-bounds`, `overlay/profile-mismatch` -- come from the resolver, so they are
+reported by `aid resolve` and by `aid fleet`.
+
+### Why the allowlist matches exact paths
+
+Listing `deployments.main.region` does not open `deployments.main` or anything else underneath it.
+A path language with implicit children would mean the set of things a customer may change is only
+knowable by simulation, and the point of the list is that it is readable in a diff. The same reason
+rules out JSON Merge Patch semantics: the only deletion is an explicit `null` at a listed path, and
+a deletion is a weakening.
+
+### Why removing a `gate.ci` eval is un-buyable
+
+`allowWeaken` lets a base author permit a **weaker value** at one path. It cannot permit dropping an
+eval that `gate.ci` requires, under any form and whether or not the path is listed: if it could, the
+gate would be advisory, and a customer overlay could remove the check that keeps their own deploy
+honest. The refusal is `overlay/removes-eval`, and it covers both ways of losing the check: deleting
+the eval (`evals.triage_regression: null`) and deleting the flag while keeping the eval
+(`evals.triage_regression.gate.ci: null`).
+
+### Why a bound is checked before a weakening
+
+An override of `maxCostBudget: 9` against a `max: 2.5` ceiling is both above the bound and a
+relaxation. AID reports `overlay/value-out-of-bounds`, because the bound is the more specific
+answer and the weakening hint would advise setting `allowWeaken` -- a permission the base author
+may grant and which would still not admit the value.
+
 ## 0.27 to 0.28: promoting a candidate, and the feedback that starts a loop
 
 What a document is allowed to do with a candidate, and which feedback it takes back from its users.
@@ -279,6 +354,7 @@ is a number rather than an adjective.
 
 | Spec | Backward compatible | What it added |
 | --- | --- | --- |
+| 0.29 | Yes | `overridable`, the paths a customer overlay may set and the bound each may move within |
 | 0.28 | Yes | `observability.feedback` (`signals`, `pii.redact`, `retentionDays`, `persistent`); `evals[].gate.promotion` |
 | 0.27 | Yes | `observability` (`trace`, `redact`, `export: otlp`, `endpointEnv`); `evals[].target` widened to `agent:<id>` |
 | 0.26 | Yes | `state`; `deployments[].identity`, `.network`, `.approvals`; `requiresApproval` on a pipeline tool step |

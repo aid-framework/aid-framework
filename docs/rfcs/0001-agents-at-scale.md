@@ -558,7 +558,9 @@ overridable:                    # NEW (0.29). The one key this phase adds to the
 A path not listed is not overridable. A listed path is overridable *within its declared bound*.
 Weakening is a distinct, explicit permission (`allowWeaken: true`) that the base author writes
 per path, so "the customer asked for a cheaper guardrail" is a visible diff in the base repo
-rather than an edit buried in a customer file.
+rather than an edit buried in a customer file. `allowWeaken` buys a weaker *value* and nothing
+more: it never buys the deletion of a CI-gating eval, which no base can permit. Deleting the
+`gate.ci` flag while keeping the eval is the same refusal, because the check is gone either way.
 
 ---
 
@@ -628,7 +630,7 @@ the move.
 | `overlay/base-missing` | error | `the overlay gate rejected "acme": base "../specs/support-copilot.yaml" does not exist` | `check the relative path from the overlay file` |
 | `overlay/path-not-overridable` | error | `the overlay gate rejected "acme": overrides "deployments.prod.replicas" is not an overridable path in the base spec` | `add deployments.prod.replicas to the base spec's overridable block` |
 | `overlay/weakens-control` | error | `the overlay gate rejected "acme": it changes "guardrails.output_pii.action" from "block" to "flag", which relaxes a control, and the base does not permit weakening at that path` | `mark the path allowWeaken: true in the base, or keep the base action` |
-| `overlay/removes-eval` | error | `the overlay gate rejected "acme": it removes eval "triage_regression", which gate.ci requires, and the base does not permit that path` | `overlays may not remove a CI-gating eval; add a stricter eval instead` |
+| `overlay/removes-eval` | error | `the overlay gate rejected "acme": it removes eval "triage_regression", which gate.ci requires` | `overlays may not remove a CI-gating eval; add a stricter eval instead` |
 
 ---
 
@@ -933,6 +935,55 @@ Deliberately **not** built in Phase 4, and stated rather than implied:
   artifact is the merge that carries the bumped prompt version; the approval is a committed file
   whose presence and non-emptiness are checked, so an enterprise promotion records *who* approved
   *what* in git rather than in a service.
+
+---
+
+### 10.5 Phase 5, as shipped
+
+Spec `0.29`, `IR_VERSION` unchanged at 0.5.0, gates unchanged at 25, and 12 new diagnostic codes.
+Phase 5 adds no IR node and no gate: an overlay is resolved into a document **before** `buildIR`
+runs, so the resolved spec is judged by the gates that already exist, at the same spec version.
+
+- `overridable` -- a root block mapping an exact path to one of four rules: `true`, `from: [...]`,
+  `max: <number>`, and `allowWeaken: true`. The path language is dotted identifiers only, matched
+  exactly; listing a path does not open its children.
+- Overlay files -- `{ base, customer, profile?, overrides }`, located anywhere, discovered by
+  parsing rather than by directory name.
+- `aid resolve <overlay> [--out <spec>] [--check]` -- prints the resolved document, writes it, or
+  byte-compares it to a committed artifact.
+- `aid fleet [dir] [--json]` -- one row per overlay: customer, profile, pinned models, regions,
+  cost ceiling, applied paths, and `ok`/`refused` from **re-running the gates today**.
+- `aid init --template support-copilot` and `--template enterprise-approvals` -- two golden-path
+  specs, each gate-clean as generated.
+
+Five refusals from the resolver: `overlay/path-not-overridable`, `overlay/weakens-control`,
+`overlay/removes-eval`, `overlay/value-out-of-bounds`, `overlay/profile-mismatch`; two from the
+schema: `spec/overridable-unknown-section`, `spec/overridable-descends-into-value`; and five CLI
+codes: `cli/resolve-outdated`, `cli/fleet-no-overlays`, `cli/fleet-dir-unreadable`,
+`cli/init-template-unknown`, `cli/init-template-conflict`.
+
+Three rules were settled by what the walkthrough exposed rather than by the design:
+
+- **The bound is checked before the weakening.** `maxCostBudget: 9` against `max: 2.5` is both
+  past the bound and a relaxation; reporting the relaxation would advise `allowWeaken`, a
+  permission that still would not admit 9. The specific answer wins.
+- **Deleting a CI check is not a value.** `allowWeaken` buys a weaker *value*, so removing a
+  CI-gating eval is refused regardless of the rule -- and so is deleting `gate.ci` itself while
+  keeping the eval, because the check is gone either way. Both are `overlay/removes-eval`.
+- **A profile on an overlay is a label to check, not a source of truth.** `overlay/profile-mismatch`
+  is an equality test against the resolved document, so a customer file cannot claim a tier its
+  base does not implement.
+
+Deliberately **not** built in Phase 5, and stated rather than implied:
+
+- **No overlay inheritance, no includes, no templating.** One base, one overlay, one resolution.
+  A chain of overlays would make "what does customer X actually run" a search rather than a read.
+- **No per-customer deployment.** `aid fleet` reports; it does not generate, deploy or compare
+  costs across customers. Each customer's `aid gen` and CI still run from their own resolved spec.
+- **No registry and no remote lookup.** `base` is a relative path in the same repository, which is
+  what makes an overlay reviewable in the same diff as the spec it narrows.
+- **No merge-patch semantics.** The only deletion is an explicit `null` at a listed path, and a
+  deletion is a weakening, so it needs `allowWeaken` -- except for the two CI-gate forms above.
 
 ---
 

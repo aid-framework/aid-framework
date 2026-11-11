@@ -18,6 +18,8 @@ Every command accepts `-h` / `--help` for its own usage. All except `dev` accept
 | --- | --- |
 | [`init`](#init) | scaffold a project: a starter spec and a README |
 | [`validate`](#validate) | parse the spec, build the IR, and run every build-time gate |
+| [`resolve`](#resolve) | resolve a customer overlay into the concrete spec it means |
+| [`fleet`](#fleet) | report every customer overlay, its profile, pins, ceilings and gate status |
 | [`gen`](#gen) | compile the spec and reconcile the tree with it |
 | [`dev`](#dev) | regenerate the tree and run the application on a local server |
 | [`guard`](#guard) | measure the guardrails against a red-team corpus |
@@ -37,12 +39,13 @@ Every command accepts `-h` / `--help` for its own usage. All except `dev` accept
 scaffold a project: a starter spec and a README
 
 ```sh
-aid init [dir] [--from <spec>] [--target <name>] [--force] [--gen]
+aid init [dir] [--from <spec>] [--template <name>] [--target <name>] [--force] [--gen]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--from <spec>` | import an existing spec instead of writing the starter |
+| `--template <name>` | scaffold a shipped golden path instead of the minimal starter |
 | `--target <name>` | generator target; one of py-fastapi, ts-vercel |
 | `--force` | replace a spec or README that is already there |
 | `--gen` | generate immediately after scaffolding |
@@ -55,6 +58,34 @@ parse the spec, build the IR, and run every build-time gate
 
 ```sh
 aid validate [spec]
+```
+
+| Option | Description |
+| --- | --- |
+| `--json` | print one JSON document on stdout |
+| `-h`, `--help` | print this command's usage |
+
+## `resolve`
+
+resolve a customer overlay into the concrete spec it means
+
+```sh
+aid resolve <overlay> [--out <file>] [--check]
+```
+
+| Option | Description |
+| --- | --- |
+| `--out <file>` | write the resolved spec here instead of printing it |
+| `--check` | fail when the resolved spec in the tree does not match its overlay |
+| `--json` | print one JSON document on stdout |
+| `-h`, `--help` | print this command's usage |
+
+## `fleet`
+
+report every customer overlay, its profile, pins, ceilings and gate status
+
+```sh
+aid fleet [dir]
 ```
 
 | Option | Description |
