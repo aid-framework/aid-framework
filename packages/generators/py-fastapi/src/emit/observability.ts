@@ -74,7 +74,7 @@ export function emitObservability(ir: IR): EmittedFile {
     target: PY_FASTAPI_TARGET,
   };
 
-  const helpers = [
+  const tracingHelper = [
     'def tracing_export_status(service_name: str) -> ExportStatus:',
     pythonDoc(
       'Install the span exporter this document declared, and report what happened. Call ' +
@@ -93,6 +93,30 @@ export function emitObservability(ir: IR): EmittedFile {
       `${INDENT})`,
     ].join('\n'),
   ].join('\n');
+
+  // A separate helper rather than one call that sets up both, because the alarm series and
+  // the spans are separate decisions: an operator may want one exported and not the other,
+  // and a single switch would make the choice invisible in the app's startup code.
+  const metricsHelper = [
+    'def metrics_export_status(service_name: str) -> ExportStatus:',
+    pythonDoc(
+      'Install the metric exporter that publishes the series alarms in this document ' +
+        'watch, and report what happened. Call it beside `tracing_export_status`: an ' +
+        'alarm over a series nothing publishes does not fail, it reports no data, which ' +
+        'is the one failure mode that looks like health. Nothing here raises, for the ' +
+        'same reason nothing in `configure_metrics` does.',
+      INDENT,
+    ),
+    [
+      `${INDENT}return configure_metrics(`,
+      `${INDENT}${INDENT}service_name=service_name,`,
+      `${INDENT}${INDENT}declared=${JSON.stringify(declaredExport)},`,
+      `${INDENT}${INDENT}endpoint_env=${JSON.stringify(endpointEnv)},`,
+      `${INDENT})`,
+    ].join('\n'),
+  ].join('\n');
+
+  const helpers = [tracingHelper, metricsHelper].join('\n\n\n');
 
   const body = [
     'def generated_capabilities() -> dict[str, Any]:',
@@ -114,7 +138,11 @@ export function emitObservability(ir: IR): EmittedFile {
           'declaration landed.',
       ),
       importFrom('typing', ['Any']),
-      importFrom('aid_runtime.telemetry', ['ExportStatus', 'configure_export']),
+      importFrom('aid_runtime.telemetry', [
+        'ExportStatus',
+        'configure_export',
+        'configure_metrics',
+      ]),
       `${body}\n\n\n${helpers}`,
     ]),
   );

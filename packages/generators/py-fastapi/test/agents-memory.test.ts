@@ -694,6 +694,14 @@ describe('the pre-P7b example', () => {
    * name it. The chunk pass below that refusal is unchanged: `await chunker.chunk(document)`
    * gained an `await` because the seam is asynchronous now, and no byte of the counting logic
    * moved with it.
+   *
+   * The two `evals/<id>.py` modules were re-recorded by the alarm layer, and they are the only
+   * files it touched here. `ir/alerts-unproduced` has to know which eval a series belongs to, so
+   * the emitted sample now carries `eval_id=EVAL_ID` into `record_eval_case`; that is one
+   * keyword argument reaching both modules for every spec, so the new bytes are pinned rather
+   * than excluded. `observability.py` keeps its pre-declaration digest on purpose: it is the
+   * mover this pin exists to observe, and it now carries the metrics status helper as well as
+   * the declaration block, which the second test below pins by name.
    */
   const DECLARATION_ONLY = 'app/generated/observability.py';
 
@@ -734,7 +742,7 @@ describe('the pre-P7b example', () => {
     expect(paths.length - moved.length).toBe(27);
   });
 
-  it('moved that one file only because the target declared more, not because an emitter ran', () => {
+  it('moved that one file because it reports the target, not because an emitter ran', () => {
     const { content } = planFor();
     const observability = content.get(DECLARATION_ONLY) ?? '';
     // The declaration block is the whole diff: the two new names are present for a spec that
@@ -742,6 +750,9 @@ describe('the pre-P7b example', () => {
     // wider than the document's.
     expect(observability).toContain('"agents"');
     expect(observability).toContain('"cursor-memory"');
+    // The alarm layer's half of the same file: the status helper an alarm can be verified
+    // against, emitted for a spec that declares no alarms because it reports the target.
+    expect(observability).toContain('def metrics_export_status');
 
     // ...and nothing that only an agent route would need is emitted anywhere else. The probe
     // is structural rather than the word "agent", because `guardrails.py` has talked about

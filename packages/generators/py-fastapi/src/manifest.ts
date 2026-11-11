@@ -62,6 +62,10 @@ export const PY_FASTAPI_MANIFEST_INPUT: GeneratorManifestInput = {
     'guardrails',
     'agents',
     'cursor-memory',
+    // The four series `observability.alerts` watches are published by
+    // `aid_runtime.telemetry.configure_metrics`, which the emitted
+    // `app/generated/observability.py` calls beside the span exporter.
+    'metrics',
   ],
   emitsAgainst: {
     structuredOutput: 'pydantic',

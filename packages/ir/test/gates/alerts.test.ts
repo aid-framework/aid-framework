@@ -7,13 +7,24 @@ import {
   IR_DIAGNOSTIC_CODES,
   runGates,
 } from '../../src/index.js';
-import { buildFixture, codesOf, gateFixture, mutateIR, onlyDiagnosticWith } from '../helpers.js';
+import {
+  buildFixture,
+  codesOf,
+  first,
+  gateFixture,
+  mutateIR,
+  onlyDiagnosticWith,
+} from '../helpers.js';
 
 const ALERTS = 'v30-alerts.yaml';
 const BEFORE = 'v27-observability.yaml';
 
 function alertsGate(ir: ReturnType<typeof mutateIR>) {
   return runGates(ir).byGate['observability/alerts'];
+}
+
+function alertsGateWith(targetCapabilities: Record<string, readonly string[]>) {
+  return runGates(mutateIR(ALERTS), { targetCapabilities }).byGate['observability/alerts'];
 }
 
 describe('alert metrics', () => {
@@ -173,6 +184,65 @@ describe('alerts gate', () => {
     const ir = mutateIR(ALERTS);
     ir.observability.export = 'none';
     expect(codesOf(runGates(ir).diagnostics)).toContain(IR_DIAGNOSTIC_CODES.alertsUnexported);
+  });
+});
+
+describe('alerts over a series this build never writes', () => {
+  /** A declaration shaped like a target that emits infrastructure but no recording point. */
+  const NO_METRICS = { 'py-fastapi': ['http-trigger', 'json-schema', 'otel', 'tool-calling'] };
+
+  it('refuses every alert on a target that records none of the series', () => {
+    // The alert passes every other rule: the series is real, the reduction fits it, and
+    // the source names a declared agent. It is still an alarm over a series nothing
+    // writes, which is the failure that reads as health, so it is refused.
+    const diagnostics = alertsGateWith(NO_METRICS).diagnostics.filter(
+      (diagnostic) => diagnostic.code === IR_DIAGNOSTIC_CODES.alertsUnproduced,
+    );
+    expect(diagnostics).toHaveLength(4);
+  });
+
+  it('names the alert and the series in the message, so the fix is local', () => {
+    const diagnostic = first(
+      alertsGateWith(NO_METRICS).diagnostics.filter(
+        (candidate) => candidate.code === IR_DIAGNOSTIC_CODES.alertsUnproduced,
+      ),
+    );
+    expect(diagnostic.path).toEqual(['observability', 'alerts', 'adjudicator_cost', 'metric']);
+    expect(diagnostic.message).toContain('the alerts gate rejected "adjudicator_cost"');
+    expect(diagnostic.message).toContain('metric "agent.cost" has no recording point');
+    expect(diagnostic.message).toContain('report no data forever');
+  });
+
+  it('points at the capability and names the target that lacks it', () => {
+    const diagnostic = first(
+      alertsGateWith(NO_METRICS).diagnostics.filter(
+        (candidate) => candidate.code === IR_DIAGNOSTIC_CODES.alertsUnproduced,
+      ),
+    );
+    expect(diagnostic.hint).toContain('`metrics` capability');
+    expect(diagnostic.hint).toContain('py-fastapi');
+    expect(diagnostic.hint).toContain('`export: otlp`');
+  });
+
+  it('is silent when the target does record the series', () => {
+    // The positive control for the rule: the same document against a declaration that
+    // carries `metrics` is accepted, so the refusal above is about the target and not
+    // about the alerts.
+    const accepted = alertsGateWith({ 'py-fastapi': [...NO_METRICS['py-fastapi'], 'metrics'] });
+    expect(
+      accepted.diagnostics.filter(
+        (diagnostic) => diagnostic.code === IR_DIAGNOSTIC_CODES.alertsUnproduced,
+      ),
+    ).toEqual([]);
+  });
+
+  it('treats a target that declares nothing as recording nothing', () => {
+    // An unknown target id has no declaration at all. Silence there would be the gate
+    // assuming a recording point into existence, which is the bug it exists to stop.
+    const diagnostics = alertsGateWith({}).diagnostics.filter(
+      (diagnostic) => diagnostic.code === IR_DIAGNOSTIC_CODES.alertsUnproduced,
+    );
+    expect(diagnostics).toHaveLength(4);
   });
 });
 

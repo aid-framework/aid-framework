@@ -14,7 +14,7 @@ import { byId, first, gateFixture, messagesOf, mutateIR, onlyDiagnosticWith } fr
  * The seam layer 3 fills in. Layer 2 cannot import `packages/generator-sdk`, so a
  * target's capability declaration arrives as a gate argument.
  */
-const PYTHON = { 'py-fastapi': ['http-trigger', 'json-schema', 'otel', 'tool-calling'] };
+const PYTHON = { 'py-fastapi': ['http-trigger', 'json-schema', 'metrics', 'otel', 'tool-calling'] };
 
 describe('capability gate', () => {
   it('satisfies every capability the IR derives from its own content', () => {

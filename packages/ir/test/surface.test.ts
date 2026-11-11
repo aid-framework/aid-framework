@@ -51,7 +51,7 @@ const ir = buildFixture('full.yaml').ir;
 describe('ir/* diagnostics', () => {
   it('names every code ir/<slug>, distinct from the spec namespace', () => {
     const codes = Object.values(IR_DIAGNOSTIC_CODES);
-    expect(codes.length).toBe(93);
+    expect(codes.length).toBe(94);
     expect(new Set(codes).size).toBe(codes.length);
     for (const code of codes) {
       expect(code).toMatch(/^ir\/[a-z0-9-]+$/);
@@ -112,7 +112,7 @@ describe('the capability vocabulary', () => {
   it('declares the Phase 0 target using only vocabulary members', () => {
     expect(phase0TargetCapabilities()).toBe(PHASE_0_TARGET_CAPABILITIES);
     const declared = PHASE_0_TARGET_CAPABILITIES[DEFAULT_TARGET];
-    expect(declared).toEqual(['http-trigger', 'json-schema', 'otel', 'tool-calling']);
+    expect(declared).toEqual(['http-trigger', 'json-schema', 'metrics', 'otel', 'tool-calling']);
     for (const entry of declared ?? []) expect(isRequiredCapability(entry)).toBe(true);
   });
 

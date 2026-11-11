@@ -130,6 +130,7 @@ async def run(deps: Deps | None = None) -> EvalRun:
         build_runner(container),
         metrics(),
         runs=SAMPLES,
+        eval_id=EVAL_ID,
     )
 
 

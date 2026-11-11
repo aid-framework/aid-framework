@@ -155,6 +155,64 @@ async def test_degrade_steps_down_once_and_a_second_breach_is_a_hard_failure() -
     assert len(harness.provider.calls) == 1
 
 
+async def test_a_run_stopped_by_its_ceiling_still_publishes_what_it_spent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refusal is not a refund, and an alarm that only saw successes would lie.
+
+    The cost alarm is the thing that pages someone, so it has to move on the runs that
+    are going wrong. A guardrail block or an exhausted ceiling has already been billed by
+    the time it refuses.
+    """
+    published: list[tuple[str, float, int]] = []
+
+    def record(*, agent_id: str, cost_usd: float, tokens: int) -> None:
+        published.append((agent_id, cost_usd, tokens))
+
+    monkeypatch.setattr("aid_runtime.agents.loop.record_agent_run", record)
+
+    tool, recorder = recording_tool(answer=LONG)
+    doc = _tool_ladder(on_budget_exhausted="degrade", budget=None)
+    doc["agents"][0]["maxCostBudget"] = _projection(doc, tools=[tool])[CHEAP] * 10
+    harness = build(
+        doc,
+        tools=[tool],
+        script=[
+            ScriptedTurn.tool("search", {"query": "delivery"}),
+            ScriptedTurn.answer("unreachable"),
+        ],
+    )
+
+    with pytest.raises(BudgetExceededError):
+        await harness.runtime.run("solo", QUESTION)
+
+    assert recorder.calls == 1
+    ((agent_id, cost_usd, tokens),) = published
+    assert agent_id == "solo"
+    assert cost_usd > 0
+    assert tokens > 0
+
+
+async def test_a_run_publishes_its_spend_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same figure the caller sees, recorded once: not per step, not per attempt."""
+    published: list[tuple[str, float, int]] = []
+
+    def record(*, agent_id: str, cost_usd: float, tokens: int) -> None:
+        published.append((agent_id, cost_usd, tokens))
+
+    monkeypatch.setattr("aid_runtime.agents.loop.record_agent_run", record)
+    harness = build(
+        _ladder(on_budget_exhausted="degrade", budget=_between_dear_and_cheap()),
+        script=[ScriptedTurn.answer("two days")],
+    )
+
+    result = await harness.runtime.run("solo", QUESTION)
+
+    assert published == [("solo", result.cost_usd, result.total_tokens)]
+
+
 async def test_the_degrade_is_visible_on_the_agent_span() -> None:
     tracer, exporter = _tracer()
     ceiling = _between_dear_and_cheap()

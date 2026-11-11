@@ -82,6 +82,7 @@ export const IR_DIAGNOSTIC_CODES = {
   promotionApproval: 'ir/promotion-approval',
   feedbackPii: 'ir/feedback-pii',
   alertsUnexported: 'ir/alerts-unexported',
+  alertsUnproduced: 'ir/alerts-unproduced',
   alertsAggregate: 'ir/alerts-aggregate',
   alertsSource: 'ir/alerts-source',
   gateFailed: 'ir/gate-failed',

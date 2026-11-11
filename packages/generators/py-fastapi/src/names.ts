@@ -250,6 +250,9 @@ export const TARGET_WIRED_CAPABILITIES: Readonly<Record<string, string>> = {
   'cursor-memory':
     'the memory tiers in the emitted document, served by the runtime memory store the ' +
     'agent runtime is built over',
+  metrics:
+    'the metric exporter generated in app/generated/observability.py, which' +
+    " publishes the series the document's alerts watch",
 };
 
 /** A target-capability declaration read three ways, so no promise goes unaccounted for. */

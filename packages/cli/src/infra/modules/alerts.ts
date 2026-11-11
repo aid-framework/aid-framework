@@ -8,19 +8,19 @@
  *
  * ## The series these alarms watch
  *
- * Every metric name is one of the four the deploy plan derives -- `agent.cost`,
- * `agent.tokens`, `eval.cost`, `eval.latency.p95` -- published into one namespace this
- * module also exports. The names are not invented here: `ALERT_METRICS` is asserted equal
- * to `DeployAlarm['metric']`, so an alarm cannot watch a series nothing produces.
+ * Every metric name is one of the four the runtime records -- `agent.cost`,
+ * `agent.tokens`, `eval.cost`, `eval.latency.p95` -- and those four leave over the same
+ * opt-in OTLP stream as the spans. The names are not invented here: `ALERT_METRICS` is
+ * asserted equal to `DeployAlarm['metric']`, and `ir/alerts-unproduced` refuses a document
+ * whose target records none of them, so an alarm cannot watch a series nothing produces.
  *
  * ## What it deliberately does not do
  *
- * - **Run the collector.** The runtime exports spans over OTLP; something has to turn
- *   those spans into a metric series before an alarm can watch one, and that something is
- *   an OpenTelemetry Collector the operator runs. AID exports `metric_namespace` for
- *   exactly this reason: the collector's metric exporter is configured against it, and
- *   the two cannot silently disagree. Generating a collector deployment is not built, and
- *   the CLI reference says so.
+ * - **Run the collector or the receiver.** The runtime exports the four series over OTLP;
+ *   what receives them -- a Collector, or a backend that accepts OTLP directly -- is the
+ *   operator's to run and pay for. AID exports `metric_namespace` for exactly this reason:
+ *   the receiver's metric exporter is configured against it, and the two cannot silently
+ *   disagree. Generating a collector deployment is not built, and the CLI reference says so.
  * - **Page anyone.** An alarm with no action notifies no one, and a notification channel
  *   is an operator's account detail -- the same reason `audit_bucket_name` is an input.
  *   `alert_channel_ids` carries it, and an empty list creates the alarm without a

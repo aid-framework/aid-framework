@@ -301,6 +301,7 @@ function runBuilder(samples: number, judged: boolean): string {
     `${INDENT}${INDENT}build_runner(container),`,
     judged ? `${INDENT}${INDENT}metrics(judge_call),` : `${INDENT}${INDENT}metrics(),`,
     `${INDENT}${INDENT}runs=SAMPLES,`,
+    `${INDENT}${INDENT}eval_id=EVAL_ID,`,
     `${INDENT})`,
   ]
     .filter((line): line is string => line !== undefined)
@@ -668,6 +669,7 @@ function runBuilderForRetrieval(samples: number): string {
     `${INDENT}${INDENT}runs=SAMPLES,`,
     `${INDENT}${INDENT}dataset=dataset.name,`,
     `${INDENT}${INDENT}dataset_version=dataset.version,`,
+    `${INDENT}${INDENT}eval_id=EVAL_ID,`,
     `${INDENT})`,
   ].join('\n');
 }

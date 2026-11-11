@@ -243,6 +243,35 @@ async def test_a_case_without_a_reference_says_so_in_the_judge_prompt() -> None:
     assert "Reference: <not provided>" in prompts[0]
 
 
+async def test_evaluate_once_publishes_under_the_declared_eval_id(
+    dataset: Dataset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One suite is one series: an alarm on the suite must not be split per case."""
+    published: list[tuple[str, float, float]] = []
+
+    def record(*, eval_id: str, cost_usd: float, latency_ms: float) -> None:
+        published.append((eval_id, cost_usd, latency_ms))
+
+    monkeypatch.setattr("aid_runtime.evals.runner.record_eval_case", record)
+
+    await evaluate_once(
+        dataset,
+        _scripted(
+            {
+                "capital-fr": "paris",
+                "capital-jp": "tokyo",
+                "capital-pe": "peru",
+                "capital-ke": "nairobi",
+            }
+        ),
+        [ExactMatch()],
+        eval_id="capitals-quality",
+    )
+
+    assert [entry[0] for entry in published] == ["capitals-quality"] * len(list(dataset.ids()))
+    assert all(latency_ms >= 0.0 for _, _, latency_ms in published)
+
+
 async def test_evaluate_once_scores_every_case_with_every_metric(dataset: Dataset) -> None:
     replies = {
         "capital-fr": "paris",

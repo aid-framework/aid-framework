@@ -65,6 +65,7 @@ export const PY_FASTAPI_MANIFEST_INPUT: GeneratorManifestInput = {
     'guardrails',
     'agents',
     'cursor-memory',
+    'metrics',
   ],
   emitsAgainst: {
     structuredOutput: 'pydantic',

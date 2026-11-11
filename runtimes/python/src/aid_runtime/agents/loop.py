@@ -89,6 +89,7 @@ from aid_runtime.errors import (
     ToolPermissionError,
 )
 from aid_runtime.gateway import ModelGateway
+from aid_runtime.metrics import record_agent_run
 from aid_runtime.providers.base import Provider
 from aid_runtime.tools import Tool, ToolExecutor
 from aid_runtime.tracing import agent_span, record_attributes, record_guardrail, record_hitl
@@ -274,11 +275,17 @@ class AgentRuntime:
         )
         start_cost = self._gateway.ledger.cost_usd
         start_tokens = self._gateway.ledger.total_tokens
-        outcome = await self._drive(
-            frame,
-            principal=principal if principal is not None else Principal(),
-            memory_key=key,
-        )
+        try:
+            outcome = await self._drive(
+                frame,
+                principal=principal if principal is not None else Principal(),
+                memory_key=key,
+            )
+        except BaseException:
+            # A run stopped by a guardrail or an exhausted ceiling was already billed.
+            # The refusal is re-raised unchanged: publishing the spend is not a recovery.
+            self._publish_spend(agent.id, start_cost, start_tokens)
+            raise
         return self._wrap(outcome, start_cost, start_tokens)
 
     async def resume(
@@ -293,11 +300,16 @@ class AgentRuntime:
         self._restore_ledger(checkpoint)
         start_cost = self._gateway.ledger.cost_usd
         start_tokens = self._gateway.ledger.total_tokens
-        outcome = await self._resume(
-            checkpoint,
-            resolved,
-            principal if principal is not None else Principal(),
-        )
+        try:
+            outcome = await self._resume(
+                checkpoint,
+                resolved,
+                principal if principal is not None else Principal(),
+            )
+        except BaseException:
+            # Same rule as `run`: a resumed run that fails has been billed too.
+            self._publish_spend(checkpoint.agent_id, start_cost, start_tokens)
+            raise
         return self._wrap(outcome, start_cost, start_tokens)
 
     async def _resume(
@@ -1238,18 +1250,35 @@ class AgentRuntime:
         )
 
     def _wrap(self, outcome: _Outcome, start_cost: float, start_tokens: int) -> RunResult:
-        ledger = self._gateway.ledger
+        cost_usd, total_tokens = self._publish_spend(outcome.agent_id, start_cost, start_tokens)
         return RunResult(
             status=outcome.status,
             agent_id=outcome.agent_id,
             answer=outcome.answer,
             steps=tuple(outcome.steps),
             path=outcome.path,
-            cost_usd=round(max(ledger.cost_usd - start_cost, 0.0), 6),
-            total_tokens=max(ledger.total_tokens - start_tokens, 0),
+            cost_usd=cost_usd,
+            total_tokens=total_tokens,
             checkpoint=outcome.checkpoint,
             guardrails=outcome.guardrails,
         )
+
+    def _publish_spend(
+        self, agent_id: str, start_cost: float, start_tokens: int
+    ) -> tuple[float, int]:
+        """Record what a run spent since ``start_*`` and return the same figures.
+
+        Every run is assembled here, on both engines, so this is the one place a run's
+        spend is published without counting a turn twice. It is called from the exception
+        paths as well: a run stopped by a guardrail or an exhausted budget has already
+        been billed, and a budget alarm that only saw successful runs would under-report
+        exactly when guardrails are firing.
+        """
+        ledger = self._gateway.ledger
+        cost_usd = round(max(ledger.cost_usd - start_cost, 0.0), 6)
+        total_tokens = max(ledger.total_tokens - start_tokens, 0)
+        record_agent_run(agent_id=agent_id, cost_usd=cost_usd, tokens=total_tokens)
+        return cost_usd, total_tokens
 
 
 def _budget_of(thread: ThreadMemory) -> int:

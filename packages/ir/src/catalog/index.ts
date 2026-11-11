@@ -67,9 +67,13 @@ export type TargetCapabilityDeclarations = Record<string, readonly string[]>;
 /**
  * The Phase 0 reference declaration. Layer 3 replaces this with real generator
  * declarations; nothing else about the capability gate changes.
+ *
+ * `metrics` belongs here because the gate that refuses an alarm over an unrecorded series
+ * reads this list when no real declaration is injected: without it the reference target
+ * would look like it records nothing, and every document with alarms would be refused.
  */
 export const PHASE_0_TARGET_CAPABILITIES: Record<string, readonly RequiredCapability[]> = {
-  'py-fastapi': ['http-trigger', 'json-schema', 'otel', 'tool-calling'],
+  'py-fastapi': ['http-trigger', 'json-schema', 'metrics', 'otel', 'tool-calling'],
 };
 
 export function phase0TargetCapabilities(): TargetCapabilityDeclarations {

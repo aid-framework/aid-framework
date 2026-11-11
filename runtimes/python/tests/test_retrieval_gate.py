@@ -554,6 +554,58 @@ async def test_sampling_produces_one_value_per_metric_per_run() -> None:
     assert not run.is_varying()
 
 
+async def test_a_sample_publishes_under_the_declared_eval_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The alarm is scoped to a declared eval, so the series must carry that id."""
+    published: list[tuple[str, float, float]] = []
+
+    def record(*, eval_id: str, cost_usd: float, latency_ms: float) -> None:
+        published.append((eval_id, cost_usd, latency_ms))
+
+    monkeypatch.setattr("aid_runtime.retrieval.gate.record_eval_case", record)
+    retriever = make_retriever(top_k=1)
+    await retriever.ingest([document("expected.md", EXPECTED_TEXT)])
+    cases = [retrieval_case("basics", "how do I install?", ["expected.md"], k=1)]
+
+    await make_gate().sample(
+        cases,
+        retriever,
+        runs=RUNS,
+        dataset=DATASET,
+        dataset_version=DATASET_VERSION,
+        eval_id="support-quality",
+    )
+
+    # One publication per case per run: each repetition is its own observation.
+    assert [entry[0] for entry in published] == ["support-quality"] * RUNS
+    assert all(cost_usd == 0.0 for _, cost_usd, _ in published)
+    assert all(latency_ms >= 0.0 for _, _, latency_ms in published)
+
+
+async def test_a_sample_without_a_declared_eval_falls_back_to_its_dataset_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Hand-written harnesses call the gate directly and have no declared eval to name.
+    published: list[str] = []
+    monkeypatch.setattr(
+        "aid_runtime.retrieval.gate.record_eval_case",
+        lambda *, eval_id, cost_usd, latency_ms: published.append(eval_id),
+    )
+    retriever = make_retriever(top_k=1)
+    await retriever.ingest([document("expected.md", EXPECTED_TEXT)])
+
+    await make_gate().sample(
+        [retrieval_case("basics", "how do I install?", ["expected.md"], k=1)],
+        retriever,
+        runs=RUNS,
+        dataset=DATASET,
+        dataset_version=DATASET_VERSION,
+    )
+
+    assert published == [DATASET] * RUNS
+
+
 async def test_sampling_needs_cases_runs_and_metrics() -> None:
     retriever = make_retriever()
     cases = [retrieval_case("basics", "q", ["a.md"], k=1)]

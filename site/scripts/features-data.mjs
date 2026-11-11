@@ -441,6 +441,17 @@ export const SHIPPED_FEATURES = [
     since: '0.1.150',
   },
   {
+    id: 'metrics-series',
+    title: 'The series the alarms watch, recorded and exported',
+    detail:
+      'Four series -- `agent.cost`, `agent.tokens`, `eval.cost` and `eval.latency.p95` -- are recorded by `aid-runtime-python` and leave by the same opt-in export as the spans: `configure_metrics()` installs an OTLP/HTTP reader and the generated `metrics_export_status()` reports where it went. A run stopped by a guardrail or an exhausted ceiling publishes what it spent before the refusal propagates, and an eval suite publishes one `eval.cost` and one `eval.latency.p95` sample per case per run under the declared eval id, so the series an alarm filters on is the eval the spec declares. An alert over a series the target does not record is refused by `ir/alerts-unproduced` rather than shipped as an alarm that would never fire; ts-vercel records none and refuses all four.',
+    declaredBy: 'observability',
+    href: './reference/spec.md#observability',
+    // The series are recorded only by py-fastapi, and the row says "recorded and exported"
+    // rather than "your dashboard fills in": the collector and the dashboards stay yours.
+    since: '0.1.152',
+  },
+  {
     id: 'fleet-report',
     title: 'A report across every deployment',
     detail:
@@ -717,13 +728,20 @@ export const REFUSALS = [
   },
   {
     id: 'alert-without-an-export',
-    title: 'An alarm over spans that never leave the process',
+    title: 'An alarm whose series never leave the process',
     reason:
-      'An alarm watches a metric, and the runtime publishes no metrics at all: the only telemetry it emits is spans. A document that declares `observability.alerts` without `export: otlp` is therefore refused by the `observability/alerts` gate, because the emitted alarm would watch a series that is never produced and stay silent forever -- which reads as health.',
+      'An alarm watches a metric, so the series has to be recorded and has to leave. A document that declares `observability.alerts` without `export: otlp` is refused by the `observability/alerts` gate, because the emitted alarm would watch a series that is recorded into a process that never sends it and stay silent forever -- which reads as health.',
     code: 'ir/alerts-unexported',
   },
   {
     id: 'alert-over-a-series-nothing-produces',
+    title: 'An alarm over a series this build never writes',
+    reason:
+      'A series is only real where the generated runtime writes it, so an alarm over a metric the build does not record is refused by `ir/alerts-unproduced` rather than emitted as an alarm that reports no data forever. The diagnostic names the metric, the target that would have written nothing, and the capability plus `export: otlp` the document needs. py-fastapi records all four -- `agent.cost`, `agent.tokens`, `eval.cost` and `eval.latency.p95` -- while a target that records none refuses every alert in the document.',
+    code: 'ir/alerts-unproduced',
+  },
+  {
+    id: 'alert-aggregate-mismatch',
     title: 'An alarm whose reduction the series cannot answer',
     reason:
       'Alerts are limited to the four metrics the deploy plan derives, and each declares which reductions make sense for it. A `p95` over a cost total, or an `average` over a per-eval spend, is refused rather than emitted as an alarm that fires on a quantity nobody meant -- the diagnostic names the metric and the reductions it does support.',
@@ -859,6 +877,7 @@ export const CAPABILITY_FAMILIES = [
     featureIds: [
       'traces',
       'cost-metric',
+      'metrics-series',
       'observability-export',
       'generated-alarms',
       'fleet-report',
