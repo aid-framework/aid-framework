@@ -80,15 +80,21 @@ jobs:
       - name: Check accessibility
         run: pnpm docs:a11y
 
-      # Playwright is a devDependency of the site package, so its browser is fetched here
-      # rather than in a postinstall hook that the workspace deliberately blocks.
-      - name: Install browser
-        run: pnpm --filter @aid-framework/docs exec playwright install --with-deps chromium
+      # The behaviour check drives the Google Chrome the runner image already ships, rather
+      # than Playwright's Chromium. Playwright's Chromium needs `--with-deps`, which shells
+      # out to apt and resolves through this runner's `azure.archive.ubuntu.com` mirror; when
+      # that mirror is down the job dies in apt and never reaches the browser, which reads as
+      # a Chromium problem and is not one. The installed Chrome needs none of that, and
+      # `A11Y_BROWSER_CHANNEL` already exists to select it, so nothing is fetched here.
+      - name: Confirm Chrome is available
+        run: google-chrome --version
 
-      # The part `docs:a11y` cannot do: loads every emitted page in Chromium, runs axe over
+      # The part `docs:a11y` cannot do: loads every emitted page in Chrome, runs axe over
       # the hydrated DOM in light and dark, and drives the skip link, search dialog, mobile
       # navigation and appearance switch from the keyboard.
       - name: Check accessibility in a browser
+        env:
+          A11Y_BROWSER_CHANNEL: chrome
         run: pnpm docs:browser
 
       - name: Configure Pages
