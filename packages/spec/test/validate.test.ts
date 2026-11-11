@@ -53,7 +53,7 @@ describe('spec version', () => {
     expect(SPEC_VERSION_LATEST).toBe(SUPPORTED_SPEC_VERSIONS[SUPPORTED_SPEC_VERSIONS.length - 1]);
   });
 
-  it('lists the nineteen supported sections, nine of which need a later version', () => {
+  it('lists the twenty supported sections, ten of which need a later version', () => {
     expect([...SUPPORTED_SECTIONS].sort()).toEqual([
       'agents',
       'decisions',
@@ -64,6 +64,7 @@ describe('spec version', () => {
       'knowledgeBases',
       'memory',
       'models',
+      'observability',
       'pipelines',
       'profile',
       'project',
@@ -77,8 +78,9 @@ describe('spec version', () => {
     ]);
     // The version boundary, named explicitly: four sections are supported from 0.2,
     // `decisions` from 0.6, `knowledgeBases` from 0.12, `gateways` from 0.24, `profile`
-    // from 0.25 and `state` from 0.26. A section that gains a minimum version without
-    // appearing here would be enforced by the schema and quietly refused by the scope rule.
+    // from 0.25, `state` from 0.26 and `observability` from 0.27. A section that gains a
+    // minimum version without appearing here would be enforced by the schema and quietly
+    // refused by the scope rule.
     expect(SECTION_MIN_VERSION).toEqual({
       agents: '0.2',
       decisions: '0.6',
@@ -87,6 +89,7 @@ describe('spec version', () => {
       guardrails: '0.2',
       knowledgeBases: '0.12',
       memory: '0.2',
+      observability: '0.27',
       profile: '0.25',
       state: '0.26',
     });
@@ -135,9 +138,10 @@ describe('valid fixtures', () => {
 
   it('accepts every section declared as supported', () => {
     // No single fixture carries every section: four require spec 0.2, `decisions` needs
-    // 0.6, `knowledgeBases` needs 0.12, `gateways` needs 0.24, `profile` needs 0.25, and the
-    // v0.1 fixture is the byte-identical baseline this layer must leave alone. The union is
-    // the assertion, so a supported section that no valid fixture carries fails here.
+    // 0.6, `knowledgeBases` needs 0.12, `gateways` needs 0.24, `profile` needs 0.25, the
+    // 0.26 controls need 0.26 and `observability` needs 0.27, and the v0.1 fixture is the
+    // byte-identical baseline this layer must leave alone. The union is the assertion, so a
+    // supported section that no valid fixture carries fails here.
     const fixtureNames = [
       'valid/full.spec.yaml',
       'valid/v02-sections.spec.yaml',
@@ -146,11 +150,13 @@ describe('valid fixtures', () => {
       'valid/v24-gateways.spec.yaml',
       'valid/v25-profile.spec.yaml',
       'valid/v26-controls.spec.yaml',
+      'valid/v27-observability.spec.yaml',
     ] as const;
     const documents = fixtureNames.map(
       (name) => checkSpecText(readFixture(name)).value as Record<string, unknown>,
     );
-    const [v01, v02, v06, v12, v24, v25, v26] = documents as [
+    const [v01, v02, v06, v12, v24, v25, v26, v27] = documents as [
+      Record<string, unknown>,
       Record<string, unknown>,
       Record<string, unknown>,
       Record<string, unknown>,
@@ -175,7 +181,8 @@ describe('valid fixtures', () => {
             section !== 'knowledgeBases' &&
             section !== 'gateways' &&
             section !== 'profile' &&
-            section !== 'state',
+            section !== 'state' &&
+            section !== 'observability',
         )
         .sort(),
     );
@@ -196,6 +203,22 @@ describe('valid fixtures', () => {
       'deployments',
       'guardrails',
       'models',
+      'pipelines',
+      'profile',
+      'project',
+      'prompts',
+      'specVersion',
+      'state',
+      'tools',
+      'types',
+    ]);
+    expect(Object.keys(v27).sort()).toEqual([
+      'agents',
+      'deployments',
+      'evals',
+      'guardrails',
+      'models',
+      'observability',
       'pipelines',
       'profile',
       'project',
@@ -1774,6 +1797,119 @@ describe('the delivery controls', () => {
  * legal value and a trigger names one kind -- because a trigger that meant both would have
  * two routes and one deployment.
  */
+/**
+ * `observability`: where traces go, declarable from spec 0.27.
+ *
+ * The cases below cover three distinct boundaries. The version boundary (a 0.26 document
+ * must hear "0.27"), the schema's mutual requirement (`export: otlp` and `endpointEnv`
+ * need each other, and neither may be declared alone), and the agent eval target, whose
+ * version cannot live in the schema because an alternation has one version rather than
+ * one per branch.
+ */
+describe('observability', () => {
+  /** The 0.27 fixture as a mutable value, so a test can change one thing about it. */
+  function doc(): Record<string, unknown> {
+    return structuredClone(
+      checkSpecText(readFixture('valid/v27-observability.spec.yaml')).value as Record<
+        string,
+        unknown
+      >,
+    );
+  }
+
+  it('accepts the export contract from spec 0.27', () => {
+    expect(validateSpec(doc())).toEqual([]);
+  });
+
+  it('tells a 0.26 document that the section needs 0.27', () => {
+    const document = doc();
+    document.specVersion = '0.26';
+    delete document.evals;
+
+    const diagnostics = validateSpec(document);
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['observability']);
+    expect(diagnostics[0]?.message).toContain('but this specification declares version 0.26');
+    expect(diagnostics[0]?.hint).toContain('set specVersion: "0.27"');
+  });
+
+  it('tells a 0.26 document that an agent eval target needs 0.27', () => {
+    const document = doc();
+    document.specVersion = '0.26';
+    delete document.observability;
+
+    const diagnostics = validateSpec(document);
+
+    // The eval names an agent, and the agent target arrived with 0.27. The rest of the
+    // document is a valid 0.26 claim, so this is the only diagnostic.
+    expect(paths(diagnostics)).toEqual(['evals.adjudicator_trajectory.target']);
+    expect(diagnostics[0]?.message).toContain('names an agent, which requires specVersion 0.27');
+    expect(diagnostics[0]?.hint).toContain('set specVersion: "0.27"');
+    expect(diagnostics[0]?.hint).toContain('an eval that targets a pipeline is unchanged');
+  });
+
+  it('leaves a 0.26 document with a pipeline eval target alone', () => {
+    // The other half of the widening: `pipeline:` targets are unchanged, so the new
+    // alternation cannot retroactively refuse a document that already had one.
+    const document = doc();
+    document.specVersion = '0.26';
+    delete document.observability;
+    const evals = document.evals as Record<string, Record<string, unknown>>;
+    const evaluated = evals.adjudicator_trajectory ?? {};
+    evaluated.target = 'pipeline:refund';
+    // A pipeline target carries no tool calls, so the trajectory metrics come off with it.
+    evaluated.metrics = [{ kind: 'exact', field: 'text' }];
+    evals.adjudicator_trajectory = evaluated;
+
+    expect(validateSpec(document)).toEqual([]);
+  });
+
+  it('refuses an otlp export with no endpoint variable', () => {
+    const document = doc();
+    delete (document.observability as Record<string, unknown>).endpointEnv;
+
+    const diagnostics = validateSpec(document);
+
+    expect(diagnostics).toHaveLength(1);
+    expect(paths(diagnostics)).toEqual(['observability.endpointEnv']);
+  });
+
+  it('refuses an endpoint variable with no export to send to', () => {
+    const document = doc();
+    delete (document.observability as Record<string, unknown>).export;
+
+    const diagnostics = validateSpec(document);
+
+    expect(diagnostics).toHaveLength(1);
+    expect(paths(diagnostics)).toEqual(['observability.export']);
+  });
+
+  it('refuses an endpoint variable that holds an address instead of a name', () => {
+    // Following `models.*.apiKeyEnv`: the spec carries the *name*, so the same document
+    // moves between environments without edit. A URL here would be baked into the image.
+    const document = doc();
+    (document.observability as Record<string, unknown>).endpointEnv =
+      'http://collector.internal:4317';
+
+    const diagnostics = validateSpec(document);
+
+    expect(diagnostics).toHaveLength(1);
+    expect(paths(diagnostics)).toEqual(['observability.endpointEnv']);
+  });
+
+  it('accepts an in-process trace with no destination', () => {
+    // `export: none` is the shape every pre-0.27 deployment already had, and it needs no
+    // endpoint because there is nowhere to send a span.
+    const document = doc();
+    const observability = document.observability as Record<string, unknown>;
+    observability.export = 'none';
+    delete observability.endpointEnv;
+
+    expect(validateSpec(document)).toEqual([]);
+  });
+});
+
 describe('the batch surface', () => {
   /** A document with one model and one prompt, so a pipeline can have a real step list. */
   function doc(

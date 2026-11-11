@@ -74,6 +74,8 @@ export const IR_DIAGNOSTIC_CODES = {
   auditConflict: 'ir/audit-conflict',
   orchestrationDeepagents: 'ir/orchestration-deepagents',
   evalUncovered: 'ir/eval-uncovered',
+  evalTrajectory: 'ir/eval-trajectory',
+  observabilityExport: 'ir/observability-export',
   gateFailed: 'ir/gate-failed',
   policyEmpty: 'ir/policy-empty',
   policySyntax: 'ir/policy-syntax',

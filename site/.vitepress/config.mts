@@ -217,6 +217,7 @@ export default defineConfig({
             { text: 'Guarded reply', link: '/walkthroughs/guarded-reply' },
             { text: 'Enterprise profile', link: '/walkthroughs/enterprise-profile' },
             { text: 'Delivery controls', link: '/walkthroughs/delivery-controls' },
+            { text: 'Trace export and agent evals', link: '/walkthroughs/observability-export' },
           ],
         },
       ],

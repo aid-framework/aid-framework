@@ -409,6 +409,17 @@ export const SHIPPED_FEATURES = [
     // and the pause land in their own release, so this row does not claim they exist yet.
     since: '0.1.143',
   },
+  {
+    id: 'observability-export',
+    title: 'A declared place for the spans',
+    detail:
+      'Spec 0.27 gives a document an `observability` block: whether to record spans, what to redact, and whether they belong somewhere other than the process (`export: otlp`, with `endpointEnv` naming the variable that holds the collector address). The `observability/export` gate refuses an `otlp` export beside `trace: false`, and an `enterprise` profile that exports nothing, because an audit trail whose spans stay in the process is not one. AID installs no exporter, so the block states where spans belong; it does not yet send them.',
+    declaredBy: 'observability',
+    href: './reference/spec.md#observability',
+    // `trace` and `redact` are emitted; the export intent is gated, not emitted. The row
+    // must not read as "AID ships your traces".
+    since: '0.1.145',
+  },
 ];
 
 /**
@@ -490,6 +501,34 @@ export const REFUSALS = [
     reason:
       "A change-control policy is what makes a production apply reviewable, so an `enterprise` spec that deploys to production with no `deployments[].approvals` is refused. The policy is emitted as infrastructure, not read from repository settings: AID writes `infra/approvals.json` and binds it to the plan workflow, and never reads or sets a repo's protection rules.",
     code: 'ir/profile-approvals',
+  },
+  {
+    id: 'export-without-spans',
+    title: 'An OTLP export with tracing turned off',
+    reason:
+      'A destination for spans that are not recorded is a contradiction, so `export: otlp` beside `trace: false` is refused by the `observability/export` gate. AID also installs no exporter, so the block declares where spans belong rather than moving them -- and the gate is what keeps the declaration from contradicting itself while that stays true.',
+    code: 'ir/observability-export',
+  },
+  {
+    id: 'enterprise-profile-without-export',
+    title: 'An `enterprise` profile whose spans never leave the process',
+    reason:
+      'The profile promises an audit trail, and a trail that stays inside the process disappears with the process. An `enterprise` document that records spans without exporting them to a collector is refused, which is the same argument the profile already makes about a missing audit sink.',
+    code: 'ir/observability-export',
+  },
+  {
+    id: 'agent-eval-target',
+    title: 'An eval that targets an agent',
+    reason:
+      'An agent run has no single response to score: the eval runner calls one prediction per case and hands the metric a string. An `agent:` target is therefore expressible and refused, with the missing runner named -- not reported as an undeclared agent, which would send the author looking for a typo in a name spelled correctly.',
+    code: 'ir/eval-trajectory',
+  },
+  {
+    id: 'tool-trace-metric',
+    title: 'A `tool-trace` metric',
+    reason:
+      'Comparing the tool calls a run made needs a trajectory the eval runner does not carry, so the metric is refused rather than reported as unmeasured. `cost` and `latency` ceilings are still accepted, because each also sets a budget the cost gate and the deploy plan already check.',
+    code: 'ir/eval-trajectory',
   },
   {
     id: 'unsatisfiable-approval-policy',
@@ -622,9 +661,9 @@ export const CAPABILITY_FAMILIES = [
     id: 'observability',
     title: 'Observability and cost',
     pitch:
-      'A trace records what each step did and a cost metric reports what it spent, both read from the same priced profiles the budget gate enforces.',
-    declaredBy: 'traces[], aid cost',
+      'A trace records what each step did, a cost metric reports what it spent, and the `observability` block says whether those spans may leave the process at all.',
+    declaredBy: 'traces[], observability, aid cost',
     href: './reference/cli.md#trace',
-    featureIds: ['traces', 'cost-metric'],
+    featureIds: ['traces', 'cost-metric', 'observability-export'],
   },
 ];

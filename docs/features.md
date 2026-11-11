@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.26`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.27`.
 
 ## Deployment targets
 
@@ -352,6 +352,14 @@ Spec 0.26 declares the controls an enterprise delivery is held to: a `state` sto
 - **Reference:** [spec](./reference/spec.md#top-level-keys)
 - **Since:** `0.1.143`
 
+### A declared place for the spans
+
+Spec 0.27 gives a document an `observability` block: whether to record spans, what to redact, and whether they belong somewhere other than the process (`export: otlp`, with `endpointEnv` naming the variable that holds the collector address). The `observability/export` gate refuses an `otlp` export beside `trace: false`, and an `enterprise` profile that exports nothing, because an audit trail whose spans stay in the process is not one. AID installs no exporter, so the block states where spans belong; it does not yet send them.
+
+- **Turned on by:** `observability`
+- **Reference:** [spec](./reference/spec.md#observability)
+- **Since:** `0.1.145`
+
 ## Refused, on purpose
 
 An absent capability is stated once, here, with the diagnostic that enforces it, instead of being discovered during an apply or debugged in production.
@@ -415,6 +423,30 @@ The `network` block requires `private` to be stated, so a spec that omits it is 
 A change-control policy is what makes a production apply reviewable, so an `enterprise` spec that deploys to production with no `deployments[].approvals` is refused. The policy is emitted as infrastructure, not read from repository settings: AID writes `infra/approvals.json` and binds it to the plan workflow, and never reads or sets a repo's protection rules.
 
 - **Enforced by:** `ir/profile-approvals`
+
+### An OTLP export with tracing turned off
+
+A destination for spans that are not recorded is a contradiction, so `export: otlp` beside `trace: false` is refused by the `observability/export` gate. AID also installs no exporter, so the block declares where spans belong rather than moving them -- and the gate is what keeps the declaration from contradicting itself while that stays true.
+
+- **Enforced by:** `ir/observability-export`
+
+### An `enterprise` profile whose spans never leave the process
+
+The profile promises an audit trail, and a trail that stays inside the process disappears with the process. An `enterprise` document that records spans without exporting them to a collector is refused, which is the same argument the profile already makes about a missing audit sink.
+
+- **Enforced by:** `ir/observability-export`
+
+### An eval that targets an agent
+
+An agent run has no single response to score: the eval runner calls one prediction per case and hands the metric a string. An `agent:` target is therefore expressible and refused, with the missing runner named -- not reported as an undeclared agent, which would send the author looking for a typo in a name spelled correctly.
+
+- **Enforced by:** `ir/eval-trajectory`
+
+### A `tool-trace` metric
+
+Comparing the tool calls a run made needs a trajectory the eval runner does not carry, so the metric is refused rather than reported as unmeasured. `cost` and `latency` ceilings are still accepted, because each also sets a budget the cost gate and the deploy plan already check.
+
+- **Enforced by:** `ir/eval-trajectory`
 
 ### An approval policy that names fewer reviewers than it requires
 

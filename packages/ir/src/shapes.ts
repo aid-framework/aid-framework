@@ -24,11 +24,12 @@ import type { PredicateNode } from './predicate/index.js';
  * A minor bump is a shape the IR gained, not a shape it lost: `0.2.0` adds the top-level
  * `profile` and the placement keys on a deployment (`cloud`, `region`, `audit`); `0.3.0`
  * adds the top-level `state` store, the `identity`/`network`/`approvals` controls on a
- * deployment, `agents[].state` and a tool step's `requiresApproval`. Every field is
- * additive, so a consumer written against `0.1.0` reads a `0.3.0` document without
- * change -- it simply does not see the new keys.
+ * deployment, `agents[].state` and a tool step's `requiresApproval`; `0.4.0` adds
+ * `observability.export` and `observability.endpointEnv`, and admits `agent` as an eval
+ * target kind. Every field is additive, so a consumer written against `0.1.0` reads a
+ * `0.4.0` document without change -- it simply does not see the new keys.
  */
-export const IR_VERSION = '0.3.0';
+export const IR_VERSION = '0.4.0';
 
 export const PRIMITIVE_TYPES = ['string', 'number', 'integer', 'boolean'] as const;
 
@@ -440,6 +441,14 @@ export interface ErrorPolicy {
 export interface ObservabilityShape {
   trace: boolean;
   redact: string[];
+  /**
+   * Where spans go: `none` keeps them in-process, `otlp` declares that they should leave
+   * for a collector. Absent means `none`, which is what every document before spec 0.27
+   * meant, so an undeclared export leaves the property off rather than writing a default.
+   */
+  export?: 'otlp' | 'none';
+  /** The *name* of the environment variable holding the collector address, never a URL. */
+  endpointEnv?: string;
 }
 
 export interface PipelineShape {
@@ -454,7 +463,7 @@ export interface PipelineShape {
   observability: ObservabilityShape;
 }
 
-export const EVAL_TARGET_KINDS = ['pipeline', 'prompt'] as const;
+export const EVAL_TARGET_KINDS = ['pipeline', 'prompt', 'agent'] as const;
 
 export type EvalTargetKind = (typeof EVAL_TARGET_KINDS)[number];
 
@@ -1427,7 +1436,13 @@ export const IR_ONLY_COLLECTIONS = ['embeddings'] as const;
  * Together with `POPULATED_COLLECTION_BY_SECTION` these account for every
  * `SUPPORTED_SECTIONS` entry exactly once.
  */
-export const NON_COLLECTION_SECTIONS = ['specVersion', 'profile', 'project', 'state'] as const;
+export const NON_COLLECTION_SECTIONS = [
+  'specVersion',
+  'profile',
+  'project',
+  'state',
+  'observability',
+] as const;
 
 /**
  * Providers the shipped runtime adapters can actually serve. The IR's `Provider`

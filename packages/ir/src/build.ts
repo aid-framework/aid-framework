@@ -1846,7 +1846,7 @@ export function buildEvalTarget(raw: unknown): EvalTarget {
   }
   const kind = match[1] as string;
   const id = match[2] as string;
-  if (kind !== 'pipeline' && kind !== 'prompt') {
+  if (kind !== 'pipeline' && kind !== 'prompt' && kind !== 'agent') {
     return { kind: 'pipeline', id, qualified, valid: false };
   }
   return { kind, id, qualified, valid: true };
@@ -1979,20 +1979,36 @@ export function templatePlaceholders(template: string): string[] {
  * `redact` to the sensitive set. An explicit `redact` therefore wins, which is
  * what lets the security gate catch a trace config that narrows it too far.
  */
+/**
+ * A trace config with no `export` inherits the enclosing one exactly like `trace` and
+ * `redact` do: a pipeline that narrows its redactions keeps recording where the project
+ * records. `export` is written only when something declared it, so every IR built from a
+ * document before spec 0.27 serializes byte-identically.
+ */
 function buildObservability(
   raw: unknown,
   sensitive: readonly string[],
   inherited?: ObservabilityShape,
 ): ObservabilityShape {
-  const fallbackRedact = inherited === undefined ? [...sensitive] : [...inherited.redact];
-  const record = asRecord(raw);
-  if (record === undefined) {
-    return { trace: inherited?.trace ?? DEFAULT_OBSERVABILITY.trace, redact: fallbackRedact };
-  }
-  return {
+  // The top-level call is the only one that owns a process. A pipeline inherits when to
+  // trace and what to redact; it does not inherit where spans are shipped, because a
+  // pipeline inside a process does not ship them, and duplicating the destination onto
+  // every pipeline would claim a decision each pipeline never made.
+  const processWide = inherited === undefined;
+  const record = asRecord(raw) ?? {};
+  const declared = asString(record.export);
+  const endpointEnv = asString(record.endpointEnv);
+  const shape: ObservabilityShape = {
     trace: asBoolean(record.trace) ?? inherited?.trace ?? DEFAULT_OBSERVABILITY.trace,
-    redact: Array.isArray(record.redact) ? asStringArray(record.redact) : fallbackRedact,
+    redact: Array.isArray(record.redact)
+      ? asStringArray(record.redact)
+      : [...(inherited?.redact ?? sensitive)],
   };
+  if (processWide) {
+    if (declared === 'otlp' || declared === 'none') shape.export = declared;
+    if (endpointEnv !== undefined) shape.endpointEnv = endpointEnv;
+  }
+  return shape;
 }
 
 export function asRecord(value: unknown): Record<string, unknown> | undefined {

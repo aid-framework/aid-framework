@@ -664,7 +664,15 @@
       "required": ["trace", "redact"],
       "properties": {
         "trace": { "type": "boolean" },
-        "redact": { "type": "array", "items": { "type": "string" } }
+        "redact": { "type": "array", "items": { "type": "string" } },
+        "export": {
+          "enum": ["otlp", "none"],
+          "description": "Where spans go. Absent when no document declared it, which is what every document before spec 0.27 meant, so the property is written only when it was stated."
+        },
+        "endpointEnv": {
+          "type": "string",
+          "description": "The name of the environment variable holding the collector address, never the address itself."
+        }
       }
     },
     "pipeline": {
@@ -686,7 +694,7 @@
       "additionalProperties": false,
       "required": ["kind", "id", "qualified", "valid"],
       "properties": {
-        "kind": { "enum": ["pipeline", "prompt"] },
+        "kind": { "enum": ["pipeline", "prompt", "agent"] },
         "id": { "type": "string" },
         "qualified": { "type": "string" },
         "valid": {

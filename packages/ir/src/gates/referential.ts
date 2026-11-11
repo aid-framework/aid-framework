@@ -702,11 +702,16 @@ function checkEvals(ir: IR, scope: Scope, diagnostics: IrDiagnostic[], report: R
           code: IR_DIAGNOSTIC_CODES.evalTargetInvalid,
           message: `the referential gate rejected this target: "${evalShape.target.qualified}" is not a "kind:id" pair naming a known kind`,
           path,
-          hint: 'Phase 0 accepts "pipeline:<id>" or "prompt:<id>"',
+          hint: 'accepts "pipeline:<id>", "prompt:<id>" or "agent:<id>"',
         }),
       );
     } else {
-      const expected: Namespace = evalShape.target.kind === 'pipeline' ? 'pipelines' : 'prompts';
+      const expected: Namespace =
+        evalShape.target.kind === 'pipeline'
+          ? 'pipelines'
+          : evalShape.target.kind === 'agent'
+            ? 'agents'
+            : 'prompts';
       if (!scope.names[expected].has(evalShape.target.id)) {
         reportRef(evalShape.target.id, expected, scope, path, diagnostics, report);
       }

@@ -32,6 +32,7 @@ Spec schema title: *AID Framework spec v0.6*.
 | `memory` | map of `memory` | Memory tiers: what is remembered, for how long, within what token budget, and where it lives. Declarable from spec v0.2; the kinds a target cannot serve are refused by its plan gate rather than approximated. |
 | `deployments` | map of `deployment` | Deployment intents: the target shape, the transport it assumes, and the secrets it needs. Declarable from spec v0.2. `streaming: true` derives a `streaming` requirement; both `py-fastapi` and `ts-vercel` declare that capability and answer an `Accept: text/event-stream` request with SSE frames, and a target that declares nothing is refused by the deploy gate. |
 | `evals` | map of `eval` | — |
+| `observability` | `observability` | — |
 | `pipelines` | map of `pipeline` | — |
 
 `specVersion` must be one of the versions in the [spec version changelog](./spec-changelog.md), which lists what each version adds.
@@ -336,7 +337,7 @@ An MCP server the gateway proxies: the app reaches one gateway URL and the platf
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `target` | `string` | yes | Only pipelines are evaluable in Phase 0. |
+| `target` | `string` | yes | What the eval scores. `pipeline:&lt;id&gt;` scores a pipeline's HTTP response through its declared route. `agent:&lt;id&gt;` (0.27) names an agent run, which is what a trajectory metric would need; the syntax is accepted so a document can say what it means, and the `evals/trajectory` gate refuses it with `ir/eval-trajectory` until the eval runner carries a trajectory rather than a response string. |
 | `dataset` | object (fields below) | yes | — |
 | `metrics` | array of `metric` | yes | — |
 | `gate` | object (fields below) | no | How this eval's result is compared against the committed baseline. Never an equality check: sampling noise is expected, so the gate is a threshold on the regression relative to the baseline. |
@@ -804,6 +805,17 @@ A durable run store, so a paused or long-running run outlives the process that s
 | `kind` | `postgres`, `sqlite` | yes | `postgres` is a database the customer runs and names through `urlEnv`; `sqlite` is a file, which survives a restart only on a mounted volume and is therefore refused for `target: container` without one. |
 | `urlEnv` | `string` | yes | The environment variable holding the connection string or file path. A name, never a value. |
 | `ttlHours` | `integer` | no | How long a saved run is kept before the store may delete it. Omitted means no expiry, which is accepted and documented rather than defaulted. |
+
+## `observability`
+
+How much the generated app records about a run, and where it goes. Omitted entirely, tracing is on with the sensitive fields the security gate derives redacted and nothing exported, which is the behaviour every document before 0.27 already had. `export: otlp` declares intent rather than a transport: the generated app reports the destination and reads the address from the environment, and installing an exporter stays a host decision, because a runtime library that installed one would decide telemetry for every application embedding it.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `trace` | `boolean` | no | Whether spans are recorded at all. Defaults to true. Turning it off under `profile: enterprise` is refused, and turning it off while declaring `export: otlp` is refused as a contradiction rather than resolved in either direction. |
+| `redact` | array of `string` | no | The fields to strip from a span before it leaves the process. Omitted, this defaults to every field the security gate derives as sensitive, and the security gate still refuses a declared set that drops one. Naming a field the IR does not mark sensitive is accepted: a spec may be stricter than the derived set, never looser. |
+| `export` | `otlp`, `none` | no | `none` records spans in-process only, which is what every document before 0.27 did. `otlp` declares that they should leave for an OTLP collector, and requires `endpointEnv`, because an export with no destination is a promise to nobody. Refused under `profile: enterprise` with `none`: an enterprise deployment that keeps no trace cannot answer the audit question the profile promises. |
+| `endpointEnv` | `string` | no | The environment variable holding the collector's address. A name, never a URL: following `models.*.apiKeyEnv`, the address stays in the platform so a spec can move between environments without edit. Only meaningful with `export: otlp`, which the schema requires rather than defaulting. |
 
 ## `image`
 
