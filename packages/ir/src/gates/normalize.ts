@@ -76,6 +76,7 @@ function normalizeObservability(
   raw: ObservabilityShape | undefined,
   inherited: readonly string[],
 ): ObservabilityShape {
+  const feedback = raw?.feedback;
   return {
     trace: raw?.trace ?? DEFAULT_OBSERVABILITY.trace,
     redact: [...(raw?.redact ?? inherited)],
@@ -83,6 +84,21 @@ function normalizeObservability(
     // defaulting either would invent a promise the author never made.
     ...(raw?.export === undefined ? {} : { export: raw.export }),
     ...(raw?.endpointEnv === undefined ? {} : { endpointEnv: raw.endpointEnv }),
+    // A feedback intake carries no default this layer can materialize: whether a store
+    // persists and how long it is kept are the declaration itself, so the block is carried
+    // through as written rather than filled in.
+    ...(feedback === undefined
+      ? {}
+      : {
+          feedback: {
+            signals: feedback.signals.map((signal) => ({ ...signal })),
+            redact: [...feedback.redact],
+            ...(feedback.retentionDays === undefined
+              ? {}
+              : { retentionDays: feedback.retentionDays }),
+            ...(feedback.persistent === undefined ? {} : { persistent: feedback.persistent }),
+          },
+        }),
   };
 }
 
@@ -172,6 +188,28 @@ function normalizeEval(evalShape: EvalShape): EvalShape {
       maxRegression: evalShape.gate.maxRegression ?? DEFAULT_EVAL_MAX_REGRESSION,
       samples: evalShape.gate.samples ?? DEFAULT_EVAL_SAMPLES,
       ...(evalShape.gate.minMean === undefined ? {} : { minMean: evalShape.gate.minMean }),
+      // The promotion policy is carried through as written: `allowedQualityDrop` and the
+      // baseline are required by the schema, and the optional halves stay absent when the
+      // document did not state them.
+      ...(evalShape.gate.promotion === undefined
+        ? {}
+        : {
+            promotion: {
+              allowedQualityDrop: evalShape.gate.promotion.allowedQualityDrop,
+              baseline: { ...evalShape.gate.promotion.baseline },
+              ...(evalShape.gate.promotion.allowedCostIncrease === undefined
+                ? {}
+                : { allowedCostIncrease: evalShape.gate.promotion.allowedCostIncrease }),
+              ...(evalShape.gate.promotion.approval === undefined
+                ? {}
+                : {
+                    approval: {
+                      by: [...evalShape.gate.promotion.approval.by],
+                      record: evalShape.gate.promotion.approval.record,
+                    },
+                  }),
+            },
+          }),
     },
     traits: evalShape.traits ?? [],
   };

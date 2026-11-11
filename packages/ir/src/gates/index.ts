@@ -32,9 +32,10 @@ import { hitlSideEffectGate } from './hitl.js';
 import { knowledgeBaseGate } from './knowledge-base.js';
 import { memoryRefsGate } from './memory.js';
 import { normalizeGate } from './normalize.js';
-import { evalTrajectoryGate, observabilityExportGate } from './observability.js';
+import { evalTrajectoryGate, feedbackPiiGate, observabilityExportGate } from './observability.js';
 import { orchestrationDeepagentsGate } from './orchestration.js';
 import { profileGate } from './profile.js';
+import { promotionGate } from './promotion.js';
 import { referentialGate } from './referential.js';
 import { securityGate } from './security.js';
 
@@ -61,6 +62,8 @@ export const GATES = {
   approvals: approvalGate,
   'observability/export': observabilityExportGate,
   'evals/trajectory': evalTrajectoryGate,
+  'evals/promotion': promotionGate,
+  feedback: feedbackPiiGate,
 } as const satisfies Record<string, Gate>;
 
 export type GateName = keyof typeof GATES;
@@ -121,6 +124,7 @@ export {
   deployStreamingGate,
   evalCoverageGate,
   evalTrajectoryGate,
+  feedbackPiiGate,
   GATES as GATE_REGISTRY,
   guardrailCoverageGate,
   guardrailPolicyGate,
@@ -131,6 +135,7 @@ export {
   observabilityExportGate,
   orchestrationDeepagentsGate,
   profileGate,
+  promotionGate,
   referentialGate,
   securityGate,
   stateGate,
