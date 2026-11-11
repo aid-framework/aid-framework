@@ -21,18 +21,23 @@ from aid_runtime.decisions import DecisionClient, DecisionQuestion, DecisionResp
 from aid_runtime.errors import ConfigurationError, EvalError
 from aid_runtime.evals.dataset import EvalCase
 from aid_runtime.evals.predicate import evaluate_predicate
+from aid_runtime.evals.trajectory import Trajectory
 from aid_runtime.structured import run_structured
 
 __all__ = [
     "AssertMetric",
+    "CostCeiling",
     "DecisionScore",
     "ExactMatch",
     "JsonSchemaValid",
     "JudgeVerdict",
+    "LatencyCeiling",
     "LlmJudge",
     "Metric",
     "MetricResult",
     "NormalizedContains",
+    "RunContext",
+    "ToolTrace",
     "default_metrics",
     "metric_names",
     "normalize",
@@ -50,6 +55,33 @@ class MetricResult(BaseModel):
     score: float = Field(ge=0.0, le=1.0)
     passed: bool
     detail: str = ""
+
+
+class RunContext(BaseModel):
+    """What the harness measured about the run a prediction came from.
+
+    A prediction on its own cannot answer "what did this case cost" or "how long did
+    it take", and those are numbers the harness already has. They travel beside the
+    prediction so a ceiling metric can read them without the runner having to smuggle
+    them through the answer text. A metric that only inspects text ignores this and
+    behaves exactly as it did before.
+
+    ``metered`` is deliberately separate from ``cost_usd``. An unmetered runner reports
+    a real ``0.0`` -- "does not meter" and "spent nothing" are the same number -- so a
+    cost ceiling has to be told which one it is looking at, or it would pass forever
+    over a run nobody measured.
+
+    ``trajectory`` is ``None`` when the runner said nothing about tool calls, and that is
+    distinguishable from a run that called no tools: the second is an empty trajectory,
+    the first is a runner that only ever returned its answer text.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    cost_usd: float = Field(default=0.0, ge=0.0)
+    latency_ms: float = Field(default=0.0, ge=0.0)
+    metered: bool = False
+    trajectory: Trajectory | None = None
 
 
 @runtime_checkable
@@ -71,7 +103,9 @@ class Metric(Protocol):
         """
         ...
 
-    async def score(self, case: EvalCase, prediction: str) -> MetricResult: ...
+    async def score(
+        self, case: EvalCase, prediction: str, *, context: RunContext | None = None
+    ) -> MetricResult: ...
 
 
 def normalize(text: str) -> str:
@@ -94,7 +128,9 @@ class ExactMatch:
     def deterministic(self) -> bool:
         return True
 
-    async def score(self, case: EvalCase, prediction: str) -> MetricResult:
+    async def score(
+        self, case: EvalCase, prediction: str, *, context: RunContext | None = None
+    ) -> MetricResult:
         if case.expected is None:
             raise EvalError(f"case {case.id!r} has no expected value for {self.name}")
         ok = normalize(prediction) == normalize(case.expected)
@@ -120,7 +156,9 @@ class NormalizedContains:
     def deterministic(self) -> bool:
         return True
 
-    async def score(self, case: EvalCase, prediction: str) -> MetricResult:
+    async def score(
+        self, case: EvalCase, prediction: str, *, context: RunContext | None = None
+    ) -> MetricResult:
         if case.expected is None:
             raise EvalError(f"case {case.id!r} has no expected value for {self.name}")
         ok = normalize(case.expected) in normalize(prediction)
@@ -150,7 +188,9 @@ class JsonSchemaValid:
     def deterministic(self) -> bool:
         return True
 
-    async def score(self, case: EvalCase, prediction: str) -> MetricResult:
+    async def score(
+        self, case: EvalCase, prediction: str, *, context: RunContext | None = None
+    ) -> MetricResult:
         schema = case.metadata.get("json_schema")
         try:
             parsed = json.loads(prediction)
@@ -198,7 +238,9 @@ class AssertMetric:
     def deterministic(self) -> bool:
         return True
 
-    async def score(self, case: EvalCase, prediction: str) -> MetricResult:
+    async def score(
+        self, case: EvalCase, prediction: str, *, context: RunContext | None = None
+    ) -> MetricResult:
         ok = evaluate_predicate(self._expr, case=case, prediction=prediction)
         return MetricResult(
             metric=self.name,
@@ -251,7 +293,9 @@ class LlmJudge:
     def deterministic(self) -> bool:
         return False
 
-    async def score(self, case: EvalCase, prediction: str) -> MetricResult:
+    async def score(
+        self, case: EvalCase, prediction: str, *, context: RunContext | None = None
+    ) -> MetricResult:
         prompt = self._build_prompt(case, prediction)
         try:
             verdict = await run_structured(self._call, JudgeVerdict, prompt, retries=self._retries)
@@ -324,7 +368,9 @@ class DecisionScore:
     def deterministic(self) -> bool:
         return False
 
-    async def score(self, case: EvalCase, prediction: str) -> MetricResult:
+    async def score(
+        self, case: EvalCase, prediction: str, *, context: RunContext | None = None
+    ) -> MetricResult:
         response = await self._ask(prediction)
         answer = response.answers.get(self._decision.id)
         if answer is None or answer.score is None:
@@ -360,6 +406,186 @@ class DecisionScore:
             },
             reproducible=True,
         )
+
+
+class _Ceiling:
+    """Shared shape for the two metrics that read a number off the run context.
+
+    Both refuse rather than pass when the number they are asked to bound was never
+    measured: a ceiling that passes over an unmeasured run is a gate that cannot fail,
+    which is worse than no gate at all because it looks like coverage.
+    """
+
+    _quantity = "value"
+
+    def __init__(self, *, name: str) -> None:
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def deterministic(self) -> bool:
+        return True
+
+    def _measure(self, case: EvalCase, context: RunContext | None) -> float:
+        raise NotImplementedError
+
+    async def score(
+        self, case: EvalCase, prediction: str, *, context: RunContext | None = None
+    ) -> MetricResult:
+        ceiling = self._limit()
+        measured = self._measure(case, context)
+        ok = measured <= ceiling
+        return MetricResult(
+            metric=self.name,
+            score=1.0 if ok else 0.0,
+            passed=ok,
+            detail=f"{self._quantity} {self._format(measured)}, ceiling {self._format(ceiling)}",
+        )
+
+    def _limit(self) -> float:
+        raise NotImplementedError
+
+    def _format(self, value: float) -> str:
+        return f"{value:.4f}"
+
+
+class CostCeiling(_Ceiling):
+    """Whether one case stayed inside a declared per-case spend.
+
+    Costs money to find out, so it is opt-in: an eval declares it and the generator
+    maps it. The harness reads spend from the gateway ledger, which only exists for a
+    runner that meters, so an unmetered runner is refused, not scored.
+    """
+
+    _quantity = "spent"
+
+    def __init__(self, *, max_usd: float, name: str = "cost") -> None:
+        if max_usd <= 0:
+            raise ConfigurationError(f"a cost ceiling must be above zero, got {max_usd:g}")
+        super().__init__(name=name)
+        self._max = max_usd
+
+    def _limit(self) -> float:
+        return self._max
+
+    def _measure(self, case: EvalCase, context: RunContext | None) -> float:
+        if context is None or not context.metered:
+            raise EvalError(
+                f"case {case.id!r} carries a cost ceiling, but its runner does not meter "
+                "spend, so the ceiling would pass over a run nobody measured"
+            )
+        return context.cost_usd
+
+    def _format(self, value: float) -> str:
+        return f"${value:.4f}"
+
+
+class LatencyCeiling(_Ceiling):
+    """Whether one case finished inside a declared wall-clock budget.
+
+    Measured by the harness around the runner call, so it is available for every
+    runner rather than only the metering ones.
+    """
+
+    _quantity = "took"
+
+    def __init__(self, *, max_ms: float, name: str = "latency") -> None:
+        if max_ms <= 0:
+            raise ConfigurationError(f"a latency ceiling must be above zero, got {max_ms:g}")
+        super().__init__(name=name)
+        self._max = max_ms
+
+    def _limit(self) -> float:
+        return self._max
+
+    def _measure(self, case: EvalCase, context: RunContext | None) -> float:
+        if context is None:
+            raise EvalError(
+                f"case {case.id!r} carries a latency ceiling, but it was scored outside a "
+                "measured run, so there is no elapsed time to compare against it"
+            )
+        return context.latency_ms
+
+    def _format(self, value: float) -> str:
+        return f"{value:.0f}ms"
+
+
+class ToolTrace:
+    """Whether a run called the tools it was expected to, in the order it was told.
+
+    ``ordered`` is the whole semantics, and it is the reason this metric needs a
+    decision rather than a default: ``True`` means ``expect`` has to appear as a
+    *subsequence* of the calls made, ``False`` means every expected tool has to appear
+    at least once, in any order. Extra calls are tolerated either way -- a run that
+    looked one more thing up on the way did more than the minimum, and failing it would
+    benchmark one exact transcript rather than a capability. A run that calls an
+    expected tool twice passes too; the metric asks whether the tool was called, not how
+    often, because "how often" is a budget question and ``cost`` answers it.
+
+    Refuses rather than passes when the runner reported no trajectory: a trace assertion
+    over an answer-only runner would pass on every case by having nothing to compare,
+    which is coverage that does not exist.
+    """
+
+    def __init__(
+        self,
+        *,
+        expect: Sequence[str],
+        ordered: bool = False,
+        name: str = "tool-trace",
+    ) -> None:
+        if not expect:
+            raise ConfigurationError("a tool-trace metric must expect at least one tool")
+        self._name = name
+        self._expect = tuple(expect)
+        self._ordered = ordered
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def deterministic(self) -> bool:
+        return True
+
+    async def score(
+        self, case: EvalCase, prediction: str, *, context: RunContext | None = None
+    ) -> MetricResult:
+        if context is None or context.trajectory is None:
+            raise EvalError(
+                f"case {case.id!r} carries a tool-trace metric, but its runner reported no "
+                "tool calls, so there is nothing to compare the expectation against"
+            )
+        calls = context.trajectory.calls
+        ok = self._satisfied_by(calls)
+        return MetricResult(
+            metric=self.name,
+            score=1.0 if ok else 0.0,
+            passed=ok,
+            detail=(
+                f"called {_tool_list(calls)}"
+                if ok
+                else (
+                    f"expected {_tool_list(self._expect)}"
+                    f"{' in order' if self._ordered else ''}, called {_tool_list(calls)}"
+                )
+            ),
+        )
+
+    def _satisfied_by(self, calls: Sequence[str]) -> bool:
+        if not self._ordered:
+            return set(self._expect) <= set(calls)
+        # Walking the calls once with a cursor is the subsequence test: `in` on an
+        # iterator advances it, so each expected tool has to be found after the last one.
+        remaining = iter(calls)
+        return all(tool in remaining for tool in self._expect)
+
+
+def _tool_list(names: Sequence[str]) -> str:
+    return ", ".join(names) if names else "no tools"
 
 
 def default_metrics() -> tuple[Metric, ...]:

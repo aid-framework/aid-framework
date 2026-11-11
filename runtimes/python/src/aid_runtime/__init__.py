@@ -116,6 +116,7 @@ from aid_runtime.errors import (
 from aid_runtime.evals import (
     BaselineGate,
     CaseOutcome,
+    CostCeiling,
     Dataset,
     DatasetRun,
     EvalBaseline,
@@ -126,6 +127,7 @@ from aid_runtime.evals import (
     GatewayRunner,
     JsonSchemaValid,
     JudgeVerdict,
+    LatencyCeiling,
     LlmJudge,
     Metric,
     MetricBaseline,
@@ -133,8 +135,12 @@ from aid_runtime.evals import (
     MetricResult,
     MetricRun,
     NormalizedContains,
+    RunContext,
     Runner,
+    RunOutput,
     Threshold,
+    ToolTrace,
+    Trajectory,
     default_metrics,
     evaluate_once,
     gate_from_config,
@@ -331,7 +337,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.152"
+__version__ = "0.1.153"
 
 __all__ = [
     "AGENT_LABEL",
@@ -397,6 +403,7 @@ __all__ = [
     "ConcurrencyLimiter",
     "ConfigurationError",
     "Connector",
+    "CostCeiling",
     "CostLedger",
     "CostProfile",
     "Dataset",
@@ -450,6 +457,7 @@ __all__ = [
     "KnowledgeDataSourceKind",
     "KnowledgeDataSourceSpec",
     "KnowledgeVectorStoreSpec",
+    "LatencyCeiling",
     "LedgerEntry",
     "LexicalReranker",
     "LlmJudge",
@@ -505,6 +513,8 @@ __all__ = [
     "RetrieverSeam",
     "RetrieverSpec",
     "Role",
+    "RunContext",
+    "RunOutput",
     "RunResult",
     "RunStatus",
     "Runner",
@@ -541,6 +551,8 @@ __all__ = [
     "ToolPermissionError",
     "ToolResult",
     "ToolSpec",
+    "ToolTrace",
+    "Trajectory",
     "UnknownModelAliasError",
     "VectorStore",
     "VectorStoreSpec",

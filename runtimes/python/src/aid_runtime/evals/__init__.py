@@ -17,14 +17,18 @@ from aid_runtime.evals.gate import (
 )
 from aid_runtime.evals.metrics import (
     AssertMetric,
+    CostCeiling,
     DecisionScore,
     ExactMatch,
     JsonSchemaValid,
     JudgeVerdict,
+    LatencyCeiling,
     LlmJudge,
     Metric,
     MetricResult,
     NormalizedContains,
+    RunContext,
+    ToolTrace,
     default_metrics,
     metric_names,
     normalize,
@@ -38,11 +42,13 @@ from aid_runtime.evals.runner import (
     gateway_judge,
     run_evaluation,
 )
+from aid_runtime.evals.trajectory import RunOutput, Trajectory
 
 __all__ = [
     "AssertMetric",
     "BaselineGate",
     "CaseOutcome",
+    "CostCeiling",
     "Dataset",
     "DatasetRun",
     "DecisionScore",
@@ -54,6 +60,7 @@ __all__ = [
     "GatewayRunner",
     "JsonSchemaValid",
     "JudgeVerdict",
+    "LatencyCeiling",
     "LlmJudge",
     "Metric",
     "MetricBaseline",
@@ -61,8 +68,12 @@ __all__ = [
     "MetricResult",
     "MetricRun",
     "NormalizedContains",
+    "RunContext",
+    "RunOutput",
     "Runner",
     "Threshold",
+    "ToolTrace",
+    "Trajectory",
     "default_metrics",
     "evaluate_once",
     "gate_from_config",

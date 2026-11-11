@@ -16,7 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from aid_runtime.errors import EvalError
 from aid_runtime.evals.dataset import Dataset, EvalCase
 from aid_runtime.evals.gate import EvalRun, MetricRun
-from aid_runtime.evals.metrics import Metric, MetricResult
+from aid_runtime.evals.metrics import Metric, MetricResult, RunContext
+from aid_runtime.evals.trajectory import RunOutput, Trajectory
 from aid_runtime.gateway import ModelGateway
 from aid_runtime.metrics import record_eval_case
 from aid_runtime.types import CompletionRequest, Message
@@ -31,18 +32,25 @@ __all__ = [
     "run_evaluation",
 ]
 
-#: Anything that turns a case into a prediction.
-Runner = Callable[[EvalCase], Awaitable[str]]
+#: Anything that turns a case into a prediction. A runner that can also say how it got
+#: there returns a :class:`RunOutput`; one that only has an answer returns a ``str``,
+#: which is what every text metric needs and all a ``tool-trace`` metric refuses.
+Runner = Callable[[EvalCase], Awaitable[str | RunOutput]]
 
 
 class CaseOutcome(BaseModel):
-    """One case's prediction and its per-metric scores, for inspection."""
+    """One case's prediction and its per-metric scores, for inspection.
+
+    ``trajectory`` is ``None`` for a runner that reported no tool calls, so "the runner
+    said nothing" and "the run called no tools" stay different answers.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     case_id: str
     prediction: str
     scores: tuple[MetricResult, ...] = ()
+    trajectory: Trajectory | None = None
 
     @property
     def passed(self) -> bool:
@@ -197,15 +205,33 @@ async def evaluate_once(
     for case in dataset.cases:
         cost_before = _runner_cost(runner)
         started = perf_counter()
-        prediction = await runner(case)
+        raw = await runner(case)
+        prediction, trajectory = _split(raw)
         # The runner call, not the scoring, is what a latency budget constrains: scoring
         # is the harness measuring the answer, and charging its time to the pipeline would
         # report a slower product because a judge was added to its eval.
         latency_ms = (perf_counter() - started) * 1000.0
-        scores = tuple([await metric.score(case, prediction) for metric in metrics])
-        outcomes.append(CaseOutcome(case_id=case.id, prediction=prediction, scores=scores))
-        # Cost is read after scoring, because a model-backed metric spends money too and a
-        # cost budget that ignored the judge would be measuring half the run.
+        # Metrics see the pipeline's own spend, measured before scoring, because "what did
+        # this task cost" is a property of the product and not of the harness auditing it.
+        context = RunContext(
+            cost_usd=_spent_since(runner, cost_before),
+            latency_ms=latency_ms,
+            metered=cost_before is not None,
+            trajectory=trajectory,
+        )
+        scores = tuple(
+            [await metric.score(case, prediction, context=context) for metric in metrics]
+        )
+        outcomes.append(
+            CaseOutcome(
+                case_id=case.id,
+                prediction=prediction,
+                scores=scores,
+                trajectory=trajectory,
+            )
+        )
+        # The published series is read after scoring, because a model-backed metric spends
+        # money too and a cost series that ignored the judge would report half the run.
         record_eval_case(
             eval_id=label,
             cost_usd=_spent_since(runner, cost_before),
@@ -214,6 +240,13 @@ async def evaluate_once(
     return DatasetRun(
         dataset=dataset.name, dataset_version=dataset.version, outcomes=tuple(outcomes)
     )
+
+
+def _split(raw: str | RunOutput) -> tuple[str, Trajectory | None]:
+    """The prediction, and the trajectory when the runner reported one."""
+    if isinstance(raw, RunOutput):
+        return raw.text, raw.trajectory
+    return raw, None
 
 
 def _runner_cost(runner: Runner) -> float | None:

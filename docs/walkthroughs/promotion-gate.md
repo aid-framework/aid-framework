@@ -122,9 +122,9 @@ a `cost` metric, so the ceiling has something to read. Take the cost metric away
 ```console
 $ aid validate claims-desk.spec.yaml
 claims-desk.spec.yaml: 1 error(s), 0 warning(s)
-claims-desk.spec.yaml: error: the promotion gate rejected "triage_regression": allowedCostIncrease is 0.1 but the eval measures no cost, so there is no baseline cost for the candidate to increase and the ceiling would be enforced against nothing [ir/promotion-cost]
+claims-desk.spec.yaml: error: the promotion gate rejected "triage_regression": allowedCostIncrease is 0.1 but the eval declares no cost ceiling, so neither baseline records a spend comparison the allowance could govern [ir/promotion-cost]
     at evals.triage_regression.gate.promotion.allowedCostIncrease
-    hint: add a `cost` metric with a `max` ceiling so both baselines record a cost, or drop allowedCostIncrease
+    hint: add a `cost` metric with a `max` ceiling so both baselines score that ceiling, or drop allowedCostIncrease
 ```
 
 The same argument applies one field over. `allowedQualityDrop` is a budget over a **quality** metric,
@@ -255,7 +255,7 @@ promotion of eval "triage_regression" over dataset evals/triage.jsonl@3
 <spec>: error: The promotion was refused: "triage_regression" requires a recorded approval at app/approvals/triage.md, and that file is missing or empty. [cli/eval-compare-approval-missing]
     at evals.triage_regression.gate.promotion.approval.record
     hint: Commit the approval record at app/approvals/triage.md, signed off by one of: platform-lead.
-<spec>: warning: allowedCostIncrease (10.00%) was not judged: a recorded baseline carries quality metrics only, because the runtime measures no cost metric yet. [cli/eval-compare-cost-unjudged]
+<spec>: warning: allowedCostIncrease (10.00%) was not judged: a recorded baseline stores a pass rate per metric, not a dollar total, so a percentage increase in spend cannot be computed from it. [cli/eval-compare-cost-unjudged]
     at evals.triage_regression.gate.promotion.allowedCostIncrease
     hint: Cost ceilings are enforced per request by the gateway budget the spec declares; the promotion cost check is listed as not built in docs/features.md.
 ```
@@ -284,7 +284,7 @@ promotion of eval "triage_regression" over dataset evals/triage.jsonl@3
   FAIL exact            accepted  95.00%  candidate  90.00%  change   -5.00%  allowance 1.00%
 
   verdict: refused
-<spec>: warning: allowedCostIncrease (10.00%) was not judged: a recorded baseline carries quality metrics only, because the runtime measures no cost metric yet. [cli/eval-compare-cost-unjudged]
+<spec>: warning: allowedCostIncrease (10.00%) was not judged: a recorded baseline stores a pass rate per metric, not a dollar total, so a percentage increase in spend cannot be computed from it. [cli/eval-compare-cost-unjudged]
     at evals.triage_regression.gate.promotion.allowedCostIncrease
     hint: Cost ceilings are enforced per request by the gateway budget the spec declares; the promotion cost check is listed as not built in docs/features.md.
 <spec>: error: The promotion was refused: metric "exact" dropped 5.00% (95.00% accepted, 90.00% candidate), and gate.promotion.allowedQualityDrop on "triage_regression" is 1.00%. [cli/eval-compare-regressed]
@@ -303,7 +303,7 @@ promotion of eval "triage_regression" over dataset evals/triage.jsonl@3
   ok   exact            accepted  95.00%  candidate  94.50%  change   -0.50%  allowance 1.00%
 
   verdict: promotable
-<spec>: warning: allowedCostIncrease (10.00%) was not judged: a recorded baseline carries quality metrics only, because the runtime measures no cost metric yet. [cli/eval-compare-cost-unjudged]
+<spec>: warning: allowedCostIncrease (10.00%) was not judged: a recorded baseline stores a pass rate per metric, not a dollar total, so a percentage increase in spend cannot be computed from it. [cli/eval-compare-cost-unjudged]
     at evals.triage_regression.gate.promotion.allowedCostIncrease
     hint: Cost ceilings are enforced per request by the gateway budget the spec declares; the promotion cost check is listed as not built in docs/features.md.
 ```
@@ -319,7 +319,7 @@ Being precise about the boundary is the point of the phase:
 - **Nothing promotes itself.** `--compare` reports; the merge promotes. There is no auto-deploy path
   and no gate that could be satisfied by a bot.
 - **No cost comparison.** `allowedCostIncrease` is declared, gated for coherence, and reported as
-  unjudged on every run, because a recorded baseline carries quality metrics only.
+  unjudged on every run, because a recorded baseline stores pass rates rather than dollars.
 - **No feedback route or storage is generated.** `observability.feedback` is a declaration the
   `feedback` gate checks. AID does not emit an endpoint that accepts a thumbs vote, does not write
   the table, and does not enforce `retentionDays` at runtime.

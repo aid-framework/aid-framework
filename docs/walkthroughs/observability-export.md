@@ -155,7 +155,7 @@ $ aid validate claims-desk.spec.yaml
 claims-desk.spec.yaml: 1 error(s), 1 warning(s)
 claims-desk.spec.yaml: error: the trajectory gate rejected "adjudicator_trajectory": target "agent:claims_adjudicator" names an agent, and this build emits evals over a prompt, not over an agent run [ir/eval-trajectory]
     at evals.adjudicator_trajectory.target
-    hint: evaluate the pipeline that runs the agent (`target: pipeline:<id>`) for now; an agent eval needs a runner that carries a trajectory, which is not built yet
+    hint: evaluate the pipeline that runs the agent (`target: pipeline:<id>`) for now; the runtime carries a trajectory, but no generator emits an agent eval yet
 claims-desk.spec.yaml: warning: the eval-coverage gate flagged this pipeline: "refund" is served over HTTP but no eval with gate.ci: true targets it [ir/eval-uncovered]
     at pipelines.refund
     hint: add an eval targeting "pipeline:refund" and set gate.ci: true
@@ -169,7 +169,11 @@ scored by `exact` or `llm-judge` would silently grade the final text and print a
 the word "trajectory".
 
 So the refusal happens at the IR, before a generator is entered, and it names the missing piece
-— *a runner that carries a trajectory* — rather than reporting a phantom undeclared subject.
+— *a generator that emits an agent eval* — rather than reporting a phantom undeclared subject.
+The runtime half exists: `aid-runtime-python` lets a runner return a `RunOutput` carrying a
+`Trajectory`, and the `tool-trace` metric scores it. What no generator emits yet is a runner that
+reports one for an agent, so the gate still refuses the target rather than promise a comparison
+nothing performs.
 
 A pipeline can run an agent (the `agent` step kind), which makes the fix a real one rather than a
 downgrade: score the pipeline that runs the agent.
@@ -202,14 +206,14 @@ declarable from 0.27 and has no consumer:
 $ aid validate claims-desk.spec.yaml
 claims-desk.spec.yaml: error: the trajectory gate rejected "adjudicator_trajectory": metric 1 compares tool calls, and "pipeline:refund" returns a response with no tool calls to compare [ir/eval-trajectory]
     at evals.adjudicator_trajectory.metrics[1]
-    hint: no metric in this build inspects a trajectory; score the response with exact, contains, json-schema, llm-judge or assert
+    hint: this build scores a trajectory (`ToolTrace`), but no generated runner reports the tool calls a case made: score the response with exact, contains, json-schema, llm-judge or assert
 ```
 
-Note what is **not** refused. `cost` and `latency` are also trajectory metrics by nature, and both
-have a consumer this build honours: `cost` compares against a static per-case estimate derived from
-the pinned model's pricing, and `latency` against `latencyBudgetP95Ms` in the deploy plan. They are
-accepted because something reads them. `tool-trace` is refused because nothing does, and a metric
-that runs and is never consulted reports coverage the suite does not have.
+Note what is **not** refused. `cost` and `latency` are scored directly: the harness reads the
+gateway ledger and the clock around every case and compares each against the declared ceiling, so
+the generated workflow fails on a case that spends or takes more than the spec allowed. `tool-trace`
+is refused because no generated runner reports the tool calls a case made, and a metric that runs
+and is never consulted reports coverage the suite does not have.
 
 Drop the `tool-trace` metric and keep a ceiling measured from the response, and the document passes.
 

@@ -82,7 +82,7 @@ function distinctSubjects(
  * The spec language names a `pipeline:` or `prompt:` target, and from 0.27 it can also
  * name an `agent:` one, while the IR can name a prompt directly, so every form has to
  * resolve here. An agent is refused by name: it *is* declared, so reporting it as
- * undeclared would be a lie, and what is missing is a runner that carries a trajectory
+ * undeclared would be a lie, and what is missing is a generator that emits an agent eval
  * rather than a declaration the document failed to make.
  *
  * A pure function of the IR on purpose: every rejection below is a branch a unit test can
@@ -105,8 +105,8 @@ export function evalSubject(ir: IR, evaluation: EvalShape): EvalSubjectResult {
       code: 'unsupported-eval-target',
       message:
         `'${target.qualified}' names an agent, and this build emits an eval over a prompt, not ` +
-        'over an agent run: an agent eval needs a runner that carries a trajectory, which is ' +
-        "not built yet; score the pipeline that runs it with a 'pipeline:' target",
+        'over an agent run: the runtime carries a trajectory, but no generator emits an agent ' +
+        "eval yet; score the pipeline that runs it with a 'pipeline:' target",
     };
   }
   const declared =
