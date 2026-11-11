@@ -418,7 +418,7 @@ export const SHIPPED_FEATURES = [
     href: './reference/spec.md#observability',
     // `trace` and `redact` are emitted; the export intent is gated, not emitted. The row
     // must not read as "AID ships your traces".
-    since: '0.1.144',
+    since: '0.1.145',
   },
 ];
 

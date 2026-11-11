@@ -358,7 +358,7 @@ Spec 0.27 gives a document an `observability` block: whether to record spans, wh
 
 - **Turned on by:** `observability`
 - **Reference:** [spec](./reference/spec.md#observability)
-- **Since:** `0.1.144`
+- **Since:** `0.1.145`
 
 ## Refused, on purpose
 
