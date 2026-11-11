@@ -175,7 +175,7 @@ function fieldTable(properties, required) {
 }
 
 /** How deep the spec reference follows inlined objects. */
-const MAX_NESTING = 2;
+const MAX_NESTING = 3;
 
 /**
  * Emit a subsection for every field of `owner` that is an object with named fields.
@@ -417,11 +417,12 @@ function cliPage() {
   }
 
   const constants = flagConstants();
-  // `usage` may be wrapped onto its own line, and a command may declare
-  // `maxPositionals` between `usage` and `flags`; tolerate both rather than
-  // silently dropping such a command from the page.
+  // `summary` and `usage` may be wrapped onto their own line once the formatter
+  // breaks a long string, and a command may declare `maxPositionals` between
+  // `usage` and `flags`; tolerate all three rather than silently dropping such a
+  // command from the page.
   const blockPattern =
-    /\{\s*\n\s*name: '([^']+)',\s*\n\s*summary: '([^']*)',\s*\n\s*usage:\s*'([^']*)',[\s\S]*?flags: \[([^\]]*)\]/g;
+    /\{\s*\n\s*name: '([^']+)',\s*\n\s*summary:\s*'([^']*)',\s*\n\s*usage:\s*'([^']*)',[\s\S]*?flags: \[([^\]]*)\]/g;
 
   /** @type {{ name: string, summary: string, usage: string, flags: { label: string, summary: string }[] }[]} */
   const commands = [];
