@@ -53,7 +53,7 @@ describe('spec version', () => {
     expect(SPEC_VERSION_LATEST).toBe(SUPPORTED_SPEC_VERSIONS[SUPPORTED_SPEC_VERSIONS.length - 1]);
   });
 
-  it('lists the twenty supported sections, ten of which need a later version', () => {
+  it('lists the twenty-one supported sections, eleven of which need a later version', () => {
     expect([...SUPPORTED_SECTIONS].sort()).toEqual([
       'agents',
       'decisions',
@@ -65,6 +65,7 @@ describe('spec version', () => {
       'memory',
       'models',
       'observability',
+      'overridable',
       'pipelines',
       'profile',
       'project',
@@ -78,9 +79,9 @@ describe('spec version', () => {
     ]);
     // The version boundary, named explicitly: four sections are supported from 0.2,
     // `decisions` from 0.6, `knowledgeBases` from 0.12, `gateways` from 0.24, `profile`
-    // from 0.25, `state` from 0.26 and `observability` from 0.27. A section that gains a
-    // minimum version without appearing here would be enforced by the schema and quietly
-    // refused by the scope rule.
+    // from 0.25, `state` from 0.26, `observability` from 0.27 and `overridable` from 0.29.
+    // A section that gains a minimum version without appearing here would be enforced by
+    // the schema and quietly refused by the scope rule.
     expect(SECTION_MIN_VERSION).toEqual({
       agents: '0.2',
       decisions: '0.6',
@@ -90,6 +91,7 @@ describe('spec version', () => {
       knowledgeBases: '0.12',
       memory: '0.2',
       observability: '0.27',
+      overridable: '0.29',
       profile: '0.25',
       state: '0.26',
     });
@@ -139,9 +141,9 @@ describe('valid fixtures', () => {
   it('accepts every section declared as supported', () => {
     // No single fixture carries every section: four require spec 0.2, `decisions` needs
     // 0.6, `knowledgeBases` needs 0.12, `gateways` needs 0.24, `profile` needs 0.25, the
-    // 0.26 controls need 0.26 and `observability` needs 0.27, and the v0.1 fixture is the
-    // byte-identical baseline this layer must leave alone. The union is the assertion, so a
-    // supported section that no valid fixture carries fails here.
+    // 0.26 controls need 0.26, `observability` needs 0.27 and `overridable` needs 0.29, and
+    // the v0.1 fixture is the byte-identical baseline this layer must leave alone. The union
+    // is the assertion, so a supported section that no valid fixture carries fails here.
     const fixtureNames = [
       'valid/full.spec.yaml',
       'valid/v02-sections.spec.yaml',
@@ -151,11 +153,13 @@ describe('valid fixtures', () => {
       'valid/v25-profile.spec.yaml',
       'valid/v26-controls.spec.yaml',
       'valid/v27-observability.spec.yaml',
+      'valid/v29-overridable.spec.yaml',
     ] as const;
     const documents = fixtureNames.map(
       (name) => checkSpecText(readFixture(name)).value as Record<string, unknown>,
     );
     const [v01, v02, v06, v12, v24, v25, v26, v27] = documents as [
+      Record<string, unknown>,
       Record<string, unknown>,
       Record<string, unknown>,
       Record<string, unknown>,
@@ -182,7 +186,8 @@ describe('valid fixtures', () => {
             section !== 'gateways' &&
             section !== 'profile' &&
             section !== 'state' &&
-            section !== 'observability',
+            section !== 'observability' &&
+            section !== 'overridable',
         )
         .sort(),
     );
@@ -435,6 +440,14 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
   'wrong-spec-version.spec.yaml': {
     code: DIAGNOSTIC_CODES.schemaViolation,
     path: ['specVersion'],
+  },
+  'overridable-unknown-section.spec.yaml': {
+    code: DIAGNOSTIC_CODES.overridableUnknownSection,
+    path: ['overridable', 'colour.accent'],
+  },
+  'overridable-descends-into-value.spec.yaml': {
+    code: DIAGNOSTIC_CODES.overridableDescendsIntoValue,
+    path: ['overridable', 'project.name.length'],
   },
 };
 

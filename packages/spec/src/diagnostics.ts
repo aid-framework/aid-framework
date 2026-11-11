@@ -56,6 +56,8 @@ export const DIAGNOSTIC_CODES = {
   gatewayUnknown: 'spec/gateway-unknown',
   gatewayOnPlatform: 'spec/gateway-on-platform',
   filterExpression: 'spec/filter-expression',
+  overridableUnknownSection: 'spec/overridable-unknown-section',
+  overridableDescendsIntoValue: 'spec/overridable-descends-into-value',
   invalidValue: 'spec/invalid-value',
 } as const;
 

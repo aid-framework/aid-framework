@@ -38,7 +38,8 @@
         "0.25",
         "0.26",
         "0.27",
-        "0.28"
+        "0.28",
+        "0.29"
       ]
     },
     "profile": {
@@ -151,6 +152,13 @@
       "minProperties": 1,
       "propertyNames": { "$ref": "#/$defs/name" },
       "additionalProperties": { "$ref": "#/$defs/pipeline" }
+    },
+    "overridable": {
+      "description": "The contract a customer overlay may change: the document paths that are open to an overlay, and how far each may move. A path that is not listed here is not overridable, so a base spec that declares nothing accepts no override at all. Declarable from spec v0.29, and it is the only key an overlay can ever act on.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/overridablePath" },
+      "additionalProperties": { "$ref": "#/$defs/overridableRule" }
     }
   },
   "$defs": {
@@ -2216,6 +2224,61 @@
           "pattern": "^[a-z0-9-]+@[a-z0-9-]+\\.iam\\.gserviceaccount\\.com$"
         }
       }
+    },
+    "overridablePath": {
+      "description": "A document path an overlay may address, written the way it is written in YAML: `project.name`, `deployments.prod.region`, `agents.triage_agent.maxCostBudget`. Segments address object keys only; an overlay may replace a whole array but may not index into one.",
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*$"
+    },
+    "overridableRule": {
+      "description": "How far an overlay may move one path. `true` accepts any value. `from` accepts only one of the listed values. `max` accepts a number no greater than the bound. `allowWeaken` is a separate, explicit permission: without it, an override that relaxes a control at this path is refused, whichever form the value takes. Removing a `gate.ci` eval is refused under every form, including `allowWeaken`.",
+      "oneOf": [
+        {
+          "title": "true",
+          "description": "Any value of the right type is accepted at this path.",
+          "const": true
+        },
+        {
+          "title": "from",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["from"],
+          "properties": {
+            "from": {
+              "description": "The values this path may be set to. A closed set: a value outside it is refused even when `allowWeaken` is set.",
+              "type": "array",
+              "minItems": 1
+            },
+            "allowWeaken": { "$ref": "#/$defs/allowWeaken" }
+          }
+        },
+        {
+          "title": "max",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max"],
+          "properties": {
+            "max": {
+              "description": "The largest number this path may be set to. A ceiling: a larger value is refused even when `allowWeaken` is set.",
+              "type": "number"
+            },
+            "allowWeaken": { "$ref": "#/$defs/allowWeaken" }
+          }
+        },
+        {
+          "title": "allowWeaken",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowWeaken"],
+          "properties": {
+            "allowWeaken": { "$ref": "#/$defs/allowWeaken" }
+          }
+        }
+      ]
+    },
+    "allowWeaken": {
+      "description": "Whether an overlay may move this path in the direction that relaxes a control: a lower cost budget, a shorter retention, a guardrail action further down `block` > `escalate` > `redact` > `flag`, or an explicit `null` that deletes the path. Written by the base author, per path, so weakening is a reviewed decision rather than a customer-side edit.",
+      "type": "boolean"
     }
   }
 }

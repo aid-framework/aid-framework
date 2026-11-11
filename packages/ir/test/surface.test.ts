@@ -204,6 +204,7 @@ describe('IR shape constants', () => {
       'project',
       'state',
       'observability',
+      'overridable',
     ]);
   });
 
