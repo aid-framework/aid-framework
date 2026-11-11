@@ -424,6 +424,14 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
   },
   'syntax-error.spec.yaml': { code: DIAGNOSTIC_CODES.yamlSyntax, path: [] },
   'unknown-key.spec.yaml': { code: DIAGNOSTIC_CODES.unknownKey, path: ['modles'] },
+  'feedback-below-version.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['observability', 'feedback'],
+  },
+  'promotion-below-version.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['evals', 'quality', 'gate', 'promotion'],
+  },
   'wrong-spec-version.spec.yaml': {
     code: DIAGNOSTIC_CODES.schemaViolation,
     path: ['specVersion'],

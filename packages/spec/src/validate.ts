@@ -80,6 +80,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.25',
   '0.26',
   '0.27',
+  '0.28',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -199,6 +200,22 @@ export const AGENT_EVAL_TARGET_MIN_VERSION: SpecVersion = '0.27';
  * existed only as IR defaults, so a document could not state where its spans go at all.
  */
 export const OBSERVABILITY_MIN_VERSION: SpecVersion = '0.27';
+
+/**
+ * The first spec version that accepts `observability.feedback`. The section itself exists
+ * from 0.27, so this is nested: a 0.27 document that declares a feedback signal is told
+ * which version it needs rather than having the block silently dropped, because a dropped
+ * feedback block is a data surface the reviewer believes exists and the app does not have.
+ */
+export const FEEDBACK_MIN_VERSION: SpecVersion = '0.28';
+
+/**
+ * The first spec version that accepts `evals[].gate.promotion`. Nested for the same
+ * reason: `evals` exists from 0.1 and `gate` from before 0.9, so only this key dates the
+ * document. A promotion policy read as absent would let a candidate through the exact
+ * check the reviewer declared.
+ */
+export const EVAL_PROMOTION_MIN_VERSION: SpecVersion = '0.28';
 
 /**
  * The first spec version that accepts the batch surface: `pipelines[].trigger.manual` and
@@ -656,6 +673,8 @@ function scopeDiagnostics(
   deploymentPlacementDiagnostics(spec, diagnostics, reported);
   deliveryControlDiagnostics(spec, diagnostics, reported);
   agentEvalTargetDiagnostics(spec, diagnostics, reported);
+  feedbackVersionDiagnostics(spec, diagnostics, reported);
+  evalPromotionVersionDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
   routeDiagnostics(spec, diagnostics, reported);
@@ -1120,6 +1139,69 @@ function agentEvalTargetDiagnostics(
       }),
     );
     reported.add(JSON.stringify(['evals', id, 'target']));
+  }
+}
+
+/**
+ * `observability.feedback` arrived in 0.28. The `observability` section itself is gated by
+ * `SECTION_MIN_VERSION`, which sees only the top-level key, so a 0.27 document that already
+ * declared the section would keep it while losing the feedback block underneath it. A
+ * silently dropped feedback block is worse than a refused one: the reviewer approves a data
+ * surface that the generated app does not have.
+ */
+function feedbackVersionDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) return;
+  if (specVersionAtLeast(declared, FEEDBACK_MIN_VERSION)) return;
+  const observability = asRecord(spec.observability);
+  if (!('feedback' in observability)) return;
+
+  diagnostics.push(
+    errorDiagnostic({
+      code: DIAGNOSTIC_CODES.notSupported,
+      message: `'observability.feedback' requires specVersion ${FEEDBACK_MIN_VERSION}, but this specification declares version ${declared}`,
+      path: ['observability', 'feedback'],
+      hint: `set specVersion: "${FEEDBACK_MIN_VERSION}"; a document that declares no feedback block is unchanged`,
+    }),
+  );
+  reported.add(JSON.stringify(['observability', 'feedback']));
+}
+
+/**
+ * `evals[].gate.promotion` arrived in 0.28, nested inside `gate`, which no version gate
+ * covers. Reading it as absent in an older document would drop the one rule that decides
+ * whether a candidate replaces the accepted baseline.
+ */
+function evalPromotionVersionDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) return;
+  if (specVersionAtLeast(declared, EVAL_PROMOTION_MIN_VERSION)) return;
+
+  for (const [id, raw] of Object.entries(asRecord(spec.evals))) {
+    const promotion = asRecord(asRecord(raw).gate).promotion;
+    if (promotion === undefined) continue;
+    const path = ['evals', id, 'gate', 'promotion'];
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.notSupported,
+        message: `'evals.${id}.gate.promotion' requires specVersion ${EVAL_PROMOTION_MIN_VERSION}, but this specification declares version ${declared}`,
+        path,
+        hint: `set specVersion: "${EVAL_PROMOTION_MIN_VERSION}"; an eval with no promotion policy is unchanged`,
+      }),
+    );
+    reported.add(JSON.stringify(path));
   }
 }
 

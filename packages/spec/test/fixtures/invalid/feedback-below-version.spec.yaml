@@ -1,0 +1,11 @@
+specVersion: "0.27"
+
+project:
+  name: claims-desk
+
+observability:
+  trace: true
+  feedback:
+    signals:
+      rating:
+        kind: thumbs

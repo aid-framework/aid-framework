@@ -1,0 +1,143 @@
+specVersion: "0.28"
+
+project:
+  name: claims-desk
+  namespace: acme.claims
+  description: A spec that declares the two 0.28 constructs together -- the feedback signals it accepts back from its users, and the policy a candidate must satisfy before it replaces an accepted eval baseline.
+  targets:
+    - py-fastapi
+
+profile: enterprise
+
+types:
+  TicketClassification:
+    kind: struct
+    fields:
+      category:
+        type: string
+        required: true
+
+models:
+  triage:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+
+prompts:
+  classify_claim:
+    version: 2
+    model: triage
+    template: |
+      Classify the claim below.
+      Subject: {{subject}}
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: TicketClassification
+
+guardrails:
+  inbound:
+    stages: [input]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The request was rejected by the input guardrail.
+      log: true
+  outbound:
+    stages: [output]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The response was rejected by the output guardrail.
+      log: true
+
+# What the app takes back from its users. `correction` is the only kind that stores text,
+# so it is the only kind the PII rule applies to; `thumbs` and `escalation` record an
+# outcome and no prose. `persistent: true` demands a retention limit, because keeping a
+# record forever is not a policy a spec may leave unstated.
+observability:
+  trace: true
+  export: otlp
+  endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT
+  feedback:
+    signals:
+      rating:
+        kind: thumbs
+        description: Was this answer useful
+      correction:
+        kind: correction
+        description: The label the agent should have produced
+      handoff:
+        kind: escalation
+        description: The ticket was escalated to a human
+    pii:
+      redact:
+        - subject
+    retentionDays: 90
+    persistent: true
+
+evals:
+  triage_regression:
+    target: pipeline:triage
+    dataset:
+      source: file
+      uri: evals/triage.jsonl
+    metrics:
+      - kind: exact
+        field: category
+      - kind: cost
+        max: 0.4
+    gate:
+      ci: true
+      maxRegression: 0.05
+      minMean: 0.8
+      # A candidate must lose no more than one point of accuracy and may cost at most 10%
+      # more than the accepted baseline. `aid eval --compare` applies this policy; nothing
+      # here promotes anything by itself.
+      promotion:
+        allowedQualityDrop: 0.01
+        allowedCostIncrease: 0.1
+        baseline:
+          prompt: classify_claim
+          version: 1
+        approval:
+          by: [platform-lead]
+          record: app/approvals/triage.md
+
+deployments:
+  prod:
+    target: container
+    cloud: aws
+    region: eu-central-1
+    audit:
+      sink: cloudwatch
+      retentionDays: 400
+    identity:
+      kind: oidc
+      issuer: https://login.example.com
+      audience: aid-claims
+    network:
+      private: true
+      egress: declared-only
+    approvals:
+      require: [security, platform]
+      minApprovers: 2
+    secrets: [OPENAI_API_KEY]
+
+pipelines:
+  triage:
+    description: Classify a claim and answer the caller.
+    trigger:
+      http:
+        method: post
+        path: /triage
+    steps:
+      - generate:
+          prompt: classify_claim
+          input:
+            subject: "{{event.subject}}"
+          as: classification
