@@ -51,7 +51,7 @@ const ir = buildFixture('full.yaml').ir;
 describe('ir/* diagnostics', () => {
   it('names every code ir/<slug>, distinct from the spec namespace', () => {
     const codes = Object.values(IR_DIAGNOSTIC_CODES);
-    expect(codes.length).toBe(83);
+    expect(codes.length).toBe(85);
     expect(new Set(codes).size).toBe(codes.length);
     for (const code of codes) {
       expect(code).toMatch(/^ir\/[a-z0-9-]+$/);
@@ -170,7 +170,7 @@ describe('the offline catalog', () => {
 
 describe('IR shape constants', () => {
   it('keeps irVersion independent of specVersion', () => {
-    expect(IR_VERSION).toBe('0.3.0');
+    expect(IR_VERSION).toBe('0.4.0');
     expect(IR_VERSION).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
     expect(SPEC_VERSION).toBe('0.1');
     expect(IR_VERSION).not.toBe(SPEC_VERSION);
@@ -186,7 +186,7 @@ describe('IR shape constants', () => {
 
   it('knows its primitive types, eval target kinds, and providers', () => {
     expect(PRIMITIVE_TYPES).toEqual(['string', 'number', 'integer', 'boolean']);
-    expect(EVAL_TARGET_KINDS).toEqual(['pipeline', 'prompt']);
+    expect(EVAL_TARGET_KINDS).toEqual(['pipeline', 'prompt', 'agent']);
     expect(DEFAULT_TARGET).toBe('py-fastapi');
     for (const provider of PROVIDERS) expect(isProvider(provider)).toBe(true);
     expect(isProvider('teleportation')).toBe(false);
@@ -198,7 +198,13 @@ describe('IR shape constants', () => {
   it('pins the collection accounting constants', () => {
     expect(IR_COLLECTIONS.length).toBe(16);
     expect(IR_ONLY_COLLECTIONS).toEqual(['embeddings']);
-    expect(NON_COLLECTION_SECTIONS).toEqual(['specVersion', 'profile', 'project', 'state']);
+    expect(NON_COLLECTION_SECTIONS).toEqual([
+      'specVersion',
+      'profile',
+      'project',
+      'state',
+      'observability',
+    ]);
   });
 
   it('accounts for every top-level key as a section, a collection, or one of its own singletons', () => {
@@ -213,7 +219,7 @@ describe('IR shape constants', () => {
       Object.keys(ir)
         .filter((key) => !accounted.has(key))
         .sort(),
-    ).toEqual(['irVersion', 'observability', 'requiredCapabilities', 'runtime']);
+    ).toEqual(['irVersion', 'requiredCapabilities', 'runtime']);
   });
 
   it('derives identities from identity, not from content', () => {
@@ -258,6 +264,8 @@ describe('the gate contract', () => {
       'profile',
       'state',
       'approvals',
+      'observability/export',
+      'evals/trajectory',
     ]);
     const result = gateFixture('eval-uncovered.yaml');
     expect(Object.keys(result.byGate)).toEqual(Object.keys(GATES));

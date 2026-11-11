@@ -402,7 +402,13 @@ describe('buildEvalTarget', () => {
       qualified: 'handle_ticket',
       valid: false,
     });
-    expect(buildEvalTarget('agent:support').valid).toBe(false);
+    expect(buildEvalTarget('agent:support')).toEqual({
+      kind: 'agent',
+      id: 'support',
+      qualified: 'agent:support',
+      valid: true,
+    });
+    expect(buildEvalTarget('batch:support').valid).toBe(false);
   });
 });
 

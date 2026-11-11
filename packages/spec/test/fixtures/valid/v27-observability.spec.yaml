@@ -99,17 +99,16 @@ observability:
 
 evals:
   adjudicator_trajectory:
-    # An agent target, declarable from 0.27. Trajectory metrics score which tools ran and
-    # what the run cost, which a pipeline's HTTP response cannot represent.
+    # An agent target, declarable from 0.27. Before it, only `pipeline:` was parseable, so
+    # an agent could not be scored at all -- not even on the text it returns. Trajectory
+    # metrics (`tool-trace`, `cost`, `latency`) are also declarable here from 0.27 but are
+    # still refused at generation with `ir/eval-trajectory`, so this example scores what
+    # AID can measure today.
     target: agent:claims_adjudicator
     dataset:
       source: file
       uri: evals/adjudicator_trajectory.jsonl
     metrics:
-      - kind: tool-trace
-        expect: [issue_refund]
-      - kind: cost
-        max: 0.05
       - kind: exact
         field: text
     gate:

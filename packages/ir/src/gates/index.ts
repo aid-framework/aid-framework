@@ -4,10 +4,10 @@
  * Error-severity diagnostics fail the build; warnings do not. Suppressed checks are
  * merged alongside the diagnostics so a caller can always see what was *not* enforced.
  *
- * The nine gates Phase 2 L1 adds are named by the id the plan's P5 table gives them,
- * because that id is what appears in mutation evidence and in a reviewer's search for
- * "which gate stopped this". A gate whose name drifts from the plan is a gate nobody
- * can find.
+ * Each gate is named by the id that appears in the documentation's refusal table and in a
+ * reviewer's search for "which gate stopped this". A gate whose name drifts from the
+ * documented refusal is a gate nobody can find, so a new gate adds its name here, its code
+ * in `diagnostics.ts`, and its row in `site/scripts/features-data.mjs` together.
  */
 
 import { hasErrors, sortDiagnostics } from '@aid-framework/spec';
@@ -32,6 +32,7 @@ import { hitlSideEffectGate } from './hitl.js';
 import { knowledgeBaseGate } from './knowledge-base.js';
 import { memoryRefsGate } from './memory.js';
 import { normalizeGate } from './normalize.js';
+import { evalTrajectoryGate, observabilityExportGate } from './observability.js';
 import { orchestrationDeepagentsGate } from './orchestration.js';
 import { profileGate } from './profile.js';
 import { referentialGate } from './referential.js';
@@ -58,6 +59,8 @@ export const GATES = {
   profile: profileGate,
   state: stateGate,
   approvals: approvalGate,
+  'observability/export': observabilityExportGate,
+  'evals/trajectory': evalTrajectoryGate,
 } as const satisfies Record<string, Gate>;
 
 export type GateName = keyof typeof GATES;
@@ -112,10 +115,12 @@ export {
   agentsBudgetGate,
   agentsHandoffGate,
   agentsRefsGate,
+  approvalGate,
   capabilityGate,
   costGate,
   deployStreamingGate,
   evalCoverageGate,
+  evalTrajectoryGate,
   GATES as GATE_REGISTRY,
   guardrailCoverageGate,
   guardrailPolicyGate,
@@ -123,7 +128,10 @@ export {
   knowledgeBaseGate,
   memoryRefsGate,
   normalizeGate,
+  observabilityExportGate,
   orchestrationDeepagentsGate,
+  profileGate,
   referentialGate,
   securityGate,
+  stateGate,
 };

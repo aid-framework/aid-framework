@@ -1,0 +1,81 @@
+specVersion: "0.27"
+project:
+  name: trajectory-gap
+types:
+  Ping:
+    kind: struct
+    fields:
+      ok:
+        type: boolean
+        required: true
+models:
+  triage:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [tools]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  instructions:
+    version: 1
+    model: triage
+    template: "Answer the question."
+    output:
+      kind: text
+agents:
+  support:
+    name: Support Agent
+    instructions: instructions
+    model: triage
+    maxSteps: 2
+    engine: native
+pipelines:
+  handle_ticket:
+    trigger:
+      http:
+        method: get
+        path: /tickets
+    steps:
+      - emit:
+          event: Ping
+evals:
+  pipeline_tool_calls:
+    target: pipeline:handle_ticket
+    dataset:
+      source: file
+      uri: datasets/tickets.jsonl
+    metrics:
+      - kind: tool-trace
+        expect: [search_knowledge]
+    gate:
+      ci: true
+  pipeline_cost:
+    target: pipeline:handle_ticket
+    dataset:
+      source: file
+      uri: datasets/tickets.jsonl
+    metrics:
+      - kind: cost
+        max: 0.25
+    gate:
+      ci: true
+  agent_tool_calls:
+    target: agent:support
+    dataset:
+      source: file
+      uri: datasets/tickets.jsonl
+    metrics:
+      - kind: tool-trace
+        expect: [search_knowledge]
+        ordered: true
+    gate:
+      ci: true
+  agent_latency:
+    target: agent:support
+    dataset:
+      source: file
+      uri: datasets/tickets.jsonl
+    metrics:
+      - kind: latency
+        maxMs: 4000
+    gate:
+      ci: true

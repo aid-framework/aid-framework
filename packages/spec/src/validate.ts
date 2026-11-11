@@ -195,13 +195,10 @@ export const RUN_STATE_MIN_VERSION: SpecVersion = '0.26';
 export const AGENT_EVAL_TARGET_MIN_VERSION: SpecVersion = '0.27';
 
 /**
- * The eval metric kinds that score a *trajectory* rather than a text response: which
- * tools were called, in what order, what the run cost, and how long it took. They are
- * declarable from 0.27 only on an `agent:` target, because a pipeline's HTTP response
- * carries no tool calls to score -- and they are still refused at generation, which is
- * why the IR refuses them with a diagnostic rather than letting codegen fail later.
+ * The first spec version with an `observability` section. Before it, `trace` and `redact`
+ * existed only as IR defaults, so a document could not state where its spans go at all.
  */
-export const TRAJECTORY_METRIC_KINDS: readonly string[] = ['tool-trace', 'cost', 'latency'];
+export const OBSERVABILITY_MIN_VERSION: SpecVersion = '0.27';
 
 /**
  * The first spec version that accepts the batch surface: `pipelines[].trigger.manual` and

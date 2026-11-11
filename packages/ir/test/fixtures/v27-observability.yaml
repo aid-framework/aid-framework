@@ -1,0 +1,130 @@
+specVersion: "0.27"
+project:
+  name: claims-desk
+  namespace: acme.claims
+  description: An enterprise claims adjudicator that states where its spans go.
+  targets: [py-fastapi]
+profile: enterprise
+types:
+  TicketClassification:
+    kind: struct
+    fields:
+      category:
+        type: string
+        required: true
+      summary:
+        type: string
+        required: true
+  RefundReceipt:
+    kind: struct
+    fields:
+      claim:
+        type: string
+        required: true
+models:
+  triage:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  classify_claim:
+    version: 1
+    model: triage
+    template: "Classify the claim below."
+    output:
+      kind: structured
+      schema: TicketClassification
+tools:
+  issue_refund:
+    description: Issue a refund against a claim.
+    input: RefundReceipt
+    output: RefundReceipt
+    handler:
+      kind: business
+      symbol: issue_refund
+    sideEffects: write
+    requiresConfirmation: true
+state:
+  kind: postgres
+  urlEnv: DATABASE_URL
+  ttlHours: 168
+agents:
+  claims_adjudicator:
+    name: Claims adjudicator
+    instructions: classify_claim
+    model: triage
+    tools: [issue_refund]
+    maxSteps: 12
+    maxCostBudget: 2.5
+    state:
+      kind: postgres
+      urlEnv: DATABASE_URL
+      ttlHours: 24
+guardrails:
+  outbound:
+    stages: [output]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The response was rejected by the output guardrail.
+      log: true
+observability:
+  trace: true
+  export: otlp
+  endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT
+  redact: [subject, authorization]
+evals:
+  adjudicator_exact:
+    target: agent:claims_adjudicator
+    dataset:
+      source: file
+      uri: evals/adjudicator.jsonl
+    metrics:
+      - kind: exact
+        field: text
+    gate:
+      ci: true
+  refund_exact:
+    target: pipeline:refund
+    dataset:
+      source: file
+      uri: evals/refund.jsonl
+    metrics:
+      - kind: exact
+        field: text
+    gate:
+      ci: true
+deployments:
+  prod:
+    target: container
+    cloud: aws
+    region: eu-central-1
+    audit:
+      sink: cloudwatch
+      retentionDays: 400
+    identity:
+      kind: oidc
+      issuer: https://login.example.com
+      audience: aid-claims
+    network:
+      private: true
+      egress: declared-only
+    approvals:
+      require: [security, platform]
+      minApprovers: 2
+    secrets: [OPENAI_API_KEY, DATABASE_URL]
+pipelines:
+  refund:
+    description: Adjudicate a claim and issue its refund once a human approves the write.
+    trigger:
+      http:
+        method: post
+        path: /refunds
+    steps:
+      - tool:
+          tool: issue_refund
+          input:
+            claim: "{{event.claim}}"
+          as: receipt
+          requiresApproval: true

@@ -79,6 +79,10 @@ function normalizeObservability(
   return {
     trace: raw?.trace ?? DEFAULT_OBSERVABILITY.trace,
     redact: [...(raw?.redact ?? inherited)],
+    // Absence is meaningful for these two: before 0.27 no document could state them, and
+    // defaulting either would invent a promise the author never made.
+    ...(raw?.export === undefined ? {} : { export: raw.export }),
+    ...(raw?.endpointEnv === undefined ? {} : { endpointEnv: raw.endpointEnv }),
   };
 }
 
