@@ -64,6 +64,8 @@ import {
   type ErrorPolicy,
   type EvalShape,
   type EvalTarget,
+  type FeedbackShape,
+  type FeedbackSignalShape,
   type GatewayAuthorizerShape,
   type GatewayShape,
   type GatewayTargetShape,
@@ -78,6 +80,7 @@ import {
   type IR,
   IR_VERSION,
   imageRegistry,
+  isFeedbackSignalKind,
   isGuardrailPolicyKind,
   isIndexMetric,
   isKnowledgeBaseEngine,
@@ -106,6 +109,7 @@ import {
   type PrimitiveType,
   type Profile,
   type ProjectShape,
+  type PromotionShape,
   type PromptOutput,
   type PromptShape,
   type PromptVariable,
@@ -1831,6 +1835,8 @@ function buildEvals(raw: unknown, context: BuildContext): EvalShape[] {
     // byte-identically.
     const minMean = asNumber(gate.minMean);
     if (minMean !== undefined) evalShape.gate.minMean = minMean;
+    const promotion = buildPromotion(gate.promotion);
+    if (promotion !== undefined) evalShape.gate.promotion = promotion;
     if (budgets.length > 0) evalShape.costBudget = Math.min(...budgets);
     if (latencies.length > 0) evalShape.latencyBudgetP95Ms = Math.min(...latencies);
     return evalShape;
@@ -2007,6 +2013,67 @@ function buildObservability(
   if (processWide) {
     if (declared === 'otlp' || declared === 'none') shape.export = declared;
     if (endpointEnv !== undefined) shape.endpointEnv = endpointEnv;
+    const feedback = buildFeedback(record.feedback);
+    if (feedback !== undefined) shape.feedback = feedback;
+  }
+  return shape;
+}
+
+/**
+ * The feedback intake is a process-wide declaration, like the export destination: a
+ * pipeline does not take back signals separately from the app it lives in. Written only
+ * when declared, so a 0.27 document's IR is byte-identical.
+ */
+function buildFeedback(raw: unknown): FeedbackShape | undefined {
+  const record = asRecord(raw);
+  if (record === undefined) return undefined;
+  const signalRecords = asRecord(record.signals) ?? {};
+  const signals: FeedbackSignalShape[] = Object.keys(signalRecords)
+    .sort()
+    .map((id) => {
+      const entry = asRecord(signalRecords[id]) ?? {};
+      const kind = asString(entry.kind) ?? '';
+      const description = asString(entry.description);
+      const signal: FeedbackSignalShape = {
+        id,
+        kind: isFeedbackSignalKind(kind) ? kind : 'thumbs',
+      };
+      if (description !== undefined) signal.description = description;
+      return signal;
+    });
+  const pii = asRecord(record.pii);
+  const shape: FeedbackShape = { signals, redact: asStringArray(pii?.redact) };
+  const retentionDays = asNumber(record.retentionDays);
+  if (retentionDays !== undefined) shape.retentionDays = retentionDays;
+  const persistent = asBoolean(record.persistent);
+  if (persistent !== undefined) shape.persistent = persistent;
+  return shape;
+}
+
+/**
+ * A promotion policy, written only when declared. `allowedQualityDrop` and `baseline`
+ * are schema-required, so the fallbacks here are unreachable for a document that passed
+ * validation; they exist so the IR stays total rather than trusting a cast.
+ */
+function buildPromotion(raw: unknown): PromotionShape | undefined {
+  const record = asRecord(raw);
+  if (record === undefined) return undefined;
+  const baselineRecord = asRecord(record.baseline) ?? {};
+  const shape: PromotionShape = {
+    allowedQualityDrop: asNumber(record.allowedQualityDrop) ?? 0,
+    baseline: {
+      prompt: asString(baselineRecord.prompt) ?? '',
+      version: asNumber(baselineRecord.version) ?? 0,
+    },
+  };
+  const allowedCostIncrease = asNumber(record.allowedCostIncrease);
+  if (allowedCostIncrease !== undefined) shape.allowedCostIncrease = allowedCostIncrease;
+  const approval = asRecord(record.approval);
+  if (approval !== undefined) {
+    shape.approval = {
+      by: asStringArray(approval.by),
+      record: asString(approval.record) ?? '',
+    };
   }
   return shape;
 }

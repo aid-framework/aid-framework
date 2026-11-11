@@ -420,6 +420,24 @@ export const SHIPPED_FEATURES = [
     // must not read as "AID ships your traces".
     since: '0.1.145',
   },
+  {
+    id: 'feedback-signals',
+    title: 'Declared feedback signals',
+    detail:
+      'Spec 0.28 lets a document say which feedback it collects (thumbs, corrections, escalations) and which fields may ride along. The `feedback` gate refuses a persistent store with no retention window, and refuses a correction store whose redaction list misses a field the spec already marks sensitive -- so a signal that could carry a customer name cannot be collected without a rule about it. AID routes and stores nothing; the declaration and its refusal are what exist.',
+    declaredBy: 'observability.feedback',
+    href: './reference/spec.md#observability',
+    since: '0.1.146',
+  },
+  {
+    id: 'promotion-gate',
+    title: 'Promotion policy for a candidate',
+    detail:
+      'Spec 0.28 states what a candidate is allowed to cost in quality and in spend: `evals[].gate.promotion` names the baseline prompt version, the quality drop and cost increase it may not exceed, and -- under `enterprise` -- who records the approval. `aid eval --compare` judges a recorded candidate baseline against a recorded accepted one and exits non-zero on a regression. Nothing auto-deploys: promotion is a gate pass plus a file in the tree.',
+    declaredBy: 'evals[].gate.promotion',
+    href: './reference/spec.md#eval',
+    since: '0.1.146',
+  },
 ];
 
 /**
@@ -551,6 +569,48 @@ export const REFUSALS = [
       '`requiresApproval` on a tool with no side effects pauses a run to ask a human about a read; the operator learns to approve without reading, which is worse than no approval step at all. The `approvals` gate refuses it, and refuses a pause whose run has nowhere to wait.',
     code: 'ir/approval-step-tool',
   },
+  {
+    id: 'promotion-without-a-baseline',
+    title: 'A promotion policy with no baseline to promote from',
+    reason:
+      'A promotion compares two named prompt versions, so `gate.promotion.baseline` is required rather than defaulted. Without it the gate could not tell a bump from a no-op, and the CLI would compare a candidate against whatever happened to be in the tree.',
+    code: 'ir/prompt-version-stale',
+  },
+  {
+    id: 'promotion-without-a-bump',
+    title: 'A promotion of the version already in force',
+    reason:
+      'Promoting a prompt whose declared version is not greater than the baseline is refused: equal means nothing was bumped, so the candidate is the baseline and there is nothing to promote; behind means a rollback wearing the name of a promotion. Both are named, because the fix differs.',
+    code: 'ir/prompt-version-stale',
+  },
+  {
+    id: 'promotion-allowance-governs-nothing',
+    title: 'A quality allowance that no metric can spend',
+    reason:
+      '`allowedQualityDrop` is a budget over a quality metric. An eval whose metrics are all `cost` or `latency` has no quality to spend it on, so the policy is refused rather than read as a looser cost ceiling -- a stale allowance is how a regression ships.',
+    code: 'ir/promotion-regression',
+  },
+  {
+    id: 'promotion-cost-ceiling-on-an-eval-with-no-cost',
+    title: 'A cost ceiling on an eval that records no cost',
+    reason:
+      '`allowedCostIncrease` compares two cost measurements. An eval with no `cost` metric records none, so the ceiling would be checked against nothing; the gate refuses it and points at the `cost` metric that would make it real.',
+    code: 'ir/promotion-cost',
+  },
+  {
+    id: 'enterprise-promotion-without-an-approver',
+    title: 'An `enterprise` promotion nobody has to approve',
+    reason:
+      'The enterprise profile promises recorded change control. A promotion is a change to what production answers, so a `gate.promotion` with no `approval` block is refused under `enterprise` -- and `aid eval --compare` refuses to report a candidate as promotable until the approval record it names exists and is not empty.',
+    code: 'ir/promotion-approval',
+  },
+  {
+    id: 'feedback-persisted-forever',
+    title: 'Feedback kept forever, or kept without a redaction rule',
+    reason:
+      'A persistent feedback store with no `retentionDays` is refused, and so is one that collects `correction` text while its `pii.redact` list misses a field the spec already marks sensitive. Collected free text is the most likely place for a customer identifier to end up, so the gate asks both questions at build time rather than at audit time.',
+    code: 'ir/feedback-pii',
+  },
 ];
 
 /**
@@ -627,7 +687,7 @@ export const CAPABILITY_FAMILIES = [
       'An eval declares a regression budget over a dataset, `aid eval` exits non-zero when it is exceeded, and a pipeline with no CI eval is a build error.',
     declaredBy: 'evals[]',
     href: './reference/spec.md#eval',
-    featureIds: ['eval-coverage', 'evals-decision'],
+    featureIds: ['eval-coverage', 'evals-decision', 'promotion-gate', 'feedback-signals'],
   },
   {
     id: 'agents',

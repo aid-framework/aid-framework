@@ -51,7 +51,7 @@ const ir = buildFixture('full.yaml').ir;
 describe('ir/* diagnostics', () => {
   it('names every code ir/<slug>, distinct from the spec namespace', () => {
     const codes = Object.values(IR_DIAGNOSTIC_CODES);
-    expect(codes.length).toBe(85);
+    expect(codes.length).toBe(90);
     expect(new Set(codes).size).toBe(codes.length);
     for (const code of codes) {
       expect(code).toMatch(/^ir\/[a-z0-9-]+$/);
@@ -170,7 +170,7 @@ describe('the offline catalog', () => {
 
 describe('IR shape constants', () => {
   it('keeps irVersion independent of specVersion', () => {
-    expect(IR_VERSION).toBe('0.4.0');
+    expect(IR_VERSION).toBe('0.5.0');
     expect(IR_VERSION).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
     expect(SPEC_VERSION).toBe('0.1');
     expect(IR_VERSION).not.toBe(SPEC_VERSION);
@@ -266,6 +266,8 @@ describe('the gate contract', () => {
       'approvals',
       'observability/export',
       'evals/trajectory',
+      'evals/promotion',
+      'feedback',
     ]);
     const result = gateFixture('eval-uncovered.yaml');
     expect(Object.keys(result.byGate)).toEqual(Object.keys(GATES));

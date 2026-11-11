@@ -218,6 +218,7 @@ export default defineConfig({
             { text: 'Enterprise profile', link: '/walkthroughs/enterprise-profile' },
             { text: 'Delivery controls', link: '/walkthroughs/delivery-controls' },
             { text: 'Trace export and agent evals', link: '/walkthroughs/observability-export' },
+            { text: 'Promotion gate and feedback', link: '/walkthroughs/promotion-gate' },
           ],
         },
       ],

@@ -24,7 +24,7 @@ Every command accepts `-h` / `--help` for its own usage. All except `dev` accept
 | [`migrate`](#migrate) | emit the SQL the declared vector stores need, for an operator to apply |
 | [`ingest`](#ingest) | index a retriever corpus into the store the spec declares |
 | [`kb`](#kb) | ask the engine that owns a managed knowledge base to re-ingest it |
-| [`eval`](#eval) | run the eval gate, or record the baseline it measures against |
+| [`eval`](#eval) | run the eval gate, record the baseline it measures against, or apply a promotion policy |
 | [`cost`](#cost) | report cost and latency from the local trace sink |
 | [`trace`](#trace) | inspect a traced run: the span tree, timings, models, tokens and cost |
 | [`doctor`](#doctor) | diagnose the tree against the spec: drift, versions, missing files |
@@ -162,10 +162,10 @@ aid kb sync [spec] [--target <name>] [--retriever <id> | --all] [--wait]
 
 ## `eval`
 
-run the eval gate, or record the baseline it measures against
+run the eval gate, record the baseline it measures against, or apply a promotion policy
 
 ```sh
-aid eval [spec] [--target <name>] [--suite <id>] [--baseline]
+aid eval [spec] [--target <name>] [--suite <id>] [--baseline] [--compare <baseline.json> --candidate <candidate.json>]
 ```
 
 | Option | Description |
@@ -173,6 +173,8 @@ aid eval [spec] [--target <name>] [--suite <id>] [--baseline]
 | `--suite <id>` | run one eval instead of all of them |
 | `--target <name>` | generator target; one of py-fastapi, ts-vercel |
 | `--baseline` | record a fresh baseline instead of gating |
+| `--compare <path>` | apply gate.promotion to an accepted baseline and a candidate one. The quality allowance is judged; a declared cost ceiling is reported as unjudged because no runtime records cost |
+| `--candidate <path>` | the candidate baseline --compare reads |
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |
 

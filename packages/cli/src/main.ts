@@ -199,12 +199,20 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'eval',
-    summary: 'run the eval gate, or record the baseline it measures against',
-    usage: 'eval [spec] [--target <name>] [--suite <id>] [--baseline]',
+    summary:
+      'run the eval gate, record the baseline it measures against, or apply a promotion policy',
+    usage:
+      'eval [spec] [--target <name>] [--suite <id>] [--baseline] [--compare <baseline.json> --candidate <candidate.json>]',
     flags: [
       valueFlag('suite', 'id', 'run one eval instead of all of them'),
       TARGET_FLAG,
       booleanFlag('baseline', 'record a fresh baseline instead of gating'),
+      valueFlag(
+        'compare',
+        'path',
+        'apply gate.promotion to an accepted baseline and a candidate one. The quality allowance is judged; a declared cost ceiling is reported as unjudged because no runtime records cost',
+      ),
+      valueFlag('candidate', 'path', 'the candidate baseline --compare reads'),
       JSON_FLAG,
     ],
     run: (context, args) =>
@@ -213,6 +221,8 @@ export const COMMANDS: readonly Command[] = [
         target: args.values.get('target'),
         suite: args.values.get('suite'),
         baseline: args.booleans.has('baseline'),
+        compare: args.values.get('compare'),
+        candidate: args.values.get('candidate'),
       }),
   },
   {

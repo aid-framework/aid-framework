@@ -29,7 +29,7 @@ import type { PredicateNode } from './predicate/index.js';
  * target kind. Every field is additive, so a consumer written against `0.1.0` reads a
  * `0.4.0` document without change -- it simply does not see the new keys.
  */
-export const IR_VERSION = '0.4.0';
+export const IR_VERSION = '0.5.0';
 
 export const PRIMITIVE_TYPES = ['string', 'number', 'integer', 'boolean'] as const;
 
@@ -438,6 +438,38 @@ export interface ErrorPolicy {
   deadLetter?: string;
 }
 
+export const FEEDBACK_SIGNAL_KINDS = ['thumbs', 'correction', 'escalation'] as const;
+
+export type FeedbackSignalKind = (typeof FEEDBACK_SIGNAL_KINDS)[number];
+
+export function isFeedbackSignalKind(value: string): value is FeedbackSignalKind {
+  return (FEEDBACK_SIGNAL_KINDS as readonly string[]).includes(value);
+}
+
+/**
+ * One signal the app takes back from its users. `correction` is the only kind that
+ * carries free text, which is why the PII gate reasons about it specifically: a thumbs
+ * vote and an escalation are outcomes, and outcomes carry nothing to redact.
+ */
+export interface FeedbackSignalShape {
+  id: string;
+  kind: FeedbackSignalKind;
+  description?: string;
+}
+
+/**
+ * The feedback intake a document declares. `persistent` is the switch that turns a
+ * signal into stored personal data, so it is written only when declared: every document
+ * before spec 0.28 has no feedback at all, and a transient intake is a different thing
+ * from a lasting one.
+ */
+export interface FeedbackShape {
+  signals: FeedbackSignalShape[];
+  redact: string[];
+  retentionDays?: number;
+  persistent?: boolean;
+}
+
 export interface ObservabilityShape {
   trace: boolean;
   redact: string[];
@@ -449,6 +481,8 @@ export interface ObservabilityShape {
   export?: 'otlp' | 'none';
   /** The *name* of the environment variable holding the collector address, never a URL. */
   endpointEnv?: string;
+  /** The feedback intake declared at the top level, from spec 0.28. */
+  feedback?: FeedbackShape;
 }
 
 export interface PipelineShape {
@@ -493,6 +527,30 @@ export type MetricShape =
   | { kind: 'decision'; decision: string }
   | { kind: 'assert'; expr: PredicateNode; message: string };
 
+export interface PromotionBaseline {
+  /** The prompt whose accepted version the candidate replaces. */
+  prompt: string;
+  /** The accepted version. */
+  version: number;
+}
+
+export interface PromotionApproval {
+  by: string[];
+  record: string;
+}
+
+/**
+ * The policy a candidate must satisfy before it replaces an accepted baseline. Written
+ * only when declared, so an eval that carries none serializes exactly as it did before
+ * spec 0.28 and `aid eval --compare` has nothing to apply.
+ */
+export interface PromotionShape {
+  allowedQualityDrop: number;
+  allowedCostIncrease?: number;
+  baseline: PromotionBaseline;
+  approval?: PromotionApproval;
+}
+
 export interface EvalGate {
   ci: boolean;
   maxRegression: number;
@@ -504,6 +562,8 @@ export interface EvalGate {
    * exactly as it did before this property existed.
    */
   minMean?: number;
+  /** The promotion policy, from spec 0.28. */
+  promotion?: PromotionShape;
 }
 
 export interface EvalShape {

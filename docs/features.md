@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.27`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.28`.
 
 ## Deployment targets
 
@@ -360,6 +360,22 @@ Spec 0.27 gives a document an `observability` block: whether to record spans, wh
 - **Reference:** [spec](./reference/spec.md#observability)
 - **Since:** `0.1.145`
 
+### Declared feedback signals
+
+Spec 0.28 lets a document say which feedback it collects (thumbs, corrections, escalations) and which fields may ride along. The `feedback` gate refuses a persistent store with no retention window, and refuses a correction store whose redaction list misses a field the spec already marks sensitive -- so a signal that could carry a customer name cannot be collected without a rule about it. AID routes and stores nothing; the declaration and its refusal are what exist.
+
+- **Turned on by:** `observability.feedback`
+- **Reference:** [spec](./reference/spec.md#observability)
+- **Since:** `0.1.146`
+
+### Promotion policy for a candidate
+
+Spec 0.28 states what a candidate is allowed to cost in quality and in spend: `evals[].gate.promotion` names the baseline prompt version, the quality drop and cost increase it may not exceed, and -- under `enterprise` -- who records the approval. `aid eval --compare` judges a recorded candidate baseline against a recorded accepted one and exits non-zero on a regression. Nothing auto-deploys: promotion is a gate pass plus a file in the tree.
+
+- **Turned on by:** `evals[].gate.promotion`
+- **Reference:** [spec](./reference/spec.md#eval)
+- **Since:** `0.1.146`
+
 ## Refused, on purpose
 
 An absent capability is stated once, here, with the diagnostic that enforces it, instead of being discovered during an apply or debugged in production.
@@ -465,6 +481,42 @@ An agent that can call a writing tool can be paused mid-write, and a paused run 
 `requiresApproval` on a tool with no side effects pauses a run to ask a human about a read; the operator learns to approve without reading, which is worse than no approval step at all. The `approvals` gate refuses it, and refuses a pause whose run has nowhere to wait.
 
 - **Enforced by:** `ir/approval-step-tool`
+
+### A promotion policy with no baseline to promote from
+
+A promotion compares two named prompt versions, so `gate.promotion.baseline` is required rather than defaulted. Without it the gate could not tell a bump from a no-op, and the CLI would compare a candidate against whatever happened to be in the tree.
+
+- **Enforced by:** `ir/prompt-version-stale`
+
+### A promotion of the version already in force
+
+Promoting a prompt whose declared version is not greater than the baseline is refused: equal means nothing was bumped, so the candidate is the baseline and there is nothing to promote; behind means a rollback wearing the name of a promotion. Both are named, because the fix differs.
+
+- **Enforced by:** `ir/prompt-version-stale`
+
+### A quality allowance that no metric can spend
+
+`allowedQualityDrop` is a budget over a quality metric. An eval whose metrics are all `cost` or `latency` has no quality to spend it on, so the policy is refused rather than read as a looser cost ceiling -- a stale allowance is how a regression ships.
+
+- **Enforced by:** `ir/promotion-regression`
+
+### A cost ceiling on an eval that records no cost
+
+`allowedCostIncrease` compares two cost measurements. An eval with no `cost` metric records none, so the ceiling would be checked against nothing; the gate refuses it and points at the `cost` metric that would make it real.
+
+- **Enforced by:** `ir/promotion-cost`
+
+### An `enterprise` promotion nobody has to approve
+
+The enterprise profile promises recorded change control. A promotion is a change to what production answers, so a `gate.promotion` with no `approval` block is refused under `enterprise` -- and `aid eval --compare` refuses to report a candidate as promotable until the approval record it names exists and is not empty.
+
+- **Enforced by:** `ir/promotion-approval`
+
+### Feedback kept forever, or kept without a redaction rule
+
+A persistent feedback store with no `retentionDays` is refused, and so is one that collects `correction` text while its `pii.redact` list misses a field the spec already marks sensitive. Collected free text is the most likely place for a customer identifier to end up, so the gate asks both questions at build time rather than at audit time.
+
+- **Enforced by:** `ir/feedback-pii`
 
 ---
 

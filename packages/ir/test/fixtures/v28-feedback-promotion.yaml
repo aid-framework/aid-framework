@@ -1,0 +1,141 @@
+specVersion: "0.28"
+project:
+  name: claims-desk
+  namespace: acme.claims
+  description: An enterprise claims adjudicator that takes feedback back from its users and states the policy a candidate prompt must satisfy before it replaces the accepted one.
+  targets: [py-fastapi]
+profile: enterprise
+types:
+  TicketClassification:
+    kind: struct
+    fields:
+      category:
+        type: string
+        required: true
+      summary:
+        type: string
+        required: true
+      email:
+        type: string
+        required: true
+      phone:
+        type: string
+        required: false
+  RefundReceipt:
+    kind: struct
+    fields:
+      claim:
+        type: string
+        required: true
+models:
+  triage:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  classify_claim:
+    version: 2
+    model: triage
+    template: "Classify the claim below, in one of the declared categories."
+    output:
+      kind: structured
+      schema: TicketClassification
+tools:
+  issue_refund:
+    description: Issue a refund against a claim.
+    input: RefundReceipt
+    output: RefundReceipt
+    handler:
+      kind: business
+      symbol: issue_refund
+    sideEffects: write
+    requiresConfirmation: true
+state:
+  kind: postgres
+  urlEnv: DATABASE_URL
+  ttlHours: 168
+guardrails:
+  outbound:
+    stages: [output]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The response was rejected by the output guardrail.
+      log: true
+observability:
+  trace: true
+  export: otlp
+  endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT
+  redact: [email, phone]
+  feedback:
+    signals:
+      rating:
+        kind: thumbs
+        description: Was this answer useful
+      correction:
+        kind: correction
+        description: The label the agent should have produced
+      handoff:
+        kind: escalation
+        description: The ticket was escalated to a human
+    pii:
+      redact: [email, phone]
+    retentionDays: 90
+    persistent: true
+evals:
+  refund_exact:
+    target: pipeline:refund
+    dataset:
+      source: file
+      uri: evals/refund.jsonl
+    metrics:
+      - kind: exact
+        field: text
+      - kind: cost
+        max: 0.4
+    gate:
+      ci: true
+      maxRegression: 0.05
+      promotion:
+        allowedQualityDrop: 0.01
+        allowedCostIncrease: 0.1
+        baseline:
+          prompt: classify_claim
+          version: 1
+        approval:
+          by: [platform-lead]
+          record: app/approvals/classify-claim-2.md
+deployments:
+  prod:
+    target: container
+    cloud: aws
+    region: eu-central-1
+    audit:
+      sink: cloudwatch
+      retentionDays: 400
+    identity:
+      kind: oidc
+      issuer: https://login.example.com
+      audience: aid-claims
+    network:
+      private: true
+      egress: declared-only
+    approvals:
+      require: [security, platform]
+      minApprovers: 2
+    secrets: [OPENAI_API_KEY, DATABASE_URL]
+pipelines:
+  refund:
+    description: Adjudicate a claim and issue its refund once a human approves the write.
+    trigger:
+      http:
+        method: post
+        path: /refunds
+    steps:
+      - tool:
+          tool: issue_refund
+          input:
+            claim: "{{event.claim}}"
+          as: receipt
+          requiresApproval: true

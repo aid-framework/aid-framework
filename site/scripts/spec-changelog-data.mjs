@@ -112,4 +112,8 @@ export const SPEC_VERSIONS = [
     version: '0.27',
     adds: 'Adds the top-level `observability` block, whose `export: otlp` states where spans go and names the variable holding the collector address instead of leaving the destination to a shell; and widens `evals[].target` to accept `agent:<id>`, which the spec language parses and the IR refuses until a runner carries a trajectory.',
   },
+  {
+    version: '0.28',
+    adds: 'Adds `observability.feedback` (declared feedback signals, the fields they may carry and how long they are kept) and `evals[].gate.promotion` (a baseline prompt version, the quality drop and cost increase a candidate may not exceed, and who must record an approval) -- the parts of a self-improvement loop that can be gated from git alone.',
+  },
 ];

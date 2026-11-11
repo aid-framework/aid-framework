@@ -27,12 +27,16 @@
  */
 
 import { specVersionAtLeast } from '@aid-framework/spec';
+import { sensitiveNames } from '../build.js';
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
-import type { IR } from '../shapes.js';
+import type { FeedbackSignalShape, IR } from '../shapes.js';
 import { type GateOptions, type GateResult, NO_SUPPRESSIONS, reporter } from './contract.js';
 
 /** The spec version that first let a document state where its spans go. */
 export const OBSERVABILITY_MIN_VERSION = '0.27';
+
+/** The spec version that first let a document declare a feedback intake. */
+export const FEEDBACK_MIN_VERSION = '0.28';
 
 export function observabilityExportGate(ir: IR, options: GateOptions): GateResult {
   const diagnostics: IrDiagnostic[] = [];
@@ -110,4 +114,72 @@ export function evalTrajectoryGate(ir: IR, options: GateOptions): GateResult {
     });
   }
   return { diagnostics, suppressed: NO_SUPPRESSIONS };
+}
+
+/**
+ * The feedback gate — what a declared signal may store.
+ *
+ * Feedback is the one place this framework tells a user to send real user text back into
+ * the app, so it is the one place where "we keep what they told us" has to be answerable
+ * from the document. Two things are unanswerable as written and each gets its own reason:
+ *
+ *   - a persistent store with no `retentionDays` keeps whatever it is given forever. A
+ *     spec may say that, but it may not say it by omission, so the absence is the refusal.
+ *   - a `correction` is free text. Once it is stored, any field the spec itself marks
+ *     sensitive and does not name in `pii.redact` is stored in the clear, which is the
+ *     same under-covering the trace gate refuses for spans.
+ *
+ * A `thumbs` vote and an `escalation` outcome carry no prose, so neither pulls in the
+ * redaction rule: refusing them would make the honest, minimal signal the expensive one.
+ * Both checks are scoped to spec 0.28 and above, because a 0.27 document has no
+ * `feedback` key to satisfy them with.
+ */
+export function feedbackPiiGate(ir: IR, options: GateOptions): GateResult {
+  const diagnostics: IrDiagnostic[] = [];
+  const report = reporter(options);
+  if (!specVersionAtLeast(ir.specVersion, FEEDBACK_MIN_VERSION)) {
+    return { diagnostics, suppressed: NO_SUPPRESSIONS };
+  }
+  const feedback = ir.observability.feedback;
+  if (feedback === undefined) return { diagnostics, suppressed: NO_SUPPRESSIONS };
+
+  if (feedback.persistent === true && feedback.retentionDays === undefined) {
+    diagnostics.push(
+      report.error({
+        code: IR_DIAGNOSTIC_CODES.feedbackPii,
+        message:
+          'the feedback gate rejected this document: the feedback store is declared persistent with no retentionDays, so every signal it receives is kept indefinitely',
+        path: ['observability', 'feedback', 'retentionDays'],
+        hint: 'set a retentionDays limit, or `persistent: false` to keep feedback for the request only',
+      }),
+    );
+  }
+
+  const storesText =
+    feedback.persistent === true &&
+    (feedback.retentionDays === undefined || feedback.retentionDays > 0);
+  if (!storesText) return { diagnostics, suppressed: NO_SUPPRESSIONS };
+
+  const textSignals = feedback.signals.filter((signal) => carriesText(signal));
+  if (textSignals.length === 0) return { diagnostics, suppressed: NO_SUPPRESSIONS };
+
+  const sensitive = sensitiveNames(ir);
+  const missing = sensitive.filter((name) => !feedback.redact.includes(name));
+  if (missing.length === 0) return { diagnostics, suppressed: NO_SUPPRESSIONS };
+
+  const names = textSignals.map((signal) => `"${signal.id}"`).join(', ');
+  diagnostics.push(
+    report.error({
+      code: IR_DIAGNOSTIC_CODES.feedbackPii,
+      message: `the feedback gate rejected this document: signal ${names} stores free text under pii.redact entries that do not cover ${missing.join(', ')}, and the store is declared as persistent`,
+      path: ['observability', 'feedback', 'pii', 'redact'],
+      hint: `add ${missing.join(', ')} to observability.feedback.pii.redact, or take the text signal out of the persistent store`,
+    }),
+  );
+  return { diagnostics, suppressed: NO_SUPPRESSIONS };
+}
+
+/** The only declared kind that records prose rather than an outcome. */
+function carriesText(signal: FeedbackSignalShape): boolean {
+  return signal.kind === 'correction';
 }

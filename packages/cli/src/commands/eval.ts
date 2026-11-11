@@ -58,6 +58,7 @@ import { absolutePath } from '../paths.js';
 import { lowerSpec, readSpec } from '../pipeline.js';
 import { discoverInterpreter, INTERPRETERS, interpreterCommand, invoke } from '../python.js';
 import { resolveTarget, unknownTargetDiagnostic } from '../targets.js';
+import { compareBaselines } from './eval-compare.js';
 
 /**
  * The TypeScript resolve hook, as a URL, because `--import` parses its argument as a
@@ -77,6 +78,9 @@ export interface EvalOptions {
   readonly target: string | undefined;
   readonly suite: string | undefined;
   readonly baseline: boolean;
+  /** The accepted baseline for `--compare`; `candidate` is the other side of it. */
+  readonly compare: string | undefined;
+  readonly candidate: string | undefined;
 }
 
 /** Eval ids the spec declares, or the diagnostics that stopped it from declaring any. */
@@ -87,6 +91,7 @@ function declaredSuites(
   | {
       readonly ok: true;
       readonly ids: readonly string[];
+      readonly ir: IR;
       readonly warnings: readonly CliDiagnostic[];
     }
   | { readonly ok: false; readonly diagnostics: readonly CliDiagnostic[] } {
@@ -96,6 +101,7 @@ function declaredSuites(
   return {
     ok: true,
     ids: ir.evals.map((entry) => entry.id),
+    ir,
     warnings: lowered.diagnostics,
   };
 }
@@ -185,6 +191,49 @@ export function evaluate(context: CliContext, options: EvalOptions): CommandOutc
   const declared = declaredSuites(read.text, specPath);
   if (!declared.ok) {
     return outcome({ command, exitCode: EXIT_FAILURE, fields, diagnostics: declared.diagnostics });
+  }
+
+  // `--compare` never runs anything: the candidate is usually a branch, and the evidence
+  // is two committed baselines. It short-circuits here, before the module and interpreter
+  // checks, because a project that has not been generated can still answer this question.
+  if (options.compare !== undefined || options.candidate !== undefined) {
+    if (options.compare === undefined || options.candidate === undefined) {
+      return outcome({
+        command,
+        exitCode: EXIT_USAGE,
+        fields,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.comparePairRequired,
+            message: '--compare takes two baselines: the accepted one and the candidate one.',
+            hint: 'Pass both, as in `aid eval --compare app/evals/x.baseline.json --candidate candidate.json`.',
+          }),
+        ],
+      });
+    }
+    if (options.baseline) {
+      // Recording replaces the accepted side of the comparison, so doing both at once would
+      // mean comparing a file this run just overwrote. Two verbs, two runs.
+      return outcome({
+        command,
+        exitCode: EXIT_USAGE,
+        fields,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.comparePairRequired,
+            message:
+              '--compare and --baseline are separate runs: one records a baseline, the other judges a candidate against one.',
+            hint: 'Record with `aid eval --baseline`, then compare with `aid eval --compare <accepted> --candidate <candidate>`.',
+          }),
+        ],
+      });
+    }
+    return compareBaselines(context, declared.ir, {
+      specPath,
+      suite: options.suite,
+      comparePath: options.compare,
+      candidatePath: options.candidate,
+    });
   }
 
   // `--suite` is checked against the ids the spec declares, not against filenames on

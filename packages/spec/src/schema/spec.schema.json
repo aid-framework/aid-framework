@@ -37,7 +37,8 @@
         "0.24",
         "0.25",
         "0.26",
-        "0.27"
+        "0.27",
+        "0.28"
       ]
     },
     "profile": {
@@ -939,6 +940,63 @@
               "type": "number",
               "minimum": 0,
               "maximum": 1
+            },
+            "promotion": {
+              "description": "The policy a candidate release must satisfy before it replaces the accepted baseline for this eval. Declarable from spec v0.28. The quality and cost numbers are not measured at build time: `aid eval --compare` applies this policy to two recorded baselines and refuses a candidate that loses more than the allowance or costs more than the increase permits. Nothing promotes automatically -- the refusal is a failed check in CI, and the promotion is still a merged pull request.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["allowedQualityDrop", "baseline"],
+              "properties": {
+                "baseline": {
+                  "description": "The prompt version this candidate is measured against. Declaring it is what makes the staleness rule checkable: a promotion that names the version already in the spec has nothing to promote, because two different templates would share one identity.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["prompt", "version"],
+                  "properties": {
+                    "prompt": {
+                      "description": "The prompt whose accepted version the candidate replaces.",
+                      "$ref": "#/$defs/name"
+                    },
+                    "version": {
+                      "description": "The accepted version. The candidate must declare a strictly greater `version` on that prompt.",
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                },
+                "allowedQualityDrop": {
+                  "description": "Largest tolerated absolute drop in any metric's mean between the accepted baseline and the candidate.",
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "allowedCostIncrease": {
+                  "description": "Largest tolerated relative increase in cost per run, as a fraction of the baseline's cost. Only checked when both baselines record a `cost`; a candidate that records none is refused rather than assumed free.",
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "approval": {
+                  "description": "The record a human approval leaves behind. Required under `profile: enterprise`, where a promotion with no named approver and no recorded decision is refused by `ir/promotion-approval`.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["by", "record"],
+                  "properties": {
+                    "by": {
+                      "description": "Who approved the promotion. Names or roles, never credentials.",
+                      "type": "array",
+                      "minItems": 1,
+                      "items": { "type": "string", "minLength": 1 },
+                      "uniqueItems": true
+                    },
+                    "record": {
+                      "description": "The committed path holding the decision, e.g. `app/approvals/triage-5.md`. A path, because the record lives in the repository the promotion is reviewed in.",
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
             }
           }
         },
@@ -2037,6 +2095,42 @@
           "description": "The environment variable holding the collector's address. A name, never a URL: following `models.*.apiKeyEnv`, the address stays in the platform so a spec can move between environments without edit. Only meaningful with `export: otlp`, which the schema requires rather than defaulting.",
           "type": "string",
           "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "feedback": {
+          "description": "The signals the generated app accepts back from the people who use it, and the handling they require. Declarable from spec v0.28. A feedback signal is the input to the improvement loop, which is why it is declared here: `aid eval --compare` can turn two accepted baselines into a promotion decision, but nothing else in the build knows that a review comment is data about a person. `correction` stores free text by definition, so the feedback gate refuses one whose redaction set does not cover every field the spec already marks sensitive, or a persistent store that keeps it with no retention limit.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["signals"],
+          "properties": {
+            "signals": {
+              "description": "The signals this app accepts, by name. One entry per endpoint the generator emits, so a reviewer reads the data surface rather than discovering it in code.",
+              "type": "object",
+              "minProperties": 1,
+              "propertyNames": { "$ref": "#/$defs/name" },
+              "additionalProperties": { "$ref": "#/$defs/feedbackSignal" }
+            },
+            "pii": {
+              "description": "What must be stripped from a signal before it is stored. Omitted, this defaults to every field the security gate derives as sensitive, exactly as `redact` does for a span; the feedback gate still refuses a declared set that drops one.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "redact": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 },
+                  "uniqueItems": true
+                }
+              }
+            },
+            "retentionDays": {
+              "description": "How long a stored signal is kept. `0` means it is held no longer than the request that wrote it, which is the only value that lets a text-storing signal skip the redaction requirement.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "persistent": {
+              "description": "Whether a signal outlives the process. Defaults to false. Declaring true without `retentionDays` is refused by the feedback gate, because keeping a record forever is not a policy a spec can leave unstated.",
+              "type": "boolean"
+            }
+          }
         }
       },
       "allOf": [
@@ -2049,6 +2143,22 @@
           "then": { "required": ["export"], "properties": { "export": true } }
         }
       ]
+    },
+    "feedbackSignal": {
+      "description": "One signal the app accepts back from its users. The `kind` decides the shape, so a signal cannot claim to be a bare rating and then store prose: `thumbs` carries a score and no text, `correction` carries the corrected text the user supplied, and `escalation` carries the outcome of a handoff. Declarable from spec v0.28.",
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "What the signal records. `correction` is the only kind that stores free text, which is why it is the only kind the PII rule applies to.",
+          "enum": ["thumbs", "correction", "escalation"]
+        },
+        "description": {
+          "description": "What this signal means and who reads it. Free text for a reviewer; it is not emitted into the app.",
+          "type": "string"
+        }
+      }
     },
     "image": {
       "description": "Where the image for a `target: container` deployment is published. `ghcr.io` needs no credential: a generated release workflow pushes there with the `GITHUB_TOKEN` it already has. Every other registry declares the fields its login reads -- `docker.io` (spec 0.16) the *names* of two repository secrets, `aws.ecr` (spec 0.17) the account, region and role the workflow federates with, and `gcp.artifact-registry` (spec 0.18) the project, region and Workload Identity pair. No credential value is ever written into the spec.",

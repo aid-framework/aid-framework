@@ -1,0 +1,21 @@
+specVersion: "0.27"
+
+project:
+  name: claims-desk
+
+evals:
+  quality:
+    target: pipeline:triage
+    dataset:
+      source: file
+      uri: evals/quality.jsonl
+    metrics:
+      - kind: exact
+        field: text
+    gate:
+      maxRegression: 0.05
+      promotion:
+        allowedQualityDrop: 0.01
+        baseline:
+          prompt: quality
+          version: 1

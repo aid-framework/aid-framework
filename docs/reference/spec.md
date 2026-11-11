@@ -360,6 +360,36 @@ How this eval's result is compared against the committed baseline. Never an equa
 | `maxRegression` | `number` | no | Largest tolerated absolute drop in the metric's score versus the baseline. |
 | `samples` | `integer` | no | Runs per case. More samples shrink the sampling-uncertainty term the gate also requires before it fails. |
 | `minMean` | `number` | no | Absolute floor: the eval fails whenever the mean score falls below this value, regardless of maxRegression. A 0/1 metric (such as `assert`) needs it, because the regression allowance can otherwise absorb a drop it must never absorb. Required to be 1 when an `assert` metric is present. |
+| `promotion` | object (fields below) | no | The policy a candidate release must satisfy before it replaces the accepted baseline for this eval. Declarable from spec v0.28. The quality and cost numbers are not measured at build time: `aid eval --compare` applies this policy to two recorded baselines and refuses a candidate that loses more than the allowance or costs more than the increase permits. Nothing promotes automatically -- the refusal is a failed check in CI, and the promotion is still a merged pull request. |
+
+#### `eval.gate.promotion`
+
+The policy a candidate release must satisfy before it replaces the accepted baseline for this eval. Declarable from spec v0.28. The quality and cost numbers are not measured at build time: `aid eval --compare` applies this policy to two recorded baselines and refuses a candidate that loses more than the allowance or costs more than the increase permits. Nothing promotes automatically -- the refusal is a failed check in CI, and the promotion is still a merged pull request.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `baseline` | object (fields below) | yes | The prompt version this candidate is measured against. Declaring it is what makes the staleness rule checkable: a promotion that names the version already in the spec has nothing to promote, because two different templates would share one identity. |
+| `allowedQualityDrop` | `number` | yes | Largest tolerated absolute drop in any metric's mean between the accepted baseline and the candidate. |
+| `allowedCostIncrease` | `number` | no | Largest tolerated relative increase in cost per run, as a fraction of the baseline's cost. Only checked when both baselines record a `cost`; a candidate that records none is refused rather than assumed free. |
+| `approval` | object (fields below) | no | The record a human approval leaves behind. Required under `profile: enterprise`, where a promotion with no named approver and no recorded decision is refused by `ir/promotion-approval`. |
+
+##### `eval.gate.promotion.baseline`
+
+The prompt version this candidate is measured against. Declaring it is what makes the staleness rule checkable: a promotion that names the version already in the spec has nothing to promote, because two different templates would share one identity.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `prompt` | `name` | yes | The prompt whose accepted version the candidate replaces. |
+| `version` | `integer` | yes | The accepted version. The candidate must declare a strictly greater `version` on that prompt. |
+
+##### `eval.gate.promotion.approval`
+
+The record a human approval leaves behind. Required under `profile: enterprise`, where a promotion with no named approver and no recorded decision is refused by `ir/promotion-approval`.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `by` | array of `string` | yes | Who approved the promotion. Names or roles, never credentials. |
+| `record` | `string` | yes | The committed path holding the decision, e.g. `app/approvals/triage-5.md`. A path, because the record lives in the repository the promotion is reviewed in. |
 
 ## `metric`
 
@@ -816,6 +846,35 @@ How much the generated app records about a run, and where it goes. Omitted entir
 | `redact` | array of `string` | no | The fields to strip from a span before it leaves the process. Omitted, this defaults to every field the security gate derives as sensitive, and the security gate still refuses a declared set that drops one. Naming a field the IR does not mark sensitive is accepted: a spec may be stricter than the derived set, never looser. |
 | `export` | `otlp`, `none` | no | `none` records spans in-process only, which is what every document before 0.27 did. `otlp` declares that they should leave for an OTLP collector, and requires `endpointEnv`, because an export with no destination is a promise to nobody. Refused under `profile: enterprise` with `none`: an enterprise deployment that keeps no trace cannot answer the audit question the profile promises. |
 | `endpointEnv` | `string` | no | The environment variable holding the collector's address. A name, never a URL: following `models.*.apiKeyEnv`, the address stays in the platform so a spec can move between environments without edit. Only meaningful with `export: otlp`, which the schema requires rather than defaulting. |
+| `feedback` | object (fields below) | no | The signals the generated app accepts back from the people who use it, and the handling they require. Declarable from spec v0.28. A feedback signal is the input to the improvement loop, which is why it is declared here: `aid eval --compare` can turn two accepted baselines into a promotion decision, but nothing else in the build knows that a review comment is data about a person. `correction` stores free text by definition, so the feedback gate refuses one whose redaction set does not cover every field the spec already marks sensitive, or a persistent store that keeps it with no retention limit. |
+
+### `observability.feedback`
+
+The signals the generated app accepts back from the people who use it, and the handling they require. Declarable from spec v0.28. A feedback signal is the input to the improvement loop, which is why it is declared here: `aid eval --compare` can turn two accepted baselines into a promotion decision, but nothing else in the build knows that a review comment is data about a person. `correction` stores free text by definition, so the feedback gate refuses one whose redaction set does not cover every field the spec already marks sensitive, or a persistent store that keeps it with no retention limit.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `signals` | map of `feedbackSignal` | yes | The signals this app accepts, by name. One entry per endpoint the generator emits, so a reviewer reads the data surface rather than discovering it in code. |
+| `pii` | object (fields below) | no | What must be stripped from a signal before it is stored. Omitted, this defaults to every field the security gate derives as sensitive, exactly as `redact` does for a span; the feedback gate still refuses a declared set that drops one. |
+| `retentionDays` | `integer` | no | How long a stored signal is kept. `0` means it is held no longer than the request that wrote it, which is the only value that lets a text-storing signal skip the redaction requirement. |
+| `persistent` | `boolean` | no | Whether a signal outlives the process. Defaults to false. Declaring true without `retentionDays` is refused by the feedback gate, because keeping a record forever is not a policy a spec can leave unstated. |
+
+#### `observability.feedback.pii`
+
+What must be stripped from a signal before it is stored. Omitted, this defaults to every field the security gate derives as sensitive, exactly as `redact` does for a span; the feedback gate still refuses a declared set that drops one.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `redact` | array of `string` | no | — |
+
+## `feedbackSignal`
+
+One signal the app accepts back from its users. The `kind` decides the shape, so a signal cannot claim to be a bare rating and then store prose: `thumbs` carries a score and no text, `correction` carries the corrected text the user supplied, and `escalation` carries the outcome of a handoff. Declarable from spec v0.28.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | `thumbs`, `correction`, `escalation` | yes | What the signal records. `correction` is the only kind that stores free text, which is why it is the only kind the PII rule applies to. |
+| `description` | `string` | no | What this signal means and who reads it. Free text for a reviewer; it is not emitted into the app. |
 
 ## `image`
 

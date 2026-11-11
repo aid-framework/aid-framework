@@ -672,7 +672,32 @@
         "endpointEnv": {
           "type": "string",
           "description": "The name of the environment variable holding the collector address, never the address itself."
+        },
+        "feedback": {
+          "$ref": "#/$defs/feedback",
+          "description": "The feedback intake. Declared once for the process, so a pipeline never carries one; absent unless a document declared it."
         }
+      }
+    },
+    "feedback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signals", "redact"],
+      "properties": {
+        "signals": { "type": "array", "items": { "$ref": "#/$defs/feedbackSignal" } },
+        "redact": { "type": "array", "items": { "type": "string" } },
+        "retentionDays": { "type": "integer", "minimum": 0 },
+        "persistent": { "type": "boolean" }
+      }
+    },
+    "feedbackSignal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": { "enum": ["thumbs", "correction", "escalation"] },
+        "description": { "type": "string" }
       }
     },
     "pipeline": {
@@ -917,6 +942,35 @@
           "minimum": 0,
           "maximum": 1,
           "description": "Absolute floor on the mean of every metric, checked before the maxRegression delta. An eval carrying an assert must declare 1.0, since a false assertion is not sampling noise."
+        },
+        "promotion": { "$ref": "#/$defs/promotion" }
+      }
+    },
+    "promotion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowedQualityDrop", "baseline"],
+      "description": "The policy `aid eval --compare` applies to two recorded baselines. Absent unless a document declared one, so every eval built before spec 0.28 serializes byte-identically.",
+      "properties": {
+        "allowedQualityDrop": { "type": "number", "minimum": 0, "maximum": 1 },
+        "allowedCostIncrease": { "type": "number", "minimum": 0, "maximum": 1 },
+        "baseline": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["prompt", "version"],
+          "properties": {
+            "prompt": { "$ref": "#/$defs/identifier" },
+            "version": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "approval": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["by", "record"],
+          "properties": {
+            "by": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "record": { "type": "string", "minLength": 1 }
+          }
         }
       }
     },

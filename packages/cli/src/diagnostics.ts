@@ -26,6 +26,18 @@ export const CLI_DIAGNOSTIC_CODES = {
   pythonMissing: 'cli/python-missing',
   suiteNotFound: 'cli/suite-not-found',
   evalModulesMissing: 'cli/eval-modules-missing',
+  // `aid eval --compare` originates these. The split is the usual one: a comparison with
+  // no policy, with two possible verdicts, with a baseline that cannot be read, or across
+  // two datasets judged nothing and exits 2; a candidate that regressed, or a required
+  // approval that is not in the tree, is a refusal and exits 1.
+  compareNoPolicy: 'cli/eval-compare-no-policy',
+  compareSuiteRequired: 'cli/eval-compare-suite-required',
+  comparePairRequired: 'cli/eval-compare-pair-required',
+  compareUnreadable: 'cli/eval-compare-unreadable',
+  compareMismatch: 'cli/eval-compare-mismatch',
+  compareRegressed: 'cli/eval-compare-regressed',
+  compareApprovalMissing: 'cli/eval-compare-approval-missing',
+  compareCostUnjudged: 'cli/eval-compare-cost-unjudged',
   retrieverRequired: 'cli/retriever-required',
   retrieverConflict: 'cli/retriever-conflict',
   retrieverNotFound: 'cli/retriever-not-found',
