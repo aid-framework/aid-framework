@@ -54,6 +54,10 @@ describe('slugifyHeading', () => {
     expect(slugifyHeading('kind: value')).toBe('kind-value');
     expect(slugifyHeading('  Deployments  ')).toBe('deployments');
     expect(slugifyHeading('Load, then serve')).toBe('load-then-serve');
+    // A dotted spec path is one word to VitePress: the built page carries
+    // `id="agent-humanintheloop"`, so a link that drops the hyphen would break
+    // even though it looks like the heading's own spelling.
+    expect(slugifyHeading('`agent.humanInTheLoop`')).toBe('agent-humanintheloop');
   });
 });
 

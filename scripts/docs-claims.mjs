@@ -12,6 +12,8 @@
 /**
  * The slug VitePress derives from a heading, for the heading shapes this
  * repository writes: backticked identifiers, `kind: value` labels, and prose.
+ * Punctuation becomes a hyphen, not nothing -- so `agent.humanInTheLoop` is
+ * `#agent-humanintheloop`, which is what the built site emits.
  *
  * @param {string} heading
  * @returns {string}
@@ -21,7 +23,7 @@ export function slugifyHeading(heading) {
     .trim()
     .toLowerCase()
     .replace(/`/g, '')
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+    .replace(/[^\p{L}\p{N}\s-]+/gu, '-')
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');

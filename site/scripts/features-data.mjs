@@ -247,6 +247,24 @@ export const SHIPPED_FEATURES = [
     since: '0.1.19',
   },
   {
+    id: 'human-in-the-loop',
+    title: 'Step-level human approval',
+    detail:
+      'A tool that writes something pauses the run for a person, and the approved run continues from the same step instead of starting over; a side-effecting tool with no approval policy is refused under the enterprise profile.',
+    declaredBy: 'agents[].humanInTheLoop, tools[].requiresConfirmation',
+    href: './reference/spec.md#agent-humanintheloop',
+    since: '0.1.27',
+  },
+  {
+    id: 'durable-state',
+    title: 'Durable run state',
+    detail:
+      'A paused or long-running run outlives the process that started it: the checkpoint goes to the store the spec names, and an agent that can call a side-effecting tool is refused without one.',
+    declaredBy: 'state, agents[].state',
+    href: './reference/spec.md#agentstate',
+    since: '0.1.143',
+  },
+  {
     id: 'memory',
     title: 'Memory tiers',
     detail: 'What is remembered, for how long, within what token budget, and where it lives.',
@@ -810,7 +828,7 @@ export const CAPABILITY_FAMILIES = [
       'The plumbing is generated and the tool bodies stay yours; a loop that could run unbounded or unpriced is refused.',
     declaredBy: 'agents[], tools[]',
     href: './reference/spec.md#agent',
-    featureIds: ['agents', 'agentcore-gateway'],
+    featureIds: ['agents', 'human-in-the-loop', 'durable-state', 'agentcore-gateway'],
   },
   {
     id: 'deploy',
