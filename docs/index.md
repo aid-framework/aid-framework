@@ -4,7 +4,7 @@ layout: home
 hero:
   name: AID Framework
   text: One YAML spec. A production AI service.
-  tagline: Models, prompts, tools, guardrails, evals, retrieval, a Dockerfile and OpenTofu infrastructure compiled from one declarative spec into FastAPI or Next.js code you own — with build-time gates that refuse a spec which cannot work.
+  tagline: Build one governed AI service, then repeat it per customer without forking. One declarative spec compiles to FastAPI or Next.js code you own, and build-time gates refuse an unsafe or impossible spec before any code exists.
   actions:
     - theme: brand
       text: Start in 60 seconds
@@ -18,17 +18,17 @@ hero:
 
 features:
   - title: Impossible specs are refused, not debugged
-    details: Capability negotiation runs before code is written. A streaming route for a target that cannot stream, a batch deployment without a pipeline, a cloud and target with no module — each is a named diagnostic with the fix, not a stack trace in production.
-  - title: Pinned models, priced calls
-    details: A model alias resolves to an exact pinned id, never a floating vendor default. Cost profiles price every call and a budget gate compares the configured ceiling with the recorded total.
-  - title: Guardrails are a build-time contract
-    details: The security gate refuses a POST route that passes caller text to a prompt with no input guardrail. The check happens at generation time, so an unprotected endpoint cannot quietly ship.
+    details: You find out at build time, not in production. Streaming on a target that cannot stream, a batch deployment with no pipeline, a cloud and target with no module — each is a named diagnostic with the fix.
+  - title: Know what a run costs before you ship it
+    details: A model alias resolves to one pinned id, never a floating vendor default, and a cost profile prices every call so the budget gate compares the declared ceiling with the recorded total.
+  - title: Unprotected endpoints cannot ship
+    details: The security gate refuses a POST route that passes caller text to a prompt with no input guardrail, so the check happens at generation time instead of during an incident review.
   - title: Evals gate like tests
-    details: An eval with gate.ci declares a regression budget over a dataset, not a dashboard. aid eval runs it and exits non-zero when the budget is exceeded.
+    details: A quality regression fails the build, not a dashboard. An eval declares a regression budget over a dataset, and `aid eval` exits non-zero when the budget is exceeded.
   - title: Infrastructure from the same spec
-    details: A deployment plan emits OpenTofu for AWS or GCP, beside a Dockerfile and generated CI. Modules are byte-asserted against fixtures and validated with tofu in CI, so the HCL is proved before you apply it.
+    details: The cloud you already use, written for you. A deployment plan emits OpenTofu for AWS or GCP beside a Dockerfile and generated CI, byte-asserted against fixtures and validated with tofu in CI.
   - title: You keep the app
-    details: Output is ordinary FastAPI or Next.js code. The generator owns app/generated/, never touches app/business/ after seeding it, and a manifest of hashes makes drift visible. There is no server to adopt and no request proxy.
+    details: Output is ordinary FastAPI or Next.js code. The generator owns app/generated/, never touches app/business/ after seeding it, and a manifest of hashes makes drift visible. No server to adopt, no request proxy.
 ---
 
 ## What goes in, what comes out
@@ -63,23 +63,71 @@ pipelines:
 registry entry, a gateway with the model pinned and priced, the pipeline module and the
 guardrail engine — then refuses to overwrite a generated file you edited by hand.
 
+## One spec, many customers
+
+The base names what a customer is allowed to decide. An overlay may move nothing else.
+
+```yaml
+# app/app.spec.yaml — abridged; the rest of the base is the example above
+overridable:
+  deployments.prod.region:
+    from: [eu-central-1, us-east-1, ap-southeast-2]
+  models.triage.modelId:
+    from: [gpt-4o-mini, gpt-4.1-mini]
+  agents.triage_agent.maxCostBudget:
+    max: 2.5
+  deployments.prod.audit.retentionDays:
+    max: 730
+```
+
+```yaml
+# customers/acme.yaml — one customer's differences
+base: ../app/app.spec.yaml
+customer: acme-eu
+profile: enterprise
+overrides:
+  deployments.prod.region: ap-southeast-2
+  models.triage.modelId: gpt-4.1-mini
+  agents.triage_agent.maxCostBudget: 1.5
+```
+
+```console
+$ aid resolve customers/acme.yaml --out customers/acme.spec.yaml
+wrote customers/acme.spec.yaml (3 overrides applied)
+$ aid resolve customers/bad.yaml --check
+error: the overlay gate rejected "acme-bad": 4000 exceeds the 730 the base allows at "deployments.prod.audit.retentionDays" [overlay/value-out-of-bounds]
+$ aid fleet
+  customer  profile     models        region          ceiling  status
+  acme-eu   enterprise  gpt-4.1-mini  ap-southeast-2  $1.50    ok
+```
+
+## Built for
+
+- **Mid-size teams.** `profile: standard`, managed services, default budgets, and the
+  [`support-copilot` golden path](reference/cli.md#init) that passes every gate as it lands.
+- **Enterprise.** Declared identity, a private network, an audit sink, change approvals, and
+  [one overlay per customer](walkthroughs/overlays-and-fleet.md) so one reviewed base stays
+  the only source of truth.
+
 ## What the compiler writes for you
 
 AID is not a prompt wrapper. Each family below is declared in the spec, then generated,
-priced and gated. The count is how much of that family has already shipped.
+priced and gated. The count is generated from the release registry rather than typed here,
+so a row cannot claim more than shipped; the [features page](features.md) lists every entry
+behind these counts.
 
 <!-- capability-band:start -->
 
 | Capability | Declared by | What it covers | Shipped |
 | --- | --- | --- | --- |
-| **[Model routing and cost](./reference/spec.md#model)** | `models[]` | An alias resolves to one pinned id, a cost profile prices every call, and a target that cannot serve a declared capability is refused before code is written. | 5 |
-| **[Retrieval and memory](./reference/spec.md#retriever)** | `retrievers[], stores[]` | Retrieved items carry the path and offsets an answer cites, and a managed knowledge base, an S3 prefix, an HTTP document or a local store is the same declaration. | 8 |
-| **[Guardrails and decisions](./reference/spec.md#guardrail)** | `guardrails[], decisions[]` | A policy names its stages and its failing action, the security gate refuses an unguarded POST route, and a judgement can be a checked decision rather than prose. | 6 |
-| **[Quality gates](./reference/spec.md#eval)** | `evals[]` | An eval declares a regression budget over a dataset, `aid eval` exits non-zero when it is exceeded, and a pipeline with no CI eval is a build error. | 4 |
-| **[Agents and tools](./reference/spec.md#agent)** | `agents[], tools[]` | A tool loop is generated from the spec while the tool bodies stay yours in `app/business/`, so the plumbing is owned and the logic is not. | 2 |
-| **[Deployment and infrastructure](./reference/targets.md#capability-matrix)** | `deployments[], aid infra` | The same spec emits a Dockerfile, OpenTofu for AWS or GCP, a CDK app, and the project CI that re-runs every gate — then stops owning any of it. | 9 |
-| **[Observability and cost](./reference/cli.md#trace)** | `traces[], observability, aid cost, aid report` | A trace records what each step did, a cost metric reports what it spent, the `observability` block says whether those spans may leave the process at all, and a declared alarm is generated as cloud infrastructure rather than described. | 5 |
-| **[Fleet repeatability](./reference/cli.md#fleet)** | `overridable, aid resolve, aid fleet` | One base spec serves many customers: an overlay may only touch the paths the base opened, the resolved document is a reviewed file, and the whole fleet is one command over git. | 4 |
+| **[Model routing and cost](./reference/spec.md#model)** | `models[]` | Every call is pinned and priced, so a budget is a number the build can enforce rather than a hope. | 5 |
+| **[Retrieval and memory](./reference/spec.md#retriever)** | `retrievers[], stores[]` | Answers cite the file and offset they came from, whether the source is a managed knowledge base, an object prefix or a local store. | 8 |
+| **[Guardrails and decisions](./reference/spec.md#guardrail)** | `guardrails[], decisions[]` | An unprotected route is refused before it exists, and a judgement can be a checked decision instead of prose. | 6 |
+| **[Quality gates](./reference/spec.md#eval)** | `evals[]` | A quality regression fails the build, and every route that reaches users has an eval claiming it. | 4 |
+| **[Agents and tools](./reference/spec.md#agent)** | `agents[], tools[]` | The plumbing is generated and the tool bodies stay yours; a loop that could run unbounded or unpriced is refused. | 2 |
+| **[Deployment and infrastructure](./reference/targets.md#capability-matrix)** | `deployments[], aid infra` | The Dockerfile, OpenTofu or CDK and CI your cloud needs, plus the profile, region, audit sink and approvals an enterprise review asks for. | 9 |
+| **[Observability and cost](./reference/cli.md#trace)** | `traces[], observability, aid cost, aid report` | Traces and costs leave only for the collector your policy names, alarms are generated infrastructure, and one report compares every customer. | 5 |
+| **[Fleet repeatability](./reference/cli.md#fleet)** | `overridable, aid resolve, aid fleet` | One reviewed base spec, one small overlay per customer: only paths the base opened can move, and the fleet is one command over git. | 4 |
 
 <!-- capability-band:end -->
 
@@ -93,6 +141,7 @@ week of plumbing before the first useful line of logic:
 | The input/output policy and its failing action, once per route | `guardrails: [{ stages: …, onFail: … }]` | One policy engine, with the routes that skip it refused |
 | A Dockerfile, and `main.tf` for whichever cloud the customer named | `deployments: [{ target: container }]` | A Dockerfile, and OpenTofu under `infra/` for the cloud `aid infra --cloud` names |
 | An eval harness, a budget check, and app CI to run both | `evals: [{ dataset: …, budget: … }]` | A generated CI job that re-runs every gate and fails the build |
+| A copy of the spec per customer, and a reviewer to diff them | `overridable` paths, plus one overlay per customer | A resolved spec per customer that only the reviewed paths can move |
 
 [The features page](features.md) lists the same capabilities one by one, with the release
 that first shipped each and the refusal that proves it is enforced. Every row on the band
@@ -102,11 +151,11 @@ links to the spec section that declares it.
 
 | Gate | What it catches | What breaks without it |
 | --- | --- | --- |
-| Capability | A target that cannot honour a declared feature, such as streaming on a target with no SSE surface | A route that compiles and fails on its first real request |
-| Security | A POST route that passes caller text to a prompt with no input guardrail | An endpoint exposed to prompt injection on day one |
-| Cost | An eval that declares a budget for a model with no cost profile, or an estimated run cost above that budget | A budget that cannot be enforced, and a cost regression that ships unnoticed |
-| Eval coverage | An HTTP pipeline with no CI eval claiming it | A prompt edit that silently regresses quality |
-| Deploy and infra | An unknown cloud, a cloud and target pair with no module, or streaming on an HTTP API | Unvalidated HCL and a failure during apply |
+| Capability | A target that cannot honour a declared feature, such as streaming on a target that cannot stream | A route that compiles, deploys, and fails on its first real user request |
+| Security | A POST route that passes caller text to a prompt with no input guardrail | An endpoint open to prompt injection from the day it ships |
+| Cost | An eval that declares a budget for a model with no cost profile, or an estimated run cost above that budget | A budget nobody can enforce, and a cost regression that reaches customers unnoticed |
+| Eval coverage | An HTTP pipeline with no CI eval claiming it | A prompt edit that quietly makes answers worse, with nothing to catch it |
+| Deploy and infra | An unknown cloud, a cloud and target pair with no module, or streaming on an HTTP API | An apply that fails under deadline, on infrastructure nobody validated first |
 
 Each gate names the field and the fix. A spec that cannot work is rejected before any code is
 written, and the same gates run again in the generated CI.
@@ -135,21 +184,14 @@ app/app.spec.yaml: ok (0 errors, 0 warnings)
 shows every file `gen` wrote and serves the endpoint. You need Node.js 24 or newer — no
 account, no email gate, nothing else to install.
 
-Seven packages on npm and one on PyPI ship together at version **{{ AID_VERSION }}**, with
-the spec language at `0.30`.
+Seven npm packages and one on PyPI ship together at version **{{ AID_VERSION }}**.
 
-## Support, read from the code
+## Support
 
-The provider, cloud and target matrix is generated from `SERVED_PROVIDERS` and
-`CLOUD_TARGETS`, the same declarations the compiler enforces, so the page cannot claim a
-provider or a cloud that has not shipped. The [support matrix](reference/support.md) is the
-source of truth; a pair it does not cover is refused at plan time with a named diagnostic.
-
-The [features page](features.md) is the short version for a decision: which managed service
-runs each deployment target on each cloud, which capabilities every model provider's adapter
-advertises, the cloud identity the generated infrastructure grants the service, what ships
-out of the box with the release that first shipped it, and what the framework refuses on
-purpose with the diagnostic that enforces the refusal.
+AWS and GCP run `batch`, `container` and `serverless`; `edge` is AWS only. Model providers
+are `anthropic`, `bedrock`, `gemini`, `google`, `openai` and `openai-compatible`. The
+[support matrix](reference/support.md) is generated from the same declarations the compiler
+enforces, so a pair it does not list is refused at plan time with a named diagnostic.
 
 ## What AID is not
 
@@ -175,8 +217,8 @@ you. The app keeps booting because it never depended on a control plane.
 
 - New here? [Getting started](guide/getting-started.md) scaffolds, validates, generates and
   serves an app, and shows the two gates that will stop you on the way.
-- Want the mental model? [Concepts](guide/concepts.md) is the shortest path through the
-  spec, the IR, the generator and the runtime.
+- Delivering it to a second customer? [Overlays and the fleet table](walkthroughs/overlays-and-fleet.md)
+  turns one base spec into one file per customer, and prints the table.
 - Want to know how each capability is used? [Usage](usage.md) is one worked example per
   family: the spec fragment, the files it generates, and the refusal that enforces it.
 - Want a worked example? [Support copilot](walkthroughs/support-copilot.md) walks a

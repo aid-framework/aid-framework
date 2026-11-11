@@ -749,7 +749,7 @@ export const CAPABILITY_FAMILIES = [
     id: 'models',
     title: 'Model routing and cost',
     pitch:
-      'An alias resolves to one pinned id, a cost profile prices every call, and a target that cannot serve a declared capability is refused before code is written.',
+      'Every call is pinned and priced, so a budget is a number the build can enforce rather than a hope.',
     declaredBy: 'models[]',
     href: './reference/spec.md#model',
     featureIds: [
@@ -764,7 +764,7 @@ export const CAPABILITY_FAMILIES = [
     id: 'retrieval',
     title: 'Retrieval and memory',
     pitch:
-      'Retrieved items carry the path and offsets an answer cites, and a managed knowledge base, an S3 prefix, an HTTP document or a local store is the same declaration.',
+      'Answers cite the file and offset they came from, whether the source is a managed knowledge base, an object prefix or a local store.',
     declaredBy: 'retrievers[], stores[]',
     href: './reference/spec.md#retriever',
     featureIds: [
@@ -782,7 +782,7 @@ export const CAPABILITY_FAMILIES = [
     id: 'guardrails',
     title: 'Guardrails and decisions',
     pitch:
-      'A policy names its stages and its failing action, the security gate refuses an unguarded POST route, and a judgement can be a checked decision rather than prose.',
+      'An unprotected route is refused before it exists, and a judgement can be a checked decision instead of prose.',
     declaredBy: 'guardrails[], decisions[]',
     href: './reference/spec.md#guardrail',
     featureIds: [
@@ -798,7 +798,7 @@ export const CAPABILITY_FAMILIES = [
     id: 'quality',
     title: 'Quality gates',
     pitch:
-      'An eval declares a regression budget over a dataset, `aid eval` exits non-zero when it is exceeded, and a pipeline with no CI eval is a build error.',
+      'A quality regression fails the build, and every route that reaches users has an eval claiming it.',
     declaredBy: 'evals[]',
     href: './reference/spec.md#eval',
     featureIds: ['eval-coverage', 'evals-decision', 'promotion-gate', 'feedback-signals'],
@@ -807,7 +807,7 @@ export const CAPABILITY_FAMILIES = [
     id: 'agents',
     title: 'Agents and tools',
     pitch:
-      'A tool loop is generated from the spec while the tool bodies stay yours in `app/business/`, so the plumbing is owned and the logic is not.',
+      'The plumbing is generated and the tool bodies stay yours; a loop that could run unbounded or unpriced is refused.',
     declaredBy: 'agents[], tools[]',
     href: './reference/spec.md#agent',
     featureIds: ['agents', 'agentcore-gateway'],
@@ -816,7 +816,7 @@ export const CAPABILITY_FAMILIES = [
     id: 'deploy',
     title: 'Deployment and infrastructure',
     pitch:
-      'The same spec emits a Dockerfile, OpenTofu for AWS or GCP, a CDK app, and the project CI that re-runs every gate — then stops owning any of it.',
+      'The Dockerfile, OpenTofu or CDK and CI your cloud needs, plus the profile, region, audit sink and approvals an enterprise review asks for.',
     declaredBy: 'deployments[], aid infra',
     href: './reference/targets.md#capability-matrix',
     featureIds: [
@@ -835,7 +835,7 @@ export const CAPABILITY_FAMILIES = [
     id: 'observability',
     title: 'Observability and cost',
     pitch:
-      'A trace records what each step did, a cost metric reports what it spent, the `observability` block says whether those spans may leave the process at all, and a declared alarm is generated as cloud infrastructure rather than described.',
+      'Traces and costs leave only for the collector your policy names, alarms are generated infrastructure, and one report compares every customer.',
     declaredBy: 'traces[], observability, aid cost, aid report',
     href: './reference/cli.md#trace',
     featureIds: [
@@ -850,7 +850,7 @@ export const CAPABILITY_FAMILIES = [
     id: 'fleet',
     title: 'Fleet repeatability',
     pitch:
-      'One base spec serves many customers: an overlay may only touch the paths the base opened, the resolved document is a reviewed file, and the whole fleet is one command over git.',
+      'One reviewed base spec, one small overlay per customer: only paths the base opened can move, and the fleet is one command over git.',
     declaredBy: 'overridable, aid resolve, aid fleet',
     href: './reference/cli.md#fleet',
     featureIds: [

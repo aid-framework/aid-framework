@@ -135,6 +135,24 @@ See the table in [`README.md`](README.md). In short:
 - `runtimes/*` — per-stack runtime libraries (`docs/design.md` §9)
 - `examples/` — example specs and generated apps
 
+## Documentation
+
+The website is built from `docs/`, so everything in that directory is either published or
+explicitly excluded in `site/.vitepress/config.mts`.
+
+- **The homepage sells, the features page enumerates.** `docs/index.md` argues *why* the
+  framework exists: outcome first, mechanism second, no release history. Every claim on it
+  must trace to a shipped entry on `docs/features.md` (generated from the registry in
+  `site/scripts/features-data.mjs`) or to the reference. Do not add roadmap promises,
+  benchmark numbers or "since 0.x" notes to it.
+- **Agent state is not documentation.** Working notes, session handoffs, verification logs and
+  RFC drafts go in `docs/rfcs/` or a notes directory excluded from the site — never in a
+  published page. `rfcs/**`, `design.md`, `contributing.md` and the layer deep-dives are
+  already excluded, and `check-links` fails a published page that links into them.
+- **Generated pages are generated.** `docs/features.md` and `docs/reference/*.md`, plus the
+  capability band on the homepage, come from `cd site && node scripts/gen-reference.mjs`.
+  Edit the registry, not the output; `pnpm gen:check` fails a stale page.
+
 ## Pull request expectations
 
 1. **Keep it focused.** One logical change per PR. Split refactors out from behavior changes.
