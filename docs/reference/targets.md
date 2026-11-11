@@ -18,6 +18,7 @@ A declared capability is a promise: there is an emitter for it, the target's run
 | `guardrails` | yes | yes |
 | `http-trigger` | yes | yes |
 | `json-schema` | yes | yes |
+| `metrics` | yes | no |
 | `otel` | yes | yes |
 | `rerank` | yes | yes |
 | `streaming` | yes | yes |
@@ -32,7 +33,7 @@ A declared capability is a promise: there is an emitter for it, the target's run
 | Package | `@aid-framework/generator-py-fastapi` |
 | Manifest version | `0.1.0` |
 | IR range | `^0.5.0` |
-| Capabilities | `http-trigger`, `json-schema`, `streaming`, `tool-calling`, `otel`, `embeddings`, `rerank`, `guardrails`, `agents`, `cursor-memory` |
+| Capabilities | `http-trigger`, `json-schema`, `streaming`, `tool-calling`, `otel`, `embeddings`, `rerank`, `guardrails`, `agents`, `cursor-memory`, `metrics` |
 | Emits against | `structuredOutput`: `pydantic`; `tracing`: `otel-genai` |
 | Output root | `app` |
 | Generated directory | `app/generated` |

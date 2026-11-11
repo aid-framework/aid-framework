@@ -376,6 +376,14 @@ Spec 0.27 gives a document an `observability` block: whether to record spans, wh
 - **Reference:** [spec](./reference/spec.md#observability)
 - **Since:** `0.1.150`
 
+### The series the alarms watch, recorded and exported
+
+Four series -- `agent.cost`, `agent.tokens`, `eval.cost` and `eval.latency.p95` -- are recorded by `aid-runtime-python` and leave by the same opt-in export as the spans: `configure_metrics()` installs an OTLP/HTTP reader and the generated `metrics_export_status()` reports where it went. A run stopped by a guardrail or an exhausted ceiling publishes what it spent before the refusal propagates, and an eval suite publishes one `eval.cost` and one `eval.latency.p95` sample per case per run under the declared eval id, so the series an alarm filters on is the eval the spec declares. An alert over a series the target does not record is refused by `ir/alerts-unproduced` rather than shipped as an alarm that would never fire; ts-vercel records none and refuses all four.
+
+- **Turned on by:** `observability`
+- **Reference:** [spec](./reference/spec.md#observability)
+- **Since:** `0.1.152`
+
 ### A report across every deployment
 
 `aid report &lt;dir&gt;` reads one directory of deployments -- each holding the `*.jsonl` files that deployment's trace sink wrote and any `*.baseline.json` it committed -- and prints spans, traces, measured cost, p95 latency, errors and baseline scores side by side, then a fleet total. A deployment with no trace files shows a dash rather than `$0.000000`, because "nothing was measured" and "measured zero" are different answers. Nothing is uploaded and nothing is joined to the repository, so the same command runs on a CI artifact download; `--budget` turns the total into a ceiling that fails the job.
@@ -606,11 +614,17 @@ A `from` list is a closed set of values and a `max` is a ceiling, so a cost budg
 
 - **Enforced by:** `overlay/value-out-of-bounds`
 
-### An alarm over spans that never leave the process
+### An alarm whose series never leave the process
 
-An alarm watches a metric, and the runtime publishes no metrics at all: the only telemetry it emits is spans. A document that declares `observability.alerts` without `export: otlp` is therefore refused by the `observability/alerts` gate, because the emitted alarm would watch a series that is never produced and stay silent forever -- which reads as health.
+An alarm watches a metric, so the series has to be recorded and has to leave. A document that declares `observability.alerts` without `export: otlp` is refused by the `observability/alerts` gate, because the emitted alarm would watch a series that is recorded into a process that never sends it and stay silent forever -- which reads as health.
 
 - **Enforced by:** `ir/alerts-unexported`
+
+### An alarm over a series this build never writes
+
+A series is only real where the generated runtime writes it, so an alarm over a metric the build does not record is refused by `ir/alerts-unproduced` rather than emitted as an alarm that reports no data forever. The diagnostic names the metric, the target that would have written nothing, and the capability plus `export: otlp` the document needs. py-fastapi records all four -- `agent.cost`, `agent.tokens`, `eval.cost` and `eval.latency.p95` -- while a target that records none refuses every alert in the document.
+
+- **Enforced by:** `ir/alerts-unproduced`
 
 ### An alarm whose reduction the series cannot answer
 

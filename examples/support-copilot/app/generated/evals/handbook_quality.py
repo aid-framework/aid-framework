@@ -111,6 +111,7 @@ async def run(deps: Deps | None = None) -> EvalRun:
         runs=SAMPLES,
         dataset=dataset.name,
         dataset_version=dataset.version,
+        eval_id=EVAL_ID,
     )
 
 

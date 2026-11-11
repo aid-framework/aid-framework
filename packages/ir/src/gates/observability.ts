@@ -28,6 +28,7 @@
 
 import { ALERTS_MIN_VERSION, specVersionAtLeast } from '@aid-framework/spec';
 import { sensitiveNames } from '../build.js';
+import { resolveRequiredCapability } from '../capabilities.js';
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
 import { type FeedbackSignalShape, type IR, isLatencyMetric } from '../shapes.js';
 import { type GateOptions, type GateResult, NO_SUPPRESSIONS, reporter } from './contract.js';
@@ -188,14 +189,18 @@ function carriesText(signal: FeedbackSignalShape): boolean {
  * The alerts gate — why an alarm that can never fire is refused.
  *
  * An alarm over a series nothing produces does not fail loudly; it sits in "no data",
- * and no data reads as healthy on the dashboard someone trusts. So each of the three
+ * and no data reads as healthy on the dashboard someone trusts. So each of the four
  * ways a declared alert can be permanently silent gets its own reason and its own fix:
  *
- *   - **No export.** `aid infra gen` emits alarms and a collector configuration together,
- *     because the alarms watch series the collector derives from exported spans. A
- *     document whose spans stay in the process has no collector, so the alarms would be
- *     watching a derivation of a stream that never leaves. This is the check that makes
- *     the rest meaningful, and it is why `export: otlp` is the price of an alarm.
+ *   - **No export.** The generated app is the producer: `observability.export` is the
+ *     switch that installs the exporter, so a document whose spans stay in the process has
+ *     no producer at all and the alarms would watch a stream that never leaves. This is the
+ *     check that makes the rest meaningful, and it is why `export: otlp` is the price of an
+ *     alarm.
+ *   - **A target that records nothing.** Exporting is necessary but not sufficient: a
+ *     target whose manifest lacks the `metrics` capability publishes no series, so the
+ *     alarm would watch a series nothing writes. Refused per series, because the diagnostic
+ *     has to name the metric and the alert a reader will change.
  *   - **An aggregate that cannot read its metric.** A percentile interprets a latency
  *     series and nothing else; `sum` of a p95 is a number with no definition. The gate
  *     refuses the crossing rather than emitting a threshold nobody can justify.
@@ -229,7 +234,7 @@ export function alertsGate(ir: IR, options: GateOptions): GateResult {
         code: IR_DIAGNOSTIC_CODES.alertsUnexported,
         message: `the alerts gate rejected this document: ${alerts.length} alert(s) are declared, but observability exports ${declared}, so no collector derives the series they watch and every alarm would report no data forever`,
         path: ['observability', 'alerts'],
-        hint: 'add `export: otlp` and `endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT` so the spans reach a collector, or remove the alerts block',
+        hint: 'add `export: otlp` and `endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT` so the generated app publishes the series, or remove the alerts block',
       }),
     );
     return { diagnostics, suppressed: NO_SUPPRESSIONS };
@@ -238,9 +243,25 @@ export function alertsGate(ir: IR, options: GateOptions): GateResult {
   const agentIds = new Set(ir.agents.map((agent) => agent.id));
   const evalIds = new Set(ir.evals.map((evalShape) => evalShape.id));
 
+  const silentTargets = ir.project.targets.filter((target) => {
+    const declared = options.targetCapabilities[target] ?? [];
+    return !declared.some((entry) => resolveRequiredCapability(entry) === 'metrics');
+  });
+
   for (const alert of alerts) {
     const base = ['observability', 'alerts', alert.id];
     const latency = isLatencyMetric(alert.metric);
+
+    if (silentTargets.length > 0) {
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.alertsUnproduced,
+          message: `the alerts gate rejected "${alert.id}": metric "${alert.metric}" has no recording point in this build, so the alarm would watch a series nothing writes and report no data forever`,
+          path: [...base, 'metric'],
+          hint: `generate for a target that records this series. py-fastapi publishes all four when \`export: otlp\` is declared and the \`otlp\` extra is installed; a target whose manifest lacks the \`metrics\` capability records none (${silentTargets.join(', ')})`,
+        }),
+      );
+    }
 
     if (latency !== (alert.aggregate === 'p95')) {
       const fix = latency

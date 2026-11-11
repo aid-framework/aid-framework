@@ -33,6 +33,7 @@ mean comparison.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from time import perf_counter
 from typing import cast
 
 from aid_runtime.errors import EvalError
@@ -45,6 +46,7 @@ from aid_runtime.evals.gate import (
     Threshold,
 )
 from aid_runtime.evals.metrics import Metric
+from aid_runtime.metrics import record_eval_case
 from aid_runtime.retrieval.metrics import RetrievalCase, RetrievalMetric
 from aid_runtime.retrieval.retriever import Retriever
 
@@ -84,8 +86,16 @@ class RetrievalGate:
         runs: int,
         dataset: str,
         dataset_version: str,
+        eval_id: str | None = None,
     ) -> EvalRun:
-        """Run every case ``runs`` times, producing one mean per metric per run."""
+        """Run every case ``runs`` times, producing one mean per metric per run.
+
+        Each case also publishes its duration, which is what makes ``eval.latency.p95`` a
+        series an alarm can watch for a retrieval eval just as for a model-backed one. The
+        spend is a real ``0.0``: retrieval costs embedding and vector queries rather than
+        model calls, and a counter that stayed silent would leave a cost alarm reporting
+        no data instead of reporting that there was nothing to spend.
+        """
         if not cases:
             raise EvalError("a retrieval run needs at least one case")
         if runs < 1:
@@ -93,16 +103,20 @@ class RetrievalGate:
         if not self._metrics:
             raise EvalError("a retrieval run needs at least one metric")
 
+        label = dataset if eval_id is None else eval_id
         samples: dict[str, list[float]] = {metric.name: [] for metric in self._metrics}
         for _ in range(runs):
             totals: dict[str, float] = {metric.name: 0.0 for metric in self._metrics}
             for case in cases:
                 # k comes from the case, because a case is what says how many
                 # passages count as an answer; a retriever's own topK is a default.
+                started = perf_counter()
                 retrieved = await retriever.retrieve(case.query, top_k=case.k)
+                latency_ms = (perf_counter() - started) * 1000.0
                 for metric in self._metrics:
                     result = await metric.score(case, retrieved)
                     totals[metric.name] += result.score
+                record_eval_case(eval_id=label, cost_usd=0.0, latency_ms=latency_ms)
             for name, total in totals.items():
                 samples[name].append(total / len(cases))
 

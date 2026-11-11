@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aid_runtime.telemetry import ExportStatus, configure_export
+from aid_runtime.telemetry import ExportStatus, configure_export, configure_metrics
 
 
 def generated_capabilities() -> dict[str, Any]:
@@ -24,6 +24,7 @@ def generated_capabilities() -> dict[str, Any]:
                 "guardrails",
                 "http-trigger",
                 "json-schema",
+                "metrics",
                 "otel",
                 "rerank",
                 "streaming",
@@ -42,6 +43,7 @@ def generated_capabilities() -> dict[str, Any]:
                 "guardrails",
                 "http-trigger",
                 "json-schema",
+                "metrics",
                 "otel",
                 "rerank",
                 "streaming",
@@ -100,6 +102,20 @@ def tracing_export_status(service_name: str) -> ExportStatus:
     """
 
     return configure_export(
+        service_name=service_name,
+        declared="none",
+        endpoint_env="OTEL_EXPORTER_OTLP_ENDPOINT",
+    )
+
+
+def metrics_export_status(service_name: str) -> ExportStatus:
+    """Install the metric exporter that publishes the series alarms in this document watch, and
+    report what happened. Call it beside `tracing_export_status`: an alarm over a series nothing
+    publishes does not fail, it reports no data, which is the one failure mode that looks like
+    health. Nothing here raises, for the same reason nothing in `configure_metrics` does.
+    """
+
+    return configure_metrics(
         service_name=service_name,
         declared="none",
         endpoint_env="OTEL_EXPORTER_OTLP_ENDPOINT",

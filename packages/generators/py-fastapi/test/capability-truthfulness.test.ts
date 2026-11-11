@@ -154,6 +154,28 @@ const CLAIMS: readonly Claim[] = [
     planned: /^app\/generated\/observability\.py$/,
   },
   {
+    capability: 'metrics',
+    emitter: {
+      path: 'packages/generators/py-fastapi/src/emit/observability.ts',
+      marker: 'def metrics_export_status(service_name: str) -> ExportStatus:',
+    },
+    pyRuntime: {
+      path: 'runtimes/python/src/aid_runtime/metrics.py',
+      marker: 'def record_agent_run',
+    },
+    // Withdrawn rather than forgotten: the TypeScript runtime records spans but no metric
+    // series, so there is nothing on that side for an alarm to watch. The alarm module
+    // refuses a target that records none, which is what keeps this a recorded gap rather
+    // than a silent one.
+    tsRuntimeGap:
+      'the TypeScript runtime records spans but no metric series, so there is no TS counterpart for the recorders or the exporter',
+    behaviour: {
+      path: 'runtimes/python/tests/test_agents_budget.py',
+      marker: 'def test_a_run_stopped_by_its_ceiling_still_publishes_what_it_spent',
+    },
+    planned: /^app\/generated\/observability\.py$/,
+  },
+  {
     capability: 'embeddings',
     emitter: {
       path: 'packages/generators/py-fastapi/src/emit/retrieval.ts',
@@ -447,6 +469,7 @@ describe('the capabilities this target declares', () => {
       'guardrails',
       'http-trigger',
       'json-schema',
+      'metrics',
       'otel',
       'rerank',
       'streaming',
@@ -457,8 +480,19 @@ describe('the capabilities this target declares', () => {
     // The example is the fixture every behavioural claim points at, so a capability
     // this target declares and the example does not use would be a promise no shipped
     // app exercises.
+    //
+    // A capability recorded in `DEFERRED_CAPABILITIES` is exempt by construction: it is
+    // declared because the target serves it, not because a spec can ask for it, so there
+    // is no IR content that could derive it. `metrics` is the only such member today --
+    // every run records spend and every sample records its score, and `ir/alerts-unproduced`
+    // refuses the alarm rather than the document -- and the exemption is read from the
+    // table rather than listed here so a second one cannot be waved through unnamed.
     const derived = deriveRequiredCapabilities(example().ir);
-    expect(new Set(derived)).toEqual(new Set(PY_FASTAPI_MANIFEST.capabilities));
+    const nonDerivable = new Set(Object.keys(DEFERRED_CAPABILITIES));
+    expect(nonDerivable.has('metrics')).toBe(true);
+    expect(new Set(derived)).toEqual(
+      new Set(PY_FASTAPI_MANIFEST.capabilities.filter((it) => !nonDerivable.has(it))),
+    );
     // And in vocabulary order, which is what makes two runs of the gate comparable.
     expect(derived).toEqual(REQUIRED_CAPABILITIES.filter((it) => derived.includes(it)));
   });
@@ -563,6 +597,7 @@ describe('the capability vocabulary', () => {
         'http-trigger',
         'json-schema',
         'long-context',
+        'metrics',
         'otel',
         'prompt-cache',
         'reasoning',

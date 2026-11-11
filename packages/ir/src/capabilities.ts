@@ -34,6 +34,10 @@ export const REQUIRED_CAPABILITIES = [
   // the runtime exists would be exactly the D-1 false declaration this layer removes.
   'agents',
   'guardrails',
+  // Declared by a target that can publish the four series `observability.alerts` watches.
+  // Nothing derives it: an alarm is enforced per series by `ir/alerts-unproduced`, which
+  // reads this declaration from the target manifest rather than assuming a generator list.
+  'metrics',
 ] as const;
 
 export type RequiredCapability = (typeof REQUIRED_CAPABILITIES)[number];
@@ -99,8 +103,13 @@ export interface DeferredCapability {
 }
 
 export const DEFERRED_CAPABILITIES: Readonly<
-  Record<'vision' | 'audio' | 'long-context' | 'reasoning', DeferredCapability>
+  Record<'metrics' | 'vision' | 'audio' | 'long-context' | 'reasoning', DeferredCapability>
 > = {
+  metrics: {
+    reason:
+      'The requirement is per alarm series rather than per document, so the IR has no single flag to derive it from: `ir/alerts-unproduced` reads the declaration from the target manifest and refuses the specific alert the build cannot record. A target that publishes nothing simply omits the capability.',
+    phase: 'enforced by the alerts gate, not derived',
+  },
   vision: {
     reason:
       'Spec v0.2 has no image input, so there is no IR content that could derive this requirement and no generator emits vision wiring.',

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import statistics
 from collections.abc import Awaitable, Callable, Sequence
+from time import perf_counter
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,6 +18,7 @@ from aid_runtime.evals.dataset import Dataset, EvalCase
 from aid_runtime.evals.gate import EvalRun, MetricRun
 from aid_runtime.evals.metrics import Metric, MetricResult
 from aid_runtime.gateway import ModelGateway
+from aid_runtime.metrics import record_eval_case
 from aid_runtime.types import CompletionRequest, Message
 
 __all__ = [
@@ -174,18 +176,63 @@ async def gateway_judge(
     return call
 
 
-async def evaluate_once(dataset: Dataset, runner: Runner, metrics: Sequence[Metric]) -> DatasetRun:
-    """One pass over ``dataset``, scoring every prediction with every metric."""
+async def evaluate_once(
+    dataset: Dataset,
+    runner: Runner,
+    metrics: Sequence[Metric],
+    *,
+    eval_id: str | None = None,
+) -> DatasetRun:
+    """One pass over ``dataset``, scoring every prediction with every metric.
+
+    Every case publishes its spend and duration as it completes, which is what makes
+    ``eval.cost`` and ``eval.latency.p95`` a series an alarm can watch. ``eval_id`` is the
+    *declared* eval this dataset belongs to -- the id an alarm's ``source`` names -- and
+    falls back to the dataset's own name for a caller that runs a dataset directly.
+    """
     if not metrics:
         raise ValueError("at least one metric is required")
+    label = dataset.name if eval_id is None else eval_id
     outcomes: list[CaseOutcome] = []
     for case in dataset.cases:
+        cost_before = _runner_cost(runner)
+        started = perf_counter()
         prediction = await runner(case)
+        # The runner call, not the scoring, is what a latency budget constrains: scoring
+        # is the harness measuring the answer, and charging its time to the pipeline would
+        # report a slower product because a judge was added to its eval.
+        latency_ms = (perf_counter() - started) * 1000.0
         scores = tuple([await metric.score(case, prediction) for metric in metrics])
         outcomes.append(CaseOutcome(case_id=case.id, prediction=prediction, scores=scores))
+        # Cost is read after scoring, because a model-backed metric spends money too and a
+        # cost budget that ignored the judge would be measuring half the run.
+        record_eval_case(
+            eval_id=label,
+            cost_usd=_spent_since(runner, cost_before),
+            latency_ms=latency_ms,
+        )
     return DatasetRun(
         dataset=dataset.name, dataset_version=dataset.version, outcomes=tuple(outcomes)
     )
+
+
+def _runner_cost(runner: Runner) -> float | None:
+    """A runner's cumulative model spend, when it meters one.
+
+    A :data:`Runner` is any callable, so most say nothing here; one built by
+    :class:`EvalRunner` reads its gateway ledger. An unmetered runner reports a real
+    ``0.0`` rather than a guess, which is why "does not meter" and "spent nothing" are the
+    same answer for a series that only ever sums.
+    """
+    spent = getattr(runner, "cost_usd", None)
+    return float(spent) if isinstance(spent, int | float) else None
+
+
+def _spent_since(runner: Runner, before: float | None) -> float:
+    after = _runner_cost(runner)
+    if before is None or after is None:
+        return 0.0
+    return max(after - before, 0.0)
 
 
 async def run_evaluation(
@@ -194,12 +241,16 @@ async def run_evaluation(
     metrics: Sequence[Metric],
     *,
     runs: int = 5,
+    eval_id: str | None = None,
 ) -> EvalRun:
     """Sample ``dataset`` ``runs`` times, recording one mean per metric per run.
 
     Every run makes fresh calls, which is the point: the spread across runs is the
     measurement of how much this system varies when nothing has changed. Without
     it there is nothing to compare a "regression" against.
+
+    ``eval_id`` is forwarded to :func:`evaluate_once` so every case's published series
+    carries the declared eval, which is the value an alarm scopes itself to.
     """
     if runs < 1:
         raise ValueError("runs must be at least 1")
@@ -208,7 +259,7 @@ async def run_evaluation(
 
     collected: dict[str, list[float]] = {metric.name: [] for metric in metrics}
     for _ in range(runs):
-        pass_result = await evaluate_once(dataset, runner, metrics)
+        pass_result = await evaluate_once(dataset, runner, metrics, eval_id=eval_id)
         means = pass_result.means()
         for metric in metrics:
             collected[metric.name].append(means[metric.name])

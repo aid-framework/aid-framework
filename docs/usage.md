@@ -624,8 +624,17 @@ tofu plan      # the same YAML produces aws_cloudwatch_metric_alarm.this["daily_
 
 The alarm is infrastructure, so it is reviewed in the same diff as the rest of the plan, and the
 unit on the page (`250 usd`) comes from the metric rather than from the author, so the number and
-its label cannot disagree. The metric list is closed to the four series the plan already derives,
-which is the point: an alarm cannot watch a series nothing produces.
+its label cannot disagree. The metric list is closed to four series — `agent.cost`, `agent.tokens`,
+`eval.cost` and `eval.latency.p95` — so an alarm cannot watch a number nothing produces.
+
+Those four are recorded, not assumed. `aid-runtime-python` writes all of them: a run stopped by a
+guardrail or an exhausted ceiling publishes what it spent before the refusal propagates, and an
+eval suite publishes one `eval.cost` and one `eval.latency.p95` sample per case per run under the
+eval id the spec declares. They leave by the same `export` switch as the spans — `aid gen` emits
+`metrics_export_status()` beside `tracing_export_status()`, and `configure_metrics()` installs the
+OTLP/HTTP reader — so an alarm filters on the same eval the spec names. An alarm over a series this
+build cannot record is refused by `ir/alerts-unproduced` instead of shipping an alarm that would
+never fire; `ts-vercel` records none of the four and so refuses all of them.
 
 What comes out:
 
@@ -657,6 +666,7 @@ Covers:
 - **A cost ceiling in CI**
 - **A declared place for the spans, and an exporter that reaches it**
 - **Alarms as generated infrastructure**
+- **The series the alarms watch, recorded and exported**
 - **A report across every deployment**
 
 ## Fleet repeatability

@@ -146,6 +146,13 @@ from aid_runtime.evals import (
 )
 from aid_runtime.gateway import ModelGateway, estimate_usage
 from aid_runtime.local_trace import TRACE_DIR_ENV, local_trace_enabled
+from aid_runtime.metrics import (
+    AGENT_LABEL,
+    EVAL_LABEL,
+    METRIC_NAMES,
+    record_agent_run,
+    record_eval_case,
+)
 from aid_runtime.pipeline import (
     STEPS_KEY,
     Pipeline,
@@ -287,6 +294,7 @@ from aid_runtime.telemetry import (
     ExportReason,
     ExportStatus,
     configure_export,
+    configure_metrics,
 )
 from aid_runtime.tools import Tool, ToolExecutor
 from aid_runtime.tracing import (
@@ -323,9 +331,10 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.151"
+__version__ = "0.1.152"
 
 __all__ = [
+    "AGENT_LABEL",
     "ANTHROPIC_VERSION",
     "ATTRIBUTES",
     "BEDROCK_SERVICE",
@@ -339,6 +348,7 @@ __all__ = [
     "DEFAULT_VERTEX_LOCATION",
     "DEPTH_KEY",
     "EMITTED_KEY",
+    "EVAL_LABEL",
     "EXPORT_KINDS",
     "GEMINI_API_KEY_ENV",
     "GEN_AI_OPERATION_CHAT",
@@ -349,6 +359,7 @@ __all__ = [
     "LIMITER_KEY",
     "MAX_STEP_DEPTH",
     "METADATA_TOKEN_URL",
+    "METRIC_NAMES",
     "OTLP_EXTRA",
     "PRINCIPAL_KEY",
     "REDUCED_KEY",
@@ -549,6 +560,7 @@ __all__ = [
     "chunker_for",
     "cite",
     "configure_export",
+    "configure_metrics",
     "create_store",
     "decision_cost_usd",
     "decision_key",
@@ -581,8 +593,10 @@ __all__ = [
     "parallel",
     "parse_structured",
     "pinned_embedding",
+    "record_agent_run",
     "record_attributes",
     "record_cost",
+    "record_eval_case",
     "record_exception",
     "record_hitl",
     "record_usage",
