@@ -360,6 +360,14 @@ Spec 0.27 gives a document an `observability` block: whether to record spans, wh
 - **Reference:** [spec](./reference/spec.md#observability)
 - **Since:** `0.1.145`
 
+### A report across every deployment
+
+`aid report &lt;dir&gt;` reads one directory of deployments -- each holding the `*.jsonl` files that deployment's trace sink wrote and any `*.baseline.json` it committed -- and prints spans, traces, measured cost, p95 latency, errors and baseline scores side by side, then a fleet total. A deployment with no trace files shows a dash rather than `$0.000000`, because "nothing was measured" and "measured zero" are different answers. Nothing is uploaded and nothing is joined to the repository, so the same command runs on a CI artifact download; `--budget` turns the total into a ceiling that fails the job.
+
+- **Turned on by:** `aid report`
+- **Reference:** [cli](./reference/cli.md#report)
+- **Since:** `0.1.148`
+
 ### Declared feedback signals
 
 Spec 0.28 lets a document say which feedback it collects (thumbs, corrections, escalations) and which fields may ride along. The `feedback` gate refuses a persistent store with no retention window, and refuses a correction store whose redaction list misses a field the spec already marks sensitive -- so a signal that could carry a customer name cannot be collected without a rule about it. AID routes and stores nothing; the declaration and its refusal are what exist.

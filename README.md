@@ -18,7 +18,7 @@ stack-independent IR, the generator SDK, the Python and TypeScript runtimes, two
 `aid` CLI, and three worked examples. Start with the [quickstart](#quickstart) below, or read
 [`docs/design.md`](docs/design.md) for the architecture and the IR.
 
-The CLI ships seventeen commands: `init`, `validate`, `resolve`, `fleet`, `gen`, `dev`, `guard`, `migrate`, `ingest`, `kb`, `eval`, `cost`, `trace`, `doctor`, `eject`, `infra`, and `package`.
+The CLI ships eighteen commands: `init`, `validate`, `resolve`, `fleet`, `gen`, `dev`, `guard`, `migrate`, `ingest`, `kb`, `eval`, `cost`, `trace`, `report`, `doctor`, `eject`, `infra`, and `package`.
 See [`packages/cli/`](packages/cli/) for the surface each command supports.
 
 Until 1.0, a minor release can change an interface; pin exact versions if you need a stable surface.
@@ -48,7 +48,7 @@ flowchart TD
     B["2. IR<br/>stack-independent, normalized, versioned"]
     C["3. Generator plugins<br/>py-fastapi (Python) · ts-vercel (TypeScript)"]
     D["4. Runtime libraries (per stack)<br/>gateway · prompt registry · retrieval · agent loop<br/>tool executor · memory · guardrails · evals · o11y/cost"]
-    E["5. CLI<br/>init · validate · resolve · fleet · gen · dev · guard · migrate · ingest · kb · eval · cost · trace · doctor · eject · infra · package"]
+    E["5. CLI<br/>init · validate · resolve · fleet · gen · dev · guard · migrate · ingest · kb · eval · cost · trace · report · doctor · eject · infra · package"]
     A -->|parse, validate, capability-check| B
     B -->|plan, emit| C
     C -->|imports| D

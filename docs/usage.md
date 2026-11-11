@@ -561,7 +561,15 @@ first thing you can answer is "what did this request do", with no collector to s
 ```sh
 aid trace <run-id>      # span tree, timings, models, tokens, cost
 aid cost                # cost and latency from the local trace sink
+aid report traces/      # the same numbers for every deployment, side by side
 ```
+
+A report is a directory of directories: one child per deployment, holding the `.jsonl` files
+that deployment's sink wrote and any `*.baseline.json` it committed. One row per customer, then
+a total, so twenty customers are one screen instead of twenty commands. It is files in and text
+out — no upload, no backend, and nothing joined to the repository — so the same command runs
+against a CI artifact download. `--budget` turns the total into a ceiling that fails the job,
+which is the only way a report can fail a build.
 
 The `observability` block moves that decision into the spec: `trace`, `redact`, and — for a
 service whose spans belong somewhere other than the process — `export: otlp` with `endpointEnv`
@@ -590,6 +598,7 @@ Covers:
 - **Local trace capture**
 - **A cost ceiling in CI**
 - **A declared place for the spans**
+- **A report across every deployment**
 
 ## Fleet repeatability
 

@@ -29,6 +29,7 @@ Every command accepts `-h` / `--help` for its own usage. All except `dev` accept
 | [`eval`](#eval) | run the eval gate, record the baseline it measures against, or apply a promotion policy |
 | [`cost`](#cost) | report cost and latency from the local trace sink |
 | [`trace`](#trace) | inspect a traced run: the span tree, timings, models, tokens and cost |
+| [`report`](#report) | compare many deployments from their trace sinks and recorded eval baselines |
 | [`doctor`](#doctor) | diagnose the tree against the spec: drift, versions, missing files |
 | [`eject`](#eject) | take ownership of a generated file: move it to business/ and stop generating it |
 | [`infra`](#infra) | derive the deployment wiring from the spec and drive OpenTofu or AWS CDK |
@@ -236,6 +237,20 @@ aid trace [run] [--dir <dir>] [--all]
 | --- | --- |
 | `--dir <dir>` | the trace directory to read (default: $AID_TRACE_DIR) |
 | `--all` | print every run in the directory, not just the run list |
+| `--json` | print one JSON document on stdout |
+| `-h`, `--help` | print this command's usage |
+
+## `report`
+
+compare many deployments from their trace sinks and recorded eval baselines
+
+```sh
+aid report <dir> [--budget <usd>]
+```
+
+| Option | Description |
+| --- | --- |
+| `--budget <usd>` | fail when the fleet total exceeds this ceiling |
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |
 
