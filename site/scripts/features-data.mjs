@@ -411,14 +411,16 @@ export const SHIPPED_FEATURES = [
   },
   {
     id: 'observability-export',
-    title: 'A declared place for the spans',
+    title: 'A declared place for the spans, and an exporter that reaches it',
     detail:
-      'Spec 0.27 gives a document an `observability` block: whether to record spans, what to redact, and whether they belong somewhere other than the process (`export: otlp`, with `endpointEnv` naming the variable that holds the collector address). The `observability/export` gate refuses an `otlp` export beside `trace: false`, and an `enterprise` profile that exports nothing, because an audit trail whose spans stay in the process is not one. AID installs no exporter, so the block states where spans belong; it does not yet send them.',
+      'Spec 0.27 gives a document an `observability` block: whether to record spans, what to redact, and whether they belong somewhere other than the process (`export: otlp`, with `endpointEnv` naming the variable that holds the collector address). The `observability/export` gate refuses an `otlp` export beside `trace: false`, and an `enterprise` profile that exports nothing, because an audit trail whose spans stay in the process is not one. Generating with py-fastapi emits `tracing_export_status()` into `app/generated/observability.py`, which the app calls at startup to install an OTLP/HTTP exporter over a batched processor from `aid-runtime-python[otlp]`; nothing is installed on import, so embedding AID does not decide telemetry for you. A target that installs no exporter refuses `export: otlp` rather than accept a destination nothing is sent to.',
     declaredBy: 'observability',
     href: './reference/spec.md#observability',
-    // `trace` and `redact` are emitted; the export intent is gated, not emitted. The row
-    // must not read as "AID ships your traces".
-    since: '0.1.145',
+    // The runtime installs the exporter only when the app calls it, and the generator emits
+    // the helper rather than the call because the ASGI entrypoint is developer-owned. The
+    // row says "an exporter that reaches it", not "traces arrive at your collector": the
+    // collector is still yours to run.
+    since: '0.1.150',
   },
   {
     id: 'fleet-report',
@@ -580,7 +582,7 @@ export const REFUSALS = [
     id: 'export-without-spans',
     title: 'An OTLP export with tracing turned off',
     reason:
-      'A destination for spans that are not recorded is a contradiction, so `export: otlp` beside `trace: false` is refused by the `observability/export` gate. AID also installs no exporter, so the block declares where spans belong rather than moving them -- and the gate is what keeps the declaration from contradicting itself while that stays true.',
+      'A destination for spans that are not recorded is a contradiction, so `export: otlp` beside `trace: false` is refused by the `observability/export` gate. The exporter installs itself only when it is called, so the block names a destination the app may reach and the gate keeps the declaration from contradicting itself.',
     code: 'ir/observability-export',
   },
   {

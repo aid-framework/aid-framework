@@ -55,6 +55,7 @@ export type PlanProblemCode =
   | 'target-unsupported'
   | 'collection-unsupported'
   | 'observability-redact-unsupported'
+  | 'observability-export-unsupported'
   | 'runtime-unsupported'
   | 'type-unsupported'
   | 'named-type-unresolved'
@@ -259,14 +260,32 @@ export function checkStreaming(ir: IR): PlanProblem[] {
 }
 
 export function checkObservability(ir: IR): PlanProblem[] {
-  if (ir.observability.redact.length === 0) return [];
-  return [
+  const problems: PlanProblem[] = [];
+  // `otel` on this target means spans are recorded against the GenAI attribute schema,
+  // which `runtimes/typescript/src/tracing.ts` does. It never meant they leave the
+  // process: that module is API-only by design. `export: otlp` asks for the leaving half,
+  // so accepting it here would emit a deployment that declares a collector it never
+  // sends a span to -- a silent gap over exactly the traffic an operator was trying to
+  // see. py-fastapi wires this through `aid_runtime.telemetry.configure_export`, so the
+  // fix is named rather than implied.
+  if (ir.observability.export === 'otlp') {
+    problems.push(
+      problem(
+        'observability-export-unsupported',
+        'observability.export',
+        'this target records spans but installs no exporter, so `otlp` would name a collector nothing is sent to; generate this document with py-fastapi to export, or declare `export: none` to keep spans in the process',
+      ),
+    );
+  }
+  if (ir.observability.redact.length === 0) return problems;
+  problems.push(
     problem(
       'observability-redact-unsupported',
       'observability.redact',
       'the runtime exposes no redaction hook, so declared redaction paths would not be honoured',
     ),
-  ];
+  );
+  return problems;
 }
 
 export function checkRuntime(ir: IR): PlanProblem[] {

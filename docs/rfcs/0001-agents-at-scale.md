@@ -774,8 +774,8 @@ For the CLI reference and the features page, at the end of this RFC:
 | `deployments[].identity`, `.network`, `.approvals` | **declared and gated in 0.26, generation pending** (§10.2) |
 | `agents[].state`, step `requiresApproval` | **declared and gated in 0.26, generation pending** (§10.2) |
 | `tool-trace` / `cost` / `latency` measured | `tool-trace` is **refused by the gate in 0.27**; `cost` and `latency` stay **refused at generation**; measuring any of them is not built (§10.3) |
-| `observability` as a spec section, `.export: otlp` | **built in 0.27, as export intent only** (§10.3) |
-| OTel exporter, generated dashboards/alerts | proposed 0.27; **alerts built in 0.30** (§10.7), exporter and dashboards **not built** (§10.3) |
+| `observability` as a spec section, `.export: otlp` | **built in 0.27, as export intent**; the exporter itself **built in Phase 8** (§10.8) |
+| OTel exporter, generated dashboards/alerts | exporter **built in the runtime** (§10.8), **refused by ts-vercel**; alerts **built in 0.30** (§10.7); dashboards **not built** |
 | `aid report` | **built** — aggregates trace sinks and recorded baselines from a directory of deployments, no backend (§10.6) |
 | `observability.feedback`, `evals[].gate.promotion` | **built in 0.28** — declared, gated and compared from files (§10.4) |
 | `prompts[].version` | **exists and is required**, and forms `prompt:<name>@<version>`; `ir/prompt-version-stale` refuses a promotion whose declared version is not strictly greater than the baseline's (§10.4) |
@@ -1103,6 +1103,47 @@ Deliberately **not** built:
 - **No paging integration.** The alarm action list is a variable the operator sets, not a channel
   the compiler creates.
 
+### 10.8 Phase 8, the OTel exporter, as shipped
+
+`export: otlp` has been export *intent* since 0.27 -- the generated app reported a destination
+nobody wrote to. Phase 8 closes that gap in the runtime, which is where the earlier phases kept
+saying the remaining decision lived ("which collector, which signal schema"). No new spec key, so
+`specVersion` stays `0.30`: nothing that validated before is refused now.
+
+- `aid_runtime.telemetry.configure_export(*, service_name, declared="otlp",
+  endpoint_env=DEFAULT_ENDPOINT_ENV)` installs an OTLP/HTTP span exporter over a
+  `BatchSpanProcessor` on a `Resource` carrying `service.name`, and returns a frozen `ExportStatus`
+  with one of five reasons. It never raises. A missing SDK is a status, not a traceback, because an
+  absent exporter must not take an application down at startup.
+- **Opt-in twice over, and the second opt-in is the design.** The runtime installs nothing on
+  import: a library that set a global tracer provider would decide telemetry for every application
+  embedding it, and `set_tracer_provider` is irreversible. And the generator does **not** make the
+  call, because the ASGI entrypoint is developer-owned -- `emit/package.ts` records that boundary.
+  So `aid gen` for py-fastapi emits `tracing_export_status(service_name)` into
+  `app/generated/observability.py`, and the app's own `main.py` calls it. Both examples do, with a
+  comment saying why that line is theirs.
+- New optional extra `otlp` on the runtime, and the exporter named in the failure status's message
+  as `aid-runtime-python[otlp]`. The base SDK alone is not enough to export, and a status that says
+  "unavailable" without naming the install is a dead end.
+- **The target-level refusal.** `ts-vercel` declares the `otel` capability and
+  `emitsAgainst.tracing: otel-genai` -- it does record spans -- but it installs no exporter, so it
+  now refuses `export: otlp` with `observability-export-unsupported` rather than accept a
+  destination it never writes to. `otel` and `export` are different claims and the matrix keeps both
+  honest. The message names both fixes: generate with py-fastapi, or declare `export: none`.
+- `IR_VERSION` unchanged; the JSON schema is unchanged apart from prose. The `observability` and
+  `export` descriptions no longer say installing an exporter "stays a host decision", because it no
+  longer does.
+
+Deliberately **not** built:
+
+- **No exporter for `ts-vercel`.** Writing one means choosing a Node OTel SDK major and a shutdown
+  hook for a serverless lifetime, and a refusal is the honest answer until that is a gated
+  decision.
+- **No generated OTel Collector deployment.** Knowing the collector's address is an environment
+  variable's job; provisioning the collector is infrastructure AID does not own.
+- **No span-per-message cost or latency *metric*.** The span schema is unchanged, so §10's "no
+  runtime measures cost" still holds.
+
 ---
 
 ## 11. Open questions for review
@@ -1154,16 +1195,18 @@ deleted, because the reasoning is part of the design record.
 
 ## 12. Decision requested
 
-**Status: all seven phases are shipped.** Spec 0.25 through 0.30, `IR_VERSION` still 0.5.0, and each
-phase's "as shipped" section (§10.1–§10.7) records exactly what landed, what was narrower than
+**Status: all eight phases are shipped.** Spec 0.25 through 0.30, `IR_VERSION` still 0.5.0, and each
+phase's "as shipped" section (§10.1–§10.8) records exactly what landed, what was narrower than
 proposed, and what was deliberately left unbuilt. The roadmap above is now history rather than a
-plan; the honest inventory of what remains unbuilt is §10.
+plan; the honest inventory of what remains unbuilt is §10. Phase 8 needed no spec version because it
+changed no spec language: it built the runtime for a key 0.27 already declared and added a refusal
+in the one target that cannot honour it.
 
-Nothing in the six capability areas is left unaddressed, but four things are declared, gated and
-deliberately not generated — an OTel exporter in the runtimes, generated dashboards, a
-generated feedback route and promotion job, and any measurement of `cost` or `latency` metrics.
-Each of those needs a runtime decision that AID has not made (which collector, which signal
-schema, which scheduler), and guessing one would break the reproducibility guarantee. They stay
-listed as unbuilt until a phase can ship them with a gate and a byte-asserted fixture. Alerts were
-also on this list and are now built (§10.7), precisely because they needed no runtime decision: the
-series were already derived, so the alarm could be generated without AID guessing at a collector.
+Nothing in the six capability areas is left unaddressed, but three things are declared, gated and
+deliberately not generated -- generated dashboards, a generated feedback route and promotion job,
+and any measurement of `cost` or `latency` metrics. Each of those needs a runtime decision that AID
+has not made (which dashboard layout, which scheduler), and guessing one would break
+the reproducibility guarantee. They stay listed as unbuilt until a phase can ship them with a gate
+and a byte-asserted fixture. Two former entries are now built: alerts (§10.7), which needed no
+runtime decision because the series were already derived, and the OTel exporter (§10.8), which
+became buildable the moment "which signal schema" was answered with OTLP rather than invented.

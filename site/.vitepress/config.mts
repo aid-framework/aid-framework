@@ -222,6 +222,7 @@ export default defineConfig({
             { text: 'Overlays and the fleet table', link: '/walkthroughs/overlays-and-fleet' },
             { text: 'One report across the fleet', link: '/walkthroughs/fleet-report' },
             { text: 'Alarms you can only declare', link: '/walkthroughs/fleet-alerts' },
+            { text: 'The exporter behind the export', link: '/walkthroughs/otel-exporter' },
           ],
         },
       ],

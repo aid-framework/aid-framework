@@ -11,8 +11,10 @@
  *      focus into and out of the search dialog, focus into and out of the mobile
  *      navigation, and the accessible name of the search control.
  *
- * Run `pnpm docs:build` first. `A11Y_BROWSER_CHANNEL=msedge` uses an installed browser
- * instead of Playwright's download; CI installs chromium and leaves it unset.
+ * Run `pnpm docs:build` first. `A11Y_BROWSER_CHANNEL` selects an installed browser instead
+ * of Playwright's download; CI sets it to `chrome`, which needs no Playwright browser and no
+ * apt, so the check cannot fail on a browser install. Unset, Playwright's bundled Chromium
+ * is used and `pnpm exec playwright install chromium` has to have run.
  */
 import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';

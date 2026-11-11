@@ -68,7 +68,7 @@ export function observabilityExportGate(ir: IR, options: GateOptions): GateResul
         code: IR_DIAGNOSTIC_CODES.observabilityExport,
         message: `the observability gate rejected this deployment: profile enterprise promises an audit trail, but observability exports ${declared}, so every span stays inside the process`,
         path: ['observability', 'export'],
-        hint: 'add `observability: { trace: true, export: otlp, endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT }`; the variable holds the collector address, and AID installs no exporter for you',
+        hint: 'add `observability: { trace: true, export: otlp, endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT }`; the variable holds the collector address, and the py-fastapi target emits `tracing_export_status()` for your entrypoint to call at startup',
       }),
     );
   }

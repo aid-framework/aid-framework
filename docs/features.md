@@ -352,13 +352,13 @@ Spec 0.26 declares the controls an enterprise delivery is held to: a `state` sto
 - **Reference:** [spec](./reference/spec.md#top-level-keys)
 - **Since:** `0.1.143`
 
-### A declared place for the spans
+### A declared place for the spans, and an exporter that reaches it
 
-Spec 0.27 gives a document an `observability` block: whether to record spans, what to redact, and whether they belong somewhere other than the process (`export: otlp`, with `endpointEnv` naming the variable that holds the collector address). The `observability/export` gate refuses an `otlp` export beside `trace: false`, and an `enterprise` profile that exports nothing, because an audit trail whose spans stay in the process is not one. AID installs no exporter, so the block states where spans belong; it does not yet send them.
+Spec 0.27 gives a document an `observability` block: whether to record spans, what to redact, and whether they belong somewhere other than the process (`export: otlp`, with `endpointEnv` naming the variable that holds the collector address). The `observability/export` gate refuses an `otlp` export beside `trace: false`, and an `enterprise` profile that exports nothing, because an audit trail whose spans stay in the process is not one. Generating with py-fastapi emits `tracing_export_status()` into `app/generated/observability.py`, which the app calls at startup to install an OTLP/HTTP exporter over a batched processor from `aid-runtime-python[otlp]`; nothing is installed on import, so embedding AID does not decide telemetry for you. A target that installs no exporter refuses `export: otlp` rather than accept a destination nothing is sent to.
 
 - **Turned on by:** `observability`
 - **Reference:** [spec](./reference/spec.md#observability)
-- **Since:** `0.1.145`
+- **Since:** `0.1.150`
 
 ### A report across every deployment
 
@@ -490,7 +490,7 @@ A change-control policy is what makes a production apply reviewable, so an `ente
 
 ### An OTLP export with tracing turned off
 
-A destination for spans that are not recorded is a contradiction, so `export: otlp` beside `trace: false` is refused by the `observability/export` gate. AID also installs no exporter, so the block declares where spans belong rather than moving them -- and the gate is what keeps the declaration from contradicting itself while that stays true.
+A destination for spans that are not recorded is a contradiction, so `export: otlp` beside `trace: false` is refused by the `observability/export` gate. The exporter installs itself only when it is called, so the block names a destination the app may reach and the gate keeps the declaration from contradicting itself.
 
 - **Enforced by:** `ir/observability-export`
 

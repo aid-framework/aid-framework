@@ -573,9 +573,25 @@ which is the only way a report can fail a build.
 
 The `observability` block moves that decision into the spec: `trace`, `redact`, and — for a
 service whose spans belong somewhere other than the process — `export: otlp` with `endpointEnv`
-naming the variable that holds the collector address. AID installs no exporter, so the block
-records where spans belong rather than moving them; what it buys today is that the destination is
-declared, reviewable in a diff, and gated, instead of living in whoever's shell ran the deploy.
+naming the variable that holds the collector address. Where the spans go is then declared,
+reviewable in a diff, and gated, instead of living in whoever's shell ran the deploy.
+
+With py-fastapi the spans actually leave. `aid gen` emits `tracing_export_status()` into
+`app/generated/observability.py`, and your own `main.py` calls it once at startup:
+
+```python
+from app.generated.observability import tracing_export_status
+
+tracing_export_status("support-copilot")
+```
+
+That installs an OTLP/HTTP exporter over a batched processor, reading the address from the variable
+`endpointEnv` names. Install the extra to get it — `pip install "aid-runtime-python[otlp]"` — since
+not every deployment exports. Nothing is installed on import and nothing is installed if you never
+call it, so embedding AID does not decide telemetry for you; the call is in your entrypoint because
+the entrypoint is yours. `ts-vercel` records spans but installs no exporter, so it refuses
+`export: otlp` with `observability-export-unsupported` rather than accept a destination nothing is
+sent to.
 
 The same block declares who should be woken up. An `alerts` entry names a metric, a window, a
 reduction and a threshold, and the deploy plan turns each one into a real alarm resource:
@@ -629,7 +645,7 @@ Covers:
 
 - **Local trace capture**
 - **A cost ceiling in CI**
-- **A declared place for the spans**
+- **A declared place for the spans, and an exporter that reaches it**
 - **Alarms as generated infrastructure**
 - **A report across every deployment**
 
