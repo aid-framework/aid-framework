@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.29`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.30`.
 
 ## Deployment targets
 
@@ -416,6 +416,14 @@ A per-customer overlay names its base and the paths it changes; `aid resolve` wr
 - **Reference:** [cli](./reference/cli.md#init)
 - **Since:** `0.1.147`
 
+### Alarms as generated infrastructure
+
+Spec 0.30 lets a document declare `observability.alerts`: a metric, a window, a reduction and a threshold, optionally scoped to one agent or eval. The infra planner turns each one into a real alarm -- a CloudWatch alarm in the Terraform env root, a Cloud Monitoring policy on GCP, a `CfnAlarm` in the CDK app -- that pages `alert_channel_ids` and treats missing data as `missing` rather than healthy. The metric list is closed to the four series the deploy plan already derives (`agent.cost`, `agent.tokens`, `eval.cost`, `eval.latency.p95`), so an alarm cannot watch a number nothing produces. The unit comes from the metric rather than the author, so the description and the threshold cannot disagree.
+
+- **Turned on by:** `observability.alerts`
+- **Reference:** [spec](./reference/spec.md#observability)
+- **Since:** `0.1.149`
+
 ## Refused, on purpose
 
 An absent capability is stated once, here, with the diagnostic that enforces it, instead of being discovered during an apply or debugged in production.
@@ -581,6 +589,24 @@ No base can permit this one. `allowWeaken` buys a weaker value, never the absenc
 A `from` list is a closed set of values and a `max` is a ceiling, so a cost budget above the ceiling is refused even when the path is overridable and even when weakening is permitted: the bound is the answer, and the hint says which bound was hit.
 
 - **Enforced by:** `overlay/value-out-of-bounds`
+
+### An alarm over spans that never leave the process
+
+An alarm watches a metric, and the runtime publishes no metrics at all: the only telemetry it emits is spans. A document that declares `observability.alerts` without `export: otlp` is therefore refused by the `observability/alerts` gate, because the emitted alarm would watch a series that is never produced and stay silent forever -- which reads as health.
+
+- **Enforced by:** `ir/alerts-unexported`
+
+### An alarm whose reduction the series cannot answer
+
+Alerts are limited to the four metrics the deploy plan derives, and each declares which reductions make sense for it. A `p95` over a cost total, or an `average` over a per-eval spend, is refused rather than emitted as an alarm that fires on a quantity nobody meant -- the diagnostic names the metric and the reductions it does support.
+
+- **Enforced by:** `ir/alerts-aggregate`
+
+### An alarm scoped to a name the document does not declare
+
+An alarm may name the agent or eval it watches; that name becomes a metric dimension, so a typo would emit an alarm that filters on a value nothing writes and never fires. The gate resolves the name against the document and refuses an unknown one instead of letting it become a permanently silent alarm.
+
+- **Enforced by:** `ir/alerts-source`
 
 ### A customer overlay whose profile label disagrees with the spec it resolves to
 

@@ -16,6 +16,7 @@ import type {
   BedrockContentFilter,
   BedrockContentStrength,
   BedrockPiiEntity,
+  DeployAlert,
   DeployAudit,
   DeployManagedGuardrail,
   DeployPlan,
@@ -368,6 +369,15 @@ export interface DeployTfvars {
   readonly tasks: readonly DeployTaskSpelling[];
   readonly alarms: readonly { id: string; metric: string; source: string }[];
   /**
+   * The alarm policies the document declared, or absent when it declared none -- the
+   * same "absent means the tree it had" rule the gateway and audit entries follow.
+   *
+   * Separate from `alarms` on purpose: `alarms` is a budget hook that exists because a
+   * ceiling was set, while `alerts` exists because a person asked to be paged. Collapsing
+   * the two would turn every budget into a page.
+   */
+  readonly alerts?: readonly DeployAlert[];
+  /**
    * The audit destination the document pinned, or absent when it pinned none. Spelled
    * with the module's snake_case key, like every other tfvar.
    */
@@ -475,6 +485,8 @@ export interface DeployContext {
   >;
   readonly tasks: readonly DeployTaskSpelling[];
   readonly alarms: readonly { id: string; metric: string; source: string }[];
+  /** The alarm policies the document declared, or absent when it declared none. */
+  readonly alerts?: readonly DeployAlert[];
   /** The audit destination the document pinned, or absent when it pinned none. */
   readonly audit?: DeployAudit;
 }
@@ -638,6 +650,19 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
       metric: alarm.metric,
       source: alarm.source,
     })),
+    ...(plan.alerts.length === 0
+      ? {}
+      : {
+          alerts: plan.alerts.map((alert) => ({
+            id: alert.id,
+            metric: alert.metric,
+            window: alert.window,
+            aggregate: alert.aggregate,
+            threshold: alert.threshold,
+            unit: alert.unit,
+            ...(alert.source === undefined ? {} : { source: alert.source }),
+          })),
+        }),
     ...(plan.audit === undefined
       ? {}
       : {
@@ -789,6 +814,9 @@ export function cdkContext(plan: DeployPlan): DeployContext {
     stores,
     tasks: spelled.tasks.map((task) => ({ ...task })),
     alarms: spelled.alarms.map((alarm) => ({ ...alarm })),
+    ...(spelled.alerts === undefined
+      ? {}
+      : { alerts: spelled.alerts.map((alert) => ({ ...alert })) }),
     ...(spelled.audit === undefined
       ? {}
       : {
@@ -873,6 +901,13 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
           cloud === 'gcp'
             ? '| `modules/audit/` | The audit destination a `deployment.audit` sink pins: a log sink into a GCS archive bucket or a BigQuery dataset. |'
             : '| `modules/audit/` | The audit destination a `deployment.audit` sink pins: a CloudWatch log group or an S3 archive bucket. |',
+        ]
+      : []),
+    ...(modules.alerts
+      ? [
+          cloud === 'gcp'
+            ? '| `modules/alerts/` | One Cloud Monitoring alert policy per `observability.alerts` entry, watching the custom metric prefix the collector publishes under. |'
+            : '| `modules/alerts/` | One CloudWatch alarm per `observability.alerts` entry, watching the namespace the collector publishes into. |',
         ]
       : []),
     ...((modules.serverless ||
@@ -1204,6 +1239,9 @@ function readme(plan: DeployPlan, cloud: Cloud): string {
     `- Knowledge bases: ${plan.knowledgeBases.length}`,
     `- Tasks: ${plan.tasks.length}`,
     `- Alarm hooks: ${plan.alarms.length}`,
+    // Only when the document declared one: an unconditional line would rewrite the README
+    // of every plan that has no alert, and those bytes are asserted.
+    ...(plan.alerts.length === 0 ? [] : [`- Declared alarms: ${plan.alerts.length}`]),
     '',
     'This directory holds derived *shape* only. Sizing, regions, accounts, domains, CIDRs',
     'and secret values are business inputs and live in your env root, never here — which is',

@@ -18,7 +18,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { emitInfra } from '../src/infra/emit.js';
 import {
   AGENT_RUNTIME_MODULE_DIR,
+  ALERTS_MODULE_DIR,
   BATCH_MODULE_DIR,
+  CDK_ALERTS_MODULE,
   CDK_BATCH_MODULE,
   CDK_CONTAINER_MODULE,
   CDK_DIR,
@@ -31,6 +33,7 @@ import {
   CONTAINER_MODULE_DIR,
   EDGE_MODULE_DIR,
   emitAgentRuntimeModule,
+  emitAlertsModule,
   emitBatchModule,
   emitCdkModules,
   emitCloudRunJobModule,
@@ -73,6 +76,7 @@ const BOTH = envRoot({
   edge: true,
   agentRuntime: true,
   gateway: true,
+  alerts: true,
 });
 
 /** The GCP env root the fixture commits: Cloud Run and a Cloud Run job. */
@@ -107,6 +111,7 @@ function managedPlan(engine: 'aws-bedrock' | 'vertex-rag'): DeployPlan {
       },
     ],
     gateways: [],
+    alerts: [],
   } as unknown as DeployPlan;
 }
 
@@ -146,9 +151,56 @@ const GW = {
       cloud: 'aws',
     },
   ],
+  alerts: [],
 } as unknown as DeployPlan;
 
-/** The env roots that carry a managed base, so the base modules are validated too. */
+/**
+ * Four alarms over the four series the deploy plan derives, so the module's window,
+ * aggregate and statistic tables are each exercised at more than one point. One alert
+ * names a source and one does not, because both forms reach the emitted description.
+ */
+const ALERTS = {
+  project: { name: 'alarms', namespace: 'aid.test' },
+  services: [],
+  knowledgeBases: [],
+  gateways: [],
+  alerts: [
+    {
+      id: 'turn_cost',
+      metric: 'agent.cost',
+      window: '15m',
+      aggregate: 'sum',
+      threshold: 25,
+      unit: 'usd',
+      source: 'support',
+    },
+    {
+      id: 'eval_spend',
+      metric: 'eval.cost',
+      window: '24h',
+      aggregate: 'sum',
+      threshold: 250,
+      unit: 'usd',
+    },
+    {
+      id: 'turn_tokens',
+      metric: 'agent.tokens',
+      window: '5m',
+      aggregate: 'average',
+      threshold: 6000,
+      unit: 'tokens',
+      source: 'support',
+    },
+    {
+      id: 'reply_latency',
+      metric: 'eval.latency.p95',
+      window: '1h',
+      aggregate: 'p95',
+      threshold: 2500,
+      unit: 'ms',
+    },
+  ],
+} as unknown as DeployPlan;
 const AWS_KB_ROOT = envRoot({
   serverless: true,
   container: true,
@@ -190,6 +242,7 @@ function runtimePlan(cloud: 'aws' | 'gcp'): DeployPlan {
     stores: [],
     tasks: [],
     alarms: [],
+    alerts: [],
     knowledgeBases: [],
     gateways: [],
   } as unknown as DeployPlan;
@@ -213,6 +266,7 @@ function planOf(...targets: string[]): DeployPlan {
     services: targets.map((target, index) => ({ id: `svc${index}`, target })),
     knowledgeBases: [],
     gateways: [],
+    alerts: [],
   } as unknown as DeployPlan;
 }
 
@@ -237,6 +291,7 @@ const SERVING = {
   stores: [],
   tasks: [],
   alarms: [],
+  alerts: [],
   knowledgeBases: [],
   gateways: [],
 } as unknown as DeployPlan;
@@ -856,6 +911,7 @@ describe('envRoot', () => {
         edge: true,
         agentRuntime: true,
         gateway: true,
+        alerts: true,
       }),
     ).toEqual(BOTH);
   });
@@ -1126,6 +1182,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       knowledgeBase: false,
       gateway: false,
       modelArmor: false,
+      alerts: false,
     });
     expect(modulesOf(planOf('serverless', 'container'))).toEqual({
       serverless: true,
@@ -1137,6 +1194,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       knowledgeBase: false,
       gateway: false,
       modelArmor: false,
+      alerts: false,
     });
     expect(modulesOf(planOf('batch'))).toEqual({
       serverless: false,
@@ -1148,6 +1206,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       knowledgeBase: false,
       gateway: false,
       modelArmor: false,
+      alerts: false,
     });
     expect(modulesOf(planOf('edge'))).toEqual({
       serverless: false,
@@ -1159,6 +1218,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       knowledgeBase: false,
       gateway: false,
       modelArmor: false,
+      alerts: false,
     });
     // A runtime service belongs to the runtime module, not the compute module: the flag
     // is exclusive so the two never both claim the same service.
@@ -1172,6 +1232,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       knowledgeBase: false,
       gateway: false,
       modelArmor: false,
+      alerts: false,
     });
   });
 
@@ -1190,6 +1251,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       knowledgeBase: false,
       gateway: false,
       modelArmor: false,
+      alerts: false,
     });
     expect(modulesOf(planOf('serverless'), 'gcp')).toEqual({
       serverless: false,
@@ -1201,6 +1263,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       knowledgeBase: false,
       gateway: false,
       modelArmor: false,
+      alerts: false,
     });
     expect(modulesOf(planOf('batch'), 'gcp')).toEqual({
       serverless: false,
@@ -1212,6 +1275,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       knowledgeBase: false,
       gateway: false,
       modelArmor: false,
+      alerts: false,
     });
     expect(modulesOf(planOf('edge'), 'gcp')).toEqual({
       serverless: false,
@@ -1223,6 +1287,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       knowledgeBase: false,
       gateway: false,
       modelArmor: false,
+      alerts: false,
     });
     // The runtime's cloud decides, not the target it happens to share with Cloud Run.
     expect(modulesOf(GCP_RUNTIME, 'gcp').agentRuntime).toBe(true);
@@ -1238,6 +1303,7 @@ describe('modulesOf, the seam emit.ts reads', () => {
       knowledgeBase: false,
       gateway: false,
       modelArmor: false,
+      alerts: false,
     });
   });
 
@@ -1424,6 +1490,15 @@ describe('the validate fixture', () => {
         root: 'gcp-runtime',
         platform: 'agent-runtime',
       },
+      { dir: ALERTS_MODULE_DIR, files: emitAlertsModule(ALERTS) },
+      {
+        dir: ALERTS_MODULE_DIR,
+        files: emitAlertsModule(ALERTS, 'gcp'),
+        // Same reason as the runtime: the alarm resource differs enough between the two
+        // clouds that one committed directory cannot be both.
+        root: 'gcp-alerts',
+        platform: 'alerts',
+      },
     ];
     for (const { dir, files, root, platform: named } of cases) {
       expect(files).toHaveLength(4);
@@ -1552,6 +1627,110 @@ describe('the validate fixture', () => {
     }
     const fixture = readFileSync(join(FIXTURE, 'generated', 'cdk', 'gateway.cjs'), 'utf8');
     expect(fixture).toBe(gateway.contents);
+  });
+
+  it('wires the alarm module only into the root that asked for it', () => {
+    // An alarm resource belongs to the environment that declared it, so the module is
+    // emitted only when a plan carries alerts and called only from that root.
+    const aws = readFileSync(join(FIXTURE, 'envs', 'dev', 'main.tf'), 'utf8');
+    expect(aws).toContain('source = "../../generated/modules/alerts"');
+    expect(aws).toContain('alert_channel_ids = var.alert_channel_ids');
+    expect(aws).toContain('output "alarm_arns"');
+    expect(aws).toContain('output "alert_metric_namespace"');
+
+    for (const env of ['gcp-dev', 'gcp-kb'] as const) {
+      const main = readFileSync(join(FIXTURE, 'envs', env, 'main.tf'), 'utf8');
+      expect(main, env).not.toContain('modules/alerts');
+    }
+  });
+
+  it('matches the emitted alarm construct byte for byte', () => {
+    const files = emitCdkModules(ALERTS, 'aws');
+    const construct = files.find((file) => file.path === CDK_ALERTS_MODULE);
+    if (construct === undefined) {
+      throw new Error('the alarm construct was not emitted');
+    }
+    const fixture = readFileSync(join(FIXTURE, 'generated', 'cdk', 'alerts.cjs'), 'utf8');
+    expect(fixture).toBe(construct.contents);
+  });
+
+  it('emits no alarm construct for a plan with no alerts', () => {
+    // A construct nothing asked for would create an empty file that `cdk synth` still
+    // loads, so an unrelated project would carry an alarm module it never declared.
+    expect(emitCdkModules(planOf('serverless'), 'aws').map((file) => file.path)).not.toContain(
+      CDK_ALERTS_MODULE,
+    );
+    expect(emitAlertsModule(planOf('serverless'))).toEqual([]);
+    expect(modulesOf(planOf('serverless')).alerts).toBe(false);
+    expect(modulesOf(ALERTS).alerts).toBe(true);
+  });
+
+  it('maps each aggregate onto the statistic the cloud actually offers', () => {
+    // CloudWatch spells "average" differently from the spec and has no p95 statistic, so
+    // the mapping is where a spec value silently becomes the wrong number.
+    const aws = mainOf(emitAlertsModule(ALERTS));
+    expect(aws).toContain('statistic           = "Sum"');
+    expect(aws).toContain('statistic           = "Average"');
+    expect(aws).toContain('extended_statistic  = "p95"');
+    expect(aws).toContain('metric_name = "agent.cost"');
+    expect(aws).toContain('period              = 900');
+    // CloudWatch's statistic enum has no percentiles: the provider rejects "p95" there, so
+    // a regression on this line is a plan-time failure for every latency alarm.
+    expect(aws).not.toContain('statistic           = "p95"');
+  });
+
+  it('carries the unit on the alarm rather than in its name', () => {
+    // A threshold with no unit is unreadable at 3am, and the plan owns the unit so the
+    // author and the emitted description cannot disagree about what the number means.
+    const aws = mainOf(emitAlertsModule(ALERTS));
+    expect(aws).toContain('exceeded 25 usd');
+    expect(aws).toContain('exceeded 2500 ms');
+    expect(aws).toContain('for \\"support\\"');
+    expect(aws).toContain('across the whole environment');
+  });
+
+  it('escapes a backslash before the quote that follows it', () => {
+    // Escaping the quote alone leaves the backslash live, so a label carrying one would
+    // either shift the text a human reads or escape the attribute's own closing quote.
+    const escaped: DeployPlan = {
+      ...ALERTS,
+      alerts: [
+        {
+          id: 'odd_source',
+          metric: 'agent.cost',
+          window: '15m',
+          aggregate: 'sum',
+          threshold: 1,
+          unit: 'usd',
+          source: 'a\\b',
+        },
+      ],
+    };
+    const aws = mainOf(emitAlertsModule(escaped));
+    expect(aws).toContain('a\\\\b');
+    expect(aws.includes('a\\b')).toBe(false);
+  });
+
+  it('does not treat missing data as healthy', () => {
+    // The default would mark an alarm OK the moment the pipeline stops reporting, which
+    // is exactly the failure an alarm is supposed to make visible.
+    const aws = mainOf(emitAlertsModule(ALERTS));
+    expect(aws).toContain('treat_missing_data = "missing"');
+    const gcp = mainOf(emitAlertsModule(ALERTS, 'gcp'));
+    expect(gcp).toContain('"ALIGN_SUM"');
+    expect(gcp).toContain('"ALIGN_PERCENTILE_95"');
+    expect(gcp).toContain('"REDUCE_MEAN"');
+  });
+
+  it('leaves the owner of an alarm explicit rather than inventing one', () => {
+    // `alert_channel_ids` defaults to empty: an alarm with no destination notifies nobody,
+    // which is visible in the plan, unlike a fabricated address that silently misroutes.
+    const variables = variableOf(emitAlertsModule(ALERTS));
+    expect(variables).toMatch(/variable "alert_channel_ids"[\s\S]{0,200}default\s+= \[\]/);
+    const gcp = variableOf(emitAlertsModule(ALERTS, 'gcp'));
+    expect(gcp).toMatch(/variable "alert_channel_ids"[\s\S]{0,200}default\s+= \[\]/);
+    // The GCP alert policy is global, so a region input would be a knob nothing reads.
+    expect(gcp).not.toContain('variable "region"');
   });
 
   it('matches the emitted container construct byte for byte', () => {

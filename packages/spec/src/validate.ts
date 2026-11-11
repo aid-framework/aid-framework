@@ -83,6 +83,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.27',
   '0.28',
   '0.29',
+  '0.30',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -211,6 +212,15 @@ export const OBSERVABILITY_MIN_VERSION: SpecVersion = '0.27';
  * feedback block is a data surface the reviewer believes exists and the app does not have.
  */
 export const FEEDBACK_MIN_VERSION: SpecVersion = '0.28';
+
+/**
+ * The first spec version that accepts `observability.alerts`. Nested inside a section
+ * that exists from 0.27, so a 0.27 document that declares alarms is told which version it
+ * needs rather than having the block dropped: dropped, `aid infra gen` would emit an
+ * environment with no alarms while the reviewer who asked for them approved a document
+ * that has them.
+ */
+export const ALERTS_MIN_VERSION: SpecVersion = '0.30';
 
 /**
  * The first spec version that accepts `evals[].gate.promotion`. Nested for the same
@@ -677,6 +687,7 @@ function scopeDiagnostics(
   deliveryControlDiagnostics(spec, diagnostics, reported);
   agentEvalTargetDiagnostics(spec, diagnostics, reported);
   feedbackVersionDiagnostics(spec, diagnostics, reported);
+  alertsVersionDiagnostics(spec, diagnostics, reported);
   evalPromotionVersionDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
@@ -1174,6 +1185,36 @@ function feedbackVersionDiagnostics(
     }),
   );
   reported.add(JSON.stringify(['observability', 'feedback']));
+}
+
+/**
+ * `observability.alerts` arrived in 0.30, nested inside `observability`, which no version
+ * gate covers. Reading the block as absent in an older document would generate an
+ * environment with no alarms while the document that asked for them says otherwise, and
+ * the gap would only be visible after a real breach went unreported.
+ */
+function alertsVersionDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) return;
+  if (specVersionAtLeast(declared, ALERTS_MIN_VERSION)) return;
+  const observability = asRecord(spec.observability);
+  if (!('alerts' in observability)) return;
+
+  diagnostics.push(
+    errorDiagnostic({
+      code: DIAGNOSTIC_CODES.notSupported,
+      message: `'observability.alerts' requires specVersion ${ALERTS_MIN_VERSION}, but this specification declares version ${declared}`,
+      path: ['observability', 'alerts'],
+      hint: `set specVersion: "${ALERTS_MIN_VERSION}"; a document that declares no alerts block is unchanged`,
+    }),
+  );
+  reported.add(JSON.stringify(['observability', 'alerts']));
 }
 
 /**

@@ -11,6 +11,8 @@
 
 import type {
   AgentRuntimePlatform,
+  AlertAggregate,
+  AlertWindow,
   BedrockGuardrailPolicy,
   DeploymentTarget,
   GatewayAuthorizerShape,
@@ -266,6 +268,32 @@ export interface DeployAlarm {
   source: string;
 }
 
+/**
+ * An alarm policy the document declared, resolved for the emitter.
+ *
+ * `unit` is derived here rather than declared: a `threshold` is a bare number and the
+ * metric decides whether it means dollars, tokens or milliseconds. Carrying the unit on
+ * the plan means the emitted alarm description and the spec author cannot disagree about
+ * what the number is, which is the one thing that would make a correct alarm unreadable.
+ */
+export interface DeployAlert {
+  id: string;
+  metric: DeployAlarm['metric'];
+  window: AlertWindow;
+  aggregate: AlertAggregate;
+  threshold: number;
+  unit: 'usd' | 'tokens' | 'ms';
+  /** The agent or eval whose series this watches. Absent watches the whole environment. */
+  source?: string;
+}
+
+/** The unit a threshold is expressed in, decided by the metric and never by the author. */
+export function alertUnit(metric: DeployAlarm['metric']): DeployAlert['unit'] {
+  if (metric === 'eval.latency.p95') return 'ms';
+  if (metric === 'agent.tokens') return 'tokens';
+  return 'usd';
+}
+
 export interface DeployPlan {
   planVersion: string;
   project: { name: string; namespace: string };
@@ -275,6 +303,18 @@ export interface DeployPlan {
   gateways: DeployGateway[];
   tasks: DeployTask[];
   alarms: DeployAlarm[];
+  /**
+   * The alarm policies the document declared, from spec 0.30. Empty for every earlier
+   * document, which is why `alerts` is a collection rather than an optional field: an
+   * emitter reads it without a presence check, and an empty list emits no module.
+   *
+   * Separate from `alarms` on purpose. `alarms` records that a budget *exists*, carrying
+   * no threshold because the IR enforces the ceiling in-process. `alerts` records that a
+   * human asked to be paged, carrying the threshold and window that decision needs. The
+   * two name the same measurements and answer different questions, and collapsing them
+   * would make a budget silently become a page.
+   */
+  alerts: DeployAlert[];
   /**
    * The audit destination the document pins, if it pins one. Project-level rather than
    * per service because an audit record is written by the environment, not by one
@@ -453,6 +493,7 @@ export function buildDeployPlan(ir: IR): DeployPlan {
     gateways,
     tasks,
     alarms: alarms(ir),
+    alerts: alerts(ir),
   };
 
   // Deployments are sorted, so the first declared audit is deterministic. `profileGate`
@@ -587,6 +628,32 @@ function alarms(ir: IR): DeployAlarm[] {
     }
   }
   return found.sort((left, right) => compare(left.id, right.id));
+}
+
+/**
+ * The declared alarm policies, resolved into the plan's own metric names.
+ *
+ * The spec already closes its `metric` enum to these four series, so this cannot meet a
+ * value it has no unit for; `alertUnit` is total for the same reason. Thresholds are
+ * copied verbatim — interpolation of a `threshold` into a dashboard expression is the
+ * emitter's job, and the plan stays a faithful record of what was declared.
+ */
+function alerts(ir: IR): DeployAlert[] {
+  const declared = ir.observability?.alerts ?? [];
+  return declared
+    .map((alert) => {
+      const planned: DeployAlert = {
+        id: alert.id,
+        metric: alert.metric,
+        window: alert.window,
+        aggregate: alert.aggregate,
+        threshold: alert.threshold,
+        unit: alertUnit(alert.metric),
+      };
+      if (alert.source !== undefined) planned.source = alert.source;
+      return planned;
+    })
+    .sort((left, right) => compare(left.id, right.id));
 }
 
 /** `env:NAME` -> `NAME`. Any other uri is a literal the plan must not copy. */

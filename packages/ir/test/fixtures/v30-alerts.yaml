@@ -1,0 +1,152 @@
+specVersion: "0.30"
+project:
+  name: claims-desk
+  namespace: acme.claims
+  description: An enterprise claims adjudicator that pages a human when a budget is at risk.
+  targets: [py-fastapi]
+profile: enterprise
+types:
+  TicketClassification:
+    kind: struct
+    fields:
+      category:
+        type: string
+        required: true
+      summary:
+        type: string
+        required: true
+  RefundReceipt:
+    kind: struct
+    fields:
+      claim:
+        type: string
+        required: true
+models:
+  triage:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  classify_claim:
+    version: 1
+    model: triage
+    template: "Classify the claim below."
+    output:
+      kind: structured
+      schema: TicketClassification
+tools:
+  issue_refund:
+    description: Issue a refund against a claim.
+    input: RefundReceipt
+    output: RefundReceipt
+    handler:
+      kind: business
+      symbol: issue_refund
+    sideEffects: write
+    requiresConfirmation: true
+    auth: isAuthenticated() and hasScope('claims:write')
+state:
+  kind: postgres
+  urlEnv: DATABASE_URL
+  ttlHours: 168
+agents:
+  claims_adjudicator:
+    name: Claims adjudicator
+    instructions: classify_claim
+    model: triage
+    tools: [issue_refund]
+    maxSteps: 12
+    maxCostBudget: 2.5
+    state:
+      kind: postgres
+      urlEnv: DATABASE_URL
+      ttlHours: 24
+guardrails:
+  tool_call:
+    stages: [tool-call]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The tool call was rejected by the guardrail.
+      log: true
+  outbound:
+    stages: [output]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The response was rejected by the output guardrail.
+      log: true
+observability:
+  trace: true
+  export: otlp
+  endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT
+  redact: [subject, authorization]
+  alerts:
+    - id: adjudicator_cost
+      metric: agent.cost
+      window: 15m
+      aggregate: sum
+      threshold: 25
+      source: claims_adjudicator
+    - id: adjudicator_tokens
+      metric: agent.tokens
+      window: 1h
+      aggregate: max
+      threshold: 120000
+      source: claims_adjudicator
+    - id: refund_latency
+      metric: eval.latency.p95
+      window: 6h
+      aggregate: p95
+      threshold: 4000
+      source: refund_exact
+    - id: fleet_eval_spend
+      metric: eval.cost
+      window: 24h
+      aggregate: sum
+      threshold: 50
+evals:
+  refund_exact:
+    target: pipeline:refund
+    dataset:
+      source: file
+      uri: evals/refund.jsonl
+    metrics:
+      - kind: exact
+        field: text
+    gate:
+      ci: true
+deployments:
+  prod:
+    target: container
+    cloud: aws
+    region: eu-central-1
+    audit:
+      sink: cloudwatch
+      retentionDays: 400
+    identity:
+      kind: oidc
+      issuer: https://login.example.com
+      audience: aid-claims
+    network:
+      private: true
+      egress: declared-only
+    approvals:
+      require: [security, platform]
+      minApprovers: 2
+    secrets: [OPENAI_API_KEY, DATABASE_URL]
+pipelines:
+  refund:
+    description: Adjudicate a claim and issue its refund once a human approves the write.
+    trigger:
+      http:
+        method: post
+        path: /refunds
+    steps:
+      - tool:
+          tool: issue_refund
+          input:
+            claim: "{{event.claim}}"
+          as: receipt
+          requiresApproval: true

@@ -577,12 +577,39 @@ naming the variable that holds the collector address. AID installs no exporter, 
 records where spans belong rather than moving them; what it buys today is that the destination is
 declared, reviewable in a diff, and gated, instead of living in whoever's shell ran the deploy.
 
+The same block declares who should be woken up. An `alerts` entry names a metric, a window, a
+reduction and a threshold, and the deploy plan turns each one into a real alarm resource:
+
+```yaml
+profile: enterprise
+observability:
+  export: otlp
+  alerts:
+    - id: daily_spend
+      metric: agent.cost
+      window: 24h
+      aggregate: sum
+      threshold: 250
+```
+
+```sh
+tofu plan      # the same YAML produces aws_cloudwatch_metric_alarm.this["daily_spend"]
+```
+
+The alarm is infrastructure, so it is reviewed in the same diff as the rest of the plan, and the
+unit on the page (`250 usd`) comes from the metric rather than from the author, so the number and
+its label cannot disagree. The metric list is closed to the four series the plan already derives,
+which is the point: an alarm cannot watch a series nothing produces.
+
 What comes out:
 
 - `app/generated/observability.py`: the span writer each generated step calls, so a pipeline
   you add later is traced without wiring it.
 - Per-call cost, from the same `costProfile` the gateway prices with and the eval budget gate
   enforces. There is one price table, not three.
+- `modules/alerts/` in the OpenTofu tree, or `alerts.cjs` in the CDK app: one alarm per declared
+  entry, wired to `alert_channel_ids`, which defaults to empty so a generated alarm notifies
+  nobody until an operator names a channel.
 
 What is refused:
 
@@ -592,12 +619,18 @@ What is refused:
   recorded is a contradiction.
 - An `enterprise` document whose spans stay inside the process, because the profile promises an
   audit trail and this one ends with the process.
+- An `alerts` entry with no `export: otlp`, because a metric nobody publishes is an alarm that
+  stays silent and reads as health.
+- A reduction the declared metric cannot answer, such as a `p95` over a cost total.
+- An alarm scoped to an agent or eval name the document does not declare, because the typo would
+  become a dimension nothing writes.
 
 Covers:
 
 - **Local trace capture**
 - **A cost ceiling in CI**
 - **A declared place for the spans**
+- **Alarms as generated infrastructure**
 - **A report across every deployment**
 
 ## Fleet repeatability

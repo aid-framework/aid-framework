@@ -120,4 +120,8 @@ export const SPEC_VERSIONS = [
     version: '0.29',
     adds: 'Adds the top-level `overridable` block, which is the only set of paths a per-customer overlay may touch and the bounds each may move within -- so one base spec serves many customers without forking, and an overlay that widens a guardrail, drops a CI-gating eval or exceeds a declared bound is refused by name.',
   },
+  {
+    version: '0.30',
+    adds: 'Adds `observability.alerts`, the metric alarms an operator wants to be paged on: each names one of the four series the deploy plan already derives, a window, an aggregate and a threshold, so the compiler emits the alarm resource instead of a dashboard nobody reads. It requires `observability.export: otlp`, because an alarm over a stream that never leaves the process can never fire.',
+  },
 ];

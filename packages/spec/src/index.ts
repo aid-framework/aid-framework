@@ -61,6 +61,7 @@ export { SourceDocument } from './source-document.js';
 
 export {
   AGENT_EVAL_TARGET_MIN_VERSION,
+  ALERTS_MIN_VERSION,
   COMPOSITE_STEP_KINDS,
   DEFERRED_SECTIONS,
   DEFERRED_STEP_KINDS,
@@ -104,7 +105,7 @@ import { validateSpec } from './validate.js';
 export const SPEC_VERSION = '0.1';
 
 /** The newest version this build reads. Sections above this are rejected, not ignored. */
-export const SPEC_VERSION_LATEST: SpecVersion = '0.29';
+export const SPEC_VERSION_LATEST: SpecVersion = '0.30';
 
 export interface SpecCheckResult {
   /** True when no diagnostic has `error` severity. Warnings do not fail a check. */

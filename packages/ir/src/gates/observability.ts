@@ -26,10 +26,10 @@
  * before a generator is ever entered.
  */
 
-import { specVersionAtLeast } from '@aid-framework/spec';
+import { ALERTS_MIN_VERSION, specVersionAtLeast } from '@aid-framework/spec';
 import { sensitiveNames } from '../build.js';
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
-import type { FeedbackSignalShape, IR } from '../shapes.js';
+import { type FeedbackSignalShape, type IR, isLatencyMetric } from '../shapes.js';
 import { type GateOptions, type GateResult, NO_SUPPRESSIONS, reporter } from './contract.js';
 
 /** The spec version that first let a document state where its spans go. */
@@ -182,4 +182,91 @@ export function feedbackPiiGate(ir: IR, options: GateOptions): GateResult {
 /** The only declared kind that records prose rather than an outcome. */
 function carriesText(signal: FeedbackSignalShape): boolean {
   return signal.kind === 'correction';
+}
+
+/**
+ * The alerts gate — why an alarm that can never fire is refused.
+ *
+ * An alarm over a series nothing produces does not fail loudly; it sits in "no data",
+ * and no data reads as healthy on the dashboard someone trusts. So each of the three
+ * ways a declared alert can be permanently silent gets its own reason and its own fix:
+ *
+ *   - **No export.** `aid infra gen` emits alarms and a collector configuration together,
+ *     because the alarms watch series the collector derives from exported spans. A
+ *     document whose spans stay in the process has no collector, so the alarms would be
+ *     watching a derivation of a stream that never leaves. This is the check that makes
+ *     the rest meaningful, and it is why `export: otlp` is the price of an alarm.
+ *   - **An aggregate that cannot read its metric.** A percentile interprets a latency
+ *     series and nothing else; `sum` of a p95 is a number with no definition. The gate
+ *     refuses the crossing rather than emitting a threshold nobody can justify.
+ *   - **A source that names nothing.** An alarm scoped to an agent or eval that the
+ *     document does not declare watches a labelled series that will never carry that
+ *     label, which is the same silence as the first case with a narrower cause.
+ *
+ * Guardrail rate and approval latency are not refused here because they are not
+ * expressible: the schema's `metric` enum is closed to the four series the derivation
+ * backs. A closed enum says "not supported" once, in the reference, instead of refusing
+ * the same speculative declaration in every document that tries it.
+ *
+ * Scoped to spec 0.30 and above, because no earlier document has an `alerts` key.
+ */
+export function alertsGate(ir: IR, options: GateOptions): GateResult {
+  const diagnostics: IrDiagnostic[] = [];
+  const report = reporter(options);
+  if (!specVersionAtLeast(ir.specVersion, ALERTS_MIN_VERSION)) {
+    return { diagnostics, suppressed: NO_SUPPRESSIONS };
+  }
+  const alerts = ir.observability.alerts;
+  if (alerts === undefined || alerts.length === 0) {
+    return { diagnostics, suppressed: NO_SUPPRESSIONS };
+  }
+
+  if (ir.observability.export !== 'otlp') {
+    const declared =
+      ir.observability.export === undefined ? 'nothing' : `\`${ir.observability.export}\``;
+    diagnostics.push(
+      report.error({
+        code: IR_DIAGNOSTIC_CODES.alertsUnexported,
+        message: `the alerts gate rejected this document: ${alerts.length} alert(s) are declared, but observability exports ${declared}, so no collector derives the series they watch and every alarm would report no data forever`,
+        path: ['observability', 'alerts'],
+        hint: 'add `export: otlp` and `endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT` so the spans reach a collector, or remove the alerts block',
+      }),
+    );
+    return { diagnostics, suppressed: NO_SUPPRESSIONS };
+  }
+
+  const agentIds = new Set(ir.agents.map((agent) => agent.id));
+  const evalIds = new Set(ir.evals.map((evalShape) => evalShape.id));
+
+  for (const alert of alerts) {
+    const base = ['observability', 'alerts', alert.id];
+    const latency = isLatencyMetric(alert.metric);
+
+    if (latency !== (alert.aggregate === 'p95')) {
+      const fix = latency
+        ? `use \`aggregate: p95\`, because "${alert.metric}" is a percentile series and no other reduction interprets it`
+        : `use \`sum\`, \`average\` or \`max\`, because "${alert.metric}" is a quantity and a percentile of it has no definition`;
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.alertsAggregate,
+          message: `the alerts gate rejected "${alert.id}": \`aggregate: ${alert.aggregate}\` cannot interpret metric "${alert.metric}"`,
+          path: [...base, 'aggregate'],
+          hint: fix,
+        }),
+      );
+    }
+
+    if (alert.source !== undefined && !agentIds.has(alert.source) && !evalIds.has(alert.source)) {
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.alertsSource,
+          message: `the alerts gate rejected "${alert.id}": source "${alert.source}" names no agent or eval in this document, so the series it watches never carries that label`,
+          path: [...base, 'source'],
+          hint: 'name a declared agent or eval id, or omit `source` to watch the whole environment',
+        }),
+      );
+    }
+  }
+
+  return { diagnostics, suppressed: NO_SUPPRESSIONS };
 }

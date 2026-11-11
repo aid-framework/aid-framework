@@ -2,6 +2,14 @@
 # the values they supply, which is what lets one generated tree run in more than one
 # account.
 
+module "alerts" {
+  source = "../../generated/modules/alerts"
+
+  project           = var.project
+  alert_channel_ids = var.alert_channel_ids
+  tags              = var.tags
+}
+
 module "gateway" {
   source = "../../generated/modules/gateway"
 
@@ -89,6 +97,14 @@ module "edge" {
   edge_certificate_arn = var.edge_certificate_arn
   edge_price_class     = var.edge_price_class
   tags                 = var.tags
+}
+
+output "alert_metric_namespace" {
+  value = module.alerts.metric_namespace
+}
+
+output "alarm_arns" {
+  value = module.alerts.alarm_arns
 }
 
 output "gateway_urls" {
