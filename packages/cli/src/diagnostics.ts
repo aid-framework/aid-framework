@@ -152,6 +152,22 @@ export const CLI_DIAGNOSTIC_CODES = {
   packageHelperFailed: 'cli/package-helper-failed',
   packageUvMissing: 'cli/package-uv-missing',
   packageWheelsUnavailable: 'cli/package-wheels-unavailable',
+  // `aid resolve` and `aid fleet` read overlay documents. They originate these; every
+  // refusal *inside* an overlay comes from `@aid-framework/spec` with an `overlay/` code, so a
+  // reader can tell "the CLI could not open it" from "the overlay is not allowed".
+  // An unreadable overlay exits 1: the request was well formed and names a real file
+  // that is not there. `--check` needs no `--out`, because the resolved artifact's path
+  // is derived from the overlay's, so nothing here judges an invocation.
+  overlayUnreadable: 'cli/overlay-unreadable',
+  resolveOverlayRequired: 'cli/resolve-overlay-required',
+  resolveOutdated: 'cli/resolve-outdated',
+  // `aid fleet` derives its table from the repository alone. A directory holding no
+  // overlay, or one that is not a directory, leaves the command with nothing to report
+  // — that is "nothing was judged" (`2`), not a verdict on a customer.
+  fleetNoOverlays: 'cli/fleet-no-overlays',
+  fleetDirUnreadable: 'cli/fleet-dir-unreadable',
+  initTemplateUnknown: 'cli/init-template-unknown',
+  initTemplateConflict: 'cli/init-template-conflict',
 } as const;
 
 export type CliDiagnosticCode = (typeof CLI_DIAGNOSTIC_CODES)[keyof typeof CLI_DIAGNOSTIC_CODES];
