@@ -583,7 +583,7 @@ and fixtures. Ranges are honest uncertainty, not padding.
 | **2. Make alarms real** | `configure_metrics()` + the four recording points + `metrics_export_status()`, with `ir/alerts-unproduced` and the corrected hint | **M, 3–4 d** | Phase 1 (docs) |
 | **3. Trajectory evals** | *(partially shipped)* `cost`/`latency` measured end to end, plus `Trajectory`/`RunOutput`/`tool-trace` in the runtime with tests. Still open: the agent-eval emitter, `ir/eval-trajectory` narrowing, `ir/eval-coverage` | **L, 1.5–2 wk** | Phase 2 (cost instrument) |
 | **4. Trace → dataset** | *(shipped)* `aid trace export --dataset` writes a canonical dataset from one directory of runs, behind an opt-in `AID_TRACE_CONTENT` capture switch | **M, 4–6 d** | Phase 3 |
-| **5. Delivery playbook** | `docs/guide/delivery.md`: template → overlay → fleet → report → improvement loop, with the enterprise checklist per control | **S, 1–2 d** | Phase 1 |
+| **5. Delivery playbook** | *(shipped)* `docs/guide/delivery.md`: template → overlay → fleet → report → improvement loop, with the enterprise checklist per control | **S, 1–2 d** | Phase 1 |
 
 Phase 1 is the smallest increment and the cheapest honesty win: it fixes a false count, a
 template that cannot express the current release, and a fleet demo that fails on first use.
