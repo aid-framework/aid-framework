@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | **Draft — awaiting review** |
+| Status | **Approved with changes** — reviewed 2026-11-12; §10 records the decisions |
 | Author | Agent-assisted verification, 2026 |
 | Phase | 0 (verify only). No feature code in this document. |
 | Affects | `ir` gates, both generators, `runtimes/python`, `cli` (`eval`, `trace export`), `docs/`, `site/scripts/features-data.mjs` |
@@ -43,7 +43,9 @@ Three findings decide the round:
 3. **The main blocker is unchanged.** The generator still refuses every `agent:` eval target
    and every `tool-trace` metric (`packages/ir/src/gates/observability.ts:79-115`), because no
    generated runner reports the tool calls a case made. Phase B is the work that matters and
-   is the largest item in this plan.
+   is the largest item in this plan. Review split it in two: **B1** makes a trajectory run
+   offline and score `tool-trace`, and **B2** adds the metrics that judge it and the `0.31`
+   spec change they need. §9 settles the two questions B1 cannot start without.
 
 ---
 
@@ -135,7 +137,11 @@ What is not defensible is a reference page telling a reader the spec field strip
 "before it leaves the process" while the export command — the one path that moves captured text
 into a file that may become a gating dataset — applies no rule from that field.
 
-Phase D exists for these five gaps, and G1 is a doc correction that can ship before the code.
+Phase D exists for these five gaps, and G1 is a doc correction that ships first, in the truth PR.
+Review chose Option A for Q1: redaction becomes real, and G4 is replaced rather than built. The
+`unreviewed` tag every exported case already carries becomes operative — a `gate.ci` eval that
+refuses `unreviewed` cases is a stronger statement than a staging directory a command can be
+pointed away from. See §10.
 
 ---
 
@@ -238,59 +244,126 @@ as an active transform, and it is not one (item 2, G1).
 
 ## 8. Phase order, effort and the smallest first increment
 
-Order is set by dependency, not by size: A′ and D-G1 are corrections to claims the repo already
-makes and can ship first; B unblocks C (an agent baseline needs an agent runner to have produced
-it); E carries whatever copy B and C make true.
+The reviewed order is by dependency and by honesty, not by size. Everything the repository
+already claims wrongly ships as one PR first, because a test that asserts a fresh scaffold
+validates is worth nothing while a release note still points at the wrong spec version. B then
+splits in two: a runner that runs is separable from the metrics that judge what it ran.
 
-| Phase | What actually remains | Effort | Smallest shippable increment |
+| # | Phase | What ships | Effort | Smallest shippable increment |
+| --- | --- | --- | --- | --- |
+| **1** | **Truth PR** | Phase A′: both examples call `metrics_export_status()`, the template README says why, `support.md` gains a target-capability table naming the `ts-vercel` alert refusal, and `aid doctor` warns when alerts are declared and no entrypoint installs the meter. Plus the `spec.md:851` correction, the `v0.1.142` body and PR #171 title corrected with a `spec-changelog.md` correction note, and the template+fleet integration test | **1–1.5 d** | Every claim the repository makes is true, and a fresh scaffold is asserted to validate and fleet |
+| **2** | **B1** | Generated `agent:` eval runner in `py-fastapi` (trajectory, handoffs, steps, cost, final answer); offline execution through the fake provider; record/replay of provider responses; `tool-trace` scoring; `ir/eval-trajectory` narrowed to name the piece it is still missing | **5–6 d** | One `agent:` eval that runs offline end to end and scores `tool-trace` |
+| **3** | **B2** | `step-count`, `forbidden-tool` and `approval-respected`; `ir/eval-coverage` for `enterprise` at `>= 0.31`; both templates move to `0.31`; spec `0.31`, a spec-changelog entry and a migration note | **3–4 d** | A trajectory eval whose step count and tool set a gate can refuse |
+| **4** | **D** | Redaction becomes real in the runtime and in `aid trace export`; `feedback.pii` applied on export; `enterprise` refuses to export captured content with no redaction set; the `unreviewed` tag made operative by a `gate.ci` refusal | **4–5 d** | `aid trace export` applying the spec's own redaction set, and refusing under `enterprise` when that set is empty |
+| **5** | **C** | `baseline` keyed by subject and shared by overlay customers unless an `overridable` path says otherwise; `RecordedBaseline` carries mean cost and latency; `--compare` judges `allowedCostIncrease`; old baselines read as "not recorded" and refuse the cost judgement | **4–5 d** | `--compare` refusing a cost judgement it cannot make instead of passing it |
+| **6** | **E** | `docs/guide/delivery.md` playbook, homepage copy the phases changed, and the "policy not behaviour" statement repeated in the walkthrough | **2–3 d** | The playbook page |
+
+**The single smallest first increment is the truth PR.** It is about a day, needs no spec bump,
+and turns several claims the repository already makes into claims that are true and asserted.
+Today a reader who follows the template copies an entrypoint that installs its tracer and forgets
+its meter, and a release note names the wrong spec version for tier profiles.
+
+---
+
+## 9. Before B1 — approvals in a trajectory eval, and what such an eval proves
+
+Review asked that two things be settled on paper before a runner exists. Both change what B1
+builds, so neither can be answered by reading the code it produces.
+
+### 9.1 How `approval-respected` models pause and resume
+
+The runtime already pauses. `AgentRuntime._needs_approval` (`loop.py:1027`) answers the question
+from two sources in the IR — a tool that declares `requiresConfirmation`, or the agent's
+`humanInTheLoop.when` policy evaluated against the caller's `Principal` — and never from a step
+counter, so a pause cannot fire on "step 3" unless the policy says so. `_checkpoint`
+(`loop.py:1045`) then serializes everything a resume needs into an `AgentCheckpoint`: agent id,
+step, messages, steps, the calls awaiting an answer, the channel, the policy, the cost and token
+anchors, the spend so far, the degraded flag, the alias, the memory key, the path, and the
+guardrail verdicts collected so far. `_restore_ledger` (`loop.py:1080`) re-charges a resumed
+run's prior spend as a real ledger entry under a distinct alias, so a resume in a fresh process
+does not hand the agent a ceiling it has already partly spent. `DeepAgentsEngine._interrupts`
+and `_pause` (`deep_agents.py:332`, `:406`) are the same mechanism expressed as graph interrupts.
+
+An eval must reach that pause without a person, and must prove the *decision* was obeyed rather
+than assume it.
+
+**How a case supplies decisions.** A case gains an `approvals` field: an ordered list of
+decisions, each `approve` or `reject`, consumed one per pause in the order the pauses occur. An
+absent or empty list means "this case must not pause", which is the default and keeps every
+existing case valid.
+
+**How the runner pauses and resumes.** The generated runner hands the engine a scripted approval
+channel in place of the deployed one. The channel implements the same interface the production
+channel implements, so the code under test is the real one: `_needs_approval` decides,
+`_checkpoint` serializes, the resume path restores. The runner persists the checkpoint into an
+in-process store implementing the same state interface the declared store implements, and
+resumes from it immediately. Nothing about the agent loop is bypassed for the eval.
+
+**Where the durable store matters.** A durable store would make every trajectory eval depend on
+a database, so B1 uses the in-process store by default. One suite-level option swaps in the
+declared state store for the case that needs it, and B2 can carry a single case that proves a
+pause survives a process boundary. That is the only part of pause and resume an in-process
+runner cannot prove.
+
+**What the metric scores.** `approval-respected` has three deterministic outcomes, and a case
+passes only when none of them fires:
+
+- `pause-missed` — the case supplied decisions and the run completed without pausing.
+- `pause-unexpected` — a pause fired that the case supplied no decision for.
+- `decision-ignored` — a call ran after the case answered `reject`. This is the only safety
+  finding of the three, and it fails the case even when the case's `expected` answer matches.
+
+### 9.2 A scripted-model trajectory eval verifies policy and plumbing, not model behaviour
+
+This must be stated wherever a reader meets the feature, not only here, because the failure mode
+is a team reading a green trajectory suite as evidence about a model.
+
+A trajectory eval run against a scripted or recorded model answers one question: **given these
+tool calls and this answer, does the surrounding machinery do what the spec says?** Does the
+step ceiling stop the run, does a forbidden tool stay unreachable, does a rejected approval
+actually block the call, is the cost attributed, is the handoff wired. It says nothing about
+whether a real model would choose those calls, and a regression budget over a scripted suite
+cannot detect a model that got worse — only plumbing that went wrong.
+
+Concretely, this statement ships in three places when B1 lands:
+
+1. `docs/reference/eval-metrics.md`, as a short callout on the `agent:` target and on
+   `tool-trace`.
+2. The trajectory section of `docs/guide/delivery.md`, in the prose that introduces the example
+   run.
+3. The generated eval module's docstring, so the statement sits in the file a developer opens.
+
+A real-model trajectory suite is a later, separate capability: it needs a pinned provider, a
+recorded response set and a cost profile, and it belongs with Phase C's baselines rather than
+with B1's runner.
+
+---
+
+## 10. Decisions from review
+
+Recorded 2026-11-12. Each answer is now the plan. The questions are kept in the review history
+rather than deleted, because the reasoning is what a later phase will need when it reopens one.
+
+| # | Question | Decision | What it changes |
 | --- | --- | --- | --- |
-| **A′** | Examples call `metrics_export_status()`; support matrix gains a target-capability section naming the `ts-vercel` alert refusal | **0.5 d** | Two example entrypoints, one table in `support.md`, no spec change |
-| **B** | Generated `agent:` eval runner in `py-fastapi` (trajectory, handoffs, steps, cost, final answer); offline via the fake provider; three new deterministic metrics (`step-count`, `forbidden-tool`, `approval-respected`); narrow `ir/eval-trajectory`; add `ir/eval-coverage` for `enterprise` | **8–10 d** | One `agent:` eval that runs offline end to end and scores `tool-trace`, with the two remaining refusals narrowed to name their missing piece |
-| **C** | `baseline` keyed by subject `{ kind: prompt\|agent, id, version }`; `RecordedBaseline` carries mean cost and latency per metric; `--compare` judges `allowedCostIncrease`; old baselines read as "not recorded" and refuse the cost judgement | **4–5 d** | `RecordedBaseline` with a `cost` field + `aid eval --compare` refusing a cost judgement it cannot make, instead of passing it |
-| **D** | G1–G5: implement redaction (or correct the doc and delete the field's claim), apply `feedback.pii` on export, staging path, walkthrough of the full loop | **3–4 d** | Fix `spec.md:851` to describe what happens, then implement the filter in `tracing.record_content` / export |
-| **E** | Template + fleet test, registry entries (done), the two label corrections, `docs/guide/delivery.md`, homepage copy the phases changed | **2–3 d** | The template/fleet integration test and the two label corrections, which need no feature code |
+| Q1 | Does `observability.redact` become real? | **Yes — Option A, with the doc correction first.** `aid trace export` reads the spec and applies `observability.redact` and `feedback.pii`; under `enterprise` it refuses to export captured content when no redaction set is declared. The `unreviewed` case tag stops being a comment and becomes a gate: a `gate.ci` eval refuses cases tagged `unreviewed`, which replaces the staging-path idea | G4 is dropped; the truth PR corrects `spec.md:851`, and Phase D implements the filter |
+| Q2 | Should the generated entrypoint call `metrics_export_status()`? | **No.** Fix the examples and the template README, and add an `aid doctor` warning when alerts are declared and no entrypoint installs the meter | Phase A′ grows by one doctor check; the ownership boundary is unchanged |
+| Q3 | `ts-vercel` alerts | **Keep the refusal, document it.** A target-capability table in `support.md` names it | Phase A′, no code |
+| Q4 | Does Phase B need a spec bump? | **Yes, `0.31`,** for the three new metric kinds. The `agent:` target itself is not a language change | B2 carries the bump; B1 does not |
+| Q5 | The enterprise coverage rule | `ir/eval-coverage` applies only at `specVersion >= 0.31`, and both templates move to `0.31` in the same PR | B2 ships the gate, the template bump and the migration note together |
+| Q6 | The overlay subject key | **Baselines are keyed by subject and shared by overlay customers**, unless an `overridable` path says otherwise | Phase C's `baseline` key is settled now; the `--filter agent=<id>` question stays open |
 
-**The single smallest first increment is Phase A′.** It is under a day, needs no spec bump, and
-turns a capability that already shipped into one the golden path actually exercises; today a
-reader who follows the template copies an entrypoint that installs its tracer and forgets its
-meter.
+Two consequences worth stating plainly, because they bind later phases:
 
----
-
-## 9. Open questions for review
-
-1. **Q1 — does `observability.redact` become real, or does the claim go?** Option A implements
-   it as a span/record filter in the runtime and applies the same set in `aid trace export`.
-   Option B narrows the reference to what exists (the field governs the feedback store and the
-   generated metadata report) and drops the "before it leaves the process" sentence. Option A
-   is the honest reading of the profile promise; Option B is the honest description of the
-   code. **Recommendation: A, with B as the doc correction that ships immediately** — an
-   enterprise profile that promises an audit trail cannot leave the redaction of that trail
-   undefined.
-2. **Q2 — should the generated ASGI entrypoint call `metrics_export_status()`?** It would make
-   alarms fire without a manual step, and it breaks the boundary that the entrypoint belongs to
-   the developer (stated at `spec.md` §`observability`). **Recommendation: no** — fix the
-   example and the template README instead, so the boundary stands and the golden path still
-   shows both calls. Revisit only if a second customer hits it.
-3. **Q3 — `ts-vercel` metrics.** Implement an OTLP metric exporter there, or keep the
-   `ir/alerts-unproduced` refusal? **Recommendation: keep the refusal, document it in the
-   support matrix** (Phase A′). The target's story is serverless and a collector is the
-   customer's platform, which is exactly the kind of pair this framework refuses rather than
-   approximates.
-4. **Q4 — does Phase B need a spec bump?** `agent:` already parses from `0.27`
-   (`spec.schema.json:900`), so the target itself is grammar, not new language. The three new
-   eval metric kinds are new enum values, so they need `0.31` plus a spec-changelog entry and a
-   migration note that reads "0.30 documents are unaffected; 0.31 adds metric kinds a 0.30
-   document cannot spell". `ir/eval-trajectory` narrowing is not a language change.
-5. **Q5 — the enterprise coverage rule.** `ir/eval-coverage` must be satisfiable by both
-   templates on the day it lands, or `enterprise-approvals` stops validating. It needs to be
-   satisfiable at `0.31` only, following the profile-requirement-set rule from RFC 0001 §3.
-6. **Q6 — whom does `--filter agent=<id>` mean for an overlay?** Unchanged this round; noted
-   because Phase C's subject key will have to answer the same question for baselines.
+- **No phase before the truth PR may claim a correct label.** The truth PR goes first because it
+  is the cheapest way to stop the repository asserting things that are not true.
+- **Nothing in this list makes anything auto-deploy.** Q1's gate refuses an export; it does not
+  promote one. The promotion gate from RFC 0001 still requires an explicit pass and, under
+  `enterprise`, a recorded approval.
 
 ---
 
-## 10. Appendix — reproductions
+## 11. Appendix — reproductions
 
 ```sh
 # Item 3: both templates on a fresh scaffold
