@@ -51,7 +51,7 @@ const PROMOTION = [
  * one possible verdict and `--suite` stays optional.
  */
 function promotableSpec(options: { readonly withApproval?: boolean } = {}): string {
-  let text = patched(EXAMPLE_SPEC, 'specVersion: "0.2"', 'specVersion: "0.28"');
+  let text = patched(EXAMPLE_SPEC, 'specVersion: "0.27"', 'specVersion: "0.28"');
   text = patched(text, '  classify_ticket:\n    version: 1', '  classify_ticket:\n    version: 2');
 
   const marker = '\n  handbook_quality:';

@@ -407,12 +407,17 @@ describe('the collections P7b owns are no longer refused', () => {
 });
 
 describe('the shipped example', () => {
-  it('is a 0.2 spec that declares an input guardrail and a streaming deployment', () => {
+  it('declares an input guardrail, a streaming deployment and an agent eval', () => {
     const { ir } = example();
 
-    expect(ir.specVersion).toBe('0.2');
+    // No version pin here. What the example has to prove is that it exercises the features
+    // the generator claims, and a version number proves nothing on its own -- it would have
+    // to be bumped by hand on every change. The agent eval below is the load-bearing one:
+    // the spec layer refuses an `agent:` target below `AGENT_EVAL_TARGET_MIN_VERSION`, so a
+    // spec that declares one is at least that new by construction.
     expect(ir.guardrails.some((guardrail) => guardrail.stages.includes('input'))).toBe(true);
     expect(ir.deployments.some((deployment) => deployment.streaming)).toBe(true);
+    expect(ir.evals.some((evaluation) => evaluation.target.kind === 'agent')).toBe(true);
     expect(checkPlan(ir)).toEqual([]);
   });
 

@@ -1,5 +1,5 @@
 ---
-description: "A 0.27 enterprise spec that promises an audit trail it never exports, plus an eval that names an agent no runner can score, refused by named diagnostics and then fixed."
+description: "A 0.27 enterprise spec that promises an audit trail it never exports, refused by a named diagnostic and then fixed, plus the eval target that names an agent and the metric kind that must follow it."
 ---
 
 # Walkthrough: trace export and agent evals
@@ -9,8 +9,9 @@ an eval to **name an agent**.
 
 Both are gated, and both have a spelling that looks reasonable and is refused. An enterprise document
 can declare every control from 0.26 — identity, a private network, audit retention, approvals — and
-still keep every span inside the process. An eval can point at an agent, which parses and reads
-naturally, and cannot be scored by any runner this build ships.
+still keep every span inside the process. An eval that names an agent is accepted by the target that
+runs agents offline and refused by the one that does not, and a metric that compares tool calls is
+refused anywhere there are no calls to compare.
 
 Every console block below is real output from this repository's CLI.
 
@@ -139,83 +140,92 @@ keeps traces in the process still benefits from not recording a claim subject in
 
 ## An eval that names an agent
 
-The second thing 0.27 adds is the syntax to say an eval is about an agent:
+The second thing 0.27 adds is the syntax to say an eval is about an agent. Declare it alongside the
+metric only an agent can satisfy — `tool-trace`, which compares the calls a run made:
 
 ```yaml
 evals:
   adjudicator_trajectory:
     target: agent:claims_adjudicator
-```
-
-It parses, and the schema accepts it — the coverage gate merely declines to count it toward the
-`pipeline:refund` route, which is the warning below. The refusal itself is specific:
-
-```console
-$ aid validate claims-desk.spec.yaml
-claims-desk.spec.yaml: 1 error(s), 1 warning(s)
-claims-desk.spec.yaml: error: the trajectory gate rejected "adjudicator_trajectory": target "agent:claims_adjudicator" names an agent, and this build emits evals over a prompt, not over an agent run [ir/eval-trajectory]
-    at evals.adjudicator_trajectory.target
-    hint: evaluate the pipeline that runs the agent (`target: pipeline:<id>`) for now; the runtime carries a trajectory, but no generator emits an agent eval yet
-claims-desk.spec.yaml: warning: the eval-coverage gate flagged this pipeline: "refund" is served over HTTP but no eval with gate.ci: true targets it [ir/eval-uncovered]
-    at pipelines.refund
-    hint: add an eval targeting "pipeline:refund" and set gate.ci: true
-```
-
-This is the design decision worth naming. Before 0.27 the spec language could only express
-`pipeline:<id>`, so an agent could not be named at all. Accepting the syntax and then failing later
-would be worse than refusing it: the eval runner hands a metric the response string the pipeline
-returned. There is no trace of which tools ran, in which order, at what cost. An `agent:` target
-scored by `exact` or `llm-judge` would silently grade the final text and print a green check beside
-the word "trajectory".
-
-So the refusal happens at the IR, before a generator is entered, and it names the missing piece
-— *a generator that emits an agent eval* — rather than reporting a phantom undeclared subject.
-The runtime half exists: `aid-runtime-python` lets a runner return a `RunOutput` carrying a
-`Trajectory`, and the `tool-trace` metric scores it. What no generator emits yet is a runner that
-reports one for an agent, so the gate still refuses the target rather than promise a comparison
-nothing performs.
-
-A pipeline can run an agent (the `agent` step kind), which makes the fix a real one rather than a
-downgrade: score the pipeline that runs the agent.
-
-```yaml
-evals:
-  adjudicator_trajectory:
-    target: pipeline:refund
-```
-
-```console
-$ aid validate claims-desk.spec.yaml
-claims-desk.spec.yaml: ok (0 errors, 0 warnings)
-```
-
-## Metrics that measure a trajectory
-
-The same gate guards the metric kinds, so the mistake is available one level down. `tool-trace` is
-declarable from 0.27 and has no consumer:
-
-```yaml
+    dataset:
+      source: file
+      uri: evals/adjudicator_trajectory.jsonl
     metrics:
       - kind: exact
         field: text
       - kind: tool-trace
         expect: [issue_refund]
+    gate:
+      ci: true
+      maxRegression: 0.05
+      minMean: 0.8
+```
+
+Whether that is accepted is decided by the target, and the [targets](../reference/targets.md) matrix
+records which ones declare `agent-evals`. `py-fastapi` does, so it emits an offline evaluator that
+runs the agent against each case and scores the calls it made:
+
+```console
+$ aid validate claims-desk.spec.yaml
+claims-desk.spec.yaml: ok (0 errors, 1 warnings)
+claims-desk.spec.yaml: warning: the eval-coverage gate flagged this pipeline: "refund" is served over HTTP but no eval with gate.ci: true targets it [ir/eval-uncovered]
+    at pipelines.refund
+    hint: add an eval targeting "pipeline:refund" and set gate.ci: true
+```
+
+The remaining warning is the coverage gate, not the trajectory gate, and it is the honest one: an
+eval over an agent does not cover the pipeline that reaches it, so a document that runs an agent and
+serves it over HTTP needs both. The committed example does exactly that — `examples/support-copilot`
+declares `target: agent:refund_agent`, and its tree carries
+`app/generated/evals/refund_trajectory.py`.
+
+`ts-vercel` does not declare `agent-evals`, so the same eval is refused before a generator is
+entered. The gate judges a target by what it declares, and `agents` alone is not the promise: a
+target can emit the agent loop without emitting anything that runs one offline.
+
+What a trajectory scored this way measures is worth stating plainly, because the name invites the
+wrong reading. The evaluator drives the agent with a scripted or recorded model, so a case verifies
+the **policy and plumbing** of a run — which tools were reachable, in what order they were called,
+whether an approval was respected, what the run cost — and not the quality of a model's answer. Model
+quality is what the prompt and pipeline evals are for, and what a run recorded against a real
+provider measures.
+
+## Metrics that measure a trajectory
+
+The gate also guards the metric kind, so the same mistake is available one level down. `tool-trace`
+compares the calls a run made, and a pipeline returns a response with no calls to compare:
+
+```yaml
+evals:
+  adjudicator_trajectory:
+    target: pipeline:refund
+    metrics:
+      - kind: exact
+        field: text
+      - kind: tool-trace
+        expect: [issue_refund]
+    gate:
+      ci: true
 ```
 
 ```console
 $ aid validate claims-desk.spec.yaml
+claims-desk.spec.yaml: 1 error(s), 0 warning(s)
 claims-desk.spec.yaml: error: the trajectory gate rejected "adjudicator_trajectory": metric 1 compares tool calls, and "pipeline:refund" returns a response with no tool calls to compare [ir/eval-trajectory]
     at evals.adjudicator_trajectory.metrics[1]
-    hint: this build scores a trajectory (`ToolTrace`), but no generated runner reports the tool calls a case made: score the response with exact, contains, json-schema, llm-judge or assert
+    hint: a prompt or pipeline target returns one response, so it has no trajectory: score the calls an agent makes with `target: agent:<id>`, or score the response with exact, contains, json-schema, llm-judge or assert
 ```
 
-Note what is **not** refused. `cost` and `latency` are scored directly: the harness reads the
-gateway ledger and the clock around every case and compares each against the declared ceiling, so
-the generated workflow fails on a case that spends or takes more than the spec allowed. `tool-trace`
-is refused because no generated runner reports the tool calls a case made, and a metric that runs
-and is never consulted reports coverage the suite does not have.
+Note what is **not** refused. `cost` and `latency` are scored directly: the harness reads the gateway
+ledger and the clock around every case and compares each against the declared ceiling, so the
+generated workflow fails on a case that spends or takes more than the spec allowed. `tool-trace` is
+refused on a pipeline only because a pipeline has no calls to report, and a metric that runs and is
+never consulted reports coverage the suite does not have.
 
-Drop the `tool-trace` metric and keep a ceiling measured from the response, and the document passes.
+Before 0.27 the spec language could only express `pipeline:<id>`, so the only available fix was to
+score the pipeline that ran the agent and lose the trajectory with it. The hint now points the other
+way: keep `target: agent:<id>` and let the evaluator report the calls, which is what the first half
+of this walkthrough validates.
 
 ## What this build does not do
 
@@ -228,10 +238,11 @@ Being precise about the boundary is the point of the phase:
   trigger rate needs a backend AID does not ship.
 - **No fleet reporting command.** Aggregating cost, eval and trace summaries across many
   deployments from files is designed in the RFC and not built.
-- **No trajectory measurement.** An agent run is not scored. Score its pipeline.
 
 Everything above is recorded as a deliberate non-build in `docs/rfcs/0001-agents-at-scale.md` §10.3
-rather than implied by a command that does not exist. The one capability 0.27 ships —
-`observability-export` — is counted on the [features page](../features.md), and the eval widening is
-counted there as a refusal rather than a capability, because what it adds is a named diagnostic: it
-joins the other refusals under [what AID refuses](../features.md#refused-on-purpose).
+rather than implied by a command that does not exist. The capabilities 0.27 ships —
+`observability-export` and, since 0.1.158, `agent-trajectory-evals` — are counted on the
+[features page](../features.md) rather than left to a walkthrough to assert. The refusals shown above
+join the others under [what AID refuses](../features.md#refused-on-purpose), and the eval widening is
+counted twice over: as the capability it is, and as the diagnostic that names the target which cannot
+carry it.

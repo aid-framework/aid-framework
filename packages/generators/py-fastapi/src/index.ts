@@ -115,6 +115,7 @@ export {
   jsonSchemaMetric,
   judgeAlias,
   metricBindings,
+  TOOL_TRACE_EXPECT,
   usesJudge,
 } from './metrics.js';
 export { fileMap, filesFor, planPyFastApi } from './plan.js';

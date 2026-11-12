@@ -55,18 +55,25 @@ function asNumber(value: unknown): number | undefined {
 /**
  * The example's sampled-prompt eval.
  *
- * The example declares two evals: this one, and a retrieval eval that measures the corpus
- * rather than the model. Every assertion in this file is about the sampled prompt eval --
- * `SAMPLES`, `MAX_REGRESSION`, the threshold's metric, delegation to `BaselineGate` -- so
- * the subject is selected as "the eval that is not a retrieval eval" and there must be
- * exactly one, because two would make these assertions partial over their own subject.
+ * The example declares three evals: this one, a retrieval eval that measures the corpus
+ * rather than the model, and an agent eval that scores a run rather than an answer. Every
+ * assertion in this file is about the sampled prompt eval -- `SAMPLES`, `MAX_REGRESSION`,
+ * the threshold's metric, delegation to `BaselineGate` -- so the subject is selected on two
+ * axes through the same helpers the emitter uses: the subject resolver must say `prompt`
+ * (which excludes the agent eval, since a replayed run carries no model), and the eval must
+ * not be a retrieval eval (which also resolves to a prompt subject, because retrieval
+ * scores a prompt's answers against a corpus). There must be exactly one, because two would
+ * make these assertions partial over their own subject.
  */
 function exampleEval(): { ir: ReturnType<typeof example>['ir']; evaluation: EvalShape } {
   const { ir } = example();
-  const sampled = ir.evals.filter((candidate) => !isRetrievalEval(candidate));
+  const sampled = ir.evals.filter((candidate) => {
+    const resolved = evalSubject(ir, candidate);
+    return resolved.ok && resolved.subject.kind === 'prompt' && !isRetrievalEval(candidate);
+  });
   const [evaluation] = sampled;
   if (evaluation === undefined || sampled.length !== 1) {
-    throw new Error(`the example should declare one sampled eval, found ${sampled.length}`);
+    throw new Error(`the example should declare one sampled prompt eval, found ${sampled.length}`);
   }
   return { ir, evaluation };
 }
@@ -307,7 +314,7 @@ describe('the emitted eval module', () => {
     const { ir, evaluation } = exampleEval();
     const subject = evalSubject(ir, evaluation);
     expect(subject.ok, subject.ok ? '' : subject.message).toBe(true);
-    if (!subject.ok) return;
+    if (!subject.ok || subject.subject.kind !== 'prompt') return;
 
     const source = evalSource();
     expect(literalString(assignedValue(source, 'PROMPT'))).toBe(subject.subject.prompt.id);

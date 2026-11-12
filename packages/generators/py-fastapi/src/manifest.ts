@@ -66,6 +66,10 @@ export const PY_FASTAPI_MANIFEST_INPUT: GeneratorManifestInput = {
     // `aid_runtime.telemetry.configure_metrics`, which the emitted
     // `app/generated/observability.py` calls beside the span exporter.
     'metrics',
+    // The emitted `app/generated/evals/<id>.py` for an `agent:` target builds an
+    // `AgentEvalRunner` over the app's own tools, so a case runs the agent offline and its
+    // trajectory -- the calls, the step count and the approval decisions -- is scored.
+    'agent-evals',
   ],
   emitsAgainst: {
     structuredOutput: 'pydantic',

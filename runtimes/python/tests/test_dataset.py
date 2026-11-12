@@ -99,6 +99,19 @@ def test_to_json_is_sorted_newline_terminated_and_round_trips() -> None:
     assert Dataset.from_json(payload) == dataset
 
 
+def test_approvals_are_written_only_when_a_case_declares_them() -> None:
+    """An empty ``approvals`` must not appear, or every committed dataset would churn."""
+    silent = EvalCase(id="quiet", input="Refund 4471.")
+    gated = EvalCase(id="gated", input="Refund 4471.", approvals=("approve", "reject"))
+    dataset = Dataset(name="refunds", version="1", cases=(silent, gated))
+
+    decoded = json.loads(dataset.to_json())
+
+    assert "approvals" not in decoded["cases"][0]
+    assert decoded["cases"][1]["approvals"] == ["approve", "reject"]
+    assert Dataset.from_json(dataset.to_json()) == dataset
+
+
 def test_a_dataset_round_trips_through_a_path(tmp_path: Path) -> None:
     dataset = _dataset()
     path = tmp_path / "capitals.json"

@@ -114,6 +114,8 @@ from aid_runtime.errors import (
     UnknownModelAliasError,
 )
 from aid_runtime.evals import (
+    AgentEvalRunner,
+    ApprovalPolicy,
     BaselineGate,
     CaseOutcome,
     CostCeiling,
@@ -184,7 +186,12 @@ from aid_runtime.providers import (
     GeminiProvider,
     OpenAICompatibleProvider,
     Provider,
+    RecordedProvider,
+    RecordingProvider,
+    ReplayDivergenceError,
     ScriptedTurn,
+    Transcript,
+    TranscriptEntry,
     VertexProvider,
     default_bedrock_base_url,
     default_vertex_base_url,
@@ -337,7 +344,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.157"
+__version__ = "0.1.158"
 
 __all__ = [
     "AGENT_LABEL",
@@ -378,11 +385,13 @@ __all__ = [
     "AgentBudgetDegradedError",
     "AgentCheckpoint",
     "AgentDefinition",
+    "AgentEvalRunner",
     "AgentHandoffUnsupportedError",
     "AgentRuntime",
     "AgentTransferCycleError",
     "AidRuntimeError",
     "AnthropicProvider",
+    "ApprovalPolicy",
     "BaselineGate",
     "BedrockProvider",
     "Budget",
@@ -496,10 +505,13 @@ __all__ = [
     "ProviderResponseError",
     "RankedId",
     "RecallAtK",
+    "RecordedProvider",
+    "RecordingProvider",
     "RecursiveChunker",
     "RefreshMode",
     "RefreshSpec",
     "RenderedPrompt",
+    "ReplayDivergenceError",
     "RerankSpec",
     "Reranker",
     "RetrievalCase",
@@ -553,6 +565,8 @@ __all__ = [
     "ToolSpec",
     "ToolTrace",
     "Trajectory",
+    "Transcript",
+    "TranscriptEntry",
     "UnknownModelAliasError",
     "VectorStore",
     "VectorStoreSpec",

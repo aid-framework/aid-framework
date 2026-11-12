@@ -253,6 +253,9 @@ export const TARGET_WIRED_CAPABILITIES: Readonly<Record<string, string>> = {
   metrics:
     'the metric exporter generated in app/generated/observability.py, which' +
     " publishes the series the document's alerts watch",
+  'agent-evals':
+    'the offline agent evaluator generated in app/generated/evals/<id>.py, which builds ' +
+    'an AgentEvalRunner over the app tools and scores the trajectory a case produced',
 };
 
 /** A target-capability declaration read three ways, so no promise goes unaccounted for. */

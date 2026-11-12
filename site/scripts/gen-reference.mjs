@@ -663,9 +663,15 @@ function targetsPage() {
         ]),
       );
     };
-    const capabilities = [
-      ...(text.match(/capabilities:\s*\[([\s\S]*?)\]/)?.[1] ?? '').matchAll(/'([^']+)'/g),
-    ].map((match) => match[1] ?? '');
+    // A manifest's `capabilities` array carries comments beside its entries, and an apostrophe
+    // in that prose would otherwise pair with an entry's opening quote and capture the words
+    // between them as a capability name. Strip line comments first, then refuse anything that
+    // is not a capability identifier, so a corrupt parse fails the build instead of publishing
+    // a garbage table row.
+    const withoutComments = (fragment) => fragment.replace(/\/\/[^\n]*/g, '');
+    const quoted = (fragment) =>
+      [...withoutComments(fragment).matchAll(/'([^']+)'/g)].map((match) => match[1] ?? '');
+    const capabilities = quoted(text.match(/capabilities:\s*\[([\s\S]*?)\]/)?.[1] ?? '');
     // A manifest may spread a named constant instead of listing capabilities inline.
     const capabilitiesConstant = text.match(/capabilities:\s*\[\.\.\.([A-Z0-9_]+)\]/);
     if (capabilitiesConstant !== null) {
@@ -674,11 +680,16 @@ function targetsPage() {
         new RegExp(`export const ${constant} = \\[([\\s\\S]*?)\\] as const;`),
       );
       capabilities.length = 0;
-      capabilities.push(
-        ...[...(declared?.[1] ?? '').matchAll(/'([^']+)'/g)].map((match) => match[1] ?? ''),
-      );
+      capabilities.push(...quoted(declared?.[1] ?? ''));
     }
     const capabilities_ = capabilities;
+    const malformed = capabilities_.filter((entry) => !/^[a-z][a-z0-9-]*$/.test(entry));
+    if (malformed.length > 0) {
+      failures.push(
+        `parsed a malformed capability from packages/generators/${directory}/src/manifest.ts: ` +
+          malformed.map((entry) => JSON.stringify(entry)).join(', '),
+      );
+    }
     // `irRange` is a template literal interpolating `IR_VERSION`, so resolve the constant
     // rather than printing the interpolation.
     const irRangeMatch = text.match(/irRange:\s*`([^`]*)`/);
@@ -1245,10 +1256,13 @@ function specChangelogPage() {
     `A spec declares its language version with \`specVersion\`. The current version is \`${current}\`, and each row below lists what that version adds.`,
   );
   lines.push('');
-  for (const correction of SPEC_VERSION_CORRECTIONS) {
+  for (const [index, correction] of SPEC_VERSION_CORRECTIONS.entries()) {
+    if (index > 0) {
+      lines.push('>');
+    }
     lines.push(`> **${correction.lead}.** ${correction.body}`);
-    lines.push('');
   }
+  lines.push('');
   lines.push('| Version | What it adds |');
   lines.push('| --- | --- |');
   // Newest first so the current version is the first row, not something to scroll past every

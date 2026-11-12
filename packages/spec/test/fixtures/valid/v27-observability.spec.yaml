@@ -100,9 +100,9 @@ observability:
 evals:
   adjudicator_trajectory:
     # An agent target, declarable from 0.27. Before it, only `pipeline:` was parseable, so
-    # an agent could not be named at all -- not even as the pipeline that runs it. The IR
-    # refuses this target with `ir/eval-trajectory` (no runner carries a trajectory), which
-    # is why this fixture only ever reaches spec validation.
+    # an agent could not be named at all -- not even as the pipeline that runs it. The
+    # target is refused with `ir/eval-trajectory` unless every targeted generator declares
+    # the `agent-evals` capability; `py-fastapi` does, `ts-vercel` does not.
     target: agent:claims_adjudicator
     dataset:
       source: file

@@ -347,11 +347,13 @@ describe('gemini provider', () => {
 /**
  * Swapping the adapter must not change the shape of the app.
  *
- * The provider the spec names reaches exactly one file: the gateway models table that
- * resolves it. Everything else -- pipelines, tools, prompts, retrieval, tests, Docker --
- * is derived from the spec's business declarations and is indifferent to the wire
- * protocol. A second file moves only when the adapter changes what the app can do: the
- * `observability.py` reconciliation records served capabilities, not declared ones.
+ * The provider the spec names reaches the gateway models table that resolves it, and -- only
+ * when the spec declares an `agent:` eval -- that eval's module, because an offline recording
+ * is keyed by provider and the module names the credential each provider needs to record one.
+ * Everything else -- pipelines, tools, prompts, retrieval, HTTP, Docker -- is derived from the
+ * spec's business declarations and is indifferent to the wire protocol. One further file moves
+ * only when the adapter changes what the app can do: the `observability.py` reconciliation
+ * records served capabilities, not declared ones.
  */
 function differingFiles(left: Map<string, string>, right: Map<string, string>): string[] {
   const keys = new Set([...left.keys(), ...right.keys()]);
@@ -365,7 +367,10 @@ describe('provider conformance', () => {
 
     // Vertex and OpenAI serve the same capability set for this spec, so even the
     // reconciliation is byte-identical.
-    expect(differingFiles(openai, vertex)).toEqual(['app/generated/gateway/models.py']);
+    expect(differingFiles(openai, vertex)).toEqual([
+      'app/generated/evals/refund_trajectory.py',
+      'app/generated/gateway/models.py',
+    ]);
   });
 
   it('moves only the models table and the credential preflight for Gemini', () => {
@@ -373,6 +378,7 @@ describe('provider conformance', () => {
     // spec-named variable. No other file moves: the served capability set is the same.
     expect(differingFiles(files(exampleSpecText()), files(geminiSpecText()))).toEqual([
       '.github/workflows/evals.yml',
+      'app/generated/evals/refund_trajectory.py',
       'app/generated/gateway/models.py',
     ]);
   });
@@ -382,6 +388,7 @@ describe('provider conformance', () => {
     const bedrock = files(bedrockSpecText());
 
     expect(differingFiles(openai, bedrock)).toEqual([
+      'app/generated/evals/refund_trajectory.py',
       'app/generated/gateway/models.py',
       'app/generated/observability.py',
     ]);

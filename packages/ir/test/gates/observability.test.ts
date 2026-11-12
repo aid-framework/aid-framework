@@ -109,19 +109,20 @@ describe('eval targets', () => {
     expect(target?.valid).toBe(true);
   });
 
-  it('reports an agent target as an agent, never as an undeclared pipeline', () => {
-    // The gate refuses the target before a generator is entered, so this branch is
-    // unreachable through `aid gen`; it exists so a caller that builds an IR directly
-    // cannot be told an agent it just read is missing.
+  it('resolves an agent target to the agent it names, so a caller is never told it is missing', () => {
+    // `evalSubject` resolves the name; whether a *target* can measure it is the trajectory
+    // gate's question, decided by the `agent-evals` capability and answered below. This one
+    // exists so a caller that builds an IR directly cannot be told an agent it just read is
+    // undeclared.
     const { ir } = buildFixture(TRAJECTORY);
     const evaluation = ir.evals.find((entry) => entry.id === 'agent_tool_calls');
     if (evaluation === undefined) throw new Error('fixture lost agent_tool_calls');
     const subject = evalSubject(ir, evaluation);
-    expect(subject.ok).toBe(false);
-    if (subject.ok) return;
-    expect(subject.code).toBe('unsupported-eval-target');
-    expect(subject.message).not.toContain('is not declared');
-    expect(subject.message).toContain('trajectory');
+    expect(subject.ok).toBe(true);
+    if (!subject.ok) return;
+    expect(subject.subject.kind).toBe('agent');
+    if (subject.subject.kind !== 'agent') return;
+    expect(subject.subject.agent.id).toBe('support');
   });
 
   it('reports an agent target naming no declared agent', () => {
@@ -143,7 +144,9 @@ describe('trajectory metrics', () => {
     const diagnostic = onlyDiagnosticWith(diagnostics, IR_DIAGNOSTIC_CODES.evalTrajectory);
     expect(diagnostic.path).toEqual(['evals', 'pipeline_tool_calls', 'metrics', 0]);
     expect(diagnostic.message).toContain('no tool calls to compare');
-    expect(diagnostic.hint).toContain('no generated runner reports the tool calls');
+    // The hint has to name the target that *can* compare calls, because a prompt eval with a
+    // tool trace is not a smaller version of this one -- it is a different subject.
+    expect(diagnostic.hint).toContain('target: agent:<id>');
   });
 
   it('refuses the agent target once, at the target, and the tool trace on a pipeline', () => {
@@ -157,18 +160,35 @@ describe('trajectory metrics', () => {
     }
   });
 
-  it('refuses an agent target with the reason it is refused, not as undeclared', () => {
+  it('refuses an agent target by the capability it lacks, not as undeclared', () => {
     const ir = mutateIR(TRAJECTORY);
     const diagnostic = onlyDiagnosticWith(
       trajectoryGate(ir).diagnostics.filter((entry) => entry.message.includes('agent_tool_calls')),
       IR_DIAGNOSTIC_CODES.evalTrajectory,
     );
     expect(diagnostic.path).toEqual(['evals', 'agent_tool_calls', 'target']);
-    expect(diagnostic.message).toContain('emits evals over a prompt, not over an agent run');
+    expect(diagnostic.message).toContain('does not declare the "agent-evals" capability');
     // The agent *is* declared; saying otherwise would send the author looking for a typo
     // in a name that is spelled correctly.
     expect(diagnostic.message).not.toContain('is not declared');
-    expect(diagnostic.hint).toContain('target: pipeline:<id>');
+    expect(diagnostic.hint).toContain('offline agent evaluator');
+  });
+
+  it('accepts an agent target once its generator declares it can measure a run', () => {
+    // `runGates` falls back to a placeholder vocabulary when a caller supplies none, which
+    // is why every test above sees the refusal. This is the other half: the capability is
+    // the only thing standing between the eval and a gate pass.
+    const ir = mutateIR(TRAJECTORY);
+    const targetCapabilities = Object.fromEntries(
+      ir.project.targets.map((target) => [target, ['agent-evals']]),
+    );
+    const gate = runGates(ir, { targetCapabilities }).byGate['evals/trajectory'];
+
+    // The pipeline eval's tool trace is still refused: a generator that can measure an
+    // agent run says nothing about a pipeline, which returns one response.
+    expect(gate.diagnostics.map((entry) => entry.path.join('.'))).toEqual([
+      'evals.pipeline_tool_calls.metrics.0',
+    ]);
   });
 
   it('accepts a cost or latency ceiling, which this build measures per case', () => {

@@ -52,7 +52,7 @@ describe('aid eval', () => {
 
     const run = aid(made, ['eval', '--json'], spawn);
     expect(run.code).toBe(0);
-    // Every declared eval gets its own module, in plan order: the example declares two,
+    // Every declared eval gets its own module, in plan order: the example declares three,
     // and asserting only the last dispatched module would pass while one of them was
     // silently skipped.
     const dispatched = spawn.calls
@@ -61,6 +61,7 @@ describe('aid eval', () => {
     expect(dispatched).toEqual([
       'app.generated.evals.classify_quality',
       'app.generated.evals.handbook_quality',
+      'app.generated.evals.refund_trajectory',
     ]);
   });
 
@@ -185,11 +186,12 @@ describe('aid eval', () => {
       driver: string;
       results: { suite: string; status: number }[];
     }>();
-    expect(report.suites).toEqual(['classify_quality', 'handbook_quality']);
+    expect(report.suites).toEqual(['classify_quality', 'handbook_quality', 'refund_trajectory']);
     expect(report.driver).toBeTruthy();
     expect(report.results).toEqual([
       { suite: 'classify_quality', module: expect.any(String), status: 0 },
       { suite: 'handbook_quality', module: expect.any(String), status: 0 },
+      { suite: 'refund_trajectory', module: expect.any(String), status: 0 },
     ]);
   });
 });

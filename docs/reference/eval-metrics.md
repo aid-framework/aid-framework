@@ -4,9 +4,10 @@ description: "How an eval becomes a gate: a pipeline, a dataset, at least one me
 
 # Eval metrics
 
-An eval names a pipeline, a dataset and at least one metric, and it compares the result against a
-committed baseline. Two things make it a gate rather than a benchmark: the comparison is
-statistical, and a metric that calls a model can never be part of it.
+An eval names what it measures — a pipeline, a prompt or an agent — a dataset, and at least one
+metric, and it compares the result against a committed baseline. Two things make it a gate rather
+than a benchmark: the comparison is statistical, and a metric that calls a model can never be part
+of it.
 
 ## The `evals` entry
 
@@ -29,9 +30,15 @@ evals:
       minMean: 0.9
 ```
 
-`target` is `pipeline:<id>` - **only pipelines are evaluable in Phase 0**. `dataset.source` is
-`file` today, with `uri` required. The `gate` object is optional and defaults to
-`samples: 5`, `maxRegression: 0`, `ci: false`, and no `minMean`.
+`target` is `pipeline:<id>`, `prompt:<id>` or `agent:<id>`. A `pipeline:` or `prompt:` target has to
+resolve to exactly one prompt on one model, and one that renders several is refused with a message
+naming them. An `agent:` target runs the agent through its own loop, so what gets scored is the run
+itself - its steps, tool calls, spend and approval decisions - and it requires spec 0.27 or later.
+`dataset.source` is `file` today, with `uri` required. The `gate` object is optional and defaults to
+`samples: 5`, `maxRegression: 0`, `ci: false`, and no `minMean`. An agent case may also carry
+`approvals`: an ordered list of `approve` or `reject` decisions, consumed one per pause, so a
+trajectory run can reach a human-in-the-loop pause without a person. An absent list means the case
+must not pause.
 
 ## The nine metric kinds
 
@@ -46,6 +53,14 @@ evals:
 | `retrieval` | `expectDocs[]`, `k` | Every listed source path appears in the top `k` ranking. |
 | `assert` | `expr`, `message` | A closed predicate over `prediction`, `case.id` and `case.metadata.<name>`. |
 | `llm-judge` | `rubric`, `field`?, `model`?, `threshold`? | A model scores the answer against the rubric. |
+
+> **A scripted or recorded trajectory eval checks policy, not model quality.** The `agent:` target
+> and the `tool-trace` metric score the tool calls a run actually made: which tools, in what order,
+> how many steps, what it spent. When a scripted or recorded provider drives the run, those calls are
+> fixed before it starts, so a green result says the step ceiling stopped the run, the tool allow-list
+> held, a rejected approval blocked the call, and the spend was attributed. It does not say a real
+> model would choose those calls, and a regression budget over such a suite cannot detect a model that
+> got worse - only plumbing that broke. A real-model trajectory suite is a separate, later capability.
 
 `retrieval` compares against **known-correct source paths**, spelled relative to the retriever's
 `uri`. It is a hit-in-top-`k` check, not a graded ranking metric. `assert` has the most restrictive

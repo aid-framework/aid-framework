@@ -897,7 +897,7 @@
       "additionalProperties": false,
       "properties": {
         "target": {
-          "description": "What the eval scores. `pipeline:<id>` scores a pipeline's HTTP response through its declared route. `agent:<id>` (0.27) names an agent run, which is what a trajectory metric needs; the syntax is accepted so a document can say what it means, and the `evals/trajectory` gate refuses it with `ir/eval-trajectory` because no generator emits an agent eval yet, even though the runtime can score a trajectory.",
+          "description": "What the eval scores. `pipeline:<id>` scores a pipeline's HTTP response through its declared route. `agent:<id>` (0.27) names an agent run, which is what a trajectory metric needs; the py-fastapi target declares `agent-evals` and runs the agent offline, and `evals/trajectory` refuses the target with `ir/eval-trajectory` when a targeted generator does not declare that capability.",
           "type": "string",
           "pattern": "^(pipeline|agent):[a-z][a-z0-9_]{0,63}$"
         },

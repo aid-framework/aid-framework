@@ -38,6 +38,12 @@ export const REQUIRED_CAPABILITIES = [
   // Nothing derives it: an alarm is enforced per series by `ir/alerts-unproduced`, which
   // reads this declaration from the target manifest rather than assuming a generator list.
   'metrics',
+  // Declared by a target that generates an evaluator able to run an agent and report the
+  // calls it made. Nothing derives it, and it is not the same promise as `agents`: a target
+  // can emit the agent loop without emitting anything that runs one offline and scores its
+  // steps. `ir/eval-trajectory` reads this declaration per target, so an `agent:` eval is
+  // refused by name on a target that does not make it.
+  'agent-evals',
 ] as const;
 
 export type RequiredCapability = (typeof REQUIRED_CAPABILITIES)[number];
@@ -103,12 +109,20 @@ export interface DeferredCapability {
 }
 
 export const DEFERRED_CAPABILITIES: Readonly<
-  Record<'metrics' | 'vision' | 'audio' | 'long-context' | 'reasoning', DeferredCapability>
+  Record<
+    'metrics' | 'agent-evals' | 'vision' | 'audio' | 'long-context' | 'reasoning',
+    DeferredCapability
+  >
 > = {
   metrics: {
     reason:
       'The requirement is per alarm series rather than per document, so the IR has no single flag to derive it from: `ir/alerts-unproduced` reads the declaration from the target manifest and refuses the specific alert the build cannot record. A target that publishes nothing simply omits the capability.',
     phase: 'enforced by the alerts gate, not derived',
+  },
+  'agent-evals': {
+    reason:
+      'Whether an `agent:` eval can be run offline is a property of the selected target, not a requirement the document states, so `ir/eval-trajectory` reads the declaration from the target manifest and refuses the specific eval the build cannot score. A target that emits no agent evaluator omits the capability.',
+    phase: 'enforced by the trajectory gate, not derived',
   },
   vision: {
     reason:

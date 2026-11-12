@@ -14,18 +14,19 @@
  * `recursive`, or it would pass just as quietly if the strategy were emitted nowhere.
  */
 
+import type { SpecVersion } from '@aid-framework/spec';
 import { describe, expect, it } from 'vitest';
 
 import { fileMap, RETRIEVAL_BINDINGS_PATH } from '../src/index.js';
-import { buildForSpecText, exampleSpecText } from './helpers.js';
+import { buildForSpecText, exampleSpecTextAt } from './helpers.js';
 
 /** The example spec at a version that has the semantic strategy. */
-function exampleAt(version: string): string {
-  return exampleSpecText().replace('specVersion: "0.2"', `specVersion: "${version}"`);
+function exampleAt(version: SpecVersion): string {
+  return exampleSpecTextAt(version);
 }
 
 /** The spec at `version` with its handbook retriever chunking semantically. */
-function semanticExample(version = '0.22'): string {
+function semanticExample(version: SpecVersion = '0.22'): string {
   const text = exampleAt(version).replace(
     '      strategy: recursive\n',
     '      strategy: semantic\n',

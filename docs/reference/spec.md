@@ -342,7 +342,7 @@ An MCP server the gateway proxies: the app reaches one gateway URL and the platf
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `target` | `string` | yes | What the eval scores. `pipeline:&lt;id&gt;` scores a pipeline's HTTP response through its declared route. `agent:&lt;id&gt;` (0.27) names an agent run, which is what a trajectory metric needs; the syntax is accepted so a document can say what it means, and the `evals/trajectory` gate refuses it with `ir/eval-trajectory` because no generator emits an agent eval yet, even though the runtime can score a trajectory. |
+| `target` | `string` | yes | What the eval scores. `pipeline:&lt;id&gt;` scores a pipeline's HTTP response through its declared route. `agent:&lt;id&gt;` (0.27) names an agent run, which is what a trajectory metric needs; the py-fastapi target declares `agent-evals` and runs the agent offline, and `evals/trajectory` refuses the target with `ir/eval-trajectory` when a targeted generator does not declare that capability. |
 | `dataset` | object (fields below) | yes | — |
 | `metrics` | array of `metric` | yes | — |
 | `gate` | object (fields below) | no | How this eval's result is compared against the committed baseline. Never an equality check: sampling noise is expected, so the gate is a threshold on the regression relative to the baseline. |

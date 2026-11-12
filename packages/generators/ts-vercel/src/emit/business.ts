@@ -363,6 +363,12 @@ function plainEvalModule(ir: IR, evalShape: EvalShape): string {
   if (!subject.ok) {
     throw new Error(`eval '${evalShape.id}' has no single subject: ${subject.message}`);
   }
+  if (subject.subject.kind !== 'prompt') {
+    // `checkEvals` refuses an agent eval for this target before emission; reaching here is a
+    // programming error, and emitting a module pinned to a model alias the run never used
+    // would be worse than stopping.
+    throw new Error(`eval '${evalShape.id}' runs an agent, and this target emits no agent eval`);
+  }
   const header = [
     nodeEvalImports(),
     importStatement('@aid-framework/runtime', plainEvalImports(metrics)),

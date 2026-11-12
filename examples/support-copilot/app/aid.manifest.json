@@ -103,7 +103,7 @@
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/evals/__init__.py",
-      "sha256": "27e9110cf35027715a1e5682d71ae60c6f6157407213bae3e9f816f37abcdbc0"
+      "sha256": "ff8e3f4fbb0b39acdf72eda6f43367050a7be74ff36fd7ac51a9a1457ac2b24d"
     },
     {
       "generator": "@aid-framework/generator-py-fastapi",
@@ -118,6 +118,13 @@
       "owner": "generated",
       "path": "app/generated/evals/handbook_quality.py",
       "sha256": "397c7ec3d12919003a19d6254bfdc0fe96773aa9cafd2fa92224037045fa83d5"
+    },
+    {
+      "generator": "@aid-framework/generator-py-fastapi",
+      "generatorVersion": "0.1.0",
+      "owner": "generated",
+      "path": "app/generated/evals/refund_trajectory.py",
+      "sha256": "c87aad7f4093a7e02605fc1a6cd7ebbbce385deac71d5c374ebbbe084df4a0e6"
     },
     {
       "generator": "@aid-framework/generator-py-fastapi",
@@ -145,7 +152,7 @@
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/observability.py",
-      "sha256": "5220fd57e5a33f521c4f67fa552037a3529bb8ed573e6ad7a07e38f2a21c7a80"
+      "sha256": "036c9c6b51079331f2388cb30380540cea7917019bd0b36252d18f2946ffca70"
     },
     {
       "generator": "@aid-framework/generator-py-fastapi",

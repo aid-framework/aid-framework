@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from aid_runtime.evals.agent_runner import AgentEvalRunner, ApprovalPolicy
 from aid_runtime.evals.dataset import Dataset, EvalCase
 from aid_runtime.evals.gate import (
     BaselineGate,
@@ -45,6 +46,8 @@ from aid_runtime.evals.runner import (
 from aid_runtime.evals.trajectory import RunOutput, Trajectory
 
 __all__ = [
+    "AgentEvalRunner",
+    "ApprovalPolicy",
     "AssertMetric",
     "BaselineGate",
     "CaseOutcome",

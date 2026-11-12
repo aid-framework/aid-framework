@@ -534,6 +534,15 @@ export const SHIPPED_FEATURES = [
     href: './reference/cli.md#trace',
     since: '0.1.154',
   },
+  {
+    id: 'agent-trajectory-evals',
+    title: 'A trajectory eval that runs an agent',
+    detail:
+      'An eval can name an agent (`target: agent:<id>`) instead of a pipeline, and the `py-fastapi` target -- which declares `agent-evals` -- emits an offline evaluator that runs the agent against each case and scores the calls it made with `tool-trace`, beside the response metrics, within the step and cost ceiling the agent declares. The evaluator drives the agent with a scripted or recorded model, so a case verifies the policy and plumbing of a run -- which tools were reachable, in what order they were called, whether an approval was respected -- and not the quality of a model answer; model quality is what the prompt and pipeline evals measure. A target that does not declare the capability is refused by `ir/eval-trajectory` rather than shipping an eval nothing runs.',
+    declaredBy: 'evals[].target',
+    href: './reference/spec.md#eval',
+    since: '0.1.158',
+  },
 ];
 
 /**
@@ -852,6 +861,7 @@ export const CAPABILITY_FAMILIES = [
       'promotion-gate',
       'feedback-signals',
       'trace-export',
+      'agent-trajectory-evals',
     ],
   },
   {
