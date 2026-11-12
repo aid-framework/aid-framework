@@ -64,6 +64,10 @@ export const CLI_DIAGNOSTIC_CODES = {
   filesMissing: 'cli/files-missing',
   businessMissing: 'cli/business-missing',
   filesOutdated: 'cli/files-outdated',
+  // The one fact about observability that no gate can see: the meters are installed from
+  // the entrypoint, which belongs to the developer. A document may declare an alert whose
+  // series nothing publishes, and that reports *no data*, which reads as healthy.
+  metricsUninstalled: 'cli/metrics-uninstalled',
   // `aid infra` originates these. A missing binary and a failed plan are separate codes
   // because they need different fixes; reporting both as "infra failed" would hide which.
   infraSubcommandRequired: 'cli/infra-subcommand-required',

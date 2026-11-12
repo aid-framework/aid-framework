@@ -33,6 +33,14 @@ A `yes` means the infra planner emits a module for that target on that cloud. A 
 
 The emitted infrastructure is OpenTofu. A plan targets one cloud at a time, because two providers in one state is a blast radius rather than a feature.
 
+## Alerts and the target you choose
+
+`observability.alerts` is the one observability declaration that can be wrong without failing: an alarm over a series nothing records reports no data forever, which reads as healthy. The series it watches are published only by a target whose manifest declares the `metrics` capability, so the compiler checks the pair rather than generating an alarm that can never fire.
+
+Only `py-fastapi` publishes them, so a document that asks for an alert and generates for `ts-vercel` is refused with `ir/alerts-unproduced`, naming the metric and the target that would have written nothing.
+
+Publishing takes two steps, and declaring the export is only the first: the series appear when the application entrypoint calls `metrics_export_status()`, and the entrypoint is the developer's own file, so no gate can require that call. `aid doctor` reports it as `cli/metrics-uninstalled` instead of leaving an alarm to watch an empty series.
+
 ## Spec language
 
 The current spec language version is `0.30`.

@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 
 import type { Project } from './helpers.js';
-import { aid, cloneExample, diagnosticsOf, project, SPEC_PATH } from './helpers.js';
+import { aid, cloneExample, diagnosticsOf, emptyProject, project, SPEC_PATH } from './helpers.js';
 
 const created: Project[] = [];
 
@@ -13,6 +13,13 @@ function example(): Project {
 
 function scratch(specText?: string): Project {
   const made = project(specText);
+  created.push(made);
+  return made;
+}
+
+/** An empty directory, for the tests that start from a scaffolded template. */
+function bare(): Project {
+  const made = emptyProject();
   created.push(made);
   return made;
 }
@@ -208,5 +215,81 @@ describe('aid doctor', () => {
     // The manifest is still readable, and saying so is the point of a diagnosis that
     // does not stop at the first failing check.
     expect(run.stdout).toContain(`manifest: ${MANIFEST}`);
+  });
+
+  /**
+   * The one observability fact no gate can see.
+   *
+   * An alert is a promise that a series exists, and `export: otlp` is what installs the
+   * exporter -- but the two calls that turn that declaration into a span and a series live
+   * in the entrypoint, which is the application's own file. A project can therefore pass
+   * every gate, generate cleanly, and publish nothing: the tracer was installed and the
+   * meter was not. Nothing in the tree reads wrong, because the missing call is not in the
+   * tree. Only a run that reads the entrypoint can tell the difference, which is why this
+   * is a doctor warning rather than a gate.
+   */
+  it('warns that a declared alert watches a series the entrypoint never installs', () => {
+    const made = bare();
+    expect(aid(made, ['init', '.', '--template', 'enterprise-approvals']).code).toBe(0);
+
+    // The template declares no alarm, so declare one: `agent.cost` scoped to the agent whose
+    // budget derives it, which is the pairing the alerts gate checks.
+    const shipped = made.read(SPEC_PATH);
+    const alerts = [
+      '  alerts:',
+      '    - id: adjudicator_cost',
+      '      metric: agent.cost',
+      '      window: 15m',
+      '      aggregate: sum',
+      '      threshold: 25',
+      '      source: triage_agent',
+      '',
+    ].join('\n');
+    const spec = shipped.replace(
+      'observability:\n  trace: true\n  export: otlp\n',
+      `observability:\n  trace: true\n  export: otlp\n${alerts}`,
+    );
+    expect(spec).not.toBe(shipped);
+    made.setSpec(spec);
+    expect(aid(made, ['validate']).code).toBe(0);
+    expect(aid(made, ['gen']).code).toBe(0);
+
+    // Generation does not write an entrypoint, so with none present there is nothing to
+    // read and doctor must not invent a verdict about a file that does not exist.
+    expect(codes(aid(made, ['doctor', '--json']))).not.toContain('cli/metrics-uninstalled');
+
+    // The shape both examples had before this change: the tracer installed, the meter not.
+    made.write(
+      'app/main.py',
+      [
+        'from app.generated.observability import tracing_export_status',
+        '',
+        'tracing_export_status("claims-desk")',
+        '',
+      ].join('\n'),
+    );
+
+    const warned = aid(made, ['doctor', '--json']);
+    // A warning, not a refusal: nothing the spec promises is broken, and the alarm is the
+    // only signal that the promise is not being kept.
+    expect(warned.code).toBe(0);
+    expect(codes(warned)).toContain('cli/metrics-uninstalled');
+    const warning = diagnosticsOf(warned).find(
+      (diagnostic) => diagnostic.code === 'cli/metrics-uninstalled',
+    );
+    expect(warning?.message).toContain('agent.cost');
+    expect(warning?.message).toContain('app/main.py');
+
+    const fixed = made
+      .read('app/main.py')
+      .replace(
+        'tracing_export_status("claims-desk")',
+        'metrics_export_status("claims-desk")\ntracing_export_status("claims-desk")',
+      );
+    made.write('app/main.py', fixed);
+
+    const repaired = aid(made, ['doctor', '--json']);
+    expect(repaired.code).toBe(0);
+    expect(codes(repaired)).not.toContain('cli/metrics-uninstalled');
   });
 });
