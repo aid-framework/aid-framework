@@ -2544,9 +2544,7 @@ export function checkEvals(ir: IR): PlanProblem[] {
     // emit a judge call a recording cannot satisfy.
     if (
       agentEval &&
-      evaluation.metrics.some(
-        (metric) => metric.kind === 'llm-judge' || metric.kind === 'decision',
-      )
+      evaluation.metrics.some((metric) => metric.kind === 'llm-judge' || metric.kind === 'decision')
     ) {
       problems.push(
         problem(

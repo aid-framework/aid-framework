@@ -66,7 +66,8 @@ export interface MetricMappingOptions {
 export const TOOL_TRACE_EXPECT = 'EXPECT_TOOLS';
 
 /** How the runtime measures one IR metric. */
-export function mapMetric(metric: MetricShape, options: MetricMappingOptions = {}): MetricMapping {  switch (metric.kind) {
+export function mapMetric(metric: MetricShape, options: MetricMappingOptions = {}): MetricMapping {
+  switch (metric.kind) {
     case 'exact':
       if (metric.field !== '') {
         return {
@@ -172,8 +173,7 @@ export function mapMetric(metric: MetricShape, options: MetricMappingOptions = {
         measured: true,
         name: 'tool-trace',
         deterministic: true,
-        expression:
-          `ToolTrace(expect=${TOOL_TRACE_EXPECT}, ordered=${metric.ordered ? 'True' : 'False'})`,
+        expression: `ToolTrace(expect=${TOOL_TRACE_EXPECT}, ordered=${metric.ordered ? 'True' : 'False'})`,
       };
     case 'retrieval':
       return {

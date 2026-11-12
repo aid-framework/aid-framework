@@ -186,11 +186,7 @@ describe('aid eval', () => {
       driver: string;
       results: { suite: string; status: number }[];
     }>();
-    expect(report.suites).toEqual([
-      'classify_quality',
-      'handbook_quality',
-      'refund_trajectory',
-    ]);
+    expect(report.suites).toEqual(['classify_quality', 'handbook_quality', 'refund_trajectory']);
     expect(report.driver).toBeTruthy();
     expect(report.results).toEqual([
       { suite: 'classify_quality', module: expect.any(String), status: 0 },

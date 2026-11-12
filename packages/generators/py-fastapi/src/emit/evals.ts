@@ -538,7 +538,8 @@ function emitAgentEval(ir: IR, evaluation: EvalShape, agentId: string): EmittedF
     (binding) => binding.deterministic,
   );
   const traced = evaluation.metrics.find(
-    (metric): metric is Extract<MetricShape, { kind: 'tool-trace' }> => metric.kind === 'tool-trace',
+    (metric): metric is Extract<MetricShape, { kind: 'tool-trace' }> =>
+      metric.kind === 'tool-trace',
   );
 
   const constants = [
@@ -610,7 +611,9 @@ function emitAgentEval(ir: IR, evaluation: EvalShape, agentId: string): EmittedF
           importFrom('..tools', ['build_agent_tools']),
         ],
       ]),
-      ['if TYPE_CHECKING:', `${INDENT}from aid_runtime.evals import EvalRun, GateResult`].join('\n'),
+      ['if TYPE_CHECKING:', `${INDENT}from aid_runtime.evals import EvalRun, GateResult`].join(
+        '\n',
+      ),
       constants.join('\n'),
       datasetLoader(false),
       baselineLoader(),
