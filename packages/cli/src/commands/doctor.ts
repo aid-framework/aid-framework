@@ -32,7 +32,9 @@ import {
   createNodeSink,
   planRegeneration,
   type RegenerationReport,
+  type RegenerationSink,
 } from '@aid-framework/generator-sdk';
+import type { IR } from '@aid-framework/ir';
 import { knowledgeBaseEnvName } from '@aid-framework/ir';
 import type { Severity } from '@aid-framework/spec';
 import { countBySeverity, hasErrors, sortDiagnostics } from '@aid-framework/spec';
@@ -174,6 +176,51 @@ function provenanceDiagnostics(
   return diagnostics;
 }
 
+/**
+ * An alarm is only an alarm if something publishes the series beneath it.
+ *
+ * `observability.alerts` is checked at build time against the series the plan derives, so a
+ * document cannot name a measurement the generated runtime never writes. What no gate can
+ * see is the other end of that promise. `aid gen` emits `metrics_export_status()` into the
+ * generated tree, but the call that installs the meter lives in the entrypoint, and the
+ * entrypoint belongs to the developer -- the generator says so in the docstring beside the
+ * function and then has to trust it. An entrypoint that installed only the tracer serves
+ * normally, publishes no series, and every alarm over it reports no data, which is the one
+ * failure that reads as healthy on a dashboard.
+ *
+ * So this asks the one question the plan cannot: did the application make the call. It is a
+ * warning rather than an error because the tree is exactly what the spec asked for -- the
+ * missing line is in a file AID does not own, and `aid gen` could not add it without taking
+ * that file. A target with no entrypoint of its own has nowhere to make the call from and
+ * cannot accept an alert in the first place, so it is not guessed at here.
+ */
+function metricsInstallDiagnostics(
+  target: Target,
+  ir: IR,
+  sink: RegenerationSink,
+): CliDiagnostic[] {
+  const alerts = ir.observability?.alerts ?? [];
+  if (alerts.length === 0) return [];
+  if (target.dev.kind !== 'asgi') return [];
+
+  const entry = target.dev.entry;
+  const entrypoint = sink.read(entry);
+  // An absent entrypoint is a fact about the tree, which the tree check already reports; the
+  // question here is about a file that exists and does not call the meter.
+  if (entrypoint === undefined) return [];
+  if (entrypoint.includes('metrics_export_status(')) return [];
+
+  const metrics = [...new Set(alerts.map((alert) => alert.metric))].sort();
+  return [
+    cliWarning({
+      code: CLI_DIAGNOSTIC_CODES.metricsUninstalled,
+      message: `"${entry}" never calls \`metrics_export_status()\`, so the ${alerts.length} alert${alerts.length === 1 ? '' : 's'} this document declares watch ${metrics.length === 1 ? 'a series' : 'series'} nothing publishes: ${metrics.join(', ')}.`,
+      path: [],
+      hint: `Call \`metrics_export_status("<service-name>")\` beside \`tracing_export_status(...)\` at startup. \`aid gen\` writes it into "${target.generatedDir}/observability.py" and cannot make the call itself, because the entrypoint is yours.`,
+    }),
+  ];
+}
+
 export function doctor(context: CliContext, options: DoctorOptions): CommandOutcome {
   const command = 'doctor';
   const target = resolveTarget(options.target);
@@ -232,6 +279,10 @@ export function doctor(context: CliContext, options: DoctorOptions): CommandOutc
     diagnostics.push(
       ...provenanceDiagnostics(target, manifest.generatedBy, specOk ? irVersion : undefined),
     );
+  }
+
+  if (compiled?.ok === true) {
+    diagnostics.push(...metricsInstallDiagnostics(target, compiled.ir, sink));
   }
 
   let facts: TreeFacts | undefined;

@@ -238,31 +238,78 @@ export function parseDiagnosticCodes(source) {
   return codes;
 }
 
-/**
- * Registered target ids, discovered the same way the CLI discovers them.
- *
- * @returns {string[]}
- */
-export function targetIds() {
+/** Registered generator package directories, sorted, so both target parsers walk one list. */
+function generatorDirectories() {
   const root = 'packages/generators';
-  let names = [];
   try {
-    names = readdirSync(join(repoRoot, root), { withFileTypes: true })
+    return readdirSync(join(repoRoot, root), { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort();
   } catch (cause) {
     throw new Error(`cannot list ${root}: ${String(cause)}`);
   }
+}
+
+/**
+ * The `capabilities` each registered generator declares, keyed by target id.
+ *
+ * The support page names the targets that publish the alert series, and a list
+ * written down in prose is the copy that goes stale: a target that gains the
+ * capability would leave the page refusing a document the compiler accepts. So
+ * the list is read here, from the same declarations the gates are run against.
+ * A manifest that spreads a named constant is followed to that constant, because
+ * reading the spread as an empty list would claim the target supports nothing.
+ *
+ * @returns {Record<string, string[]>}
+ */
+export function targetCapabilities() {
+  /** @type {Record<string, string[]>} */
+  const byTarget = {};
+  for (const name of generatorDirectories()) {
+    const path = `packages/generators/${name}/src/manifest.ts`;
+    const source = readText(path);
+    const id = source.match(/export const [A-Z0-9_]+_TARGET = '([^']+)'/)?.[1] ?? '';
+    if (id === '') {
+      throw new Error(`cannot parse the target id from ${path}`);
+    }
+    const block = source.match(/\n\s*capabilities:\s*\[([\s\S]*?)\]/)?.[1] ?? '';
+    const spread = block.match(/\.\.\.([A-Z0-9_]+)/)?.[1];
+    const listed =
+      spread === undefined
+        ? block
+        : (source.match(new RegExp(`export const ${spread} = \\[([\\s\\S]*?)\\] as const;`))?.[1] ??
+          '');
+    // Only quoted entries count: the block's comments name capabilities in backticks.
+    const declared = [...listed.matchAll(/'([a-z-]+)'/g)].map((match) => match[1] ?? '');
+    if (declared.length === 0) {
+      throw new Error(`parsed no capabilities for \`${id}\` from ${path}`);
+    }
+    byTarget[id] = declared;
+  }
+  if (Object.keys(byTarget).length === 0) {
+    throw new Error('cannot parse any generator capability declaration');
+  }
+  return byTarget;
+}
+
+/**
+ * Registered target ids, discovered the same way the CLI discovers them.
+ *
+ * @returns {string[]}
+ */
+export function targetIds() {
+  const names = generatorDirectories();
   /** @type {string[]} */
   const ids = [];
   for (const name of names) {
-    const manifest = readText(`${root}/${name}/src/manifest.ts`);
+    const path = `packages/generators/${name}/src/manifest.ts`;
+    const manifest = readText(path);
     const found = [...manifest.matchAll(/export const [A-Z0-9_]+_TARGET = '([^']+)'/g)].map(
       (match) => match[1] ?? '',
     );
     if (found.length === 0) {
-      throw new Error(`cannot parse the target id from ${root}/${name}/src/manifest.ts`);
+      throw new Error(`cannot parse the target id from ${path}`);
     }
     ids.push(...found);
   }
@@ -306,6 +353,7 @@ export function parseProviderCatalog(models) {
  *   specCapabilities: { spec: string, canonical: string }[],
  *   clouds: { cloud: string, targets: string[] }[],
  *   targets: string[],
+ *   targetCapabilities: Record<string, string[]>,
  *   specVersions: string[],
  *   latestSpecVersion: string,
  *   chunkingStrategies: string[],
@@ -344,6 +392,7 @@ export function loadSupportData() {
     specCapabilities: parseSpecCapabilityEnum(capabilities),
     clouds: parseCloudTargets(cloud),
     targets: targetIds(),
+    targetCapabilities: targetCapabilities(),
     specVersions,
     latestSpecVersion: specVersions[specVersions.length - 1] ?? '',
     chunkingStrategies: parseChunkingStrategies(schema),

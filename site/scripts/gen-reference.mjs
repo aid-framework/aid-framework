@@ -28,7 +28,7 @@ import {
   REFUSALS,
   SHIPPED_FEATURES,
 } from './features-data.mjs';
-import { SPEC_VERSIONS } from './spec-changelog-data.mjs';
+import { SPEC_VERSION_CORRECTIONS, SPEC_VERSIONS } from './spec-changelog-data.mjs';
 import { loadSupportData } from './support-data.mjs';
 
 const siteRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -916,6 +916,30 @@ function supportPage() {
   );
   lines.push('');
 
+  const declaring = Object.entries(data.targetCapabilities);
+  const publishing = declaring.filter(([, caps]) => caps.includes('metrics')).map(([id]) => id);
+  const silent = declaring.filter(([, caps]) => !caps.includes('metrics')).map(([id]) => id);
+  lines.push('## Alerts and the target you choose');
+  lines.push('');
+  lines.push(
+    '`observability.alerts` is the one observability declaration that can be wrong without failing: an alarm over a series nothing records reports no data forever, which reads as healthy. The series it watches are published only by a target whose manifest declares the `metrics` capability, so the compiler checks the pair rather than generating an alarm that can never fire.',
+  );
+  lines.push('');
+  if (silent.length === 0) {
+    lines.push(
+      `Every registered target declares \`metrics\` (${publishing.map((id) => `\`${id}\``).join(', ')}), so any target may carry an alerts block.`,
+    );
+  } else {
+    lines.push(
+      `${publishing.length === 1 ? 'Only' : 'Of the registered targets, only'} ${publishing.map((id) => `\`${id}\``).join(' and ')} ${publishing.length === 1 ? 'publishes' : 'publish'} them, so a document that asks for an alert and generates for ${silent.map((id) => `\`${id}\``).join(' or ')} is refused with \`ir/alerts-unproduced\`, naming the metric and the target that would have written nothing.`,
+    );
+  }
+  lines.push('');
+  lines.push(
+    "Publishing takes two steps, and declaring the export is only the first: the series appear when the application entrypoint calls `metrics_export_status()`, and the entrypoint is the developer's own file, so no gate can require that call. `aid doctor` reports it as `cli/metrics-uninstalled` instead of leaving an alarm to watch an empty series.",
+  );
+  lines.push('');
+
   lines.push('## Spec language');
   lines.push('');
   lines.push(`The current spec language version is \`${latestVersion}\`.`);
@@ -1221,6 +1245,10 @@ function specChangelogPage() {
     `A spec declares its language version with \`specVersion\`. The current version is \`${current}\`, and each row below lists what that version adds.`,
   );
   lines.push('');
+  for (const correction of SPEC_VERSION_CORRECTIONS) {
+    lines.push(`> **${correction.lead}.** ${correction.body}`);
+    lines.push('');
+  }
   lines.push('| Version | What it adds |');
   lines.push('| --- | --- |');
   // Newest first so the current version is the first row, not something to scroll past every

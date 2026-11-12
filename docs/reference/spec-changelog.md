@@ -6,6 +6,8 @@ description: "What each spec language version adds, from the original surface th
 
 A spec declares its language version with `specVersion`. The current version is `0.30`, and each row below lists what that version adds.
 
+> **Two published labels were wrong.** The merge commit `dfdae40` (PR #171) and the `v0.1.142` release notes both call their work "spec 0.19". It is `0.25`. The constructs they ship are the top-level `profile` and `deployments[].cloud`, `.region` and `.audit`, which this page lists under `0.25`, and `aid validate` refuses them below it: `SECTION_MIN_VERSION.profile` and `DEPLOYMENT_PLACEMENT_MIN_VERSION` are both `0.25`. `0.19` is the floor of an unrelated gate, `RETRIEVAL_INCREMENTAL_MIN_VERSION`, so a document that declared `0.19` on the strength of those labels is refused until it declares `0.25`.
+
 | Version | What it adds |
 | --- | --- |
 | `0.30` | Adds `observability.alerts`, the metric alarms an operator wants to be paged on: each names one of the four series the deploy plan already derives, a window, an aggregate and a threshold, so the compiler emits the alarm resource instead of a dashboard nobody reads. It requires `observability.export: otlp`, because an alarm over a stream that never leaves the process can never fire. |
