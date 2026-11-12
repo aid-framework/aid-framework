@@ -1,0 +1,22 @@
+{
+  "name": "decision_quality",
+  "version": "1",
+  "cases": [
+    {
+      "id": "criteria-met",
+      "input": "Request PA-1001: MRI lumbar spine. Six weeks of conservative therapy documented, red-flag symptoms absent, ordering physician is in network."
+    },
+    {
+      "id": "criteria-missing",
+      "input": "Request PA-1002: MRI lumbar spine. No conservative therapy documented. No red flags described."
+    },
+    {
+      "id": "out-of-network",
+      "input": "Request PA-1003: CT abdomen. Ordering physician is out of network. Clinical notes attached."
+    },
+    {
+      "id": "urgent",
+      "input": "Request PA-1004: MRI brain. Marked urgent. Suspected lesion on prior imaging, neurology requesting expedited review."
+    }
+  ]
+}

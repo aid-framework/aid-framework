@@ -1,0 +1,220 @@
+specVersion: "0.30"
+
+project:
+  name: prior-auth-review
+  namespace: acme.clinical
+  description: An enterprise prior-authorization desk. Region-pinned, OIDC, private networking, an audit sink, two named approvers, and a clinician before any determination is written.
+  targets:
+    - py-fastapi
+
+profile: enterprise
+
+overridable:
+  deployments.prod.region:
+    from: [eu-central-1, us-east-1]
+  models.assess.modelId:
+    from: [gpt-4o-mini, gpt-4.1-mini]
+  agents.pa_review_agent.maxCostBudget:
+    max: 2.5
+  evals.decision_quality.gate.maxRegression:
+    max: 0.05
+
+types:
+  CoverageDecision:
+    kind: struct
+    fields:
+      decision:
+        type: string
+        required: true
+      criteria_met:
+        type: boolean
+        required: true
+      rationale:
+        type: string
+        required: true
+  DeterminationRecord:
+    kind: struct
+    fields:
+      request_id:
+        type: string
+        required: true
+      decision:
+        type: string
+        required: true
+
+models:
+  assess:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema, tools]
+    apiKeyEnv: OPENAI_API_KEY
+    costProfile: openai-gpt-4o-mini
+    limits:
+      maxInputTokens: 16384
+      maxOutputTokens: 1024
+
+prompts:
+  assess_request:
+    version: 2
+    model: assess
+    template: |
+      Assess the prior-authorization request below against the published criteria.
+      Answer only from the request and the criteria. Do not infer a diagnosis.
+      Request: {{ request }}
+    variables:
+      request:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: CoverageDecision
+
+  review_instructions:
+    version: 1
+    model: assess
+    template: |
+      You prepare a prior-authorization determination for a clinical reviewer. Record it with
+      record_determination only after a reviewer has seen it. Never state a coverage guarantee,
+      and never repeat a member identifier back to the caller.
+    output:
+      kind: text
+
+tools:
+  record_determination:
+    description: Record one prior-authorization determination against a request.
+    input: DeterminationRecord
+    output: DeterminationRecord
+    handler:
+      kind: business
+      symbol: record_determination
+    sideEffects: write
+    requiresConfirmation: true
+    auth: "isAuthenticated() and hasScope('pa:write')"
+    idempotency: key
+    retries: 1
+    timeoutMs: 15000
+
+state:
+  kind: postgres
+  urlEnv: DATABASE_URL
+  ttlHours: 168
+
+guardrails:
+  inbound:
+    stages: [input]
+    policies: [pii-detect, prompt-injection]
+    action: block
+    onFail:
+      message: The request was rejected by the input guardrail.
+      log: true
+  outbound:
+    stages: [output]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The response was withheld because it carried member-identifying data.
+      log: true
+  before_write:
+    stages: [tool-call]
+    tools: [record_determination]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The determination was not recorded because the payload carried member-identifying data.
+      log: true
+
+agents:
+  pa_review_agent:
+    name: Prior-authorization reviewer
+    instructions: review_instructions
+    model: assess
+    tools: [record_determination]
+    guardrails: [inbound]
+    maxSteps: 10
+    maxCostBudget: 1.5
+    state:
+      kind: postgres
+      urlEnv: DATABASE_URL
+      ttlHours: 48
+    humanInTheLoop:
+      when: "not hasRole('auto_adjudicator')"
+      channel: medical-review
+
+observability:
+  trace: true
+  export: otlp
+  endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT
+  feedback:
+    signals:
+      rating:
+        kind: thumbs
+        description: Did the reviewer accept the prepared determination
+      correction:
+        kind: correction
+        description: The decision the medical director recorded instead
+      handoff:
+        kind: escalation
+        description: The request was escalated past the agent to a medical director
+    pii:
+      redact:
+        - rationale
+    retentionDays: 90
+    persistent: true
+
+evals:
+  decision_quality:
+    target: pipeline:assess_request
+    dataset:
+      source: file
+      uri: evals/prior_auth.json
+    metrics:
+      - kind: json-schema
+        schema: CoverageDecision
+    gate:
+      ci: true
+      maxRegression: 0.03
+      minMean: 0.85
+      promotion:
+        allowedQualityDrop: 0.01
+        baseline:
+          prompt: assess_request
+          version: 1
+        approval:
+          by: [clinical-lead]
+          record: app/approvals/decision_quality.md
+
+pipelines:
+  assess_request:
+    description: Assess one prior-authorization request against the published criteria.
+    trigger:
+      http:
+        method: post
+        path: /prior-auth/assess
+    steps:
+      - generate:
+          prompt: assess_request
+          input:
+            request: "{{event.request}}"
+          as: decision
+      - emit:
+          event: CoverageDecision
+
+deployments:
+  prod:
+    target: container
+    cloud: aws
+    region: eu-central-1
+    audit:
+      sink: cloudwatch
+      retentionDays: 730
+    identity:
+      kind: oidc
+      issuer: https://login.example-health.com
+      audience: aid-prior-auth
+    network:
+      private: true
+      egress: declared-only
+    approvals:
+      require: [clinical, compliance]
+      minApprovers: 2
+    secrets: [OPENAI_API_KEY]

@@ -1,0 +1,147 @@
+specVersion: "0.30"
+
+# Accounts-payable intake, on the mid-size path.
+#
+# A finance team receives invoices as unstructured text in three shapes (email body, PDF
+# dump, portal export) and needs the same five fields in a ledger. The declaration is one
+# prompt, one struct, one guardrail and one eval gate; everything a service needs around
+# that -- the route, the request schema, the retry and rate limit, the structured-output
+# enforcement, the trace -- is generated.
+#
+# This is `profile: standard` on purpose. Nothing here names a cloud control, an identity
+# provider or an approval, because a mid-size finance team's whole requirement is that
+# the defaults answer those questions. The enterprise version of the same domain adds
+# them and is refused without them; see `examples/scenarios/prior-auth-review`.
+
+project:
+  name: invoice-intake
+  namespace: acme.finance
+  description: Read one inbound invoice and return the five fields the payables ledger needs, refusing anything that carries unscreened contact details.
+  targets:
+    - py-fastapi
+
+profile: standard
+
+# The contract a per-customer overlay may move, and nothing more. An overlay that changes
+# a path outside this block is refused by `aid fleet` rather than silently applied, so a
+# customer's tighter region or smaller ceiling cannot drift into an unrelated edit.
+overridable:
+  deployments.api.region:
+    from: [us-east-1, eu-west-1]
+  models.extract.modelId:
+    from: [gpt-4o-mini, gpt-4.1-mini]
+  evals.extraction_quality.gate.maxRegression:
+    max: 0.1
+
+types:
+  InvoiceFields:
+    kind: struct
+    fields:
+      vendor:
+        type: string
+        required: true
+      invoice_number:
+        type: string
+        required: true
+      due_date:
+        type: string
+        required: true
+      total:
+        type: number
+        required: true
+      currency:
+        type: string
+        required: true
+
+models:
+  extract:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [json-schema]
+    params:
+      # Zero temperature: the same invoice must produce the same ledger row. A payables
+      # ledger reconciled twice with two answers is not a ledger.
+      temperature: 0
+      maxTokens: 512
+    # The cost gate multiplies this profile by the tokens the eval measures. Without it
+    # the build is refused rather than priced at zero.
+    costProfile: openai-gpt-4o-mini
+    limits:
+      # An invoice is bounded, so the input is bounded. A document past this is refused
+      # before it is paid for, which is the difference between a ceiling and a surprise.
+      maxInputTokens: 16384
+      maxOutputTokens: 512
+
+prompts:
+  read_invoice:
+    version: 1
+    model: extract
+    template: |
+      You read one inbound invoice and return the fields the accounts-payable ledger
+      needs. Use only the text you were given. If a field is absent, leave it out rather
+      than inventing a value.
+      Invoice:
+      {{ invoice }}
+    variables:
+      invoice:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: InvoiceFields
+
+guardrails:
+  # Input and output on the same policy, because the failure this catches is symmetric:
+  # a supplier pastes a personal email into the invoice body, and the extracted `vendor`
+  # field echoes it back into the ledger.
+  invoice_pii:
+    stages: [input, output]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The invoice carried contact details, so it was not written to the ledger.
+      log: true
+
+evals:
+  extraction_quality:
+    # `pipeline:<id>` rather than an agent: this pipeline renders one prompt against one
+    # model, which is what makes it a single measurable subject.
+    target: pipeline:extract_invoice
+    dataset:
+      source: file
+      uri: evals/extraction_quality.json
+    metrics:
+      - kind: json-schema
+        schema: InvoiceFields
+    gate:
+      # `ci: true` is what makes this a gate and not a report.
+      ci: true
+      maxRegression: 0.05
+
+pipelines:
+  extract_invoice:
+    description: Read one invoice and return its five ledger fields.
+    trigger:
+      http:
+        method: post
+        path: /invoices/extract
+    steps:
+      - generate:
+          prompt: read_invoice
+          input:
+            invoice: "{{ event.invoice }}"
+          as: fields
+      - emit:
+          event: InvoiceFields
+
+deployments:
+  api:
+    target: container
+    cloud: aws
+    # A region is not required for `profile: standard`; it is declared because the
+    # `overridable` block above moves it, and a contract over an undeclared path is not a
+    # contract.
+    region: us-east-1
+    streaming: false
+    secrets: [OPENAI_API_KEY]
