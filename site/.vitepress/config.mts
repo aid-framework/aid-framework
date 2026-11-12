@@ -191,6 +191,7 @@ export default defineConfig({
             { text: 'Writing a spec', link: '/guide/writing-a-spec' },
             { text: 'The generated tree', link: '/guide/generated-tree' },
             { text: 'Serving an app', link: '/guide/serving' },
+            { text: 'Delivering to many customers', link: '/guide/delivery' },
             { text: 'Concepts', link: '/guide/concepts' },
           ],
         },
