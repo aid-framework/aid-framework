@@ -1,17 +1,20 @@
 /**
  * `aid trace` — read a traced run back out of the local trace sink.
  *
- * The sink records *what happened*, not *what was said*: spans carry timing, kind, model,
- * token counts and priced cost, but no prompts and no completions. So this command
- * **inspects** a run; it does not replay one. A replay needs the request payloads, and
- * inventing them -- asking the model again -- would answer a different question than "what
- * happened here", while looking like an answer to it. Replay stays unimplemented until the
- * sink records payloads, and the help text says so rather than letting a reader assume.
+ * The sink records *what happened*: spans carry timing, kind, model, token counts and
+ * priced cost. It records *what was said* only when `AID_TRACE_CONTENT` asks for it, in
+ * which case a model-call span also carries `aid.input.text` and `aid.output.text`. So
+ * this command **inspects** a run by default; it does not replay one, because a replay
+ * needs the request payloads and that switch is opt-in rather than assumed.
+ *
+ * `aid trace export` is the one reader that needs the text: it turns runs into a dataset
+ * an eval can read. Its help text says the variable is required rather than letting a
+ * reader assume payloads were captured.
  *
  * Exit codes:
  *
  * - `2` when the invocation is wrong: no directory, a selector that matches no run or more
- *   than one, or `--run` together with `--all`.
+ *   than one, an unknown verb, or `--run` together with `--all`.
  * - `1` only when a trace file exists and could not be read. The tree still prints: what
  *   was readable is worth seeing.
  * - `0` otherwise, including a directory with no runs yet -- "nothing ran" is a true
@@ -27,6 +30,7 @@ import { group, outcome, usd } from '../output.js';
 import type { SpanRow, TraceRun } from '../trace.js';
 import { runsOf, treeRowsOf } from '../trace.js';
 import { readTraceDir, resolveTraceDir, TRACE_DIR_ENV } from '../trace-dir.js';
+import { traceExport } from './trace-export.js';
 
 export interface TraceOptions {
   /** The directory to read; defaults to `$AID_TRACE_DIR`. */
@@ -35,6 +39,18 @@ export interface TraceOptions {
   readonly run: string | undefined;
   /** Print every run's tree instead of the run list. */
   readonly all: boolean;
+  /** The verb, when one was given: `export`. */
+  readonly subcommand: string | undefined;
+  /** `aid trace export --dataset <name>`. */
+  readonly dataset: string | undefined;
+  /** `aid trace export --filter agent=<id>`. */
+  readonly filter: string | undefined;
+  /** `aid trace export --version <version>`. */
+  readonly version: string | undefined;
+  /** `aid trace export --out <path>`. */
+  readonly out: string | undefined;
+  /** `aid trace export --force`. */
+  readonly force: boolean;
 }
 
 /** What a reader wants to know about a run before opening it. */
@@ -181,6 +197,32 @@ function selectionRefusal(
 
 export function trace(context: CliContext, options: TraceOptions): CommandOutcome {
   const command = 'trace';
+
+  if (options.subcommand === 'export') {
+    return traceExport(context, {
+      dataset: options.dataset,
+      dir: options.dir,
+      filter: options.filter,
+      version: options.version,
+      out: options.out,
+      force: options.force,
+    });
+  }
+
+  if (options.subcommand !== undefined) {
+    return outcome({
+      command,
+      exitCode: EXIT_USAGE,
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.traceUnknownSubcommand,
+          message: `"${options.subcommand}" is not a trace verb.`,
+          hint: 'The only verb is `export`, which writes a dataset from the runs in a trace directory. `aid trace <run>` inspects one run.',
+        }),
+      ],
+      text: `aid: "${options.subcommand}" is not a trace verb. The only verb is \`export\`.\n`,
+    });
+  }
 
   if (options.run !== undefined && options.all) {
     return outcome({

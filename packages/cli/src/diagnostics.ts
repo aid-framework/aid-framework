@@ -111,6 +111,18 @@ export const CLI_DIAGNOSTIC_CODES = {
   traceRunAmbiguous: 'cli/trace-run-ambiguous',
   traceNoRuns: 'cli/trace-no-runs',
   traceFlagsConflict: 'cli/trace-flags-conflict',
+  // `aid trace export` writes a dataset from the same files. A run that recorded no
+  // payloads is the ordinary case, because the sink keeps text only when
+  // `AID_TRACE_CONTENT` asks for it, so that refusal names the variable rather than
+  // leaving a reader to wonder why an expensive run produced no cases.
+  traceExportDatasetRequired: 'cli/trace-export-dataset-required',
+  traceExportFilterInvalid: 'cli/trace-export-filter-invalid',
+  traceExportFilterNoMatch: 'cli/trace-export-filter-no-match',
+  traceExportNoCases: 'cli/trace-export-no-cases',
+  traceExportPartial: 'cli/trace-export-partial',
+  traceExportWouldOverwrite: 'cli/trace-export-would-overwrite',
+  traceExportUnwritable: 'cli/trace-export-unwritable',
+  traceUnknownSubcommand: 'cli/trace-unknown-subcommand',
   // `aid dev` starts the application's own server, so every failure here is about the
   // environment it needs or the address it was given -- not about the spec, which `gen`
   // has already validated by the time any of these can fire.

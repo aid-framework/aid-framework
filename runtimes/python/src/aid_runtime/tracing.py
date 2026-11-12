@@ -16,6 +16,7 @@ spans written here leave the process.
 from __future__ import annotations
 
 import contextlib
+import os
 from collections.abc import Iterator, Sequence
 from typing import Any, Protocol
 
@@ -27,13 +28,17 @@ from aid_runtime.types import TokenUsage
 
 __all__ = [
     "ATTRIBUTES",
+    "CONTENT_ENV",
     "GEN_AI_OPERATION_CHAT",
+    "MAX_CONTENT_CHARS",
     "GuardrailEvent",
     "agent_span",
     "aid_attributes",
+    "content_capture_enabled",
     "get_tracer",
     "llm_span",
     "record_attributes",
+    "record_content",
     "record_cost",
     "record_exception",
     "record_guardrail",
@@ -87,7 +92,19 @@ ATTRIBUTES: dict[str, str] = {
     "guardrail_stage": "aid.guardrail.stage",
     "guardrail_action": "aid.guardrail.action",
     "guardrail_policies": "aid.guardrail.policies",
+    # Payload text. Written only when ``AID_TRACE_CONTENT`` asks for it; see
+    # :func:`record_content` for why the default is off.
+    "input_text": "aid.input.text",
+    "output_text": "aid.output.text",
 }
+
+#: The environment variable that opts in to recording prompt and completion text.
+CONTENT_ENV = "AID_TRACE_CONTENT"
+
+#: Longest payload fragment a span records. A dataset needs enough of the input to
+#: name the case, not a full transcript, and an unbounded attribute would put a
+#: megabyte into one JSONL line.
+MAX_CONTENT_CHARS = 4000
 
 _TRACER_NAME = "aid_runtime"
 
@@ -160,6 +177,41 @@ def record_attributes(span: Span, **values: Any) -> None:
     for key, value in aid_attributes(**values).items():
         if value is not None:
             span.set_attribute(key, value)
+
+
+def content_capture_enabled() -> bool:
+    """Whether ``AID_TRACE_CONTENT`` asks for prompt and completion text on spans."""
+    return os.environ.get(CONTENT_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def record_content(span: Span, *, input_text: str | None, output_text: str | None) -> None:
+    """Attach the prompt and the completion to a span **only** when asked to.
+
+    Everything else this runtime records is a fact about a call -- a model, a token
+    count, a price. Payloads are what a user said and what a model answered, so they
+    stay out of the trace unless the operator names :data:`CONTENT_ENV`. Three
+    reasons the default matters:
+
+    - The sink writes to a local directory that a repository may commit and a CI log
+      may echo, so text that is off by default cannot leak by accident.
+    - Nothing here redacts. A captured prompt is captured as it was sent, and the
+      operator who set the variable owns that decision; the spec's ``pii.redact``
+      governs the deployed feedback path, not this local switch.
+    - ``aid trace export --dataset`` is the one reader that wants the text, and it
+      can only build a case from a run that recorded one.
+
+    Empty and whitespace-only text is skipped, so a span that carried nothing does
+    not look like a decided empty answer.
+    """
+    if not content_capture_enabled():
+        return
+    for key, value in (
+        ("input_text", input_text),
+        ("output_text", output_text),
+    ):
+        if value is None or value.strip() == "":
+            continue
+        span.set_attribute(ATTRIBUTES[key], value[:MAX_CONTENT_CHARS])
 
 
 @contextlib.contextmanager

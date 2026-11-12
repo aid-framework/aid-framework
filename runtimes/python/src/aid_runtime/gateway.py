@@ -32,7 +32,14 @@ from aid_runtime.errors import (
     UnknownModelAliasError,
 )
 from aid_runtime.providers.base import Provider
-from aid_runtime.tracing import ATTRIBUTES, get_tracer, llm_span, record_cost, record_usage
+from aid_runtime.tracing import (
+    ATTRIBUTES,
+    get_tracer,
+    llm_span,
+    record_content,
+    record_cost,
+    record_usage,
+)
 from aid_runtime.types import (
     Capability,
     CompletionRequest,
@@ -53,6 +60,15 @@ _CACHE_CHUNK = 16
 #: Callback after every successfully charged call. Lets a generated app log or
 #: forward spend without the gateway knowing anything about logging.
 CallHook = Callable[[LedgerEntry], None]
+
+
+def _prompt_text(request: CompletionRequest) -> str:
+    """The prompt as one string, for a span that was asked to record payloads.
+
+    Role-prefixed rather than concatenated, so a captured prompt still shows which
+    turn a line came from once it is a row of JSONL rather than a live message list.
+    """
+    return "\n\n".join(f"{message.role}: {message.content}" for message in request.messages)
 
 
 def _sse(payload: dict[str, Any]) -> bytes:
@@ -270,6 +286,7 @@ class ModelGateway:
                 cost = spec.cost.cost_usd(usage)
                 record_usage(span, usage)
                 record_cost(span, cost, alias=pinned.alias)
+                record_content(span, input_text=_prompt_text(request), output_text=text)
 
                 entry = LedgerEntry(
                     alias=pinned.alias,
@@ -341,6 +358,7 @@ class ModelGateway:
                 cost = spec.cost.cost_usd(response.usage)
                 record_usage(span, response.usage)
                 record_cost(span, cost, alias=pinned.alias)
+                record_content(span, input_text=_prompt_text(request), output_text=response.text)
                 if len(attempted) > 1:
                     span.set_attribute(ATTRIBUTES["attempts"], list(attempted))
 

@@ -306,12 +306,48 @@ already marks sensitive, and refuses `persistent: true` with no `retentionDays`,
 every signal forever is not a policy a spec may leave unstated. This build declares the intake
 and gates it; it generates no feedback route and stores nothing.
 
+**A dataset from the runs you already have.** The first eval set for a new agent is easier to
+find in the traffic the agent already served than in a guess about what people will ask.
+
+```sh
+AID_TRACE_DIR=traces AID_TRACE_CONTENT=1 python -m app.main   # run it, keeping the text
+aid trace export --dataset support_quality --from traces
+```
+
+One run is one case: `input` is the prompt the run was first given, `expected` the answer it last
+produced, and `metadata` carries the calls, cost, wall time, model and tools beside them. The file
+is written in the form the Python `Dataset` reads, so setting `evals[].dataset.uri` at it is the
+only wiring left.
+
+The capture is opt-in. The sink records timing, model, tokens and cost always, but keeps prompts
+and completions only when `AID_TRACE_CONTENT` is truthy — so no service starts recording what its
+users typed because a trace directory happened to be configured. Nothing here redacts; the
+operator who sets the variable owns what it collects.
+
+What comes out:
+
+- A dataset file, plus a printed next step naming the `evals[].dataset.uri` to set.
+
+What is refused:
+
+- A run set that recorded no payloads, naming `AID_TRACE_CONTENT=1` as the fix rather than
+  writing a dataset with no `input` in it.
+- A `--filter` that is not `agent=<id>`, or one that matches no run.
+- An existing dataset file without `--force`, because it may have been curated by hand since it
+  was generated. Bump `--version` when the cases change, since the eval gate will not compare
+  across versions.
+
+Every exported case is tagged `unreviewed`. `expected` is what the run happened to output, so
+`exact-match` against it measures stability rather than quality — a better-worded answer fails.
+The tag is the honest label for that, and a person editing the file is what removes it.
+
 Covers:
 
 - **Eval coverage**
 - **A decision eval metric**
 - **Promotion policy for a candidate**
 - **Declared feedback signals**
+- **A dataset from the runs you already have**
 
 ## Agents and tools
 

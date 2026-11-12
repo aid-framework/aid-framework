@@ -279,19 +279,36 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'trace',
-    summary: 'inspect a traced run: the span tree, timings, models, tokens and cost',
-    usage: 'trace [run] [--dir <dir>] [--all]',
+    summary: 'inspect a traced run, or export runs as a dataset an eval can read',
+    usage:
+      'trace [run | export] [--dir <dir>] [--all] [--dataset <name>] [--from <dir>] [--filter agent=<id>] [--version <v>] [--out <path>] [--force]',
+    maxPositionals: 2,
     flags: [
       valueFlag('dir', 'dir', 'the trace directory to read (default: $AID_TRACE_DIR)'),
       booleanFlag('all', 'print every run in the directory, not just the run list'),
+      valueFlag('dataset', 'name', 'export: the dataset name, which becomes datasets/<name>.json'),
+      valueFlag('from', 'dir', 'export: the trace directory to read (same as --dir)'),
+      valueFlag('filter', 'agent-id', 'export: only export runs whose agent span names this agent'),
+      valueFlag('version', 'v', 'export: the dataset version (default: 1)'),
+      valueFlag('out', 'path', 'export: the file to write (default: datasets/<name>.json)'),
+      booleanFlag('force', 'export: replace an existing dataset file'),
       JSON_FLAG,
     ],
-    run: (context, args) =>
-      trace(context, {
-        run: args.positionals[0],
-        dir: args.values.get('dir'),
+    run: (context, args) => {
+      const first = args.positionals[0];
+      const subcommand = first === 'export' ? first : undefined;
+      return trace(context, {
+        run: subcommand === undefined ? first : args.positionals[1],
+        dir: args.values.get('from') ?? args.values.get('dir'),
         all: args.booleans.has('all'),
-      }),
+        subcommand,
+        dataset: args.values.get('dataset'),
+        filter: args.values.get('filter'),
+        version: args.values.get('version'),
+        out: args.values.get('out'),
+        force: args.booleans.has('force'),
+      });
+    },
   },
   {
     name: 'report',

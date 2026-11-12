@@ -525,6 +525,15 @@ export const SHIPPED_FEATURES = [
     // imply them.
     since: '0.1.149',
   },
+  {
+    id: 'trace-export',
+    title: 'A dataset from the runs you already have',
+    detail:
+      '`aid trace export --dataset <name>` turns a directory of traced runs into an eval dataset, so the first cases for a new agent come from production traffic instead of from someone guessing what people will ask. One run is one case: the prompt it was first given, the answer it last produced, and the calls, cost, wall time, model and tools beside it. The file is written in the same canonical form the Python `Dataset` writes, so a regenerated dataset diffs cleanly. The exit code separates the two failures that matter -- a run that recorded no payloads (the sink keeps text only when the application ran with `AID_TRACE_CONTENT=1`, and the refusal names that variable) and a file that already exists (refused without `--force`, because it may have been curated by hand since). Every case is tagged `unreviewed`, because `expected` is what the run happened to output: it is a record of behaviour, not a judgement about a good answer, and the honest next step is a person editing the file.',
+    declaredBy: 'aid trace export',
+    href: './reference/cli.md#trace',
+    since: '0.1.154',
+  },
 ];
 
 /**
@@ -837,7 +846,13 @@ export const CAPABILITY_FAMILIES = [
       'A quality regression fails the build, and every route that reaches users has an eval claiming it.',
     declaredBy: 'evals[]',
     href: './reference/spec.md#eval',
-    featureIds: ['eval-coverage', 'evals-decision', 'promotion-gate', 'feedback-signals'],
+    featureIds: [
+      'eval-coverage',
+      'evals-decision',
+      'promotion-gate',
+      'feedback-signals',
+      'trace-export',
+    ],
   },
   {
     id: 'agents',

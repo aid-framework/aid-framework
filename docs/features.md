@@ -448,6 +448,14 @@ Spec 0.30 lets a document declare `observability.alerts`: a metric, a window, a 
 - **Reference:** [spec](./reference/spec.md#observability)
 - **Since:** `0.1.149`
 
+### A dataset from the runs you already have
+
+`aid trace export --dataset &lt;name&gt;` turns a directory of traced runs into an eval dataset, so the first cases for a new agent come from production traffic instead of from someone guessing what people will ask. One run is one case: the prompt it was first given, the answer it last produced, and the calls, cost, wall time, model and tools beside it. The file is written in the same canonical form the Python `Dataset` writes, so a regenerated dataset diffs cleanly. The exit code separates the two failures that matter -- a run that recorded no payloads (the sink keeps text only when the application ran with `AID_TRACE_CONTENT=1`, and the refusal names that variable) and a file that already exists (refused without `--force`, because it may have been curated by hand since). Every case is tagged `unreviewed`, because `expected` is what the run happened to output: it is a record of behaviour, not a judgement about a good answer, and the honest next step is a person editing the file.
+
+- **Turned on by:** `aid trace export`
+- **Reference:** [cli](./reference/cli.md#trace)
+- **Since:** `0.1.154`
+
 ## Refused, on purpose
 
 An absent capability is stated once, here, with the diagnostic that enforces it, instead of being discovered during an apply or debugged in production.

@@ -36,14 +36,24 @@ export interface ParsedTrace {
   readonly skipped: number;
 }
 
-/** The attribute keys the report reads, from the runtime's own conventions table. */
-const ATTRIBUTES = {
+/**
+ * The attribute keys the reader uses, from the runtime's own conventions table.
+ *
+ * Exported so a second reader -- `trace export` -- names the same keys rather than
+ * repeating the strings, because two copies can drift and one of them would end up
+ * reading an attribute the runtime never writes.
+ */
+export const ATTRIBUTES = {
+  agentId: 'aid.agent.id',
   alias: 'aid.model.alias',
   costUsd: 'aid.cost.usd',
+  inputText: 'aid.input.text',
   inputTokens: 'gen_ai.usage.input_tokens',
+  outputText: 'aid.output.text',
   outputTokens: 'gen_ai.usage.output_tokens',
   responseModel: 'gen_ai.response.model',
   requestModel: 'gen_ai.request.model',
+  toolNames: 'aid.tool.names',
 } as const;
 
 const UNKNOWN_MODEL = '(unknown)';
