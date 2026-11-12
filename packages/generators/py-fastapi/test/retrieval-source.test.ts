@@ -16,9 +16,8 @@
  * `checkSpecText` rejects them at every version, so a generator never sees them.
  */
 
-import { describe, expect, it } from 'vitest';
-
 import type { SpecVersion } from '@aid-framework/spec';
+import { describe, expect, it } from 'vitest';
 
 import { fileMap, RETRIEVAL_BINDINGS_PATH } from '../src/index.js';
 import { buildForSpecText, exampleSpecTextAt } from './helpers.js';

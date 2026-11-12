@@ -17,7 +17,7 @@
 import type { IR } from '@aid-framework/ir';
 import { describe, expect, it } from 'vitest';
 
-import { TOOL_TRACE_EXPECT, checkPlan, evalModulePath, planPyFastApi } from '../src/index.js';
+import { checkPlan, evalModulePath, planPyFastApi, TOOL_TRACE_EXPECT } from '../src/index.js';
 import { assignedValue, exampleSpecText, lowerForSpecText, quotedSegments } from './helpers.js';
 
 const EVAL_ID = 'refund_trajectory';

@@ -14,9 +14,8 @@
  * `recursive`, or it would pass just as quietly if the strategy were emitted nowhere.
  */
 
-import { describe, expect, it } from 'vitest';
-
 import type { SpecVersion } from '@aid-framework/spec';
+import { describe, expect, it } from 'vitest';
 
 import { fileMap, RETRIEVAL_BINDINGS_PATH } from '../src/index.js';
 import { buildForSpecText, exampleSpecTextAt } from './helpers.js';
