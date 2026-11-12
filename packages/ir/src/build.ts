@@ -1925,6 +1925,14 @@ function buildMetric(
       // would be a knob the generated gate could never honor.
       return { kind: 'decision', decision };
     }
+    case 'step-count': {
+      const maxSteps = asNumber(record.maxSteps);
+      return maxSteps === undefined ? undefined : { kind: 'step-count', maxSteps };
+    }
+    case 'forbidden-tool':
+      return { kind: 'forbidden-tool', forbid: asStringArray(record.forbid) };
+    case 'approval-respected':
+      return { kind: 'approval-respected' };
     case 'assert': {
       const message = asString(record.message);
       if (message === undefined) return undefined;

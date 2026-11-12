@@ -16,6 +16,8 @@
  * and refuses an overlay that exercises anything it does not list.
  */
 
+import { SPEC_VERSION_LATEST } from '@aid-framework/spec';
+
 export const TEMPLATE_NAMES = ['support-copilot', 'enterprise-approvals'] as const;
 
 export type TemplateName = (typeof TEMPLATE_NAMES)[number];
@@ -46,7 +48,7 @@ export function isTemplateName(value: string): value is TemplateName {
 }
 
 function supportCopilotSpec(projectName: string): string {
-  return `specVersion: "0.30"
+  return `specVersion: "${SPEC_VERSION_LATEST}"
 
 project:
   name: ${projectName}
@@ -176,7 +178,7 @@ deployments:
 }
 
 function enterpriseApprovalsSpec(projectName: string): string {
-  return `specVersion: "0.30"
+  return `specVersion: "${SPEC_VERSION_LATEST}"
 
 project:
   name: ${projectName}

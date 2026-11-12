@@ -946,6 +946,32 @@
             "kind": { "const": "decision" },
             "decision": { "type": "string", "minLength": 1 }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "maxSteps"],
+          "properties": {
+            "kind": { "const": "step-count" },
+            "maxSteps": { "type": "integer", "minimum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "forbid"],
+          "properties": {
+            "kind": { "const": "forbidden-tool" },
+            "forbid": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "const": "approval-respected" }
+          }
         }
       ]
     },

@@ -111,6 +111,7 @@ export {
 /** The metric mapping, so the eval gate's metric names are assertable without emitting. */
 export {
   deterministicMetrics,
+  FORBIDDEN_TOOLS,
   isRetrievalEval,
   jsonSchemaMetric,
   judgeAlias,

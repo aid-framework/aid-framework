@@ -31,7 +31,8 @@ needs a pinned provider and belongs with the baselines, not with a gate.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from enum import StrEnum
 
 from aid_runtime.agents.loop import AgentRuntime
@@ -139,14 +140,22 @@ class AgentEvalRunner:
         before = runtime.gateway.ledger.cost_usd
         try:
             result = await runtime.run(self._agent_id, case.input)
-            result = await self._settle(runtime, case, result)
+            result, approvals = await self._settle(runtime, case, result)
         finally:
             # Charged even when the run raised: a case stopped by a guardrail was billed,
             # and a cost series that only saw completed cases would under-report exactly
             # when the guardrails fire.
             self._cost_usd += max(runtime.gateway.ledger.cost_usd - before, 0.0)
         self._last = result
-        return RunOutput(text=result.answer, trajectory=Trajectory.from_run(result))
+        return RunOutput(
+            text=result.answer,
+            trajectory=Trajectory.from_run(
+                result,
+                pauses=approvals.pauses,
+                decisions=approvals.decisions,
+                ignored=approvals.ignored,
+            ),
+        )
 
     def _runtime(self) -> AgentRuntime:
         # A fresh memory store per case, for the same reason as the fresh ledger: ``run``
@@ -159,10 +168,14 @@ class AgentEvalRunner:
             memory_store=InProcessMemoryStore(),
         )
 
-    async def _settle(self, runtime: AgentRuntime, case: EvalCase, result: RunResult) -> RunResult:
-        """Resume through every pause the case has decisions for."""
+    async def _settle(
+        self, runtime: AgentRuntime, case: EvalCase, result: RunResult
+    ) -> tuple[RunResult, _Approvals]:
+        """Resume through every pause the case has decisions for, and record what happened."""
         decisions = iter(case.approvals)
-        resumes = 0
+        applied: list[str] = []
+        rejections: list[_Rejection] = []
+        pauses = 0
         while result.status is RunStatus.PAUSED:
             checkpoint = result.checkpoint
             if checkpoint is None:
@@ -171,15 +184,33 @@ class AgentEvalRunner:
                     "cannot be resumed; the loop must record one before reporting a pause"
                 )
             decision = self._decision(case, decisions)
-            resumes += 1
-            if resumes > self._max_resumes:
+            pauses += 1
+            if pauses > self._max_resumes:
                 raise EvalError(
                     f"case {case.id!r} paused {self._max_resumes} times and is still asking; "
                     "the case is supplying decisions to a run that is not converging, and "
                     "resuming it again would only multiply the spend"
                 )
+            applied.append(decision.value)
+            # The calls this pause is asking about. `Checkpoint.calls` is empty when the
+            # pause came from a guardrail releasing an answer rather than a tool call, so
+            # a rejection there blocks nothing and records no boundary.
+            names = frozenset(call.name for call in checkpoint.calls)
+            if decision is HumanDecision.REJECT:
+                rejections.append(_Rejection(boundary=len(result.steps), names=names))
+            else:
+                # A later approval of the same calls lifts the earlier rejection, so the
+                # only names left to check at the end are the ones nobody ever approved.
+                rejections = [
+                    _Rejection(boundary=rejection.boundary, names=rejection.names - names)
+                    for rejection in rejections
+                ]
             result = await runtime.resume(checkpoint, decision)
-        return result
+        return result, _Approvals(
+            pauses=pauses,
+            decisions=tuple(applied),
+            ignored=_ignored_calls(result, [r for r in rejections if r.names]),
+        )
 
     def _decision(self, case: EvalCase, decisions: Iterator[str]) -> HumanDecision:
         if self._policy is ApprovalPolicy.APPROVE:
@@ -194,6 +225,44 @@ class AgentEvalRunner:
             "answered, or construct the runner with ApprovalPolicy.APPROVE when this eval "
             "is not about approval"
         )
+
+
+@dataclass(frozen=True)
+class _Approvals:
+    """What the harness observed about a case's approvals, for the trajectory to carry."""
+
+    pauses: int = 0
+    decisions: tuple[str, ...] = ()
+    ignored: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _Rejection:
+    """One rejection, and where in the run's steps it was answered.
+
+    ``boundary`` is the number of steps recorded when the rejection was given. Steps only
+    ever append -- a resume restores the ones the checkpoint holds and continues from
+    there -- so the same index slices the final run and yields exactly what happened
+    after the answer, which is the only place a call could ignore it.
+    """
+
+    boundary: int
+    names: frozenset[str]
+
+
+def _ignored_calls(result: RunResult, rejections: Sequence[_Rejection]) -> tuple[str, ...]:
+    """Names of rejected tools that nonetheless ran after the rejection.
+
+    A rejection tells the run that a call did not happen. A call that happens anyway is
+    the one safety finding this metric reports: everything else it checks is a mismatch
+    between what a case scripted and what the run did, but this one is a bound the spec
+    promised a person that the machinery then crossed.
+    """
+    found: set[str] = set()
+    for rejection in rejections:
+        for step in result.steps[rejection.boundary :]:
+            found.update(name for name in step.tool_names if name in rejection.names)
+    return tuple(sorted(found))
 
 
 def _declared_agents(document: Mapping[str, object]) -> set[str]:

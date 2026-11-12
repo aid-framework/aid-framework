@@ -84,6 +84,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.28',
   '0.29',
   '0.30',
+  '0.31',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -221,6 +222,22 @@ export const FEEDBACK_MIN_VERSION: SpecVersion = '0.28';
  * that has them.
  */
 export const ALERTS_MIN_VERSION: SpecVersion = '0.30';
+
+/**
+ * The first spec version that accepts the trajectory metrics: `step-count`,
+ * `forbidden-tool` and `approval-respected`. Nested inside `metrics`, which exists from
+ * 0.1, so only the metric kind dates the document. A metric read as an unrecognized kind
+ * would be dropped from the eval while the reviewer who asked for it approved a document
+ * that has it -- and the eval would then pass every case by measuring less.
+ */
+export const TRAJECTORY_METRIC_MIN_VERSION: SpecVersion = '0.31';
+
+/** The metric kinds that version introduced. */
+const TRAJECTORY_METRIC_KINDS = new Set<string>([
+  'step-count',
+  'forbidden-tool',
+  'approval-respected',
+]);
 
 /**
  * The first spec version that accepts `evals[].gate.promotion`. Nested for the same
@@ -689,6 +706,7 @@ function scopeDiagnostics(
   feedbackVersionDiagnostics(spec, diagnostics, reported);
   alertsVersionDiagnostics(spec, diagnostics, reported);
   evalPromotionVersionDiagnostics(spec, diagnostics, reported);
+  trajectoryMetricVersionDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
   routeDiagnostics(spec, diagnostics, reported);
@@ -1246,6 +1264,43 @@ function evalPromotionVersionDiagnostics(
       }),
     );
     reported.add(JSON.stringify(path));
+  }
+}
+
+/**
+ * `step-count`, `forbidden-tool` and `approval-respected` arrived in 0.31, nested inside
+ * `metrics`, which no version gate covers. Reading an unknown kind as absent in an older
+ * document would generate an eval that measures less than the document declares and then
+ * passes every case -- the gap only visible in a release that shipped nothing.
+ */
+function trajectoryMetricVersionDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) return;
+  if (specVersionAtLeast(declared, TRAJECTORY_METRIC_MIN_VERSION)) return;
+
+  for (const [id, raw] of Object.entries(asRecord(spec.evals))) {
+    const metrics = asRecord(raw).metrics;
+    if (!Array.isArray(metrics)) continue;
+    metrics.forEach((metric, index) => {
+      const kind = asRecord(metric).kind;
+      if (typeof kind !== 'string' || !TRAJECTORY_METRIC_KINDS.has(kind)) return;
+      const path = ['evals', id, 'metrics', index];
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'evals.${id}.metrics[${index}]' declares the '${kind}' metric, which requires specVersion ${TRAJECTORY_METRIC_MIN_VERSION}, but this specification declares version ${declared}`,
+          path,
+          hint: `set specVersion: "${TRAJECTORY_METRIC_MIN_VERSION}"; an eval that declares none of step-count, forbidden-tool or approval-respected is unchanged`,
+        }),
+      );
+      reported.add(JSON.stringify(path));
+    });
   }
 }
 

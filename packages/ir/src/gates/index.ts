@@ -27,6 +27,7 @@ import { costGate } from './cost.js';
 import { approvalGate, stateGate } from './delivery.js';
 import { deployStreamingGate } from './deploy.js';
 import { evalCoverageGate } from './eval-coverage.js';
+import { evalMetricGate } from './eval-metrics.js';
 import { guardrailCoverageGate, guardrailPolicyGate } from './guardrails.js';
 import { hitlSideEffectGate } from './hitl.js';
 import { knowledgeBaseGate } from './knowledge-base.js';
@@ -67,6 +68,7 @@ export const GATES = {
   approvals: approvalGate,
   'observability/export': observabilityExportGate,
   'evals/trajectory': evalTrajectoryGate,
+  'evals/metrics': evalMetricGate,
   'evals/promotion': promotionGate,
   feedback: feedbackPiiGate,
   'observability/alerts': alertsGate,
@@ -130,6 +132,7 @@ export {
   costGate,
   deployStreamingGate,
   evalCoverageGate,
+  evalMetricGate,
   evalTrajectoryGate,
   feedbackPiiGate,
   GATES as GATE_REGISTRY,

@@ -722,6 +722,19 @@ function checkEvals(ir: IR, scope: Scope, diagnostics: IrDiagnostic[], report: R
       if (metric.kind === 'json-schema') {
         reportTypeRef(metric.schema, [...metricPath, 'schema'], diagnostics, report);
       }
+      if (metric.kind === 'forbidden-tool') {
+        metric.forbid.forEach((name, position) => {
+          if (scope.names.tools.has(name)) return;
+          diagnostics.push(
+            report.error({
+              code: IR_DIAGNOSTIC_CODES.metricToolUnresolved,
+              message: `the referential gate rejected this forbidden-tool list: no tool named "${name}" exists`,
+              path: [...metricPath, 'forbid', position],
+              hint: 'a forbidden tool is still a declared tool: name one from `tools`, the registry this build can check a run against',
+            }),
+          );
+        });
+      }
       if (metric.kind !== 'tool-trace') return;
       metric.expect.forEach((name, position) => {
         if (scope.names.tools.has(name)) return;

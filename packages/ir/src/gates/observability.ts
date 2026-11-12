@@ -77,6 +77,18 @@ export function observabilityExportGate(ir: IR, options: GateOptions): GateResul
   return { diagnostics, suppressed: NO_SUPPRESSIONS };
 }
 
+/**
+ * What each 0.31 trajectory metric reads off a run, phrased as the quantity it scores.
+ *
+ * `tool-trace` is deliberately absent: its refusal predates these three and names what it
+ * compares ("tool calls") in its own message, which a release has already quoted.
+ */
+const RUN_QUANTITY: Readonly<Record<string, string>> = {
+  'step-count': 'how many model calls a run took',
+  'forbidden-tool': 'the tools a run reached for',
+  'approval-respected': 'the pauses a run took and the decisions it was given',
+};
+
 export function evalTrajectoryGate(ir: IR, options: GateOptions): GateResult {
   const diagnostics: IrDiagnostic[] = [];
   const report = reporter(options);
@@ -110,7 +122,23 @@ export function evalTrajectoryGate(ir: IR, options: GateOptions): GateResult {
     }
 
     evalShape.metrics.forEach((metric, index) => {
-      if (metric.kind !== 'tool-trace') return;
+      if (metric.kind !== 'tool-trace') {
+        // The 0.31 trajectory metrics read the same run `tool-trace` reads, so a target that
+        // cannot report a trajectory cannot measure any of them either. Each message names
+        // the quantity, because "no trajectory" is true of four metrics that ask four
+        // different questions.
+        const reads = RUN_QUANTITY[metric.kind];
+        if (reads === undefined) return;
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.evalTrajectory,
+            message: `the trajectory gate rejected "${evalShape.id}": metric ${index} scores ${reads}, which only a run has, and "${target.qualified}" returns a response`,
+            path: ['evals', evalShape.id, 'metrics', index],
+            hint: `a prompt or pipeline target returns one response, so it has no run to score: use \`target: agent:<id>\`, or score the response with exact, contains, json-schema, cost, latency or assert`,
+          }),
+        );
+        return;
+      }
       diagnostics.push(
         report.error({
           code: IR_DIAGNOSTIC_CODES.evalTrajectory,

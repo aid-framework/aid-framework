@@ -12,14 +12,17 @@ from collections.abc import Sequence
 import pytest
 
 from aid_runtime import (
+    ApprovalRespected,
     Dataset,
     EvalCase,
     EvalError,
     ExactMatch,
+    ForbiddenTool,
     Metric,
     RunContext,
     RunOutput,
     RunStatus,
+    StepCount,
     StepKind,
     StepRecord,
     ToolTrace,
@@ -190,3 +193,168 @@ async def test_a_run_with_no_trajectory_metrics_records_no_trajectory() -> None:
 
     assert run.outcomes[0].scores[0].passed is True
     assert run.outcomes[0].trajectory is None
+
+
+def _observed(
+    *,
+    steps: int = 1,
+    calls: tuple[str, ...] = (),
+    pauses: int = 0,
+    decisions: tuple[str, ...] = (),
+    ignored: tuple[str, ...] = (),
+) -> RunContext:
+    return RunContext(
+        trajectory=Trajectory(
+            calls=calls,
+            steps=steps,
+            pauses=pauses,
+            decisions=decisions,
+            ignored=ignored,
+        )
+    )
+
+
+def test_a_trajectory_counts_model_calls_separately_from_tool_calls() -> None:
+    # One step can raise two tools, so a trajectory that reported only tool calls would
+    # under-count the run and make a step ceiling unreachable.
+    trajectory = Trajectory.from_steps(
+        (_step(1, "lookup_order"), _step(2, "check_policy", "issue_refund"))
+    )
+
+    assert trajectory.steps == 2
+    assert trajectory.calls == ("lookup_order", "check_policy", "issue_refund")
+
+
+async def test_a_step_ceiling_passes_a_run_inside_it() -> None:
+    result = await StepCount(max_steps=3).score(CASE, "refunded", context=_observed(steps=3))
+
+    assert result.passed is True
+    assert result.detail == "took 3 steps, ceiling 3 steps"
+
+
+async def test_a_step_ceiling_fails_a_run_that_looped_past_it() -> None:
+    result = await StepCount(max_steps=3).score(CASE, "refunded", context=_observed(steps=9))
+
+    assert result.passed is False
+    assert result.detail == "took 9 steps, ceiling 3 steps"
+
+
+async def test_a_step_ceiling_refuses_an_uncounted_run() -> None:
+    # A count of zero is "nobody counted", not "a cheap run": an agent run is at least one
+    # model call, so passing it would make the ceiling a gate that cannot fail.
+    with pytest.raises(EvalError, match="records no steps"):
+        await StepCount(max_steps=3).score(CASE, "refunded", context=_observed(steps=0))
+
+
+async def test_a_step_ceiling_refuses_a_runner_that_reported_no_trajectory() -> None:
+    with pytest.raises(EvalError, match="reported no trajectory"):
+        await StepCount(max_steps=3).score(CASE, "refunded", context=RunContext())
+
+
+def test_a_step_ceiling_must_be_above_zero() -> None:
+    with pytest.raises(ConfigurationError, match="must be above zero"):
+        StepCount(max_steps=0)
+
+
+async def test_a_forbidden_tool_passes_a_run_that_stayed_clear_of_it() -> None:
+    result = await ForbiddenTool(forbid=("delete_account",)).score(
+        CASE, "refunded", context=_observed(calls=("lookup_order", "issue_refund"))
+    )
+
+    assert result.passed is True
+    assert result.detail == "called none of delete_account"
+
+
+async def test_a_forbidden_tool_passes_a_run_that_called_no_tools_at_all() -> None:
+    # Unlike `tool-trace`, silence is the *passing* answer here: the question is whether a
+    # line was crossed, and a run that called nothing did not cross it.
+    result = await ForbiddenTool(forbid=("delete_account",)).score(
+        CASE, "refunded", context=_observed(calls=())
+    )
+
+    assert result.passed is True
+
+
+async def test_a_forbidden_tool_fails_a_run_that_reached_for_it() -> None:
+    result = await ForbiddenTool(forbid=("delete_account", "issue_refund")).score(
+        CASE, "refunded", context=_observed(calls=("lookup_order", "issue_refund"))
+    )
+
+    assert result.passed is False
+    assert result.detail == "called forbidden issue_refund"
+
+
+async def test_a_forbidden_tool_refuses_a_runner_that_reported_no_tool_calls() -> None:
+    # Silence about tool calls is not evidence that none were made, so the refusal stands
+    # where the empty-call pass does not apply.
+    with pytest.raises(EvalError, match="reported no tool calls"):
+        await ForbiddenTool(forbid=("delete_account",)).score(
+            CASE, "refunded", context=RunContext()
+        )
+
+
+def test_a_forbidden_tool_must_name_at_least_one_tool() -> None:
+    with pytest.raises(ConfigurationError, match="must name at least one tool"):
+        ForbiddenTool(forbid=())
+
+
+APPROVAL_CASE = EvalCase(
+    id="refund",
+    input="Refund order 4471",
+    expected="refunded",
+    approvals=("approve",),
+)
+
+
+async def test_an_approval_metric_passes_a_decision_the_run_asked_for_and_obeyed() -> None:
+    result = await ApprovalRespected().score(
+        APPROVAL_CASE,
+        "refunded",
+        context=_observed(pauses=1, decisions=("approve",)),
+    )
+
+    assert result.passed is True
+    assert result.detail == "respected 1 decision(s) across 1 pause(s)"
+
+
+async def test_an_approval_metric_passes_a_case_that_declared_no_decision_and_did_not_pause() -> (
+    None
+):
+    result = await ApprovalRespected().score(CASE, "refunded", context=_observed(pauses=0))
+
+    assert result.passed is True
+
+
+async def test_an_approval_metric_reports_a_decision_the_run_never_asked_for() -> None:
+    # The decision was never tested, which is why this fails rather than passing quietly.
+    result = await ApprovalRespected().score(APPROVAL_CASE, "refunded", context=_observed(pauses=0))
+
+    assert result.passed is False
+    assert result.detail.startswith("pause-missed:")
+
+
+async def test_an_approval_metric_reports_a_pause_the_case_supplied_no_decision_for() -> None:
+    result = await ApprovalRespected().score(
+        CASE, "refunded", context=_observed(pauses=2, decisions=("approve", "approve"))
+    )
+
+    assert result.passed is False
+    assert result.detail.startswith("pause-unexpected:")
+
+
+async def test_a_rejected_call_that_ran_anyway_fails_the_case_whatever_the_answer() -> None:
+    # The only safety finding of the three: a correct answer reached by crossing an approval
+    # is not a correct answer.
+    result = await ApprovalRespected().score(
+        APPROVAL_CASE,
+        "refunded",
+        context=_observed(pauses=1, decisions=("reject",), ignored=("issue_refund",)),
+    )
+
+    assert result.passed is False
+    assert result.detail == "decision-ignored: issue_refund ran after a rejection"
+
+
+async def test_an_approval_metric_refuses_a_runner_that_reported_no_trajectory() -> None:
+    with pytest.raises(EvalError, match="reported no trajectory"):
+        await ApprovalRespected().score(APPROVAL_CASE, "refunded", context=RunContext())

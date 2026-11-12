@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.30`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.31`.
 
 ## Deployment targets
 
@@ -463,6 +463,22 @@ An eval can name an agent (`target: agent:&lt;id&gt;`) instead of a pipeline, an
 - **Turned on by:** `evals[].target`
 - **Reference:** [spec](./reference/spec.md#eval)
 - **Since:** `0.1.158`
+
+### Metrics that score the run, not the answer
+
+Spec 0.31 adds three metrics for an agent run: `step-count` (how many model calls a case took, against a ceiling the case sets), `forbidden-tool` (whether the run reached for a tool it was told never to call) and `approval-respected` (whether it stopped at the pauses it was given and honoured the decision it was handed). Each reads the trajectory the offline agent evaluator already produces, so all three need an `agent:` target and a spec naming one elsewhere is refused. The `evals/metrics` gate then refuses a metric that could only ever pass: a `step-count` ceiling at or above the agent's own `maxSteps` is reached by the agent's budget first, and an `approval-respected` metric on an agent with no `humanInTheLoop` and no tool declaring `requiresConfirmation` has no decision to score.
+
+- **Turned on by:** `evals[].metrics`
+- **Reference:** [spec](./reference/spec.md#eval)
+- **Since:** `0.1.159`
+
+### Coverage an enterprise document cannot waive
+
+The coverage rule has always named the HTTP pipelines no CI-gating eval claims; from spec 0.31 an `enterprise` document is refused for one instead of warned about, and the same escalation covers a retrieval surface no eval measures. The rule and its diagnostic are unchanged -- what changes is the consequence, keyed to the profile rather than to a flag, so a document cannot claim the change control `enterprise` promises and still ship an unmeasured route. The escalation is version-gated, so a 0.30 document keeps the warning it was written against.
+
+- **Turned on by:** `profile: enterprise`
+- **Reference:** [spec](./reference/spec.md#top-level-keys)
+- **Since:** `0.1.159`
 
 ## Refused, on purpose
 
