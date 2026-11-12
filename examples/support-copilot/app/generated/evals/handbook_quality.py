@@ -22,6 +22,7 @@ from aid_runtime import (
     RetrievalGate,
     RetrievalMetric,
     Threshold,
+    require_reviewed,
     retrieval_metrics,
 )
 
@@ -104,7 +105,7 @@ async def run(deps: Deps | None = None) -> EvalRun:
     """
 
     container = build_deps() if deps is None else deps
-    dataset = load_dataset()
+    dataset = require_reviewed(load_dataset(), eval_id=EVAL_ID)
     return await RetrievalGate(thresholds(), metrics=metrics()).sample(
         cases(dataset),
         container.retriever(RETRIEVER),

@@ -73,6 +73,10 @@ function jsonl(spans: readonly TraceSpan[]): string {
 function withTraces(spans: readonly TraceSpan[]): Project {
   const made = scratch();
   made.write('traces/trace-1.jsonl', jsonl(spans));
+  // `trace export` reads the spec to learn what a trace may carry, so every project needs
+  // one. This is the smallest document `aid validate` accepts: no sensitive field, which
+  // is what lets an export write the payloads it captured.
+  made.setSpec('specVersion: "0.31"\nproject:\n  name: minimal\n');
   return made;
 }
 
@@ -88,6 +92,145 @@ function codes(made: Project, argv: readonly string[]): readonly string[] {
 function exportOf(made: Project, extra: readonly string[] = []): readonly string[] {
   return ['trace', 'export', '--dataset', 'demo', '--from', join(made.root, 'traces'), ...extra];
 }
+
+/**
+ * A valid `profile: enterprise` document: every control the profile's gates demand, and
+ * nothing else, so a test that fails here is about the export rather than the profile.
+ */
+const ENTERPRISE_SPEC = `specVersion: "0.31"
+project:
+  name: ledger
+  namespace: aid.test
+  targets: [py-fastapi]
+profile: enterprise
+models:
+  small:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+observability:
+  trace: true
+  export: otlp
+  endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT
+prompts:
+  answer:
+    version: 1
+    model: small
+    template: "Answer the request."
+    output:
+      kind: text
+guardrails:
+  both:
+    engine: bedrock
+    stages: [input, output]
+    action: block
+    onFail:
+      message: rejected.
+      log: true
+deployments:
+  api:
+    target: container
+    cloud: aws
+    region: eu-central-1
+    secrets: [OPENAI_API_KEY]
+    audit:
+      sink: cloudwatch
+      retentionDays: 400
+    approvals:
+      require: [platform]
+      minApprovers: 1
+    identity:
+      kind: oidc
+      issuer: https://idp.example.com
+    network:
+      private: true
+evals:
+  answers:
+    target: pipeline:ledger
+    dataset:
+      source: file
+      uri: datasets/ledger.jsonl
+    metrics:
+      - kind: contains
+        field: reply
+        value: ok
+    gate:
+      ci: true
+pipelines:
+  ledger:
+    trigger:
+      http:
+        method: get
+        path: /ledger
+    steps:
+      - generate:
+          prompt: answer
+          as: reply
+`;
+
+describe('aid trace export: the spec decides what may leave', () => {
+  it('refuses when there is no spec to apply, and names --spec', () => {
+    // A trace directory without a document is not a project, and the export has no
+    // policy to apply -- so the refusal is about the missing document, not the traces.
+    const made = scratch();
+    made.write('traces/trace-1.jsonl', jsonl([span()]));
+
+    const run = jsonRun(made, exportOf(made));
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run).map((item) => item.code)).toEqual(['cli/trace-export-spec-required']);
+    expect(run.stdout).toContain('--spec');
+  });
+
+  it('refuses a spec that does not pass its gates, and carries the gate diagnosis', () => {
+    const made = withTraces([span()]);
+    made.setSpec('specVersion: "99.0"\nproject:\n  name: minimal\n');
+
+    const run = jsonRun(made, exportOf(made));
+
+    expect(run.code).toBe(1);
+    const found = diagnosticsOf(run).map((item) => item.code);
+    expect(found).toContain('cli/trace-export-spec-invalid');
+    // The spec's own diagnostic travels with the refusal, so the operator fixes the
+    // document rather than guessing which gate the export meant.
+    expect(found.length).toBeGreaterThan(1);
+    expect(made.exists('datasets/demo.json')).toBe(false);
+  });
+
+  it('refuses to export text the spec says a trace must never carry', () => {
+    // The set names a field, and an export writes prose: there is no way to remove the
+    // field from a recorded prompt, so nothing is written.
+    const made = withTraces([span()]);
+    made.setSpec(
+      'specVersion: "0.31"\nproject:\n  name: minimal\nobservability:\n  redact: [email]\n',
+    );
+
+    const run = jsonRun(made, exportOf(made));
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run).map((item) => item.code)).toEqual([
+      'cli/trace-export-redaction-unapplied',
+    ]);
+    expect(run.stdout).toContain('email');
+    expect(made.exists('datasets/demo.json')).toBe(false);
+  });
+
+  it('refuses an enterprise document, because nothing removes what must not travel', () => {
+    // `enterprise` promises that what leaves the deployment can be accounted for. With no
+    // runtime redaction hook there is no such export to offer, so the answer is no.
+    const made = withTraces([span()]);
+    made.setSpec(ENTERPRISE_SPEC);
+
+    const run = jsonRun(made, exportOf(made, ['--spec', 'app/app.spec.yaml']));
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run).map((item) => item.code)).toEqual([
+      'cli/trace-export-enterprise-capture',
+    ]);
+    expect(made.exists('datasets/demo.json')).toBe(false);
+  });
+});
 
 describe('aid trace export', () => {
   it('writes the canonical dataset form, byte for byte', () => {

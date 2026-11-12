@@ -24,6 +24,7 @@ from aid_runtime.evals import (
     JsonSchemaValid,
     Metric,
     Threshold,
+    require_reviewed,
     run_evaluation,
 )
 
@@ -126,7 +127,7 @@ async def run(deps: Deps | None = None) -> EvalRun:
 
     container = build_deps() if deps is None else deps
     return await run_evaluation(
-        load_dataset(),
+        require_reviewed(load_dataset(), eval_id=EVAL_ID),
         build_runner(container),
         metrics(),
         runs=SAMPLES,

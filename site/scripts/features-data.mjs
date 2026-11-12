@@ -529,10 +529,19 @@ export const SHIPPED_FEATURES = [
     id: 'trace-export',
     title: 'A dataset from the runs you already have',
     detail:
-      '`aid trace export --dataset <name>` turns a directory of traced runs into an eval dataset, so the first cases for a new agent come from production traffic instead of from someone guessing what people will ask. One run is one case: the prompt it was first given, the answer it last produced, and the calls, cost, wall time, model and tools beside it. The file is written in the same canonical form the Python `Dataset` writes, so a regenerated dataset diffs cleanly. The exit code separates the two failures that matter -- a run that recorded no payloads (the sink keeps text only when the application ran with `AID_TRACE_CONTENT=1`, and the refusal names that variable) and a file that already exists (refused without `--force`, because it may have been curated by hand since). Every case is tagged `unreviewed`, because `expected` is what the run happened to output: it is a record of behaviour, not a judgement about a good answer, and the honest next step is a person editing the file.',
+      '`aid trace export --dataset <name>` turns a directory of traced runs into an eval dataset, so the first cases for a new agent come from production traffic instead of from someone guessing what people will ask. One run is one case: the prompt it was first given, the answer it last produced, and the calls, cost, wall time, model and tools beside it. The file is written in the same canonical form the Python `Dataset` writes, so a regenerated dataset diffs cleanly. The exit code separates the two failures that matter -- a run that recorded no payloads (the sink keeps text only when the application ran with `AID_TRACE_CONTENT=1`, and the refusal names that variable) and a file that already exists (refused without `--force`, because it may have been curated by hand since). Every case is tagged `unreviewed`, because `expected` is what the run happened to output: it is a record of behaviour, not a judgement about a good answer, and the honest next step is a person editing the file. The export reads the spec first and applies the policy it finds: a document that names a field a trace must never carry, or one under `profile: enterprise`, refuses the export rather than writing text it has no way to redact.',
     declaredBy: 'aid trace export',
     href: './reference/cli.md#trace',
     since: '0.1.154',
+  },
+  {
+    id: 'eval-unreviewed',
+    title: 'Unreviewed cases refuse a CI gate',
+    detail:
+      '`expected` in an exported case is what a run happened to output, so every case is tagged `unreviewed` and the tag is operative rather than advisory: a `gate.ci: true` eval refuses a dataset that still carries it, naming up to five of the cases and the two ways forward -- review each case and drop the tag, or take the eval out of the gate. A hand-curated dataset is unaffected, and so is an exported one until it is wired into a gate, which is exactly the moment an unexamined expectation would otherwise start deciding whether a change ships. The refusal lives in the runtime `Dataset` layer rather than in generated code, so a module edited by hand keeps it.',
+    declaredBy: 'evals[].gate.ci',
+    href: './reference/cli.md#trace',
+    since: '0.1.160',
   },
   {
     id: 'agent-trajectory-evals',
@@ -879,6 +888,7 @@ export const CAPABILITY_FAMILIES = [
       'promotion-gate',
       'feedback-signals',
       'trace-export',
+      'eval-unreviewed',
       'agent-trajectory-evals',
       'trajectory-metrics',
       'enterprise-eval-coverage',

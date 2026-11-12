@@ -85,6 +85,31 @@ describe('an agent eval module', () => {
     expect(source).toContain('async def evaluate() -> GateResult:');
   });
 
+  it('refuses an unreviewed dataset when the gate decides CI', () => {
+    // `aid trace export` tags every case it writes `unreviewed`, so a dataset that came
+    // from traffic must not be able to approve a release without a human reading it.
+    const source = agentEvalSource();
+
+    expect(source).toContain('require_reviewed(load_dataset(), eval_id=EVAL_ID)');
+    expect(source).toContain('require_reviewed');
+  });
+
+  it('leaves an unreviewed dataset alone when the gate does not decide CI', () => {
+    // An advisory eval is exactly where an unreviewed case is useful: it is how a team
+    // measures a candidate before promoting it, so refusing there would block the loop.
+    const advisory = agentSpecText().replace(
+      '        max: 0.05\n    gate:\n      ci: true\n',
+      '        max: 0.05\n    gate:\n      ci: false\n',
+    );
+    const source =
+      planPyFastApi(lowerForSpecText(advisory)).files.find(
+        (candidate) => candidate.path === evalModulePath(EVAL_ID),
+      )?.content ?? '';
+
+    expect(source).toContain('load_dataset(),');
+    expect(source).not.toContain('require_reviewed');
+  });
+
   it('names the agent as its subject and reuses MODEL so baselines read uniformly', () => {
     const source = agentEvalSource();
 

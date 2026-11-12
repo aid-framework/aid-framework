@@ -519,6 +519,41 @@ document at `0.30` that validated before still validates, unchanged. Bumping the
 would force every document to edit a line to gain nothing, which is exactly the "bump on principle"
 this page tells you not to do.
 
+## 0.1.160: `unreviewed` stops being a label {#unreviewed-cases-release}
+
+This is a **release**, not a spec version. `specVersion` stays `0.31`: no key, enum value or
+constraint changed. What changed is that a tag the export has always written now refuses something
+in the place it was always meant to.
+
+### What changed
+
+| Before | Now |
+| --- | --- |
+| `aid trace export` tagged every case `unreviewed` and said so in the docs. The tag was advisory: an eval with `gate.ci: true` scored the cases and nothing looked at the tag. | The generated eval refuses a dataset that still carries `unreviewed` when `gate.ci: true`, naming up to five case ids and both ways forward. An advisory eval (`gate.ci` absent or false) still runs them. |
+| `aid trace export` wrote a dataset without reading the spec. | It reads the spec first, applies `observability.redact` and `observability.feedback.pii`, and refuses an unreadable or gate-failing document, a document naming a field a trace must never carry, and any export under `profile: enterprise`. |
+
+The refusal lives in the runtime `Dataset` layer, not in the exported module, so a module edited
+after generation keeps it. It also means the check holds for a dataset assembled by hand, which is
+why the export is not the only writer that meets it.
+
+### What you have to do
+
+If you exported a dataset and wired it into an eval that gates CI, that eval now refuses at
+runtime. Two ways out, both named in the error: review each case and drop the `unreviewed` tag, or
+take the eval out of the gate while the set is a draft. A hand-curated dataset is unaffected, and
+so is an exported one that no gate reads yet.
+
+If a script calls `aid trace export` outside the project root, it now needs `--spec` pointing at
+the document. The default path is still `app/app.spec.yaml`, so a script running in the project
+root needs no change.
+
+### Why there is no `specVersion` bump
+
+Same reason as `0.1.150`: a bump is owed to a **spec language change**. Both edits here are
+descriptions in the JSON schema plus behaviour in the CLI and runtime. A document at `0.31` that
+validated before still validates, byte for byte, and the only documents that newly refuse are ones
+whose export could not have been honoured honestly.
+
 | Spec | Backward compatible | What it added |
 | --- | --- | --- |
 | 0.30 | Yes | `observability.alerts`, the threshold each declared metric should page on |

@@ -45,6 +45,8 @@ export interface TraceOptions {
   readonly dataset: string | undefined;
   /** `aid trace export --filter agent=<id>`. */
   readonly filter: string | undefined;
+  /** `aid trace export --spec <path>`. */
+  readonly spec: string | undefined;
   /** `aid trace export --version <version>`. */
   readonly version: string | undefined;
   /** `aid trace export --out <path>`. */
@@ -203,6 +205,7 @@ export function trace(context: CliContext, options: TraceOptions): CommandOutcom
       dataset: options.dataset,
       dir: options.dir,
       filter: options.filter,
+      spec: options.spec,
       version: options.version,
       out: options.out,
       force: options.force,

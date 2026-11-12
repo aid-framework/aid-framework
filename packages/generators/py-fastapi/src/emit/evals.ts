@@ -304,7 +304,19 @@ function runnerBuilder(contextVariable: string | undefined): string {
   ].join('\n');
 }
 
-function runBuilder(samples: number, judged: boolean): string {
+/**
+ * The dataset expression a generated `run()` hands the harness.
+ *
+ * A `gate.ci` eval wraps the loader in `require_reviewed`, so a dataset that still holds
+ * cases `aid trace export` produced and no human has read is refused instead of approving
+ * a release. The guard is in the runtime, not inlined here: an emitted module that someone
+ * hand-edits keeps the same refusal.
+ */
+function datasetExpression(ci: boolean): string {
+  return ci ? 'require_reviewed(load_dataset(), eval_id=EVAL_ID)' : 'load_dataset()';
+}
+
+function runBuilder(samples: number, judged: boolean, ci: boolean): string {
   return [
     'async def run(deps: Deps | None = None) -> EvalRun:',
     pythonDoc(
@@ -316,7 +328,7 @@ function runBuilder(samples: number, judged: boolean): string {
       ? `${INDENT}judge_call = await gateway_judge(container.gateway, JUDGE_MODEL)`
       : undefined,
     `${INDENT}return await run_evaluation(`,
-    `${INDENT}${INDENT}load_dataset(),`,
+    `${INDENT}${INDENT}${datasetExpression(ci)},`,
     `${INDENT}${INDENT}build_runner(container),`,
     judged ? `${INDENT}${INDENT}metrics(judge_call),` : `${INDENT}${INDENT}metrics(),`,
     `${INDENT}${INDENT}runs=SAMPLES,`,
@@ -402,6 +414,7 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
     judged ? 'gateway_judge' : undefined,
     'GatewayRunner',
     'Metric',
+    evaluation.gate.ci ? 'require_reviewed' : undefined,
     'Threshold',
     'run_evaluation',
   ].filter((name): name is string => name !== undefined);
@@ -497,7 +510,7 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
         scoredMetric?.expression,
       ),
       runnerBuilder(contextVariable),
-      runBuilder(evaluation.gate.samples, judged),
+      runBuilder(evaluation.gate.samples, judged, evaluation.gate.ci),
       [
         'def gate(measured: EvalRun, baseline: EvalBaseline) -> GateResult:',
         pythonDoc(
@@ -612,6 +625,7 @@ function emitAgentEval(ir: IR, evaluation: EvalShape, agentId: string): EmittedF
             'EvalBaseline',
             ...inline.map((binding) => metricClass(binding.expression)),
             'Metric',
+            ...(evaluation.gate.ci ? ['require_reviewed'] : []),
             'Threshold',
             'run_evaluation',
           ]),
@@ -699,7 +713,7 @@ function emitAgentEval(ir: IR, evaluation: EvalShape, agentId: string): EmittedF
           INDENT,
         ),
         `${INDENT}return await run_evaluation(`,
-        `${INDENT}${INDENT}load_dataset(),`,
+        `${INDENT}${INDENT}${datasetExpression(evaluation.gate.ci)},`,
         `${INDENT}${INDENT}build_runner(),`,
         `${INDENT}${INDENT}metrics(),`,
         `${INDENT}${INDENT}runs=SAMPLES,`,
@@ -838,6 +852,7 @@ function emitRetrievalEval(ir: IR, evaluation: EvalShape): EmittedFile {
             'RetrievalGate',
             'RetrievalMetric',
             'Threshold',
+            ...(evaluation.gate.ci ? ['require_reviewed'] : []),
             'retrieval_metrics',
           ]),
         ],
@@ -893,7 +908,7 @@ function emitRetrievalEval(ir: IR, evaluation: EvalShape): EmittedFile {
         `${INDENT}${INDENT}for case in dataset.cases`,
         `${INDENT})`,
       ].join('\n'),
-      runBuilderForRetrieval(evaluation.gate.samples),
+      runBuilderForRetrieval(evaluation.gate.samples, evaluation.gate.ci),
       [
         'def gate(measured: EvalRun, baseline: EvalBaseline) -> GateResult:',
         pythonDoc(
@@ -909,7 +924,7 @@ function emitRetrievalEval(ir: IR, evaluation: EvalShape): EmittedFile {
   );
 }
 
-function runBuilderForRetrieval(samples: number): string {
+function runBuilderForRetrieval(samples: number, ci: boolean): string {
   return [
     'async def run(deps: Deps | None = None) -> EvalRun:',
     pythonDoc(
@@ -918,7 +933,7 @@ function runBuilderForRetrieval(samples: number): string {
       INDENT,
     ),
     `${INDENT}container = build_deps() if deps is None else deps`,
-    `${INDENT}dataset = load_dataset()`,
+    `${INDENT}dataset = ${datasetExpression(ci)}`,
     `${INDENT}return await RetrievalGate(thresholds(), metrics=metrics()).sample(`,
     `${INDENT}${INDENT}cases(dataset),`,
     `${INDENT}${INDENT}container.retriever(RETRIEVER),`,

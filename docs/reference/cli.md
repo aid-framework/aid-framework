@@ -230,7 +230,7 @@ aid cost [dir] [--since <date>] [--budget <usd>]
 inspect a traced run, or export runs as a dataset an eval can read
 
 ```sh
-aid trace [run | export] [--dir <dir>] [--all] [--dataset <name>] [--from <dir>] [--filter agent=<id>] [--version <v>] [--out <path>] [--force]
+aid trace [run | export] [--dir <dir>] [--all] [--dataset <name>] [--from <dir>] [--filter agent=<id>] [--spec <path>] [--version <v>] [--out <path>] [--force]
 ```
 
 | Option | Description |
@@ -240,6 +240,7 @@ aid trace [run | export] [--dir <dir>] [--all] [--dataset <name>] [--from <dir>]
 | `--dataset <name>` | export: the dataset name, which becomes datasets/&lt;name&gt;.json |
 | `--from <dir>` | export: the trace directory to read (same as --dir) |
 | `--filter <agent-id>` | export: only export runs whose agent span names this agent |
+| `--spec <path>` | export: the spec whose redaction policy governs it (default: app/app.spec.yaml) |
 | `--version <v>` | export: the dataset version (default: 1) |
 | `--out <path>` | export: the file to write (default: datasets/&lt;name&gt;.json) |
 | `--force` | export: replace an existing dataset file |

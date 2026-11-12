@@ -336,10 +336,20 @@ What is refused:
 - An existing dataset file without `--force`, because it may have been curated by hand since it
   was generated. Bump `--version` when the cases change, since the eval gate will not compare
   across versions.
+- A spec that cannot be read, or does not pass its own gates — an export applies the policy the
+  document declares, so there is nothing to export from an unreadable one.
+- A spec that names a field a trace must never carry, or one under `profile: enterprise`, because
+  the export writes recorded prompts verbatim and nothing in the runtime redacts a named field out
+  of prose yet. The refusal goes away when trace redaction ships.
 
 Every exported case is tagged `unreviewed`. `expected` is what the run happened to output, so
 `exact-match` against it measures stability rather than quality — a better-worded answer fails.
-The tag is the honest label for that, and a person editing the file is what removes it.
+
+**Unreviewed cases refuse a CI gate**. The tag is operative rather than advisory: an eval with
+`gate.ci: true` refuses a dataset that still carries it, naming the cases and the two ways forward
+— review each case and drop the tag, or take the eval out of the gate. A hand-curated dataset is
+unaffected, and so is an exported one until it is wired into a gate. The check lives in the
+runtime `Dataset` layer, so a module edited by hand keeps it.
 
 **A trajectory eval that runs an agent.** A pipeline eval scores a route; an agent needs its
 *calls* scored, so the eval names the agent as its target.

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from aid_runtime import Dataset, EvalCase, EvalError
+from aid_runtime import Dataset, EvalCase, EvalError, UnreviewedCasesError, require_reviewed
 
 
 def _dataset(*, tags: tuple[str, ...] = ()) -> Dataset:
@@ -119,3 +119,37 @@ def test_a_dataset_round_trips_through_a_path(tmp_path: Path) -> None:
 
     assert Dataset.from_path(path) == dataset
     assert Dataset.from_path(str(path)) == dataset
+
+
+def test_require_reviewed_passes_a_dataset_with_no_unreviewed_case() -> None:
+    dataset = _dataset(tags=("curated",))
+
+    assert require_reviewed(dataset, eval_id="refunds") is dataset
+
+
+def test_require_reviewed_refuses_a_dataset_exported_from_traces() -> None:
+    """The tag stops being a comment: an unreviewed case cannot approve a release."""
+    dataset = _dataset(tags=("trace-export", "unreviewed"))
+
+    with pytest.raises(UnreviewedCasesError) as refusal:
+        require_reviewed(dataset, eval_id="refunds")
+
+    message = str(refusal.value)
+    assert "'refunds'" in message
+    assert "'d'" in message
+    assert "1 case(s) tagged 'unreviewed': a" in message
+    assert "gate.ci: false" in message
+
+
+def test_require_reviewed_names_at_most_five_cases_and_counts_the_rest() -> None:
+    """A dataset exported from a busy service has thousands; the message stays readable."""
+    cases = tuple(EvalCase(id=f"c{index}", input="Q", tags=("unreviewed",)) for index in range(8))
+    dataset = Dataset(name="d", version="1", cases=cases)
+
+    with pytest.raises(UnreviewedCasesError) as refusal:
+        require_reviewed(dataset, eval_id="refunds")
+
+    message = str(refusal.value)
+    assert "8 case(s)" in message
+    assert "c0, c1, c2, c3, c4 and 3 more" in message
+    assert "c5" not in message
