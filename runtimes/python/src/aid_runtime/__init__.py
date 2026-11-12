@@ -112,6 +112,7 @@ from aid_runtime.errors import (
     ToolNotFoundError,
     ToolPermissionError,
     UnknownModelAliasError,
+    UnreviewedCasesError,
 )
 from aid_runtime.evals import (
     AgentEvalRunner,
@@ -152,6 +153,7 @@ from aid_runtime.evals import (
     gateway_judge,
     metric_names,
     normalize,
+    require_reviewed,
     run_evaluation,
     z_critical,
 )
@@ -347,7 +349,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.159"
+__version__ = "0.1.160"
 
 __all__ = [
     "AGENT_LABEL",
@@ -574,6 +576,7 @@ __all__ = [
     "Transcript",
     "TranscriptEntry",
     "UnknownModelAliasError",
+    "UnreviewedCasesError",
     "VectorStore",
     "VectorStoreSpec",
     "VertexProvider",
@@ -634,6 +637,7 @@ __all__ = [
     "record_usage",
     "reduce_step",
     "repair_prompt",
+    "require_reviewed",
     "reranker_for",
     "resolve_source",
     "resolve_uri",

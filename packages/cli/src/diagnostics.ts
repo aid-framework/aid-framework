@@ -120,10 +120,14 @@ export const CLI_DIAGNOSTIC_CODES = {
   // `AID_TRACE_CONTENT` asks for it, so that refusal names the variable rather than
   // leaving a reader to wonder why an expensive run produced no cases.
   traceExportDatasetRequired: 'cli/trace-export-dataset-required',
+  traceExportEnterpriseCapture: 'cli/trace-export-enterprise-capture',
   traceExportFilterInvalid: 'cli/trace-export-filter-invalid',
   traceExportFilterNoMatch: 'cli/trace-export-filter-no-match',
   traceExportNoCases: 'cli/trace-export-no-cases',
   traceExportPartial: 'cli/trace-export-partial',
+  traceExportRedactionUnapplied: 'cli/trace-export-redaction-unapplied',
+  traceExportSpecInvalid: 'cli/trace-export-spec-invalid',
+  traceExportSpecRequired: 'cli/trace-export-spec-required',
   traceExportWouldOverwrite: 'cli/trace-export-would-overwrite',
   traceExportUnwritable: 'cli/trace-export-unwritable',
   traceUnknownSubcommand: 'cli/trace-unknown-subcommand',

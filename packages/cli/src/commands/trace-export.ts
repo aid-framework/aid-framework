@@ -21,11 +21,27 @@
  * it. A dataset is versioned and the eval gate refuses to compare across versions, so
  * bumping `--version` is the deliberate act that marks a curation pass.
  *
+ * ## The spec decides what may be exported
+ *
+ * An export writes prompts and completions verbatim, so it is the one command that can
+ * move text out of a deployment and into a git-tracked file. It therefore reads the spec
+ * (`--spec`, defaulting to the project's `app/app.spec.yaml`) and refuses in two cases
+ * rather than exporting content the document does not allow:
+ *
+ * - the spec says a trace must never carry some field, and this command cannot strip a
+ *   *named* field out of prose -- so it writes nothing rather than something forbidden;
+ * - the profile is `enterprise`, where captured content may not leave the deployment at
+ *   all until a redaction hook exists to remove what must not travel.
+ *
+ * Both refusals disappear when runtime redaction ships; that is the point of asking here,
+ * where a wrong answer is recoverable, rather than at review time, where it is not.
+ *
  * Exit codes:
  *
  * - `2` for a wrong invocation: no `--dataset`, a `--filter` that is not
- *   `agent=<id>`, a directory with nothing exportable in it, or an existing file this
- *   would overwrite without `--force`.
+ *   `agent=<id>`, a spec that cannot be read or does not pass its gates, a spec whose
+ *   policy forbids exporting captured content, a directory with nothing exportable in
+ *   it, or an existing file this would overwrite without `--force`.
  * - `1` only when the dataset could not be written.
  * - `0` when the file was written.
  */
@@ -39,6 +55,8 @@ import { CLI_DIAGNOSTIC_CODES, cliError, cliWarning } from '../diagnostics.js';
 import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE, type ExitCode } from '../exit.js';
 import type { CommandOutcome } from '../output.js';
 import { group, outcome } from '../output.js';
+import { lowerSpec, readSpec } from '../pipeline.js';
+import { DEFAULT_SPEC_PATH } from '../targets.js';
 import type { TraceRun, TraceSpan } from '../trace.js';
 import { ATTRIBUTES, runsOf } from '../trace.js';
 import { displayPath, readTraceDir, resolveTraceDir, TRACE_DIR_ENV } from '../trace-dir.js';
@@ -50,6 +68,8 @@ export interface TraceExportOptions {
   readonly dir: string | undefined;
   /** `agent=<id>`: only export runs whose agent span names this agent. */
   readonly filter: string | undefined;
+  /** The spec whose policy governs the export; defaults to the project's spec. */
+  readonly spec: string | undefined;
   /** The dataset's `version`; defaults to `1`. */
   readonly version: string | undefined;
   /** Where to write; defaults to `datasets/<name>.json`. */
@@ -197,6 +217,103 @@ function datasetJson(name: string, version: string, cases: readonly ExportedCase
   });
 }
 
+/**
+ * What the spec says about exporting recorded text.
+ *
+ * `withheld` is the trace redaction set, which the security gate has already refused if
+ * it is looser than the fields the IR marks sensitive. An empty set means the document
+ * forbids nothing, and an export may write the payloads it captured.
+ */
+interface ExportPolicy {
+  readonly specPath: string;
+  readonly profile: string;
+  readonly withheld: readonly string[];
+}
+
+type PolicyRead =
+  | { readonly ok: true; readonly policy: ExportPolicy }
+  | { readonly ok: false; readonly outcome: CommandOutcome };
+
+/**
+ * Read the spec and decide whether this project may export captured content.
+ *
+ * `lowerSpec` is the same path `aid validate` takes, gates included, so an export can
+ * never be produced from a document the build would refuse -- which matters here more
+ * than elsewhere, because the output is a committed file other tooling trusts.
+ */
+function exportPolicy(context: CliContext, specPath: string): PolicyRead {
+  const read = readSpec(context, specPath);
+  if (!read.ok) {
+    return {
+      ok: false,
+      outcome: refusal(
+        CLI_DIAGNOSTIC_CODES.traceExportSpecRequired,
+        `cannot read the spec at "${specPath}", and an export applies the policy it declares.`,
+        `Pass --spec <path> to name the document, or run \`aid init\` (the default is ${DEFAULT_SPEC_PATH}).`,
+        `aid: cannot read the spec at "${specPath}". Pass --spec <path>.\n`,
+        EXIT_USAGE,
+      ),
+    };
+  }
+
+  const lowered = lowerSpec(read.text, specPath);
+  if (!lowered.ok) {
+    return {
+      ok: false,
+      outcome: outcome({
+        command: 'trace export',
+        exitCode: EXIT_FAILURE,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.traceExportSpecInvalid,
+            message: `"${specPath}" does not pass its build-time gates, so there is no agreed policy for what a trace may carry.`,
+            hint: 'Run `aid validate` on the same file and fix what it reports.',
+          }),
+          ...lowered.diagnostics,
+        ],
+        text: `aid: "${specPath}" does not pass its gates; nothing was exported.\n`,
+      }),
+    };
+  }
+
+  const policy: ExportPolicy = {
+    specPath,
+    profile: lowered.ir.profile,
+    withheld: lowered.ir.observability.redact,
+  };
+
+  // `enterprise` promises that what leaves a deployment can be accounted for. Captured
+  // prompts and completions leave verbatim, and no runtime hook removes anything from
+  // them yet, so there is no honest enterprise export of content to offer.
+  if (policy.profile === 'enterprise') {
+    return {
+      ok: false,
+      outcome: refusal(
+        CLI_DIAGNOSTIC_CODES.traceExportEnterpriseCapture,
+        `"${specPath}" is an enterprise document, and capturing prompts and completions into a dataset is content leaving the deployment.`,
+        'Nothing in the runtime removes a withheld field from recorded text yet, so no enterprise export of content can be made. Record the runs without AID_TRACE_CONTENT=1 to export structure only, or wait for trace redaction to ship.',
+        'aid: an enterprise profile does not export captured content.\n',
+        EXIT_USAGE,
+      ),
+    };
+  }
+
+  if (policy.withheld.length > 0) {
+    return {
+      ok: false,
+      outcome: refusal(
+        CLI_DIAGNOSTIC_CODES.traceExportRedactionUnapplied,
+        `"${specPath}" declares ${group(policy.withheld.length)} field(s) a trace must never carry (${policy.withheld.join(', ')}), and an export writes the recorded text verbatim.`,
+        'This command cannot strip a named field out of prose, so it exports nothing rather than text the document forbids. Remove the declaration if the field may appear in a trace; the runtime hook that applies it is what will lift this refusal.',
+        `aid: "${specPath}" forbids ${policy.withheld.join(', ')} in a trace; nothing was exported.\n`,
+        EXIT_USAGE,
+      ),
+    };
+  }
+
+  return { ok: true, policy };
+}
+
 function refusal(
   code: (typeof CLI_DIAGNOSTIC_CODES)[keyof typeof CLI_DIAGNOSTIC_CODES],
   message: string,
@@ -244,6 +361,10 @@ export function traceExport(context: CliContext, options: TraceExportOptions): C
 
   const version = options.version?.trim() ?? '';
   const resolvedVersion = version === '' ? '1' : version;
+
+  const specPath = options.spec ?? DEFAULT_SPEC_PATH;
+  const policy = exportPolicy(context, specPath);
+  if (!policy.ok) return policy.outcome;
 
   const resolved = resolveTraceDir(context, options.dir, command, '--from <dir>');
   if (resolved.kind === 'refused') return resolved.outcome;
@@ -386,6 +507,8 @@ export function traceExport(context: CliContext, options: TraceExportOptions): C
       path: targetShown,
       cases: cases.length,
       leftOut: withoutInput + withoutExpected,
+      spec: specPath,
+      profile: policy.policy.profile,
     },
     diagnostics,
     text: [
@@ -394,6 +517,7 @@ export function traceExport(context: CliContext, options: TraceExportOptions): C
       ...(withoutInput + withoutExpected === 0
         ? []
         : [`left out: ${group(withoutInput + withoutExpected)} run(s) with no exportable payload`]),
+      `policy: ${policy.policy.profile}, ${specPath} withholds no field from a trace`,
       `next: set evals[].dataset.uri to "${targetShown}" and curate the cases (every one is tagged "unreviewed").`,
     ].join('\n'),
   });

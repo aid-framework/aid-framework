@@ -27,6 +27,7 @@ from aid_runtime.evals import (
     Metric,
     Threshold,
     ToolTrace,
+    require_reviewed,
     run_evaluation,
 )
 from aid_runtime.providers import Provider, RecordedProvider
@@ -122,7 +123,7 @@ async def run() -> EvalRun:
     """Drive the agent over the dataset 3 times and return every metric's mean per run."""
 
     return await run_evaluation(
-        load_dataset(),
+        require_reviewed(load_dataset(), eval_id=EVAL_ID),
         build_runner(),
         metrics(),
         runs=SAMPLES,

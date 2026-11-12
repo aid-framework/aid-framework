@@ -654,7 +654,7 @@ describe('the pre-P7b example', () => {
   >;
 
   /**
-   * The one file this layer is allowed to move, and the reason.
+   * The declaration-only mover this pin exists to observe, and the reason.
    *
    * `observability.py` reports the *target's* declared capability set, not the spec's -- it
    * already named `embeddings` and `rerank` for an example that uses neither. Widening the
@@ -702,6 +702,13 @@ describe('the pre-P7b example', () => {
    * than excluded. `observability.py` keeps its pre-declaration digest on purpose: it is the
    * mover this pin exists to observe, and it now carries the metrics status helper as well as
    * the declaration block, which the second test below pins by name.
+   *
+   * The same two modules were re-recorded again by RFC 0003 Phase D, for the same reason and
+   * with no second file moving: `unreviewed` stops being advice and becomes a refusal, so a
+   * `gate.ci` eval samples `require_reviewed(load_dataset(), eval_id=EVAL_ID)` instead of a
+   * bare `load_dataset()`, and imports the guard. Both evals in this fixture gate CI, so both
+   * moved. A spec whose evals are advisory still emits the bare loader, which
+   * `agent-eval.test.ts` asserts directly rather than pinning here.
    */
   const DECLARATION_ONLY = 'app/generated/observability.py';
 

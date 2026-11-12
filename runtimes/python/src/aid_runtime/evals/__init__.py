@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from aid_runtime.evals.agent_runner import AgentEvalRunner, ApprovalPolicy
-from aid_runtime.evals.dataset import Dataset, EvalCase
+from aid_runtime.evals.dataset import Dataset, EvalCase, require_reviewed
 from aid_runtime.evals.gate import (
     BaselineGate,
     EvalBaseline,
@@ -89,6 +89,7 @@ __all__ = [
     "gateway_judge",
     "metric_names",
     "normalize",
+    "require_reviewed",
     "run_evaluation",
     "z_critical",
 ]

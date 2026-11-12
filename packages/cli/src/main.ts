@@ -281,7 +281,7 @@ export const COMMANDS: readonly Command[] = [
     name: 'trace',
     summary: 'inspect a traced run, or export runs as a dataset an eval can read',
     usage:
-      'trace [run | export] [--dir <dir>] [--all] [--dataset <name>] [--from <dir>] [--filter agent=<id>] [--version <v>] [--out <path>] [--force]',
+      'trace [run | export] [--dir <dir>] [--all] [--dataset <name>] [--from <dir>] [--filter agent=<id>] [--spec <path>] [--version <v>] [--out <path>] [--force]',
     maxPositionals: 2,
     flags: [
       valueFlag('dir', 'dir', 'the trace directory to read (default: $AID_TRACE_DIR)'),
@@ -289,6 +289,11 @@ export const COMMANDS: readonly Command[] = [
       valueFlag('dataset', 'name', 'export: the dataset name, which becomes datasets/<name>.json'),
       valueFlag('from', 'dir', 'export: the trace directory to read (same as --dir)'),
       valueFlag('filter', 'agent-id', 'export: only export runs whose agent span names this agent'),
+      valueFlag(
+        'spec',
+        'path',
+        'export: the spec whose redaction policy governs it (default: app/app.spec.yaml)',
+      ),
       valueFlag('version', 'v', 'export: the dataset version (default: 1)'),
       valueFlag('out', 'path', 'export: the file to write (default: datasets/<name>.json)'),
       booleanFlag('force', 'export: replace an existing dataset file'),
@@ -304,6 +309,7 @@ export const COMMANDS: readonly Command[] = [
         subcommand,
         dataset: args.values.get('dataset'),
         filter: args.values.get('filter'),
+        spec: args.values.get('spec'),
         version: args.values.get('version'),
         out: args.values.get('out'),
         force: args.booleans.has('force'),

@@ -12,9 +12,17 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from aid_runtime.errors import EvalError
+from aid_runtime.errors import EvalError, UnreviewedCasesError
 
-__all__ = ["Dataset", "EvalCase"]
+__all__ = ["UNREVIEWED_TAG", "Dataset", "EvalCase", "require_reviewed"]
+
+UNREVIEWED_TAG = "unreviewed"
+"""The tag ``aid trace export`` puts on every case it writes.
+
+A case carrying it was produced by a machine from captured traffic, so no human has
+read it. It is a legitimate case -- the raw material of the improvement loop -- but it
+is not evidence that a change is safe.
+"""
 
 
 class EvalCase(BaseModel):
@@ -110,3 +118,31 @@ class Dataset(BaseModel):
             if not case.get("approvals"):
                 case.pop("approvals", None)
         return payload
+
+
+def require_reviewed(dataset: Dataset, *, eval_id: str) -> Dataset:
+    """Refuse a dataset that still carries cases no human has reviewed.
+
+    Returns the dataset so a generated CI-gating eval can wrap its loader:
+    ``require_reviewed(load_dataset(), eval_id=EVAL_ID)``. An eval that does not gate
+    CI is left alone -- unreviewed cases are the point of the improvement loop.
+
+    The refusal is the product. A ``gate.ci`` eval decides whether a change ships, so a
+    case exported from traffic and never read would let unread data approve a release.
+    Dropping those cases silently would be worse than refusing: the dataset would look
+    complete while part of it never ran. The message names the cases and the fix, because
+    the fix is a human reading them -- nothing in the runtime can clear the tag for them.
+    """
+    unreviewed = dataset.by_tag(UNREVIEWED_TAG)
+    if not unreviewed:
+        return dataset
+    named = ", ".join(case.id for case in unreviewed[:5])
+    remainder = "" if len(unreviewed) <= 5 else f" and {len(unreviewed) - 5} more"
+    raise UnreviewedCasesError(
+        f"eval {eval_id!r} gates CI but its dataset {dataset.name!r} ({dataset.version}) "
+        f"carries {len(unreviewed)} case(s) tagged {UNREVIEWED_TAG!r}: {named}{remainder}. "
+        f"A case tagged {UNREVIEWED_TAG!r} came from `aid trace export` and no human has "
+        f"read it, so it cannot decide whether a change ships. Review each case, then drop "
+        f"{UNREVIEWED_TAG!r} from its tags; or point this eval at a dataset you curated. "
+        f"An eval with `gate.ci: false` may use an unreviewed dataset as it is."
+    )

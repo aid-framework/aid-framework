@@ -35,6 +35,7 @@ __all__ = [
     "ToolExecutionError",
     "ToolNotFoundError",
     "UnknownModelAliasError",
+    "UnreviewedCasesError",
 ]
 
 
@@ -334,4 +335,14 @@ class GateConfigurationError(EvalError):
     The load-bearing case: a threshold that references a metric whose result is
     itself produced by a model. Gating on one source of non-determinism using
     another is not a gate.
+    """
+
+
+class UnreviewedCasesError(GateConfigurationError):
+    """A CI-gating eval was handed a dataset that still carries unreviewed cases.
+
+    ``aid trace export`` writes every case it produces tagged ``unreviewed``, because
+    a machine turned captured traffic into a case and nobody has read it. That is the
+    raw material of the improvement loop, not evidence that a change is safe, so a
+    ``gate.ci`` eval refuses it rather than letting unread data approve a release.
     """
