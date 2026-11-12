@@ -110,7 +110,7 @@ export const SPEC_VERSIONS = [
   },
   {
     version: '0.27',
-    adds: 'Adds the top-level `observability` block, whose `export: otlp` states where spans go and names the variable holding the collector address instead of leaving the destination to a shell; and widens `evals[].target` to accept `agent:<id>`, which the spec language parses and the IR refuses, because no generator emits an agent eval yet.',
+    adds: 'Adds the top-level `observability` block, whose `export: otlp` states where spans go and names the variable holding the collector address instead of leaving the destination to a shell; and widens `evals[].target` to accept `agent:<id>`, which names an agent run so a trajectory metric has a subject.',
   },
   {
     version: '0.28',
@@ -136,5 +136,9 @@ export const SPEC_VERSION_CORRECTIONS = [
   {
     lead: 'Two published labels were wrong',
     body: 'The merge commit `dfdae40` (PR #171) and the `v0.1.142` release notes both call their work "spec 0.19". It is `0.25`. The constructs they ship are the top-level `profile` and `deployments[].cloud`, `.region` and `.audit`, which this page lists under `0.25`, and `aid validate` refuses them below it: `SECTION_MIN_VERSION.profile` and `DEPLOYMENT_PLACEMENT_MIN_VERSION` are both `0.25`. `0.19` is the floor of an unrelated gate, `RETRIEVAL_INCREMENTAL_MIN_VERSION`, so a document that declared `0.19` on the strength of those labels is refused until it declares `0.25`.',
+  },
+  {
+    lead: 'One row described a refusal that has been lifted',
+    body: 'The `0.27` row used to end by saying the IR refuses `agent:<id>` because no generator emits an agent eval. That was true when it was written, and it is not true now. The `py-fastapi` target declares `agent-evals` and emits an offline agent evaluator that runs the agent against a case and records the calls it made, so `ir/eval-trajectory` no longer refuses an `agent:` target there; it refuses a target that does not declare the capability, which today is `ts-vercel`, and [Targets](./targets.md) records that in its matrix. Nothing in the spec language moved: `0.27` is still the version that first parses `agent:<id>`, so no document has to change. A trajectory eval scored this way runs the agent against a scripted or recorded model, so it verifies the policy and plumbing of a run, not the quality of a model.',
   },
 ];

@@ -12,7 +12,7 @@ happens on the second run.
 | Tree | Files in the tree | In the manifest |
 | --- | --- | --- |
 | The tutorial from [getting started](getting-started.md) | 24 | 20 |
-| `examples/support-copilot` | 62 | 41 |
+| `examples/support-copilot` | 65 | 42 |
 
 The difference is not the generator being inconsistent. It is the rule: **the generator only
 manages what it can reproduce from the spec.** A file you write - `app/main.py`, an eval

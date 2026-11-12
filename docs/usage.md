@@ -341,6 +341,41 @@ Every exported case is tagged `unreviewed`. `expected` is what the run happened 
 `exact-match` against it measures stability rather than quality — a better-worded answer fails.
 The tag is the honest label for that, and a person editing the file is what removes it.
 
+**A trajectory eval that runs an agent.** A pipeline eval scores a route; an agent needs its
+*calls* scored, so the eval names the agent as its target.
+
+```yaml
+evals:
+  refund_trajectory:
+    target: agent:refund_agent
+    dataset: { source: file, uri: evals/refund_trajectory.json }
+    metrics:
+      - kind: tool-trace
+        expect: [lookup_customer, issue_refund]
+    gate:
+      ci: true
+      maxRegression: 0.05
+```
+
+What comes out:
+
+- An offline evaluator in the `py-fastapi` target — the generator that declares `agent-evals` —
+  which replays each case through the generated loop and reports the calls it made and the
+  response metrics, under the agent's own step and cost ceiling.
+
+What is refused:
+
+- `target: agent:<id>` on a target that does not declare `agent-evals`, as `ir/eval-trajectory`,
+  rather than shipping an evaluator nothing runs.
+- `tool-trace` on a pipeline target, with a hint naming `target: agent:<id>` as the fix, because
+  a route's own calls are not a trajectory.
+
+The evaluator drives the agent with a scripted or recorded model, so a case verifies the policy
+and plumbing of a run — which tools were reachable, in what order they were called, whether an
+approval was respected — and not the quality of a model answer. Model quality is what the prompt
+and pipeline evals measure; a trajectory case that passes while the wording is poor is working as
+designed.
+
 Covers:
 
 - **Eval coverage**
@@ -348,6 +383,7 @@ Covers:
 - **Promotion policy for a candidate**
 - **Declared feedback signals**
 - **A dataset from the runs you already have**
+- **A trajectory eval that runs an agent**
 
 ## Agents and tools
 
