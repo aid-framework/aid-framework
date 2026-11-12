@@ -1,0 +1,21 @@
+{
+  "name": "refund_trajectory",
+  "version": "1",
+  "cases": [
+    {
+      "id": "double-charge",
+      "input": "I was charged twice for my subscription this month. Please refund the duplicate.",
+      "approvals": ["approve"]
+    },
+    {
+      "id": "goodwill-credit",
+      "input": "The export has been broken for a week. I would like the month credited back.",
+      "approvals": ["approve"]
+    },
+    {
+      "id": "small-refund",
+      "input": "Cancelled within the trial window but was still billed. Refund please.",
+      "approvals": ["approve"]
+    }
+  ]
+}

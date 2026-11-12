@@ -1,4 +1,4 @@
-specVersion: "0.2"
+specVersion: "0.27"
 
 # The example app: the smallest spec that still exercises every contract the
 # py-fastapi target emits -- a model gateway with a pinned model and a fallback, a
@@ -521,6 +521,41 @@ evals:
       ci: true
       maxRegression: 0.05
       samples: 5
+  # A third harness again, and the only one that measures a *run* rather than an answer:
+  # `classify_quality` asks whether one prompt shaped one reply, `handbook_quality` asks
+  # whether retrieval ranked the right pages, and this asks whether the agent got to the
+  # refund by the route the spec allows -- `lookup_customer` before `issue_refund` -- and
+  # inside the budget `refund_agent.maxCostBudget` sets.
+  #
+  # Every case declares `approvals` because `refund_agent.humanInTheLoop.when` is `"true"`:
+  # the run pauses before it acts and the decision comes from the row. That is the whole
+  # point of the fixture -- the pause is reached by the real loop and resumed from a real
+  # checkpoint, so a regression in either fails this eval instead of a mock of it.
+  #
+  # What a green run here does *not* mean: the loop replays a recorded provider, so this
+  # measures policy and plumbing, not how a model would choose. See the callout on the
+  # `agent:` target in docs/reference/eval-metrics.md.
+  refund_trajectory:
+    description: Whether the refund agent calls the right tools, in order, inside its budget.
+    target: agent:refund_agent
+    dataset:
+      source: file
+      uri: evals/refund_trajectory.json
+    metrics:
+      # `ordered: true` makes the expectation a subsequence rather than a set, which is
+      # what makes the pair meaningful: issuing a refund before looking the customer up
+      # is the failure this eval exists to catch.
+      - kind: tool-trace
+        expect: [lookup_customer, issue_refund]
+        ordered: true
+      # The per-case ceiling the harness differences out of the gateway ledger, so a run
+      # that reaches the right tools by an expensive route still fails.
+      - kind: cost
+        max: 0.05
+    gate:
+      ci: true
+      maxRegression: 0.1
+      samples: 3
 
 pipelines:
   answer_ticket:

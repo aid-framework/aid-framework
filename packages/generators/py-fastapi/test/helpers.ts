@@ -24,7 +24,12 @@ import {
 } from '@aid-framework/generator-sdk';
 import type { IR } from '@aid-framework/ir';
 import { buildIR, runGates } from '@aid-framework/ir';
-import { checkSpecText } from '@aid-framework/spec';
+import {
+  AGENT_EVAL_TARGET_MIN_VERSION,
+  checkSpecText,
+  type SpecVersion,
+  specVersionAtLeast,
+} from '@aid-framework/spec';
 
 import { PY_FASTAPI_MANIFEST, PY_FASTAPI_TARGET, planPyFastApi } from '../src/index.js';
 
@@ -132,6 +137,40 @@ export function buildForSpecText(text: string, file = EXAMPLE_SPEC_PATH): Exampl
 /** The example's spec as authored. Read fresh, so a test can plan it more than once. */
 export function exampleSpecText(): string {
   return readFileSync(EXAMPLE_SPEC_PATH, 'utf8');
+}
+
+/**
+ * The example at `version`, with what that version cannot express removed.
+ *
+ * The example is the only fixture, and it declares an `agent:` eval, which the spec layer
+ * refuses below `AGENT_EVAL_TARGET_MIN_VERSION`. A plain version rewrite therefore produces
+ * a spec that is refused for a reason unrelated to whatever the caller is testing, so the
+ * agent eval is dropped when the target version predates it. That is the honest
+ * reconstruction of what the example looked like at that version, rather than a second
+ * hand-maintained fixture that could drift from this one.
+ *
+ * The rewrite is asserted: a silent no-op here would leave the caller testing the current
+ * version while believing it tested an old one.
+ */
+export function exampleSpecTextAt(version: SpecVersion): string {
+  const text = exampleSpecText().replace(/^specVersion: "[^"]*"$/m, `specVersion: "${version}"`);
+  if (!text.includes(`specVersion: "${version}"`)) {
+    throw new Error(`the example does not declare a replaceable specVersion for ${version}`);
+  }
+  if (specVersionAtLeast(version, AGENT_EVAL_TARGET_MIN_VERSION)) return text;
+
+  const lines = text.split('\n');
+  const start = lines.indexOf('  refund_trajectory:');
+  const end = lines.indexOf('pipelines:');
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error('the example no longer declares refund_trajectory before pipelines');
+  }
+  // Walk back over the comment block that introduces the eval, so the derived spec does not
+  // carry a comment about an eval it does not declare.
+  let from = start;
+  while (from > 0 && (lines[from - 1] ?? '').startsWith('  #')) from -= 1;
+
+  return [...lines.slice(0, from), '', ...lines.slice(end)].join('\n');
 }
 
 let exampleBuild: ExampleBuild | undefined;

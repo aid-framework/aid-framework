@@ -1,14 +1,15 @@
 /**
  * The IR's eval metric vocabulary mapped onto the runtime's metrics.
  *
- * The mapping is partial in its kinds and in its options. Of the IR's ten kinds, `tool-trace`
- * is rejected here; the other nine reach a runtime metric. And a declaration the runtime
- * cannot honour is *rejected* rather than silently dropped, because a metric that is
- * declared but not measured makes a baseline report a passing gate over an unmeasured
- * claim, which is worse than refusing to generate -- and every rejection carries its reason.
+ * The mapping is partial in its kinds and in its options. Of the IR's ten kinds, every one
+ * reaches a runtime metric, but `tool-trace` reaches one only when the eval runs an agent:
+ * a prompt or pipeline response has no calls to compare, so the mapping refuses there rather
+ * than emitting a metric that raises on its first case. And a declaration the runtime cannot
+ * honour is *rejected* rather than silently dropped, because a metric that is declared but
+ * not measured makes a baseline report a passing gate over an unmeasured claim, which is
+ * worse than refusing to generate -- and every rejection carries its reason.
  * `cost` and `latency` are measured from the numbers the harness already collects around
- * each case; `tool-trace` is refused because no generated runner reports the tool calls a
- * case made.
+ * each case; `tool-trace` is measured from the `Trajectory` only the agent runner reports.
  *
  * `retrieval` is measured, but not by the prediction-per-case harness: the runtime scores
  * a ranked, cited retrieved set with `RetrievalGate` over the family `retrieval_metrics`
@@ -40,9 +41,32 @@ export type MetricMapping =
     }
   | { readonly measured: false; readonly reason: string };
 
+/**
+ * What about the eval decides whether a metric can be measured.
+ *
+ * Currently one thing: a trajectory is observable only when the case ran an agent, because
+ * only the agent runner reports the calls it made. Everything else is a property of the
+ * metric declaration alone.
+ */
+export interface MetricMappingOptions {
+  /** Whether the eval runs an agent, which is what makes a trajectory observable. */
+  readonly agent?: boolean;
+}
+
+/**
+ * The module constant a generated agent eval carries its expected tool calls in.
+ *
+ * The expectation is hoisted out of the metric expression rather than inlined because a
+ * tool name is arbitrary in length: `ToolTrace(expect=("a", "b", ...))` grows with the
+ * list, and `pythonTuple` never wraps, so a spec with a handful of tools would emit a line
+ * `ruff format` rewrites -- which is a failing CI check on generated output rather than a
+ * cosmetic difference. The name lives here so the mapper and the emitter that writes the
+ * constant cannot disagree about it.
+ */
+export const TOOL_TRACE_EXPECT = 'EXPECT_TOOLS';
+
 /** How the runtime measures one IR metric. */
-export function mapMetric(metric: MetricShape): MetricMapping {
-  switch (metric.kind) {
+export function mapMetric(metric: MetricShape, options: MetricMappingOptions = {}): MetricMapping {  switch (metric.kind) {
     case 'exact':
       if (metric.field !== '') {
         return {
@@ -130,15 +154,26 @@ export function mapMetric(metric: MetricShape): MetricMapping {
         expression: `LatencyCeiling(max_ms=${metric.maxMs})`,
       };
     case 'tool-trace':
-      // The runtime can compare a trajectory (`ToolTrace`), but nothing generated carries
-      // one: an `agent:` target is refused by the trajectory gate and a pipeline response
-      // has no tool calls to record. Emitting the metric here would produce a module that
-      // raises on its first case, so the refusal names the missing half instead.
+      // A trajectory is observable only through the agent runner: it is the one generated
+      // runner that returns the calls a case made. A prompt or pipeline response has no tool
+      // calls, so emitting the metric there would produce a module that raises on its first
+      // case -- and `ir/eval-trajectory` refuses that spec before generation for the same
+      // reason, which is why the two messages name the same missing half.
+      if (options.agent !== true) {
+        return {
+          measured: false,
+          reason:
+            'no generated runner reports the tool calls a case made, so the runtime trace metric ' +
+            'would have no trajectory to compare; an agent run does report them, so score the ' +
+            'agent with a `target: agent:<id>` eval',
+        };
+      }
       return {
-        measured: false,
-        reason:
-          'no generated runner reports the tool calls a case made, so the runtime trace metric ' +
-          'would have no trajectory to compare',
+        measured: true,
+        name: 'tool-trace',
+        deterministic: true,
+        expression:
+          `ToolTrace(expect=${TOOL_TRACE_EXPECT}, ordered=${metric.ordered ? 'True' : 'False'})`,
       };
     case 'retrieval':
       return {
@@ -190,10 +225,13 @@ export function isRetrievalEval(evaluation: EvalShape): boolean {
 }
 
 /** The distinct runtime metric names an eval measures, sorted. */
-export function measuredMetrics(evaluation: EvalShape): string[] {
+export function measuredMetrics(
+  evaluation: EvalShape,
+  options: MetricMappingOptions = {},
+): string[] {
   const names = new Set<string>();
   for (const metric of evaluation.metrics) {
-    const mapping = mapMetric(metric);
+    const mapping = mapMetric(metric, options);
     if (mapping.measured) names.add(mapping.name);
   }
   return [...names].sort();
@@ -214,10 +252,13 @@ export interface MetricBinding {
  * wins and the duplicate is dropped -- otherwise the registry would raise on the
  * duplicate name at import time.
  */
-export function metricBindings(evaluation: EvalShape): MetricBinding[] {
+export function metricBindings(
+  evaluation: EvalShape,
+  options: MetricMappingOptions = {},
+): MetricBinding[] {
   const byName = new Map<string, MetricBinding>();
   for (const metric of evaluation.metrics) {
-    const mapping = mapMetric(metric);
+    const mapping = mapMetric(metric, options);
     if (!mapping.measured) continue;
     if (!byName.has(mapping.name)) {
       byName.set(mapping.name, {
@@ -231,8 +272,11 @@ export function metricBindings(evaluation: EvalShape): MetricBinding[] {
 }
 
 /** The metric expressions to instantiate, in sorted metric-name order. */
-export function metricExpressions(evaluation: EvalShape): string[] {
-  return metricBindings(evaluation).map((binding) => binding.expression);
+export function metricExpressions(
+  evaluation: EvalShape,
+  options: MetricMappingOptions = {},
+): string[] {
+  return metricBindings(evaluation, options).map((binding) => binding.expression);
 }
 
 /**
@@ -243,8 +287,11 @@ export function metricExpressions(evaluation: EvalShape): string[] {
  * metrics a `Threshold` may name -- and therefore the ones every eval must declare at
  * least one of.
  */
-export function deterministicMetrics(evaluation: EvalShape): MetricBinding[] {
-  return metricBindings(evaluation).filter((binding) => binding.deterministic);
+export function deterministicMetrics(
+  evaluation: EvalShape,
+  options: MetricMappingOptions = {},
+): MetricBinding[] {
+  return metricBindings(evaluation, options).filter((binding) => binding.deterministic);
 }
 
 /** Whether the eval's metrics need the LLM judge, and therefore a gateway alias. */

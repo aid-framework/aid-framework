@@ -18,16 +18,18 @@
 
 import { describe, expect, it } from 'vitest';
 
+import type { SpecVersion } from '@aid-framework/spec';
+
 import { fileMap, RETRIEVAL_BINDINGS_PATH } from '../src/index.js';
-import { buildForSpecText, exampleSpecText } from './helpers.js';
+import { buildForSpecText, exampleSpecTextAt } from './helpers.js';
 
 /** The example spec at a version that has the s3 and http loaders. */
-function exampleAt(version: string): string {
-  return exampleSpecText().replace('specVersion: "0.2"', `specVersion: "${version}"`);
+function exampleAt(version: SpecVersion): string {
+  return exampleSpecTextAt(version);
 }
 
 /** The spec at `version` with its handbook retriever reading S3 instead of a directory. */
-function s3Example(version = '0.21'): string {
+function s3Example(version: SpecVersion = '0.21'): string {
   const text = exampleAt(version).replace(
     '      kind: file\n      uri: ./docs\n',
     '      kind: s3\n      uri: s3://corpus/handbook\n',

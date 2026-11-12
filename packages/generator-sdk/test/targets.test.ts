@@ -24,6 +24,7 @@ describe('the Phase 0 generator set', () => {
   it('is the replacement for the IR package placeholder', () => {
     expect(phase0TargetCapabilities()).toEqual({
       [PY_FASTAPI_TARGET]: [
+        'agent-evals',
         'agents',
         'cursor-memory',
         'embeddings',
@@ -64,6 +65,7 @@ describe('the py-fastapi declaration', () => {
 
   it('declares streaming, because the emitted route serves SSE and the Python runtime streams', () => {
     expect(PY_FASTAPI_MANIFEST.capabilities).toEqual([
+      'agent-evals',
       'agents',
       'cursor-memory',
       'embeddings',

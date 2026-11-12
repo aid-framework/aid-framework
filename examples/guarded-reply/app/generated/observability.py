@@ -18,6 +18,7 @@ def generated_capabilities() -> dict[str, Any]:
     return {
         "capabilities": {
             "declared": [
+                "agent-evals",
                 "agents",
                 "cursor-memory",
                 "embeddings",
@@ -37,6 +38,7 @@ def generated_capabilities() -> dict[str, Any]:
                 "Capability.TOOL_CALLING",
             ],
             "targetWired": [
+                "agent-evals",
                 "agents",
                 "cursor-memory",
                 "embeddings",

@@ -27,6 +27,28 @@ class EvalCase(BaseModel):
     expected: str | None = None
     tags: tuple[str, ...] = ()
     metadata: dict[str, str] = Field(default_factory=dict)
+    #: What a person answers, in order, each time the run pauses for approval. An
+    #: agent case that pauses and supplies no answer here is refused rather than
+    #: auto-approved: the harness must not stand in for the reviewer it is modelling.
+    approvals: tuple[str, ...] = ()
+
+    @field_validator("approvals", mode="before")
+    @classmethod
+    def _coerce_approvals(cls, value: object) -> object:
+        if isinstance(value, str):
+            return (value,)
+        return value
+
+    @field_validator("approvals")
+    @classmethod
+    def _check_approvals(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        allowed = {"approve", "reject"}
+        for decision in value:
+            if decision not in allowed:
+                raise ValueError(
+                    f"a case's approvals may only be 'approve' or 'reject', not {decision!r}"
+                )
+        return value
 
 
 class Dataset(BaseModel):
@@ -73,5 +95,18 @@ class Dataset(BaseModel):
         return cls.from_json(Path(path).read_text(encoding="utf-8"))
 
     def to_json(self) -> str:
-        """Canonical JSON: sorted keys, so a dataset diff is reviewable."""
-        return json.dumps(self.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
+        """Canonical JSON: sorted keys, so a dataset diff is reviewable.
+
+        ``approvals`` is omitted when a case declared none, so adding approval-aware
+        trajectory evals did not rewrite every dataset already in a repository. A case
+        that does declare decisions writes them, because a reader has to be able to see
+        what the reviewer answered.
+        """
+        return json.dumps(self._dumped(), indent=2, sort_keys=True) + "\n"
+
+    def _dumped(self) -> dict[str, object]:
+        payload = self.model_dump(mode="json")
+        for case in payload.get("cases", ()):
+            if not case.get("approvals"):
+                case.pop("approvals", None)
+        return payload

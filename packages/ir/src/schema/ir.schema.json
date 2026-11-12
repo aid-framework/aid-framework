@@ -89,7 +89,8 @@
         "prompt-cache",
         "agents",
         "guardrails",
-        "metrics"
+        "metrics",
+        "agent-evals"
       ]
     },
     "modelCapability": {

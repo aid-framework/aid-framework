@@ -6,7 +6,9 @@ Converse API, and Gemini's ``generateContent`` -- which the Vertex AI adapter
 serves over an OAuth2 bearer token and the Gemini API adapter serves with one API
 key. Bedrock is signed with SigV4 and Vertex is OAuth2-bearer, which is why
 neither can be an OpenAI-compatible base URL. A sixth, deterministic fake serves
-tests and the eval-gate fixture.
+tests and builds the scripted side of an eval case. A seventh, ``recorded``,
+replays a committed transcript so an agent eval can be gated without calling a
+vendor; it has no fall-through to a live model, by design.
 """
 
 from __future__ import annotations
@@ -30,6 +32,13 @@ from aid_runtime.providers.gemini import (
     GeminiProvider,
 )
 from aid_runtime.providers.http import DEFAULT_BASE_URL, OpenAICompatibleProvider
+from aid_runtime.providers.recorded import (
+    RecordedProvider,
+    RecordingProvider,
+    ReplayDivergenceError,
+    Transcript,
+    TranscriptEntry,
+)
 from aid_runtime.providers.vertex import (
     DEFAULT_VERTEX_LOCATION,
     METADATA_TOKEN_URL,
@@ -54,7 +63,12 @@ __all__ = [
     "GeminiProvider",
     "OpenAICompatibleProvider",
     "Provider",
+    "RecordedProvider",
+    "RecordingProvider",
+    "ReplayDivergenceError",
     "ScriptedTurn",
+    "Transcript",
+    "TranscriptEntry",
     "VertexProvider",
     "default_bedrock_base_url",
     "default_vertex_base_url",

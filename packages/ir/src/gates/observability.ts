@@ -11,12 +11,13 @@
  * the trail the profile promises. Both checks are scoped to spec 0.27 and above, because
  * a 0.26 document has no `observability` key to satisfy them with.
  *
- * The trajectory gate covers the two things a 0.27 document can say about a run that this
- * build cannot honour, and it refuses each with its own reason. An `agent:` target is
- * expressible so a spec can state what it means, but no generator emits an agent eval --
- * the runner drives one prediction per case through a prompt, and an agent run has no such
- * single subject. A `tool-trace` metric compares tool calls, which nothing here compares,
- * so declaring one promises a score that will never be produced. `cost` and `latency` are
+ * The trajectory gate covers the two things a 0.27 document can say about a run that part
+ * of this build cannot honour, and it refuses each with its own reason. An `agent:` target
+ * needs a generator that runs an agent offline and reports the calls it made, so it is
+ * refused unless every targeted generator declares `agent-evals` -- a target is judged by
+ * what it declares, and `agents` alone is not that promise. A `tool-trace` metric compares
+ * tool calls, which a prompt or pipeline target never returns, so declaring one there
+ * promises a score that will never be produced. `cost` and `latency` are
  * *not* refused, because both are measured: the runner carries the spend and the wall time
  * of each case, so a ceiling is scored like any other metric rather than estimated, and
  * each also carries a second meaning this build honours -- a `cost` ceiling becomes the
@@ -80,24 +81,31 @@ export function evalTrajectoryGate(ir: IR, options: GateOptions): GateResult {
   const diagnostics: IrDiagnostic[] = [];
   const report = reporter(options);
 
+  // Only a target that generates an offline agent evaluator can report the calls a case
+  // made, so an `agent:` eval is refused unless every targeted generator declares
+  // `agent-evals`. Same shape as the deploy gate: a target is judged by what it declares,
+  // and `agents` alone is not the promise -- a target can emit the agent loop without
+  // emitting anything that runs one offline.
+  const unable = ir.project.targets.filter((target) => {
+    const declared = options.targetCapabilities[target] ?? [];
+    return !declared.some((entry) => resolveRequiredCapability(entry) === 'agent-evals');
+  });
+  const able = ir.project.targets.filter((target) => !unable.includes(target));
+
   for (const evalShape of ir.evals) {
     const target = evalShape.target;
 
-    // An `agent:` target is expressible from 0.27 so a document can say what it means,
-    // but no generator emits an agent eval: the runner drives one prediction per case
-    // through a prompt, and an agent run has no such single subject. Refusing here rather
-    // than at generation is the whole point of the gate -- `aid validate` says it before a
-    // generator is entered, and it names the missing piece instead of pretending the agent
-    // is undeclared.
     if (target.kind === 'agent') {
-      diagnostics.push(
-        report.error({
-          code: IR_DIAGNOSTIC_CODES.evalTrajectory,
-          message: `the trajectory gate rejected "${evalShape.id}": target "${target.qualified}" names an agent, and this build emits evals over a prompt, not over an agent run`,
-          path: ['evals', evalShape.id, 'target'],
-          hint: `evaluate the pipeline that runs the agent (\`target: pipeline:<id>\`) for now; the runtime carries a trajectory, but no generator emits an agent eval yet`,
-        }),
-      );
+      if (unable.length > 0) {
+        diagnostics.push(
+          report.error({
+            code: IR_DIAGNOSTIC_CODES.evalTrajectory,
+            message: `the trajectory gate rejected "${evalShape.id}": target "${target.qualified}" runs an agent, and ${unable.map((name) => `"${name}"`).join(', ')} ${unable.length === 1 ? 'does' : 'do'} not declare the "agent-evals" capability`,
+            path: ['evals', evalShape.id, 'target'],
+            hint: `target a generator that emits an offline agent evaluator (${able.join(', ') || 'none in this build'}), or drop the eval`,
+          }),
+        );
+      }
       continue;
     }
 
@@ -108,7 +116,7 @@ export function evalTrajectoryGate(ir: IR, options: GateOptions): GateResult {
           code: IR_DIAGNOSTIC_CODES.evalTrajectory,
           message: `the trajectory gate rejected "${evalShape.id}": metric ${index} compares tool calls, and "${target.qualified}" returns a response with no tool calls to compare`,
           path: ['evals', evalShape.id, 'metrics', index],
-          hint: `this build scores a trajectory (\`ToolTrace\`), but no generated runner reports the tool calls a case made: score the response with exact, contains, json-schema, llm-judge or assert`,
+          hint: `a prompt or pipeline target returns one response, so it has no trajectory: score the calls an agent makes with \`target: agent:<id>\`, or score the response with exact, contains, json-schema, llm-judge or assert`,
         }),
       );
     });

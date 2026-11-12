@@ -16,6 +16,12 @@
  * The prompt the eval sends is the prompt the app sends: `request_for` renders the same
  * prompt and version the pipeline renders, with the case's input as the prompt's one
  * variable. An eval that paraphrased the prompt would measure a prompt nobody calls.
+ *
+ * A subject that is an agent rather than a prompt gets a third harness. There is no
+ * prompt to render and no single completions to sample -- the subject is a loop -- so the
+ * module drives the runtime's `AgentEvalRunner` over the generated document and registers
+ * the tools the app registers. Its metrics read the trajectory the loop produced, which is
+ * what makes a `tool-trace` measurement a first-class eval rather than a debug log.
  */
 
 import type { DecisionShape, EvalShape, IR, MetricShape, PromptShape } from '@aid-framework/ir';
@@ -25,6 +31,7 @@ import {
   jsonSchemaMetric,
   judgeAlias,
   metricBindings,
+  TOOL_TRACE_EXPECT,
   usesJudge,
 } from '../metrics.js';
 import { className, moduleName } from '../names.js';
@@ -53,12 +60,23 @@ import {
 } from '../validate.js';
 import type { EmittedFile } from './file.js';
 import { GENERATED_ROOT, generated } from './file.js';
+import { providerKeys } from './gateway.js';
 import { orderedEvals } from './order.js';
 import { promptVersion } from './prompts.js';
 import { require } from './require.js';
 import { pythonDoc } from './text.js';
 
 export const EVALS_INIT_PATH = `${GENERATED_ROOT}/evals/__init__.py`;
+
+/**
+ * The environment variable an agent eval reads a recorded transcript from.
+ *
+ * An environment variable rather than a spec field on purpose: which recording a run replays
+ * is a property of the run -- a developer's machine, one CI job -- not of the document the
+ * service is generated from, and putting it in the spec would make two deployments of one
+ * described service differ.
+ */
+const AGENT_TRANSCRIPT_ENV = 'AID_EVAL_TRANSCRIPT';
 
 export function evalModulePath(evalId: string): string {
   return `${GENERATED_ROOT}/evals/${moduleName(evalId)}.py`;
@@ -337,6 +355,9 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
     return emitRetrievalEval(ir, evaluation);
   }
   const subject = evalSubjectOf(ir, evaluation);
+  if (subject.kind === 'agent') {
+    return emitAgentEval(ir, evaluation, subject.agent.id);
+  }
   const prompt = subject.prompt;
   const model = subject.model;
   const contextVariable = evalContextVariable(ir, evaluation, prompt);
@@ -488,6 +509,226 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
       ...gateEntrypoints(),
     ]),
   );
+}
+
+/**
+ * The module for an eval whose subject is an agent.
+ *
+ * Three things differ from the prompt module, and each follows from what an agent run is.
+ * The subject is a loop rather than one completion, so the module drives the runtime's
+ * `AgentEvalRunner` over the generated document and registers the same tools the app
+ * registers -- the loop under measurement is the loop the service runs. There is no
+ * `Deps`: an agent eval needs model providers and nothing else, and staying free of the app
+ * container is what lets `AID_EVAL_TRANSCRIPT` replay a recording offline without a gateway,
+ * a retriever or a settings singleton. And the metric set is the deterministic one only,
+ * because every metric that matters here reads the trajectory the run produced; a
+ * model-backed metric would need a second gateway whose calls a recording does not contain,
+ * and `checkEvals` refuses it rather than emitting a module that cannot replay.
+ *
+ * Approval decisions reach the loop through the case, never through the module: a dataset
+ * row declares the decisions its run needs, and a run that needs an approver and has none
+ * blocks. That is what makes `approval-respected` measurable without the eval inventing a
+ * decision the deployed service would not have made.
+ */
+function emitAgentEval(ir: IR, evaluation: EvalShape, agentId: string): EmittedFile {
+  // `agent: true` is what lets `tool-trace` map at all: a prompt eval cannot measure a
+  // trajectory, so the mapping is withheld from one and granted here. Without it every
+  // metric of an agent eval maps to nothing and the module measures nothing.
+  const inline = metricBindings(evaluation, { agent: true }).filter(
+    (binding) => binding.deterministic,
+  );
+  const traced = evaluation.metrics.find(
+    (metric): metric is Extract<MetricShape, { kind: 'tool-trace' }> => metric.kind === 'tool-trace',
+  );
+
+  const constants = [
+    `EVAL_ID = ${pythonString(evaluation.id)}`,
+    `AGENT = ${pythonString(agentId)}`,
+    // A baseline records what it measured under `model`, and `aid eval --baseline` reads
+    // that constant from every suite. An agent eval measures a loop, so naming the agent
+    // under MODEL keeps that reader uniform instead of special-casing this module.
+    'MODEL = AGENT',
+    `TRANSCRIPT_ENV = ${pythonString(AGENT_TRANSCRIPT_ENV)}`,
+    `SAMPLES = ${pythonNumber(evaluation.gate.samples)}`,
+    `MAX_REGRESSION = ${pythonNumber(evaluation.gate.maxRegression)}`,
+    traced === undefined
+      ? undefined
+      : `${TOOL_TRACE_EXPECT} = ${tupleLiteral(
+          traced.expect.map(pythonString),
+          INDENT,
+          `${TOOL_TRACE_EXPECT} = `,
+        )}`,
+    `PROVIDER_KEYS = ${tupleLiteral(providerKeys(ir).map(pythonString), INDENT, 'PROVIDER_KEYS = ')}`,
+    `DATASET_PATH = ${pathExpression(datasetRelativePath(evaluation.dataset.uri ?? ''))}`,
+    `BASELINE_PATH = ${pathExpression(baselineRelativePath(evaluation.id))}`,
+  ].filter((line): line is string => line !== undefined);
+
+  const thresholds = inline.map((binding) => {
+    const floor = binding.name === 'assert' ? evaluation.gate.minMean : undefined;
+    const minMean = floor === undefined ? '' : `, min_mean=${pythonNumber(floor)}`;
+    return `Threshold(metric=${pythonString(binding.name)}, max_regression=MAX_REGRESSION${minMean})`;
+  });
+
+  return generated(
+    evalModulePath(evaluation.id),
+    assemble([
+      HEADER,
+      pythonDoc(
+        `The \`${evaluation.id}\` eval${evaluation.description === undefined ? '.' : `: ${evaluation.description}`}\n\n` +
+          `It drives the \`${agentId}\` agent ${evaluation.gate.samples} times over the dataset, ` +
+          'through the same loop and the same tools the service runs, and hands the result to ' +
+          'a baseline gate. It never decides correctness itself: the metrics read the ' +
+          'trajectory the run produced -- which tools were called, how many steps it took, ' +
+          'what it spent -- and the gate compares a mean against a tolerance. A scripted or ' +
+          'recorded provider fixes the model choices before the run starts, so this measures ' +
+          'policy and plumbing (the step ceiling, the tool allow-list, approval handling, ' +
+          'spend attribution) and not how a model would behave.',
+      ),
+      importBlock([
+        [
+          'import asyncio',
+          'import os',
+          importFrom('pathlib', ['Path']),
+          importFrom('typing', ['TYPE_CHECKING']),
+        ],
+        [
+          importFrom('aid_runtime.evals', [
+            'AgentEvalRunner',
+            'BaselineGate',
+            'Dataset',
+            'EvalBaseline',
+            ...inline.map((binding) => metricClass(binding.expression)),
+            'Metric',
+            'Threshold',
+            'run_evaluation',
+          ]),
+          importFrom('aid_runtime.providers', ['Provider', 'RecordedProvider']),
+        ],
+        [
+          importFrom('..agents', ['DOCUMENT']),
+          importFrom('..gateway.models', ['default_providers']),
+          importFrom('..tools', ['build_agent_tools']),
+        ],
+      ]),
+      ['if TYPE_CHECKING:', `${INDENT}from aid_runtime.evals import EvalRun, GateResult`].join('\n'),
+      constants.join('\n'),
+      datasetLoader(false),
+      baselineLoader(),
+      [
+        'def providers() -> dict[str, Provider]:',
+        pythonDoc(
+          'The model providers the run calls.\n\n' +
+            'With `AID_EVAL_TRANSCRIPT` set the run is offline: one recording replays every ' +
+            'model call, so the eval takes the same path on a laptop as in CI and spends ' +
+            'nothing. Without it the app is provider-wired as usual and the run is a live ' +
+            'one. The recording serves every provider key because it is the sequence of calls ' +
+            'the run makes, not a per-vendor cache -- which provider answered is part of what ' +
+            'it replays.',
+          INDENT,
+        ),
+        `${INDENT}recording = os.environ.get(TRANSCRIPT_ENV)`,
+        `${INDENT}if recording is None:`,
+        `${INDENT}${INDENT}return default_providers()`,
+        `${INDENT}replayed: Provider = RecordedProvider.from_path(Path(recording))`,
+        // `dict.fromkeys` rather than a comprehension: the generated tree is linted with
+        // `C4` on, and `{key: replayed for key in PROVIDER_KEYS}` is the exact shape C420
+        // rejects -- every value is the same object, which is the point here.
+        `${INDENT}return dict.fromkeys(PROVIDER_KEYS, replayed)`,
+      ].join('\n'),
+      [
+        'def thresholds() -> tuple[Threshold, ...]:',
+        pythonDoc(
+          'The tolerances the gate applies.\n\n' +
+            'Each threshold names a metric `metrics()` builds, so the two cannot drift. Every ' +
+            'metric here reads the trajectory rather than judging the answer, so a threshold ' +
+            'is a budget on the run: how many steps it took, which tools it reached for, what ' +
+            'it cost. `max_regression` is a tolerance over the mean of SAMPLES runs, as ' +
+            'everywhere else here.',
+          INDENT,
+        ),
+        `${INDENT}return ${tupleLiteral(thresholds, INDENT, 'return ', '')}`,
+      ].join('\n'),
+      [
+        'def metrics() -> tuple[Metric, ...]:',
+        pythonDoc(
+          'The metrics the spec declares for this eval, all of them read off the trajectory. ' +
+            'A model-backed metric is refused at generation time rather than measured here, ' +
+            "because a judge's calls are not in a recording and the two would disagree about " +
+            'which run they measured.',
+          INDENT,
+        ),
+        `${INDENT}return ${tupleLiteral(
+          inline.map((binding) => binding.expression),
+          INDENT,
+          'return ',
+          '',
+        )}`,
+      ].join('\n'),
+      [
+        'def build_runner() -> AgentEvalRunner:',
+        pythonDoc(
+          'The measurement, over the agent the app actually runs.\n\n' +
+            'The runner is built from the generated document and the tools the app registers, ' +
+            'so the loop under measurement is the loop the service runs, and a spec change ' +
+            'that alters either changes what this measures. Approval decisions come from the ' +
+            'case: a dataset row that declares them is the only way one arrives.',
+          INDENT,
+        ),
+        `${INDENT}return AgentEvalRunner(DOCUMENT, AGENT, providers=providers(), tools=build_agent_tools())`,
+      ].join('\n'),
+      [
+        'async def run() -> EvalRun:',
+        pythonDoc(
+          `Drive the agent over the dataset ${evaluation.gate.samples} times and return every ` +
+            "metric's mean per run.",
+          INDENT,
+        ),
+        `${INDENT}return await run_evaluation(`,
+        `${INDENT}${INDENT}load_dataset(),`,
+        `${INDENT}${INDENT}build_runner(),`,
+        `${INDENT}${INDENT}metrics(),`,
+        `${INDENT}${INDENT}runs=SAMPLES,`,
+        `${INDENT}${INDENT}eval_id=EVAL_ID,`,
+        `${INDENT})`,
+      ].join('\n'),
+      [
+        'def gate(measured: EvalRun, baseline: EvalBaseline) -> GateResult:',
+        pythonDoc(
+          'Compare a measurement against the stored baseline. The verdict is the shipped ' +
+            "gate's: this module holds no comparison of its own.",
+          INDENT,
+        ),
+        `${INDENT}return BaselineGate(thresholds(), metrics=metrics()).evaluate(measured, baseline)`,
+      ].join('\n'),
+      ...agentGateEntrypoints(),
+    ]),
+  );
+}
+
+/**
+ * The three blocks an agent eval ends with.
+ *
+ * Separate from {@link gateEntrypoints} only in dropping `deps`: the agent harness needs no
+ * app container, and the CLI runs `python -m app.generated.evals.<id>`, so `evaluate()` has
+ * to be callable with nothing. The exit status and the summary are identical, because the
+ * `evals` CI job reads the same two things from every generated module.
+ */
+function agentGateEntrypoints(): string[] {
+  return [
+    [
+      'async def evaluate() -> GateResult:',
+      pythonDoc('Measure the agent and compare the result against the stored baseline.', INDENT),
+      `${INDENT}return gate(await run(), load_baseline())`,
+    ].join('\n'),
+    [
+      'def main() -> int:',
+      pythonDoc('Run the gate, print its summary, and exit non-zero on a regression.', INDENT),
+      `${INDENT}result = asyncio.run(evaluate())`,
+      `${INDENT}print(result.summary())`,
+      `${INDENT}return 1 if result.failures() else 0`,
+    ].join('\n'),
+    ['if __name__ == "__main__":', `${INDENT}raise SystemExit(main())`].join('\n'),
+  ];
 }
 
 /**

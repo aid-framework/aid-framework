@@ -66,6 +66,9 @@ export const PY_FASTAPI_MANIFEST_INPUT: GeneratorManifestInput = {
     'agents',
     'cursor-memory',
     'metrics',
+    // An `agent:` eval target builds an `AgentEvalRunner` over the app's own tools so a
+    // case runs the agent offline and its trajectory is scored.
+    'agent-evals',
   ],
   emitsAgainst: {
     structuredOutput: 'pydantic',

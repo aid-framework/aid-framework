@@ -1189,6 +1189,20 @@ export function checkEvals(ir: IR): PlanProblem[] {
             subject.message,
           ),
         );
+      } else if (subject.subject.kind === 'agent') {
+        // `ir/eval-trajectory` refuses this too, by the `agent-evals` capability this target
+        // does not declare. Repeated here because this check also runs without the gates, and
+        // a module pinned to one model alias cannot express a run whose steps it never saw.
+        problems.push(
+          problem(
+            'eval-target-unsupported',
+            at,
+            `'${evaluation.target.qualified}' runs an agent, and this target emits no offline ` +
+              'agent evaluator: its eval module pins one model alias and samples one response, ' +
+              'while an agent run makes calls the module would have to record; target the prompt ' +
+              'the agent renders, or use a target that declares "agent-evals"',
+          ),
+        );
       }
     }
   }

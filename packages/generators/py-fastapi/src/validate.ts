@@ -2485,7 +2485,12 @@ export function checkEvals(ir: IR): PlanProblem[] {
     if (!subject.ok) {
       problems.push(problem(subject.code, `${base}.target`, subject.message));
     }
-    const prompt = subject.ok ? subject.subject.prompt : undefined;
+    // Only a prompt subject renders variables, so the "one row fills one variable" rule
+    // below applies to it alone: an agent eval's row is the task the agent is given, and the
+    // variables its instructions render are supplied by the app.
+    const prompt =
+      subject.ok && subject.subject.kind === 'prompt' ? subject.subject.prompt : undefined;
+    const agentEval = subject.ok && subject.subject.kind === 'agent';
     const dataset = evaluation.dataset;
     if (dataset?.source !== 'file' || (dataset.uri ?? '') === '') {
       problems.push(
@@ -2531,6 +2536,30 @@ export function checkEvals(ir: IR): PlanProblem[] {
         ),
       );
     }
+    // An agent eval measures the trajectory a run produced, and every metric that reads one
+    // needs no second model. A model-backed metric does: the judge's calls are not in a
+    // recorded transcript, so a replayed run would diverge from its recording rather than
+    // measure it, and a live one would spend on a judge the eval never declared. Refusing is
+    // the honest outcome -- `mapMetric` measures both kinds, so without this the module would
+    // emit a judge call a recording cannot satisfy.
+    if (
+      agentEval &&
+      evaluation.metrics.some(
+        (metric) => metric.kind === 'llm-judge' || metric.kind === 'decision',
+      )
+    ) {
+      problems.push(
+        problem(
+          'unsupported-metric',
+          `${base}.metrics`,
+          'an agent eval measures the trajectory a run produced, and an llm-judge or decision ' +
+            "metric is a judgment of the answer by a second model: the judge's calls are not " +
+            'in a recorded transcript, so a replayed run would diverge from its recording ' +
+            'instead of measuring one; measure the trajectory with a tool-trace, cost or ' +
+            'latency metric',
+        ),
+      );
+    }
     if (isRetrievalEval(evaluation) && retrievalEvalRetriever(ir, evaluation) === undefined) {
       problems.push(
         problem(
@@ -2544,7 +2573,7 @@ export function checkEvals(ir: IR): PlanProblem[] {
     }
     for (const [index, metric] of evaluation.metrics.entries()) {
       const path = `${base}.metrics[${index}]`;
-      const mapping = mapMetric(metric);
+      const mapping = mapMetric(metric, { agent: agentEval });
       if (!mapping.measured) {
         problems.push(
           problem(

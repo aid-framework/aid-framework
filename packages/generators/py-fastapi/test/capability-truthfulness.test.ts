@@ -292,6 +292,28 @@ const CLAIMS: readonly Claim[] = [
     },
     planned: /^app\/generated\/sse\.py$/,
   },
+  {
+    capability: 'agent-evals',
+    emitter: {
+      path: 'packages/generators/py-fastapi/src/emit/evals.ts',
+      marker: 'function emitAgentEval',
+    },
+    pyRuntime: {
+      path: 'runtimes/python/src/aid_runtime/evals/agent_runner.py',
+      marker: 'class AgentEvalRunner',
+    },
+    // Withdrawn rather than forgotten: a trajectory eval needs an offline runner and a
+    // recorded provider to be worth any CI time, and the TypeScript runtime has neither.
+    // `ts-vercel` declares `agents` but emits no evaluator for them, and the trajectory
+    // gate refuses an agent target there rather than emitting a suite that cannot run.
+    tsRuntimeGap:
+      'the TypeScript runtime ships no agent runner or recorded provider, so an agent eval module emitted there would have nothing to replay against',
+    behaviour: {
+      path: 'examples/support-copilot/tests/test_agent_evals.py',
+      marker: 'def test_the_shipped_eval_scores_the_trajectory_it_names',
+    },
+    planned: /^app\/generated\/evals\/[a-z_]+\.py$/,
+  },
 ];
 
 /** The two filesystem questions the capability audit asks, injectable so it can fail. */
@@ -463,6 +485,7 @@ describe('the capabilities this target declares', () => {
       'Capability.TOOL_CALLING',
     ]);
     expect(report.targetWired).toEqual([
+      'agent-evals',
       'agents',
       'cursor-memory',
       'embeddings',
@@ -589,6 +612,7 @@ describe('the capability vocabulary', () => {
     // this layer is that an unexamined capability is recorded, not removed.
     expect([...REQUIRED_CAPABILITIES].sort()).toEqual(
       [
+        'agent-evals',
         'agents',
         'audio',
         'cursor-memory',

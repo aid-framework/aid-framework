@@ -13,15 +13,32 @@
  * the target is refused rather than averaged.
  */
 
-import type { EvalShape, IR, PromptShape } from './shapes.js';
+import type { AgentShape, EvalShape, IR, PromptShape } from './shapes.js';
 
 /** The prompt an eval measures, and the one model it is measured against. */
-export interface EvalSubject {
+export interface PromptSubject {
+  readonly kind: 'prompt';
   /** The prompt the eval renders, and whose single variable a dataset row fills. */
   readonly prompt: PromptShape;
   /** The model alias the app pins for that prompt, which is what the eval samples. */
   readonly model: string;
 }
+
+/**
+ * The agent an eval runs.
+ *
+ * The subject of an agent eval is the agent, not a prompt on a model: a trajectory metric
+ * scores the calls the run made, and a run that pauses for approval was decided by the
+ * reviewer rather than sampled from a model. Carrying a `model` here would imply the eval
+ * measured one, which with a scripted or recorded provider it did not.
+ */
+export interface AgentSubject {
+  readonly kind: 'agent';
+  readonly agent: AgentShape;
+}
+
+/** Which app an eval measures: one prompt on one model, or one agent run. */
+export type EvalSubject = PromptSubject | AgentSubject;
 
 /** Why an eval has no single subject. Both codes are `PlanProblemCode`s in every generator. */
 export type EvalSubjectProblemCode = 'unresolved-reference' | 'unsupported-eval-target';
@@ -79,11 +96,10 @@ function distinctSubjects(
 /**
  * The prompt and model an eval measures, or why it measures none.
  *
- * The spec language names a `pipeline:` or `prompt:` target, and from 0.27 it can also
- * name an `agent:` one, while the IR can name a prompt directly, so every form has to
- * resolve here. An agent is refused by name: it *is* declared, so reporting it as
- * undeclared would be a lie, and what is missing is a generator that emits an agent eval
- * rather than a declaration the document failed to make.
+ * The spec language names a `pipeline:`, `prompt:` or `agent:` target, while the IR can
+ * name a prompt directly, so every form has to resolve here. An agent resolves to the
+ * `AgentShape` itself: an agent eval runs the agent, so the run's steps, cost and
+ * approval decisions are the thing scored, and no single prompt or model describes it.
  *
  * A pure function of the IR on purpose: every rejection below is a branch a unit test can
  * reach without a spec file, a model or a filesystem.
@@ -100,14 +116,15 @@ export function evalSubject(ir: IR, evaluation: EvalShape): EvalSubjectResult {
     };
   }
   if (target.kind === 'agent') {
-    return {
-      ok: false,
-      code: 'unsupported-eval-target',
-      message:
-        `'${target.qualified}' names an agent, and this build emits an eval over a prompt, not ` +
-        'over an agent run: the runtime carries a trajectory, but no generator emits an agent ' +
-        "eval yet; score the pipeline that runs it with a 'pipeline:' target",
-    };
+    const agent = ir.agents.find((item) => item.id === target.id);
+    if (agent === undefined) {
+      return {
+        ok: false,
+        code: 'unresolved-reference',
+        message: `agent '${target.id}' is not declared`,
+      };
+    }
+    return { ok: true, subject: { kind: 'agent', agent } };
   }
   const declared =
     target.kind === 'prompt'
@@ -149,5 +166,5 @@ export function evalSubject(ir: IR, evaluation: EvalShape): EvalSubjectResult {
       message: `prompt '${only.prompt}' is not declared`,
     };
   }
-  return { ok: true, subject: { prompt, model: only.model } };
+  return { ok: true, subject: { kind: 'prompt', prompt, model: only.model } };
 }
