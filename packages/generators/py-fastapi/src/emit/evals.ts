@@ -27,6 +27,7 @@
 import type { DecisionShape, EvalShape, IR, MetricShape, PromptShape } from '@aid-framework/ir';
 
 import {
+  FORBIDDEN_TOOLS,
   isRetrievalEval,
   jsonSchemaMetric,
   judgeAlias,
@@ -541,6 +542,10 @@ function emitAgentEval(ir: IR, evaluation: EvalShape, agentId: string): EmittedF
     (metric): metric is Extract<MetricShape, { kind: 'tool-trace' }> =>
       metric.kind === 'tool-trace',
   );
+  const forbidden = evaluation.metrics.find(
+    (metric): metric is Extract<MetricShape, { kind: 'forbidden-tool' }> =>
+      metric.kind === 'forbidden-tool',
+  );
 
   const constants = [
     `EVAL_ID = ${pythonString(evaluation.id)}`,
@@ -558,6 +563,13 @@ function emitAgentEval(ir: IR, evaluation: EvalShape, agentId: string): EmittedF
           traced.expect.map(pythonString),
           INDENT,
           `${TOOL_TRACE_EXPECT} = `,
+        )}`,
+    forbidden === undefined
+      ? undefined
+      : `${FORBIDDEN_TOOLS} = ${tupleLiteral(
+          forbidden.forbid.map(pythonString),
+          INDENT,
+          `${FORBIDDEN_TOOLS} = `,
         )}`,
     `PROVIDER_KEYS = ${tupleLiteral(providerKeys(ir).map(pythonString), INDENT, 'PROVIDER_KEYS = ')}`,
     `DATASET_PATH = ${pathExpression(datasetRelativePath(evaluation.dataset.uri ?? ''))}`,

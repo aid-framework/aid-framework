@@ -9,6 +9,7 @@
  * unmappable metrics, a pipeline step that would need a checkpoint -- only fire in `gen`.
  */
 
+import { SPEC_VERSION_LATEST } from '@aid-framework/spec';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { projectNameFor } from '../src/index.js';
@@ -41,7 +42,9 @@ describe('aid init --template', () => {
       expect(made.exists('README.md')).toBe(true);
 
       const spec = made.read('app/app.spec.yaml');
-      expect(spec).toContain('specVersion: "0.30"');
+      // Pinned to the constant rather than to a copy of it: a template that lags the latest
+      // version is the one case `aid init` could scaffold a document the newest gates skip.
+      expect(spec).toContain(`specVersion: "${SPEC_VERSION_LATEST}"`);
       // A template is the base half of the overlay workflow, so it has to declare the
       // contract an overlay is checked against, and ship an overlay that uses it.
       expect(spec).toContain('overridable:');

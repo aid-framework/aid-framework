@@ -116,6 +116,7 @@ from aid_runtime.errors import (
 from aid_runtime.evals import (
     AgentEvalRunner,
     ApprovalPolicy,
+    ApprovalRespected,
     BaselineGate,
     CaseOutcome,
     CostCeiling,
@@ -125,6 +126,7 @@ from aid_runtime.evals import (
     EvalCase,
     EvalRun,
     ExactMatch,
+    ForbiddenTool,
     GateResult,
     GatewayRunner,
     JsonSchemaValid,
@@ -140,6 +142,7 @@ from aid_runtime.evals import (
     RunContext,
     Runner,
     RunOutput,
+    StepCount,
     Threshold,
     ToolTrace,
     Trajectory,
@@ -344,7 +347,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.158"
+__version__ = "0.1.159"
 
 __all__ = [
     "AGENT_LABEL",
@@ -392,6 +395,7 @@ __all__ = [
     "AidRuntimeError",
     "AnthropicProvider",
     "ApprovalPolicy",
+    "ApprovalRespected",
     "BaselineGate",
     "BedrockProvider",
     "Budget",
@@ -445,6 +449,7 @@ __all__ = [
     "FileMemoryStore",
     "FinishReason",
     "FixedChunker",
+    "ForbiddenTool",
     "GateConfigurationError",
     "GateResult",
     "GatewayRunner",
@@ -540,6 +545,7 @@ __all__ = [
     "SourceSpec",
     "SpendSummary",
     "Step",
+    "StepCount",
     "StepKind",
     "StepRecord",
     "StepResult",

@@ -398,7 +398,7 @@ The record a human approval leaves behind. Required under `profile: enterprise`,
 
 ## `metric`
 
-A `metric` is exactly one of the 10 forms below; each form is recognised by its discriminating key.
+A `metric` is exactly one of the 13 forms below; each form is recognised by its discriminating key.
 
 ### `kind` = `exact`
 
@@ -474,6 +474,28 @@ Scores a prediction with a `score` decision: the rubric is declared once in `dec
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `decision` | `name` | yes | The name of a `decisions` entry whose `type` is `score`. A moving alias is refused, because two runs of an eval would otherwise score two different models. |
+
+### `kind` = `step-count`
+
+Deterministic and offline: an agent runner reports how many model calls a case took, so unlike llm-judge it is allowed under gate.ci. An agent target only -- a prompt or pipeline target has no steps to count.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `maxSteps` | `integer` | yes | The ceiling on model calls this case may take. The agent's own `maxSteps` already bounds a run; this asserts that the bound held for *this* case, so a case expected to take three steps that takes nine is a run that looped and the answer it produced is not the run the case described. Refused by `ir/eval-metric-vacuous` when it is not below the agent's own `maxSteps`, because a ceiling the budget always reaches first can never fail. |
+
+### `kind` = `forbidden-tool`
+
+Deterministic and offline: it reads the calls an agent runner reports, so unlike llm-judge it is allowed under gate.ci. An agent target only.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `forbid` | array of `name` | yes | The tools this case must not reach for. The inverse of `tool-trace`, which asks whether the run did a thing: this asks whether it crossed a line, so a run that calls no tools at all passes. Every name must be a declared tool, which the referential gate enforces. |
+
+### `kind` = `approval-respected`
+
+Deterministic and offline: the runner records the pauses it took and the decisions it was given, so unlike llm-judge it is allowed under gate.ci. Three findings, and a case passes only when none fires: `pause-missed`, `pause-unexpected`, and `decision-ignored` -- a call that ran after a rejection, which fails the case even when the answer matches. A case supplies its decisions in `approvals`. An agent target only, and refused by `ir/eval-metric-vacuous` when the agent can never pause, because a metric that can only pass measures nothing.
+
+Takes the value `"approval-respected"` and no other keys.
 
 ## `pipeline`
 

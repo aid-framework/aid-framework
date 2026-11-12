@@ -346,6 +346,65 @@ channel would page a stranger, so a generated alarm notifies nobody until an ope
 variable. This is documented rather than gated, because "not yet wired to a channel" is a normal
 state during a first deploy.
 
+## 0.30 to 0.31: scoring the run, not only the answer
+
+A trajectory eval could already say which tools a case called and how much it cost. 0.31 adds the
+three metrics that turn a run into something a regression can fail on, and makes the coverage rule
+bite under `enterprise`.
+
+> **What 0.31 declares but does not do.** All three metrics score an offline run driven by a
+> scripted or recorded model, so they verify the policy and plumbing of a run -- which tools were
+> reachable, in what order they were called, whether an approval was respected -- and not the
+> quality of a model answer. Nothing here reads production traffic, and no metric measures a live
+> run.
+
+### What 0.31 adds
+
+| Construct | What it says |
+| --- | --- |
+| `evals[].metrics[].kind: step-count` | `maxSteps`: the number of model calls this case should finish inside. |
+| `evals[].metrics[].kind: forbidden-tool` | `forbid`: tools the run must never call, named from the document's own `tools`. |
+| `evals[].metrics[].kind: approval-respected` | No fields. Passes only when the run asked for every decision the case scripted, paused nowhere else, and did nothing a reviewer rejected. |
+
+### Nothing to do for 0.30 documents
+
+The three kinds are new enum values, so a 0.30 document cannot have been written to use them, and
+every rule below is scoped to `specVersion: "0.31"` and above. That includes the coverage
+escalation, which leaves a 0.30 `enterprise` document with the warning it was written against. A
+0.31 document declaring none of the new metrics emits the same evaluators as 0.30.
+
+### What a 0.31 document must declare
+
+| Refusal | What is missing | The fix |
+| --- | --- | --- |
+| `ir/eval-trajectory` | A run metric on a pipeline or prompt target, which returns a response with no trajectory. | Target the agent: `target: agent:<id>`. |
+| `ir/eval-metric-vacuous` | A `step-count` ceiling at or above the agent's own `maxSteps`, which the agent's budget reaches first. | Set `maxSteps` below the agent's ceiling. |
+| `ir/eval-metric-vacuous` | An `approval-respected` metric on an agent that declares no `humanInTheLoop` and calls no tool with `requiresConfirmation`. | Declare one of the two, or drop the metric. |
+| `ir/metric-tool-unresolved` | A `forbid` entry that names no declared tool. | Name a tool from `tools`. |
+| `ir/eval-uncovered` | Under `profile: enterprise`, an HTTP pipeline no eval with `gate.ci: true` targets. | Add a CI-gating eval, or declare `profile: standard`. |
+| `ir/eval-uncovered` | Under `profile: enterprise`, a retrieval surface with no `retrieval` metric anywhere in the document. | Add one, or declare `profile: standard`. |
+
+### Why a metric that cannot fail is refused
+
+A metric that always passes is worse than no metric: it is a green check that costs a reviewer's
+attention and answers nothing. Two of the three kinds have a document-visible way to be
+unanswerable while looking complete. A `step-count` ceiling set at or above the agent's own
+`maxSteps` is reached by the agent's budget first, so the run is stopped before the ceiling can be
+exceeded. An `approval-respected` metric on an agent that never pauses has no decision to score: it
+passes trivially or fails every case, and neither is a measurement.
+
+`forbidden-tool` is deliberately not checked that way. Forbidding a tool the agent cannot reach is
+a legitimate statement -- "this run must never delete a customer" is the point of the metric, not a
+defect in it -- so the only refusal is a `forbid` entry that names no declared tool at all.
+
+### Why the coverage escalation is version-gated
+
+It turns a document that built yesterday into one that refuses today, and a profile that promises
+change control should be able to say when it started requiring the measurement. Keying the
+escalation to `specVersion` rather than to a flag also means an overlay cannot opt out of it: the
+resolved document carries the version, so `enterprise` coverage is a property of what is delivered
+rather than of who wrote it.
+
 ## 0.27 to 0.28: promoting a candidate, and the feedback that starts a loop
 
 What a document is allowed to do with a candidate, and which feedback it takes back from its users.

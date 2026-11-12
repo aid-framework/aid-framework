@@ -376,6 +376,48 @@ approval was respected — and not the quality of a model answer. Model quality 
 and pipeline evals measure; a trajectory case that passes while the wording is poor is working as
 designed.
 
+**Metrics that score the run, not the answer.** A trajectory eval already reports the calls a
+case made. Three metrics turn that report into something a regression can fail on.
+
+```yaml
+evals:
+  refund_policy:
+    target: agent:refund_agent
+    dataset: { source: file, uri: evals/refund_policy.json }
+    metrics:
+      - kind: step-count
+        maxSteps: 4
+      - kind: forbidden-tool
+        forbid: [delete_customer]
+      - kind: approval-respected
+    gate:
+      ci: true
+```
+
+`step-count` fails a case whose run took more model calls than the ceiling it declares,
+`forbidden-tool` fails a case that reached for a tool it must never call, and
+`approval-respected` passes only when the run asked for every decision the case scripted, paused
+nowhere else, and did nothing a reviewer rejected. All three read the trajectory, so all three
+need `target: agent:<id>`.
+
+What is refused:
+
+- A `step-count` ceiling at or above the agent's own `maxSteps`, as `ir/eval-metric-vacuous`:
+  the agent's budget stops the run before the ceiling can be exceeded, so the metric could only
+  ever pass.
+- An `approval-respected` metric on an agent that declares no `humanInTheLoop` and calls no tool
+  with `requiresConfirmation`, because such a run never pauses and there is no decision to score.
+- A `forbid` entry no `tools` declaration names, as `ir/metric-tool-unresolved`.
+
+A trajectory metric declared on a pipeline target is still the `ir/eval-trajectory` refusal
+above, with the same hint.
+
+**Coverage an enterprise document cannot waive.** `profile: enterprise` promises change control,
+and a route no CI-gating eval measures has nothing to hold a change against. From spec 0.31 an
+HTTP pipeline — or a retrieval surface with no `retrieval` metric — that no CI-gating eval covers
+is an error under `enterprise` rather than a warning. `profile: standard` keeps the warning, and
+the escalation is version-gated, so a 0.30 document keeps what it was written against.
+
 Covers:
 
 - **Eval coverage**
@@ -384,6 +426,8 @@ Covers:
 - **Declared feedback signals**
 - **A dataset from the runs you already have**
 - **A trajectory eval that runs an agent**
+- **Metrics that score the run, not the answer**
+- **Coverage an enterprise document cannot waive**
 
 ## Agents and tools
 

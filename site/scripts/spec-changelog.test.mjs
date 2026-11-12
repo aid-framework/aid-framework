@@ -53,7 +53,12 @@ describe('the spec version changelog', () => {
     const page = read('docs/reference/spec-changelog.md');
     const rows = [...page.matchAll(/^\| `([0-9]+\.[0-9]+)` \|/gm)].map((match) => match[1]);
     expect(rows).toEqual([...SPEC_VERSIONS].map((entry) => entry.version).reverse());
-    expect(rows[0]).toBe('0.30');
-    expect(rows[rows.length - 1]).toBe('0.1');
+    // The registry is oldest-first and the page is newest-first, so the ends cross. Both
+    // derive from the registry: a hand-written version here would be a second copy of the
+    // list, and the row order is what the page promises, not the number itself.
+    const first = SPEC_VERSIONS[0].version;
+    const last = SPEC_VERSIONS[SPEC_VERSIONS.length - 1].version;
+    expect(rows[0]).toBe(last);
+    expect(rows[rows.length - 1]).toBe(first);
   });
 });

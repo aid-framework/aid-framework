@@ -592,6 +592,9 @@ export type MetricShape =
   | { kind: 'llm-judge'; rubric: string; field?: string; model?: string; threshold?: number }
   | { kind: 'retrieval'; expectDocs: string[]; k: number }
   | { kind: 'decision'; decision: string }
+  | { kind: 'step-count'; maxSteps: number }
+  | { kind: 'forbidden-tool'; forbid: string[] }
+  | { kind: 'approval-respected' }
   | { kind: 'assert'; expr: PredicateNode; message: string };
 
 export interface PromotionBaseline {

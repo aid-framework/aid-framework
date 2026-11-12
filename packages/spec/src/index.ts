@@ -88,6 +88,7 @@ export {
   SUPPORTED_STEP_KINDS,
   specJsonSchema,
   specVersionAtLeast,
+  TRAJECTORY_METRIC_MIN_VERSION,
   type ValidateOptions,
   validateSpec,
 } from './validate.js';
@@ -105,7 +106,7 @@ import { validateSpec } from './validate.js';
 export const SPEC_VERSION = '0.1';
 
 /** The newest version this build reads. Sections above this are rejected, not ignored. */
-export const SPEC_VERSION_LATEST: SpecVersion = '0.30';
+export const SPEC_VERSION_LATEST: SpecVersion = '0.31';
 
 export interface SpecCheckResult {
   /** True when no diagnostic has `error` severity. Warnings do not fail a check. */

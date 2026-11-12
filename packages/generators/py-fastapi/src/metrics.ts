@@ -65,6 +65,31 @@ export interface MetricMappingOptions {
  */
 export const TOOL_TRACE_EXPECT = 'EXPECT_TOOLS';
 
+/**
+ * The module constant a generated agent eval carries its forbidden tool list in.
+ *
+ * Hoisted for the same reason as `TOOL_TRACE_EXPECT`: `ForbiddenTool(forbid=("a", ...))`
+ * grows with the list and `pythonTuple` never wraps, so a spec naming enough tools would
+ * emit a line `ruff format` rewrites -- a failing CI check on generated output rather than a
+ * cosmetic difference.
+ */
+export const FORBIDDEN_TOOLS = 'FORBIDDEN_TOOLS';
+
+/**
+ * Why a trajectory metric cannot be measured off a non-agent eval.
+ *
+ * Four metric kinds read a run rather than an answer, and a prompt or pipeline target
+ * returns one response, so none of them has anything to read. The message names the same
+ * missing half `ir/eval-trajectory` names, because the two refusals describe one situation
+ * and a reader should not have to reconcile two vocabularies for it.
+ */
+function noTrajectoryReason(what: string): string {
+  return (
+    `no generated runner reports ${what}, so the metric would have nothing to score; an ` +
+    'agent run does report it, so score the agent with a `target: agent:<id>` eval'
+  );
+}
+
 /** How the runtime measures one IR metric. */
 export function mapMetric(metric: MetricShape, options: MetricMappingOptions = {}): MetricMapping {
   switch (metric.kind) {
@@ -174,6 +199,45 @@ export function mapMetric(metric: MetricShape, options: MetricMappingOptions = {
         name: 'tool-trace',
         deterministic: true,
         expression: `ToolTrace(expect=${TOOL_TRACE_EXPECT}, ordered=${metric.ordered ? 'True' : 'False'})`,
+      };
+    case 'step-count':
+      if (options.agent !== true) {
+        return {
+          measured: false,
+          reason: noTrajectoryReason('how many model calls a case took'),
+        };
+      }
+      return {
+        measured: true,
+        name: 'step-count',
+        deterministic: true,
+        expression: `StepCount(max_steps=${metric.maxSteps})`,
+      };
+    case 'forbidden-tool':
+      if (options.agent !== true) {
+        return {
+          measured: false,
+          reason: noTrajectoryReason('the tools a case reached for'),
+        };
+      }
+      return {
+        measured: true,
+        name: 'forbidden-tool',
+        deterministic: true,
+        expression: `ForbiddenTool(forbid=${FORBIDDEN_TOOLS})`,
+      };
+    case 'approval-respected':
+      if (options.agent !== true) {
+        return {
+          measured: false,
+          reason: noTrajectoryReason('the pauses a case took and the decisions it was given'),
+        };
+      }
+      return {
+        measured: true,
+        name: 'approval-respected',
+        deterministic: true,
+        expression: 'ApprovalRespected()',
       };
     case 'retrieval':
       return {

@@ -124,6 +124,10 @@ export const SPEC_VERSIONS = [
     version: '0.30',
     adds: 'Adds `observability.alerts`, the metric alarms an operator wants to be paged on: each names one of the four series the deploy plan already derives, a window, an aggregate and a threshold, so the compiler emits the alarm resource instead of a dashboard nobody reads. It requires `observability.export: otlp`, because an alarm over a stream that never leaves the process can never fire.',
   },
+  {
+    version: '0.31',
+    adds: 'Adds the `step-count`, `forbidden-tool` and `approval-respected` eval metrics, which score a run rather than an answer: how many model calls a case took, whether it reached for a tool it was told never to call, and whether it stopped at the pauses it was given and honoured the decision it was handed. Each is only meaningful on an `agent:` target, so a spec that declares one elsewhere is refused by name. From `0.31`, an `enterprise` document with a pipeline or retriever no eval covers is refused rather than warned about, which is the same coverage rule with the consequence an enterprise delivery needs.',
+  },
 ];
 /**
  * Corrections to labels published outside this page.

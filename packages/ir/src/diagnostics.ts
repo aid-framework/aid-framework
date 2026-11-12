@@ -75,6 +75,7 @@ export const IR_DIAGNOSTIC_CODES = {
   orchestrationDeepagents: 'ir/orchestration-deepagents',
   evalUncovered: 'ir/eval-uncovered',
   evalTrajectory: 'ir/eval-trajectory',
+  evalMetricVacuous: 'ir/eval-metric-vacuous',
   observabilityExport: 'ir/observability-export',
   promptVersionStale: 'ir/prompt-version-stale',
   promotionRegression: 'ir/promotion-regression',

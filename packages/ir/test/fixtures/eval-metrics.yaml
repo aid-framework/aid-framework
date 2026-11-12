@@ -1,0 +1,59 @@
+specVersion: "0.31"
+project:
+  name: trajectory-metrics
+types:
+  Order:
+    kind: struct
+    fields:
+      order_id:
+        type: string
+        required: true
+models:
+  triage:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [tools]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  instructions:
+    version: 1
+    model: triage
+    template: "Answer the question."
+    output:
+      kind: text
+tools:
+  fetch_order:
+    description: Read an order record.
+    input: Order
+    output: Order
+    sideEffects: read
+    auth: isAuthenticated()
+    handler:
+      kind: business
+      symbol: fetch_order
+agents:
+  support:
+    name: Support Agent
+    instructions: instructions
+    model: triage
+    tools: [fetch_order]
+    maxSteps: 4
+    maxTokensBudget: 4096
+    engine: native
+    humanInTheLoop:
+      when: hasRole("support_agent")
+      channel: slack
+evals:
+  trajectory_shape:
+    target: agent:support
+    dataset:
+      source: file
+      uri: datasets/tickets.jsonl
+    metrics:
+      - kind: step-count
+        maxSteps: 2
+      - kind: forbidden-tool
+        forbid: [fetch_order]
+      - kind: approval-respected
+    gate:
+      ci: true
