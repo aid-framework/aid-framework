@@ -1,0 +1,22 @@
+{
+  "name": "extraction_quality",
+  "version": "1",
+  "cases": [
+    {
+      "id": "saas-monthly",
+      "input": "Northwind Analytics, invoice NA-2024-0417, due 2024-05-30, total 249.00 USD."
+    },
+    {
+      "id": "freight",
+      "input": "DHL Express, invoice 7781209344, due 2024-06-14, total 1,890.50 EUR."
+    },
+    {
+      "id": "contractor",
+      "input": "Rivera Consulting LLC, invoice RC-0091, net 30 from 2024-05-01, 6400.00 USD."
+    },
+    {
+      "id": "utilities",
+      "input": "Municipal Water, account invoice MW-88213, due 2024-05-20, 118.75 USD."
+    }
+  ]
+}

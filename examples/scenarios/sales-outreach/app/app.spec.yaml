@@ -1,0 +1,162 @@
+specVersion: "0.30"
+
+project:
+  name: sales-outreach
+  namespace: acme.gtm
+  description: A draft-then-send outreach agent with a human at the send step.
+  targets: [py-fastapi]
+
+profile: standard
+
+overridable:
+  deployments.api.region:
+    from: [us-east-1, eu-west-1]
+  models.compose.modelId:
+    from: [gpt-4o-mini, gpt-4.1-mini]
+  agents.outreach_agent.maxCostBudget:
+    max: 0.25
+
+types:
+  OutreachDraft:
+    kind: struct
+    fields:
+      subject:
+        type: string
+        required: true
+      body:
+        type: string
+        required: true
+  SendReceipt:
+    kind: struct
+    fields:
+      message_id:
+        type: string
+        required: true
+
+models:
+  compose:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [json-schema, tools]
+    params:
+      temperature: 0.4
+      maxTokens: 700
+    costProfile: openai-gpt-4o-mini
+    limits:
+      maxInputTokens: 8192
+      maxOutputTokens: 700
+
+prompts:
+  draft_outreach:
+    version: 1
+    model: compose
+    template: |
+      Write one short outreach email for the account below.
+      Account: {{ account }}
+      Subject line first, then at most 90 words of body. No claims about pricing.
+    variables:
+      account:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: OutreachDraft
+
+  outreach_instructions:
+    version: 1
+    model: compose
+    template: |
+      You prepare outreach for an account executive. Use send_email only after the
+      draft has been reviewed. Never state a price, a discount or a delivery date.
+    output:
+      kind: text
+
+tools:
+  send_email:
+    description: Send one reviewed outreach email to the prospect contact.
+    input: OutreachDraft
+    output: SendReceipt
+    handler:
+      kind: business
+      symbol: send_email
+    sideEffects: write
+    requiresConfirmation: true
+    auth: "hasScope('outreach:send')"
+    idempotency: key
+    retries: 2
+    timeoutMs: 10000
+
+guardrails:
+  inbound:
+    stages: [input]
+    policies: [prompt-injection]
+    action: block
+    onFail:
+      message: The request was refused before the model ran.
+      log: true
+  outbound:
+    stages: [output]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The draft was withheld. Remove personal data and retry.
+      log: true
+  before_send:
+    stages: [tool-call]
+    tools: [send_email]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The outbound email was withheld by policy.
+      log: true
+
+agents:
+  outreach_agent:
+    name: Outreach agent
+    instructions: outreach_instructions
+    model: compose
+    tools: [send_email]
+    guardrails: [inbound, outbound, before_send]
+    maxSteps: 6
+    maxCostBudget: 0.25
+    humanInTheLoop:
+      when: "true"
+      channel: outreach-review
+
+evals:
+  draft_quality:
+    target: pipeline:draft_outreach
+    dataset:
+      source: file
+      uri: evals/draft_quality.json
+    metrics:
+      - kind: json-schema
+        schema: OutreachDraft
+    gate:
+      ci: true
+      maxRegression: 0.05
+
+pipelines:
+  draft_outreach:
+    description: Draft one outreach email and return it for review.
+    trigger:
+      http:
+        method: post
+        path: /outreach/draft
+    steps:
+      - generate:
+          prompt: draft_outreach
+          input:
+            account: "{{ event.account }}"
+          as: draft
+      - emit:
+          event: OutreachDraft
+
+deployments:
+  api:
+    target: container
+    cloud: aws
+    region: us-east-1
+    streaming: false
+    secrets: [OPENAI_API_KEY]

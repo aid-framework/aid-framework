@@ -64,6 +64,15 @@ pnpm --filter support-copilot-ts-example test
 From the repository root, `pnpm e2e` and `pnpm e2e:ts` regenerate the two golden trees and boot the result
 over a real socket.
 
+## `scenarios/` — three delivery situations, spec only
+
+Not golden trees. `scenarios/` holds three specs chosen to cover both market segments — a payables
+extractor and an outreach agent on `profile: standard`, and a prior-authorization desk on
+`profile: enterprise`, where audit, identity, private networking and approvals are required and the
+build is refused without them. The generated code is not committed; each is compiled by `aid gen` when
+you want it, and `packages/cli/test/scenarios.test.ts` fails if a spec-language change leaves one of
+them unable to pass its gates. Start at [`scenarios/README.md`](scenarios/README.md).
+
 ## Contributing an example
 
 Examples are meant to be read, copied, and modified. If you would like to contribute one, please open an

@@ -1,0 +1,22 @@
+{
+  "name": "draft_quality",
+  "version": "1",
+  "cases": [
+    {
+      "id": "named-contact",
+      "input": "Account: Northwind Traders. Contact: Dana Reyes, Head of Ops. They asked about reducing manual invoice review."
+    },
+    {
+      "id": "inbound-lead",
+      "input": "Account: Contoso Logistics. Contact: Sam Okafor, VP Engineering. Downloaded the onboarding checklist last week."
+    },
+    {
+      "id": "renewal-window",
+      "input": "Account: Fabrikam Health. Contact: Priya Nair, Director of Compliance. Current contract ends next quarter."
+    },
+    {
+      "id": "cold-account",
+      "input": "Account: Tailspin Toys. Contact: unknown. No prior conversation."
+    }
+  ]
+}
