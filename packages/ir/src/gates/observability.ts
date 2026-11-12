@@ -17,13 +17,12 @@
  * the runner drives one prediction per case through a prompt, and an agent run has no such
  * single subject. A `tool-trace` metric compares tool calls, which nothing here compares,
  * so declaring one promises a score that will never be produced. `cost` and `latency` are
- * *not* refused even though the runner cannot score them either, because each carries a
- * second meaning this build does honour: a `cost` ceiling becomes the eval's `costBudget`
- * and is checked against a static estimate by the cost gate, and a `latency` ceiling
- * becomes `latencyBudgetP95Ms` and reaches the deploy plan. Refusing them would delete a
- * working check to make a point; they stay refused at generation, where they always were.
- * Refusing the rest here rather than in codegen is the point -- `aid validate` says it
- * before a generator is ever entered.
+ * *not* refused, because both are measured: the runner carries the spend and the wall time
+ * of each case, so a ceiling is scored like any other metric rather than estimated, and
+ * each also carries a second meaning this build honours -- a `cost` ceiling becomes the
+ * eval's `costBudget` for the cost gate, and a `latency` ceiling reaches the deploy plan as
+ * `latencyBudgetP95Ms`. Refusing the rest here rather than in codegen is the point --
+ * `aid validate` says it before a generator is ever entered.
  */
 
 import { ALERTS_MIN_VERSION, specVersionAtLeast } from '@aid-framework/spec';

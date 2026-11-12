@@ -404,15 +404,42 @@ Two details worth recording, because each is a place a gate could have gone wron
 
 `tool-trace` matching needed a semantic decision, resolved in §11 (open question 3).
 
-### 4.4 Trace → dataset (CLI only)
+### 4.4 Trace → dataset (CLI only) — **SHIPPED, differently from the sketch**
 
-New: `aid trace export --dataset triage_curated --from <dir> --filter agent=triage_agent`
-writes a `Dataset`-shaped JSONL file from the JSONL spans `aid trace` already reads. Cases are
-the successful runs; `expected` is derived from what the run did, not from a model. A second
-flag, `aid eval --from-traces <file>`, skips writing and evaluates directly.
+```sh
+aid trace export --dataset triage_curated --from traces --filter agent=triage_agent
+```
 
-No spec change: `evals[].dataset.source` is currently a `const: "file"`, and a trace-derived
-dataset is a file by the time eval reads it.
+writes a dataset file from the spans `aid trace` already reads. One run is one case:
+`input` is the first recorded prompt, `expected` the last recorded answer, and `metadata`
+carries the call count, cost, wall time, model, tools and trace id. The file is written in
+the exact canonical form the Python `Dataset` writes (`json.dumps(sort_keys=True, indent=2)`
+plus a trailing newline), so a regenerated dataset diffs cleanly and `evals[].dataset.uri`
+points at it directly.
+
+No spec change: `evals[].dataset.source` is a `const: "file"`, and a trace-derived dataset
+is a file by the time the runner reads it.
+
+**Two corrections to the sketch above, both discovered while building it.**
+
+1. **The sink had no payloads.** `expected` "derived from what the run did" needs the text
+   the run produced, and the sink recorded timing, model, tokens and cost but never a prompt
+   or a completion — so the first honest export would have been empty. The fix is an opt-in
+   capture switch: `AID_TRACE_CONTENT=1` makes `record_content` attach `aid.input.text` and
+   `aid.output.text` to a model-call span, truncated at 4000 characters. It is **off by
+   default** so that pointing `AID_TRACE_DIR` at a directory never starts recording what
+   users typed, and the refusal for "no payloads" names the variable rather than leaving a
+   reader to work out why an expensive run produced no cases. Nothing redacts; the operator
+   who sets the variable owns what it collects, which is why `feedbackPiiGate` (scoped to
+   the deployed feedback store) does not and should not cover it.
+2. **`aid eval --from-traces` is not built, and should not be.** It would imply a curated
+   dataset exists at eval time, which is exactly the judgement an export cannot make. The
+   export writes a file; a person edits it; `aid eval` reads the file. Every exported case
+   is tagged `unreviewed` and carries `trace-export` in `tags` for the same reason.
+
+Codes: `cli/trace-export-dataset-required`, `-filter-invalid`, `-filter-no-match`,
+`-no-cases`, `-partial` (a warning: some runs contributed, some could not), `-would-overwrite`,
+`-unwritable`, and `cli/trace-unknown-subcommand` for `aid trace <not-a-verb>`.
 
 ## 5. New gates and their exact diagnostics
 
@@ -555,7 +582,7 @@ and fixtures. Ranges are honest uncertainty, not padding.
 | **1. Accuracy sweep** | Registry gains the three agent constructs, both templates move to 0.30, `support-copilot` gains a `customers/acme.yaml`, plus a test asserting every template validates and `aid fleet` succeeds | **S, 0.5–1 d** | — |
 | **2. Make alarms real** | `configure_metrics()` + the four recording points + `metrics_export_status()`, with `ir/alerts-unproduced` and the corrected hint | **M, 3–4 d** | Phase 1 (docs) |
 | **3. Trajectory evals** | *(partially shipped)* `cost`/`latency` measured end to end, plus `Trajectory`/`RunOutput`/`tool-trace` in the runtime with tests. Still open: the agent-eval emitter, `ir/eval-trajectory` narrowing, `ir/eval-coverage` | **L, 1.5–2 wk** | Phase 2 (cost instrument) |
-| **4. Trace → dataset** | `aid trace export --dataset` writes a valid dataset from one agent's spans | **M, 4–6 d** | Phase 3 |
+| **4. Trace → dataset** | *(shipped)* `aid trace export --dataset` writes a canonical dataset from one directory of runs, behind an opt-in `AID_TRACE_CONTENT` capture switch | **M, 4–6 d** | Phase 3 |
 | **5. Delivery playbook** | `docs/guide/delivery.md`: template → overlay → fleet → report → improvement loop, with the enterprise checklist per control | **S, 1–2 d** | Phase 1 |
 
 Phase 1 is the smallest increment and the cheapest honesty win: it fixes a false count, a
@@ -584,7 +611,11 @@ it is.
 - **`gate.promotion.allowedCostIncrease` comparing dollars.** Declarable, gated both ways,
   still not computable: a recorded baseline stores a pass rate per metric, not a total. The
   warning now says that rather than describing a later phase.
-- **`aid trace export`, `aid eval --from-traces`.** Proposed in §4.4.
+- **`aid eval --from-traces`.** Proposed in §4.4 and deliberately dropped: it would imply a
+  curated dataset exists at eval time. `aid trace export` writes the file, a person edits it,
+  `aid eval` reads it.
+- **Prompt or completion capture by default.** The sink keeps text only when
+  `AID_TRACE_CONTENT` is set. Nothing redacts, so that stays an operator decision.
 - **`ir/eval-coverage`.** Proposed in §5.4. Deferred with the agent-eval emitter: it would
   otherwise refuse every enterprise spec that declares an agent.
 - **Percentile alarms on a backend that cannot compute them from a histogram.** Unverified.

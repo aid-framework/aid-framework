@@ -28,7 +28,7 @@ Every command accepts `-h` / `--help` for its own usage. All except `dev` accept
 | [`kb`](#kb) | ask the engine that owns a managed knowledge base to re-ingest it |
 | [`eval`](#eval) | run the eval gate, record the baseline it measures against, or apply a promotion policy |
 | [`cost`](#cost) | report cost and latency from the local trace sink |
-| [`trace`](#trace) | inspect a traced run: the span tree, timings, models, tokens and cost |
+| [`trace`](#trace) | inspect a traced run, or export runs as a dataset an eval can read |
 | [`report`](#report) | compare many deployments from their trace sinks and recorded eval baselines |
 | [`doctor`](#doctor) | diagnose the tree against the spec: drift, versions, missing files |
 | [`eject`](#eject) | take ownership of a generated file: move it to business/ and stop generating it |
@@ -227,16 +227,22 @@ aid cost [dir] [--since <date>] [--budget <usd>]
 
 ## `trace`
 
-inspect a traced run: the span tree, timings, models, tokens and cost
+inspect a traced run, or export runs as a dataset an eval can read
 
 ```sh
-aid trace [run] [--dir <dir>] [--all]
+aid trace [run | export] [--dir <dir>] [--all] [--dataset <name>] [--from <dir>] [--filter agent=<id>] [--version <v>] [--out <path>] [--force]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--dir <dir>` | the trace directory to read (default: $AID_TRACE_DIR) |
 | `--all` | print every run in the directory, not just the run list |
+| `--dataset <name>` | export: the dataset name, which becomes datasets/&lt;name&gt;.json |
+| `--from <dir>` | export: the trace directory to read (same as --dir) |
+| `--filter <agent-id>` | export: only export runs whose agent span names this agent |
+| `--version <v>` | export: the dataset version (default: 1) |
+| `--out <path>` | export: the file to write (default: datasets/&lt;name&gt;.json) |
+| `--force` | export: replace an existing dataset file |
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |
 

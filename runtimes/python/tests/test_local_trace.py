@@ -22,10 +22,12 @@ from aid_runtime import (
     ATTRIBUTES,
     GEN_AI_OPERATION_CHAT,
     TRACE_DIR_ENV,
+    CompletionRequest,
+    ModelGateway,
     local_trace_enabled,
 )
 from aid_runtime.local_trace import finish_span, wrap_span
-from aid_runtime.tracing import agent_span, get_tracer, llm_span, record_cost
+from aid_runtime.tracing import CONTENT_ENV, agent_span, get_tracer, llm_span, record_cost
 
 
 class BoomError(Exception):
@@ -39,6 +41,11 @@ def _raise_boom() -> None:
 def _lines(directory: Path) -> list[dict[str, Any]]:
     (path,) = directory.glob("trace-*.jsonl")
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _clear(directory: Path) -> None:
+    for leftover in directory.glob("trace-*.jsonl"):
+        leftover.unlink()
 
 
 def test_the_sink_is_off_unless_a_directory_is_configured(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,3 +160,27 @@ def test_the_opentelemetry_path_still_records(
     assert recorded.name == f"{GEN_AI_OPERATION_CHAT} m"
     (line,) = _lines(tmp_path)
     assert line["name"] == recorded.name
+
+
+async def test_the_gateway_captures_payloads_only_when_asked(
+    gateway: ModelGateway, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A real gateway call is the only thing that proves the wiring, not the helper."""
+    monkeypatch.delenv(CONTENT_ENV, raising=False)
+    monkeypatch.setenv(TRACE_DIR_ENV, str(tmp_path))
+    await gateway.generate("small", CompletionRequest.prompt("what is it"))
+
+    calls = [record for record in _lines(tmp_path) if record["kind"] == "CLIENT"]
+    assert calls
+    assert all(ATTRIBUTES["input_text"] not in call["attributes"] for call in calls)
+    assert all(ATTRIBUTES["output_text"] not in call["attributes"] for call in calls)
+
+    # A second run in a clean directory, so the assertion isolates the captured call.
+    _clear(tmp_path)
+
+    monkeypatch.setenv(CONTENT_ENV, "1")
+    await gateway.generate("small", CompletionRequest.prompt("what is it"))
+
+    (captured,) = [record for record in _lines(tmp_path) if record["kind"] == "CLIENT"]
+    assert captured["attributes"][ATTRIBUTES["input_text"]] == "user: what is it"
+    assert str(captured["attributes"][ATTRIBUTES["output_text"]]).strip()

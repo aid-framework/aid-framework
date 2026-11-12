@@ -17,8 +17,12 @@ from opentelemetry.trace import SpanKind, StatusCode, Tracer
 
 from aid_runtime import ATTRIBUTES, GEN_AI_OPERATION_CHAT, TokenUsage, aid_attributes
 from aid_runtime.tracing import (
+    CONTENT_ENV,
+    MAX_CONTENT_CHARS,
+    content_capture_enabled,
     get_tracer,
     llm_span,
+    record_content,
     record_cost,
     record_exception,
     record_usage,
@@ -83,6 +87,8 @@ def test_framework_specific_attributes_stay_out_of_the_genai_namespace() -> None
         "aid.guardrail.stage",
         "aid.guardrail.action",
         "aid.guardrail.policies",
+        "aid.input.text",
+        "aid.output.text",
     }
 
 
@@ -221,3 +227,70 @@ def test_aid_attributes_renames_known_keys_and_passes_others_through() -> None:
         "aid.gateway.attempts": 2,
         "tenant_id": "acme",
     }
+
+
+def test_content_capture_is_off_unless_the_variable_says_otherwise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(CONTENT_ENV, raising=False)
+    assert content_capture_enabled() is False
+
+    for off in ("", "0", "false", "no", "off", "  "):
+        monkeypatch.setenv(CONTENT_ENV, off)
+        assert content_capture_enabled() is False, off
+
+    for on in ("1", "true", "TRUE", " Yes ", "on"):
+        monkeypatch.setenv(CONTENT_ENV, on)
+        assert content_capture_enabled() is True, on
+
+
+def test_payloads_are_not_recorded_when_capture_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(CONTENT_ENV, raising=False)
+    tracer, exporter = _recording_tracer()
+
+    with llm_span(model="m", provider="p", tracer=tracer) as span:
+        record_content(span, input_text="hello", output_text="hi")
+
+    attributes = _attributes_of(exporter)
+    assert "aid.input.text" not in attributes
+    assert "aid.output.text" not in attributes
+
+
+def test_a_captured_prompt_and_completion_land_on_the_span(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(CONTENT_ENV, "1")
+    tracer, exporter = _recording_tracer()
+
+    with llm_span(model="m", provider="p", tracer=tracer) as span:
+        record_content(span, input_text="hello", output_text="hi")
+
+    attributes = _attributes_of(exporter)
+    assert attributes["aid.input.text"] == "hello"
+    assert attributes["aid.output.text"] == "hi"
+
+
+def test_captured_text_is_truncated_to_the_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(CONTENT_ENV, "1")
+    tracer, exporter = _recording_tracer()
+
+    with llm_span(model="m", provider="p", tracer=tracer) as span:
+        record_content(span, input_text="x" * (MAX_CONTENT_CHARS + 500), output_text=None)
+
+    attributes = _attributes_of(exporter)
+    assert attributes["aid.input.text"] == "x" * MAX_CONTENT_CHARS
+    assert "aid.output.text" not in attributes
+
+
+def test_blank_payloads_are_omitted_rather_than_recorded_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(CONTENT_ENV, "1")
+    tracer, exporter = _recording_tracer()
+
+    with llm_span(model="m", provider="p", tracer=tracer) as span:
+        record_content(span, input_text="   ", output_text="")
+
+    attributes = _attributes_of(exporter)
+    assert "aid.input.text" not in attributes
+    assert "aid.output.text" not in attributes
