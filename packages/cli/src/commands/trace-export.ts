@@ -30,7 +30,7 @@
  * - `0` when the file was written.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 import type { CliContext } from '../context.js';
@@ -344,20 +344,24 @@ export function traceExport(context: CliContext, options: TraceExportOptions): C
   const target = resolve(context.cwd, options.out ?? `datasets/${name}.json`);
   const targetShown = displayPath(context.cwd, target);
 
-  if (existsSync(target) && !options.force) {
-    return refusal(
-      CLI_DIAGNOSTIC_CODES.traceExportWouldOverwrite,
-      `"${targetShown}" already exists, and a dataset may have been curated by hand since it was generated.`,
-      'Pass --force to replace it, or --out <path> to write somewhere else. Bump --version when the cases change, because the eval gate refuses to compare across versions.',
-      `aid: "${targetShown}" already exists. Pass --force to replace it.\n`,
-      EXIT_USAGE,
-    );
-  }
-
   try {
     mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, datasetJson(name, resolvedVersion, cases), 'utf8');
+    // `wx` creates only if the file is absent, so "does this exist" and "write it" are one
+    // operation rather than a check followed by a write something can slip between.
+    writeFileSync(target, datasetJson(name, resolvedVersion, cases), {
+      encoding: 'utf8',
+      flag: options.force ? 'w' : 'wx',
+    });
   } catch (error) {
+    if (!options.force && (error as NodeJS.ErrnoException).code === 'EEXIST') {
+      return refusal(
+        CLI_DIAGNOSTIC_CODES.traceExportWouldOverwrite,
+        `"${targetShown}" already exists, and a dataset may have been curated by hand since it was generated.`,
+        'Pass --force to replace it, or --out <path> to write somewhere else. Bump --version when the cases change, because the eval gate refuses to compare across versions.',
+        `aid: "${targetShown}" already exists. Pass --force to replace it.\n`,
+        EXIT_USAGE,
+      );
+    }
     const reason = error instanceof Error ? error.message : String(error);
     return refusal(
       CLI_DIAGNOSTIC_CODES.traceExportUnwritable,
