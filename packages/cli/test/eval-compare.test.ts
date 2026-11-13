@@ -337,4 +337,20 @@ describe('aid eval --compare', () => {
     expect(run.code).toBe(0);
     expect(run.stdout).toContain('verdict: promotable');
   });
+
+  it('names the resolved path, so running from elsewhere is not read as a missing sign-off', () => {
+    // The record is a path in the spec and resolves against the directory the command runs
+    // from. A refusal that only echoed the declared path would describe a file that exists
+    // as one that is missing, which is the one thing a refusal may not do.
+    const made = compared({ withApproval: true });
+    const missing = compareText(made);
+    expect(missing.code).toBe(1);
+    expect(missing.stderr).toContain(join(made.root, 'approvals', 'classify-2.md'));
+
+    mkdirSync(join(made.root, 'approvals'), { recursive: true });
+    writeFileSync(join(made.root, 'approvals', 'classify-2.md'), '  \n', 'utf8');
+    const empty = compareText(made);
+    expect(empty.code).toBe(1);
+    expect(empty.stderr).toContain('the file is empty');
+  });
 });

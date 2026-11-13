@@ -247,7 +247,7 @@ export const COMMANDS: readonly Command[] = [
       valueFlag(
         'compare',
         'path',
-        'apply gate.promotion to an accepted baseline and a candidate one. The quality allowance is judged; a declared cost ceiling is reported as unjudged because no runtime records cost',
+        'apply gate.promotion to an accepted baseline and a candidate one. Both allowances are judged from what the two files record, so a quality drop above allowedQualityDrop and a spend rise above allowedCostIncrease are both refused, and an allowance neither file can judge is refused rather than passed',
       ),
       valueFlag('candidate', 'path', 'the candidate baseline --compare reads'),
       JSON_FLAG,
