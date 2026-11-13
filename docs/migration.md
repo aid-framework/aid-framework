@@ -138,7 +138,7 @@ an `enterprise` document must now say.
 | `deployments[].identity` | Where a caller is authenticated: `issuer`, `audience`, and the `subjectClaim` / `rolesClaim` / `scopesClaim` that become the runtime `Principal`. |
 | `deployments[].network` | `private` (required — see below), an optional `vpcId` / `subnetIds` / `privateEndpoints`. |
 | `deployments[].approvals` | The change-control policy for production: `environment`, `requiredApprovals`, and an optional `preventSelfReview`. |
-| `pipelines[].steps[].requiresApproval` | A pipeline tool step that stops and asks a human before it runs. |
+| `pipelines[].steps[].tool.requiresApproval` | A pipeline tool step that stops and asks a human before it runs. |
 
 ### Nothing to do for 0.25 documents
 
@@ -795,7 +795,7 @@ agent, which the previous release refused outright.
 | Before | Now |
 | --- | --- |
 | Any document that ran an agent and withheld a field failed the build with `unsupported-redact`, because a run has no rendered prompt to bind a value to. | An agent run binds the declared names against the arguments of the tool calls its model composes, recursing into nested objects and lists, and withholds those values from the copy a trace records while the model still receives them. The refusal survives only for a document that runs an agent and **declares no tool at all**, which has no argument to bind. |
-| `aid trace export` refused enterprise capture only when `observability.redact` was empty, without looking at what the document actually ran. | It refuses an agent document under `profile: enterprise` on the same test, and does not accept `observability.feedback.redact` in its place: a set declared for stored signals says nothing about what a trace kept (`cli/trace-export-agent-unredacted`). |
+| `aid trace export` refused enterprise capture only when `observability.redact` was empty, without looking at what the document actually ran. | It refuses an agent document under `profile: enterprise` on the same test, and does not accept `observability.feedback.pii.redact` in its place: a set declared for stored signals says nothing about what a trace kept (`cli/trace-export-agent-unredacted`). |
 
 ### What the set does not reach
 

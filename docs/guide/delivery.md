@@ -187,7 +187,7 @@ still receives the real value and the text recorded says `[redacted:<name>]` in 
 customer identifier listed there reaches the model and never reaches the sink. It falls back to
 the fields the IR already marks sensitive, so naming one more is an addition rather than a
 rewrite. `aid trace export` applies the same set, plus anything in
-`observability.feedback.redact`, to what it writes. Under `profile: enterprise` it refuses to
+`observability.feedback.pii.redact`, to what it writes. Under `profile: enterprise` it refuses to
 export captured content when that set is empty (`cli/trace-export-enterprise-capture`): a
 document that names nothing is declaring that nothing it records is sensitive, and the command
 does not take that declaration at face value.
@@ -207,7 +207,7 @@ checkpoint carries, so a resumed run is protected too. Two limits stand:
   arguments carry the fields, or serve the same work through a pipeline.
 
 `aid trace export` holds an agent document to the same test, and does not accept
-`observability.feedback.redact` in its place: a set declared for stored signals says nothing about
+`observability.feedback.pii.redact` in its place: a set declared for stored signals says nothing about
 what a trace already recorded.
 
 What the set does not cover either way is a value you record by another route — your own log line,
