@@ -378,6 +378,77 @@ describe('a pipeline that cannot be streamed is refused at plan time', () => {
   });
 });
 
+/**
+ * `BASE_SPEC`'s one model, repointed at a provider whose adapter returns the whole reply.
+ *
+ * `capabilities` deliberately omits `streaming`: the deployment is the only thing asking
+ * for a stream, which is the case the shape rule cannot see. A declared capability the
+ * runtime cannot name is tolerated here by design, so only the emitted route's
+ * unconditional `gateway.stream()` call makes this combination impossible.
+ */
+function unstreamableModelSpec(): string {
+  const replaced = BASE_SPEC.replace(
+    [
+      '    provider: fake',
+      '    modelId: fake-deterministic-1',
+      '    capabilities: [json-schema, streaming]',
+    ].join('\n'),
+    [
+      '    provider: bedrock',
+      '    modelId: anthropic.claude-3-5-sonnet-20241022-v2:0',
+      '    capabilities: [json-schema]',
+      '    costProfile: bedrock-claude-3-5-sonnet',
+      '    limits:',
+      '      maxInputTokens: 8192',
+      '      maxOutputTokens: 512',
+    ].join('\n'),
+  );
+  // Without this the tests below would pass by inspecting the unchanged fake model.
+  expect(replaced).toContain('provider: bedrock');
+  return replaced;
+}
+
+/** The IR for a spec that passes the spec and lowering checks, without planning it. */
+function irFor(text: string): IR {
+  const spec = checkSpecText(text, { file: 'surface.spec.yaml' });
+  if (spec.value === undefined) throw new Error('the spec parsed to nothing');
+  const { ir, diagnostics } = buildIR(spec.value, { file: 'surface.spec.yaml' });
+  const blocking = diagnostics.filter((line) => line.severity === 'error');
+  if (blocking.length > 0) {
+    throw new Error(blocking.map((line) => line.message).join('\n'));
+  }
+  return ir;
+}
+
+describe('a stream the pinned model cannot produce is refused at plan time', () => {
+  // `deployments[].streaming` names no model, and the adapter table is this generator's,
+  // not the spec's, so nothing tied the two together: the build passed and `stream()` in
+  // the runtime raised `CapabilityMismatchError` on the first request.
+  it('names the model, the adapter, and the call that would have raised', () => {
+    const problems = checkPlan(irFor(unstreamableModelSpec() + STREAMING_DEPLOYMENT));
+    const refusal = problems.find((entry) => entry.message.includes('BedrockProvider'));
+    expect(refusal).toBeDefined();
+    expect(refusal?.code).toBe('unsupported-streaming');
+    expect(refusal?.path).toBe('pipelines.handle.steps');
+    expect(refusal?.message).toContain('anthropic.claude-3-5-sonnet-20241022-v2:0');
+    expect(refusal?.message).toContain("does not advertise 'Capability.STREAMING'");
+    expect(refusal?.message).toContain('CapabilityMismatchError');
+    expect(refusal?.message).toContain('drop `streaming`');
+  });
+
+  it('stops the plan, rather than emitting a route that raises on the first request', () => {
+    expect(() => planPyFastApi(irFor(unstreamableModelSpec() + STREAMING_DEPLOYMENT))).toThrow(
+      /unsupported-streaming/,
+    );
+  });
+
+  it('accepts the same model when no deployment asks to stream', () => {
+    // The refusal is about the stream, not about Bedrock: an adapter that returns the
+    // whole reply serves every other route this target emits.
+    expect(codes(irFor(unstreamableModelSpec()))).not.toContain('unsupported-streaming');
+  });
+});
+
 describe('guardrail actions a pipeline route cannot honour', () => {
   it('refuses `escalate`, because a pipeline route has no checkpoint to resume', () => {
     const { ir } = buildForSpecText(specText(BLOCKING_GUARDRAIL, STREAMING_DEPLOYMENT));

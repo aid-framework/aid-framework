@@ -18,7 +18,13 @@ dialects. Three translations are structural rather than cosmetic:
 There is no ``stream``: ``/converse-stream`` frames events in AWS's binary
 event-stream format (length-prefixed records with CRC32) rather than SSE, which
 is out of scope for this adapter. ``STREAMING`` is therefore not advertised, and
-the capability gate refuses a spec that asks for it instead of failing mid-run.
+both generators refuse a deployment that asks a Bedrock-pinned model to stream --
+``unsupported-streaming`` in ``py-fastapi``, ``streaming-unsupported`` in
+``ts-vercel`` -- naming the model and this adapter. The refusal is at plan time
+because ``ModelGateway.stream`` requires ``STREAMING`` and has no fallback chain,
+so the alternative is raising on the first request. Bedrock itself does stream:
+``ConverseStream`` serves every model that supports messages. The limit is this
+adapter's, not the provider's.
 
 ``EMBEDDINGS`` *is* advertised: Titan models answer on ``InvokeModel``, which is
 the uninterpreted sibling of ``complete`` sharing this adapter's region,

@@ -144,8 +144,17 @@ describe('adapter capabilities', () => {
  * instead of an unpriced model, and it contains the `:` the adapter percent-encodes
  * in the `/model/{id}/converse` path.
  */
+/**
+ * The example repointed at Bedrock, with the stream switched off.
+ *
+ * Bedrock serves streaming, but this target's `BedrockProvider` does not decode AWS's
+ * binary event stream, so a deployment that asks to stream is refused at plan time --
+ * see the refusal test below. The model keeps its `streaming` declaration so the pinned
+ * `models.py` still has a capability to drop, which is what the report records.
+ */
 function bedrockSpecText(): string {
   return exampleSpecText()
+    .replace('    streaming: true', '    streaming: false')
     .replace(
       '    provider: openai\n    modelId: gpt-4o-mini\n    apiKeyEnv: OPENAI_API_KEY',
       '    provider: bedrock\n    modelId: anthropic.claude-3-5-haiku-20241022-v1:0',
@@ -190,6 +199,19 @@ describe('bedrock provider', () => {
     expect(pinned).toContain('Capability.STRUCTURED_OUTPUT');
     expect(pinned).toContain('Capability.TOOL_CALLING');
     expect(pinned).not.toContain('Capability.STREAMING');
+  });
+
+  it('refuses a deployment that asks it to stream, rather than raising on the first request', () => {
+    // Bedrock itself streams (`ConverseStream`, which is why the AWS modules grant
+    // `InvokeModelWithResponseStream`), but this adapter returns the whole reply. The
+    // pinned model simply not advertising `STREAMING` was not enough: the emitted route
+    // calls `deps.gateway.stream(...)` unconditionally, so the shortfall surfaced as a
+    // `CapabilityMismatchError` on the first request instead of at build time.
+    const streaming = bedrockSpecText().replace('    streaming: false', '    streaming: true');
+
+    expect(() => buildForSpecText(streaming)).toThrow(/unsupported-streaming/);
+    expect(() => buildForSpecText(streaming)).toThrow(/does not advertise 'Capability\.STREAMING'/);
+    expect(() => buildForSpecText(streaming)).toThrow(/BedrockProvider/);
   });
 
   it('advertises the embeddings Titan serves over InvokeModel', () => {
@@ -384,7 +406,10 @@ describe('provider conformance', () => {
   });
 
   it('records the capability an adapter cannot serve, without touching anything else', () => {
-    const openai = files(exampleSpecText());
+    // Both sides stop streaming: this target now refuses a Bedrock stream outright, so
+    // leaving the flag on would compare a streaming app against a non-streaming one and
+    // the file list would say so for a reason that has nothing to do with the adapter.
+    const openai = files(exampleSpecText().replace('    streaming: true', '    streaming: false'));
     const bedrock = files(bedrockSpecText());
 
     expect(differingFiles(openai, bedrock)).toEqual([

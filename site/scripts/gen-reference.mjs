@@ -182,6 +182,24 @@ function fieldTable(properties, required) {
 const MAX_NESTING = 3;
 
 /**
+ * Adapter limits that are about the wire format, not the provider's API.
+ *
+ * The `Refuses` line names the capability an adapter leaves out; on its own it reads as a
+ * claim about the provider, which is the one thing it is not. Keyed `Adapter.MEMBER`, so a
+ * note disappears the moment the adapter starts advertising the capability -- an
+ * explanation that outlived its cause would be a second, quieter untruth.
+ */
+const ADAPTER_NOTES = {
+  'BedrockProvider.STREAMING':
+    'Bedrock does stream: `ConverseStream` returns a stream for every model that supports ' +
+    'messages, and the AWS module grants `bedrock:InvokeModelWithResponseStream` for it. ' +
+    '`BedrockProvider` returns the whole reply because the response is AWS binary ' +
+    'event-stream framing, which the adapter does not decode. A deployment that asks a ' +
+    'Bedrock-pinned model to stream is refused at build time with `unsupported-streaming`, ' +
+    'naming the model and the adapter, rather than raising on the first request.',
+};
+
+/**
  * Emit a subsection for every field of `owner` that is an object with named fields.
  *
  * The schema inlines these objects instead of naming them in `$defs`, so a table that stopped at
@@ -1081,6 +1099,10 @@ function featuresPage() {
     "Every provider in `SERVED_PROVIDERS` has a section. The capabilities it advertises are the ones the spec's `capabilities` enum may declare; a spec that names one the adapter does not advertise is refused with `ir/model-capability-missing`, because the provider's API has no such endpoint.",
   );
   lines.push('');
+  lines.push(
+    'The **Catalog** count is not coverage of the provider. `models[]` requires only `provider` and `modelId`, and `modelId` is an open string, so any id the provider serves can be pinned. A catalog entry exists to supply default `limits` and a verified price: an id with no entry builds from the `limits` and `costProfile` the spec declares, and is refused with `ir/cost-profile-unknown` if an eval declares a budget that cannot be priced. The table is offline and deterministic by design, so it never learns about a model the provider launches until someone verifies its rates by hand.',
+  );
+  lines.push('');
   for (const provider of data.providers) {
     const adapter = data.providerAdapters[provider] ?? '';
     const advertised = data.adapterCapabilities[adapter] ?? [];
@@ -1104,6 +1126,10 @@ function featuresPage() {
           )
           .join(', ')}.`,
       );
+      for (const axis of no) {
+        const note = ADAPTER_NOTES[`${adapter}.${axis.member}`];
+        if (note !== undefined) lines.push(`- **Why:** ${note}`);
+      }
     }
     lines.push(
       catalog === undefined

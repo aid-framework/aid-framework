@@ -191,3 +191,43 @@ describe('the emitted app', () => {
     expect(route).not.toContain('answerTicketStreamRequest');
   });
 });
+
+describe('a stream the pinned model cannot produce', () => {
+  /**
+   * `streamableExampleIR` with the answer route's model on an adapter that returns the
+   * whole reply, and its `streaming` declaration dropped so `checkModels` has nothing to
+   * say about it. That leaves one question: does the deployment's request for a stream
+   * notice that the model it routes to cannot produce one?
+   */
+  function unstreamable(): IR {
+    const ir = streamableExampleIR();
+    const pipeline = answerPipeline(ir);
+    const step = (pipeline.steps ?? [])[generateIndex(pipeline)];
+    if (step === undefined || step.kind !== 'generate') {
+      throw new Error('the answer pipeline has no generate step to repoint');
+    }
+    const model = ir.models.find((candidate) => candidate.id === step.model);
+    if (model === undefined) throw new Error('the generate step names a model the IR lacks');
+    model.provider = 'bedrock';
+    model.modelId = 'anthropic.claude-3-5-sonnet-20241022-v2:0';
+    model.capabilities = model.capabilities.filter((name) => name !== 'streaming');
+    return ir;
+  }
+
+  it('refuses it, naming the model and the adapter rather than failing on the first request', () => {
+    const problems = checkPlan(unstreamable()).filter(
+      (problem) => problem.code === 'streaming-unsupported',
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]?.path).toBe('pipelines.answer_ticket');
+    expect(problems[0]?.message).toContain('anthropic.claude-3-5-sonnet-20241022-v2:0');
+    expect(problems[0]?.message).toContain('BedrockProvider');
+    expect(problems[0]?.message).toContain('`gateway.stream()`');
+  });
+
+  it('accepts the same model when no deployment asks to stream', () => {
+    const ir = unstreamable();
+    for (const deployment of ir.deployments) deployment.streaming = false;
+    expect(checkPlan(ir).filter((problem) => problem.code === 'streaming-unsupported')).toEqual([]);
+  });
+});
