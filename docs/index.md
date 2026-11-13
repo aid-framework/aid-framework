@@ -282,7 +282,10 @@ you. The app keeps booting because it never depended on a control plane.
   serves an app, and shows the two gates that will stop you on the way.
 - Taking it to a customer? [The delivery playbook](guide/delivery.md) is the end-to-end
   checklist: which profile to start from, what a customer may change, the enterprise
-  controls, and the limits that are stated rather than implied.
+  controls, and the limits that are stated rather than implied. If a security review is what
+  comes next, [what AID enforces and what stays
+  yours](guide/boundary.md) is the same ground as a reviewer's table: per concern, the
+  diagnostic that refuses it, what is generated, what you provide, and the risk that remains.
 - Making an agent better rather than older? [Improving an agent over time](guide/improvement-loop.md)
   runs the loop end to end from git: traced runs become a curated dataset, a candidate is
   measured against the accepted baseline, and a promotion needs a passing gate and a recorded
