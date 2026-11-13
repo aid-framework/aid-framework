@@ -24,7 +24,7 @@ features:
   - title: Unprotected endpoints cannot ship
     details: The security gate refuses a POST route that passes caller text to a prompt with no input guardrail, so the check happens at generation time instead of during an incident review.
   - title: Evals gate like tests
-    details: A quality regression fails the build, not a dashboard. An eval declares a regression budget over a dataset, and `aid eval` exits non-zero when the budget is exceeded.
+    details: A quality or spend regression fails the build, not a dashboard. An eval declares a regression budget over a dataset, and `aid eval --compare` exits non-zero when either allowance is exceeded.
   - title: Infrastructure from the same spec
     details: The cloud you already use, written for you. A deployment plan emits OpenTofu for AWS or GCP beside a Dockerfile and generated CI, byte-asserted against fixtures and validated with tofu in CI.
   - title: You keep the app
