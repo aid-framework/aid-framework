@@ -53,6 +53,18 @@ deterministic fake provider — as its fallback, and the tests wire the fake pro
 ([`tests/fake_gateway.py`](tests/fake_gateway.py)), so the route, the prompt and the tool run offline and
 reproducibly, and the eval gate does too when it is driven through the same fake provider.
 
+The agent routes want two variables first, because the document declares a signed checkpoint and a
+store for the ones already spent, and the tests set both for themselves in
+[`tests/conftest.py`](tests/conftest.py):
+
+```console
+export AID_CHECKPOINT_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export AID_STATE_DB="$(mktemp -d)/aid-state.db"
+```
+
+Leave either unset and an agent run stops with a message naming the variable, which is the intended
+behaviour rather than a missing default: the app will not sign a checkpoint with a key it invented.
+
 ## The eval gate
 
 ```console

@@ -1,4 +1,4 @@
-specVersion: "0.30"
+specVersion: "0.32"
 
 project:
   name: sales-outreach
@@ -124,6 +124,17 @@ agents:
       when: "true"
       channel: outreach-review
 
+# A pause hands the checkpoint back to whoever asked, so it is signed and it expires.
+# Standard keeps spent-checkpoint memory in one local file: a replay is refused by the
+# process that issued the checkpoint and accepted by any other, which is the documented
+# standard-profile limit. Move to profile: enterprise (with a postgres store) for a replay
+# protection a second replica honours.
+state:
+  kind: sqlite
+  urlEnv: AID_STATE_DB
+  signingKeyEnv: AID_CHECKPOINT_KEY
+  checkpointTtlMinutes: 60
+
 evals:
   draft_quality:
     target: pipeline:draft_outreach
@@ -160,3 +171,10 @@ deployments:
     region: us-east-1
     streaming: false
     secrets: [OPENAI_API_KEY]
+    env:
+      # Where the sqlite file that remembers spent checkpoints lives. The signing key is
+      # not repeated here: `state.signingKeyEnv` names it once and the deploy plan collects
+      # it as a secret, because the resume gate refuses a name that already holds another
+      # credential of this app.
+      - name: AID_STATE_DB
+        value: /var/lib/aid/state.db

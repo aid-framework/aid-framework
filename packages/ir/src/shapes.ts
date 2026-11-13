@@ -896,6 +896,18 @@ export interface AgentStateShape {
    * operator's rows on a policy it invented.
    */
   ttlHours?: number;
+  /**
+   * The environment variable holding the HMAC key checkpoints are signed with, from spec
+   * 0.32. Absent means the generated resume route accepts any well-formed checkpoint, as
+   * it did before 0.32; `ir/resume-unsigned` refuses that under `profile: enterprise`,
+   * where an editable checkpoint is authority to run a paused write.
+   */
+  signingKeyEnv?: string;
+  /**
+   * How long a pause may be resumed for, in minutes. Absent means the runtime default
+   * (15). The deadline is inside the signature, so a holder cannot extend it.
+   */
+  checkpointTtlMinutes?: number;
 }
 
 export interface AgentShape {

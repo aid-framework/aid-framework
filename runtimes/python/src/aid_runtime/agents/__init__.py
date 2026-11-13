@@ -60,8 +60,21 @@ from aid_runtime.agents.memory import (
     render_context,
 )
 from aid_runtime.agents.policy import Principal, evaluate_policy, policy_source
+from aid_runtime.agents.resume import (
+    DEFAULT_CHECKPOINT_TTL_MINUTES,
+    CheckpointRefusalError,
+    CheckpointSigner,
+    InProcessNonceStore,
+    NonceStore,
+    PostgresNonceStore,
+    SqliteNonceStore,
+    nonce_store_for,
+    nonce_store_from_env,
+    signer_from_env,
+)
 from aid_runtime.agents.state import (
     AgentCheckpoint,
+    CheckpointIntegrity,
     HumanDecision,
     PendingApproval,
     RunResult,
@@ -71,6 +84,7 @@ from aid_runtime.agents.state import (
 )
 
 __all__ = [
+    "DEFAULT_CHECKPOINT_TTL_MINUTES",
     "DETECTORS",
     "GUARDRAIL_ACTIONS",
     "GUARDRAIL_STAGES",
@@ -82,6 +96,9 @@ __all__ = [
     "AgentRuntime",
     "BedrockGuardrailClient",
     "BedrockGuardrailPolicy",
+    "CheckpointIntegrity",
+    "CheckpointRefusalError",
+    "CheckpointSigner",
     "DecisionAsker",
     "DecisionDefinition",
     "Detection",
@@ -96,16 +113,20 @@ __all__ = [
     "HumanApproval",
     "HumanDecision",
     "InProcessMemoryStore",
+    "InProcessNonceStore",
     "ManagedGuardrailSettings",
     "MemoryDefinition",
     "MemoryStore",
     "ModelArmorGuardrailClient",
     "ModelArmorGuardrailSettings",
+    "NonceStore",
     "PendingApproval",
+    "PostgresNonceStore",
     "Principal",
     "RunResult",
     "RunStatus",
     "RuntimeSpec",
+    "SqliteNonceStore",
     "StepKind",
     "StepRecord",
     "ThreadMemory",
@@ -115,6 +136,9 @@ __all__ = [
     "evaluate_policy",
     "managed_guardrail_settings",
     "model_armor_settings",
+    "nonce_store_for",
+    "nonce_store_from_env",
     "policy_source",
     "render_context",
+    "signer_from_env",
 ]

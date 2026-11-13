@@ -43,6 +43,7 @@ import { orchestrationDeepagentsGate } from './orchestration.js';
 import { profileGate } from './profile.js';
 import { promotionGate } from './promotion.js';
 import { referentialGate } from './referential.js';
+import { resumeGate } from './resume.js';
 import { securityGate } from './security.js';
 
 export const GATES = {
@@ -72,6 +73,7 @@ export const GATES = {
   'evals/promotion': promotionGate,
   feedback: feedbackPiiGate,
   'observability/alerts': alertsGate,
+  resume: resumeGate,
 } as const satisfies Record<string, Gate>;
 
 export type GateName = keyof typeof GATES;

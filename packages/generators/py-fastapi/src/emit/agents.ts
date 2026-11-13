@@ -25,18 +25,33 @@
  * with no way to continue, so `hasResumeRoute` unions all three, and the route exists iff
  * some agent can pause by any of them.
  *
- * ## `/resume` is a bearer capability, and that is a deliberate Phase 2 position
+ * ## `/resume` accepts a checkpoint this app signed, and each one only once
  *
  * The body of a resume request *is* the checkpoint the previous call returned, and a
- * checkpoint replays a conversation and its pending tool calls. Whoever holds one can
- * continue that run, so the checkpoint is a bearer capability over it rather than a
- * resource with an owner. Authentication and authorization are Phase 3's; until then this
- * route refuses nothing, and the risk is recorded in the PR that shipped it rather than
- * left for a reader to discover.
+ * checkpoint replays a conversation and its pending tool calls -- including a held write
+ * awaiting approval. Whoever holds one can continue that run, so the checkpoint is a bearer
+ * capability over it rather than a resource with an owner.
+ *
+ * From spec 0.32 the route narrows that to something a holder cannot forge: when the spec
+ * declares `state.signingKeyEnv`, `build_runtime` signs every checkpoint it returns and
+ * `resume` verifies the signature before it continues. The signature covers everything but
+ * itself -- the pending call and its arguments, the approval decision, the expiry and the
+ * nonce -- so an edited answer, swapped arguments, an extended deadline and a replayed body
+ * are each refused with a 403 that names which of the four happened. The nonce is claimed in
+ * the store the spec's `state` points at, so a replay is refused by every replica rather
+ * than only by the worker that issued the checkpoint.
+ *
+ * What this does *not* do is decide *who* may resume. No token verification is generated:
+ * the app still expects the deployment to authenticate the caller in front of it. What the
+ * profile refuses is the unsigned and the replayable case -- `profile: enterprise` makes
+ * both errors (`ir/resume-unsigned`, `ir/resume-replay-weak`) and `profile: standard` warns
+ * about both, because an unsigned checkpoint is only ever as good as the endpoint that
+ * accepts it.
  */
 
 import type {
   AgentShape,
+  AgentStateShape,
   GuardrailShape,
   IR,
   MemoryShape,
@@ -73,6 +88,57 @@ export function pausingAgents(ir: IR): AgentShape[] {
  */
 export function hasResumeRoute(ir: IR): boolean {
   return pausingAgents(ir).length > 0;
+}
+
+/**
+ * The store the emitted signer and nonce store read from.
+ *
+ * One route serves every pausable agent, so one store has to serve all of them, and
+ * `ir/resume-key-conflict` is the gate that refuses a document whose pausable agents
+ * disagree about the key, the store or the lifetime. Reading one declaration is therefore
+ * exact rather than a guess. `agent.state` is the *projected* store -- `buildIR` resolves
+ * the document-level `state` into every agent that declares none -- so an override is
+ * already visible on the agent it belongs to and this does not walk up to the document.
+ *
+ * The first *declaring* agent wins rather than the first agent: a document where any
+ * pausable agent names a key signs every checkpoint this route issues, which is the
+ * stricter of the two readings and never weaker than what was declared. The looser
+ * direction -- skipping the key because agent one did not name it -- would withdraw the
+ * signature from the agent that asked for one.
+ */
+function resumeState(ir: IR): AgentStateShape | undefined {
+  return pausingAgents(ir)
+    .map((agent) => agent.state)
+    .find((state) => state !== undefined);
+}
+
+/**
+ * The declarations the emitted protection reads, as Python module constants.
+ *
+ * They are emitted rather than inlined so the value the app uses is visible at the top of
+ * the file an operator is asked to configure, and so the docstring can point at a name.
+ * `None` is a real value here: a spec that declares no `signingKeyEnv` is one that accepted
+ * `ir/resume-unsigned`, and the emitted route then behaves exactly as it did before 0.32
+ * instead of inventing a key.
+ *
+ * The lifetime has no `None` form. An undeclared `checkpointTtlMinutes` emits no constant at
+ * all and the call omits `ttl_seconds`, so the runtime's own default is the only place the
+ * number lives rather than a second copy here that can drift from it.
+ */
+function resumeConfig(state: AgentStateShape | undefined): string {
+  const lines = [
+    renderOptionalString('CHECKPOINT_SIGNING_KEY_ENV', state?.signingKeyEnv),
+    renderOptionalString('CHECKPOINT_STATE_KIND', state?.kind),
+    renderOptionalString('CHECKPOINT_STATE_URL_ENV', state?.urlEnv),
+  ];
+  if (state?.checkpointTtlMinutes !== undefined) {
+    lines.push(`CHECKPOINT_TTL_SECONDS = ${state.checkpointTtlMinutes * 60}`);
+  }
+  return lines.join('\n');
+}
+
+function renderOptionalString(name: string, value: string | undefined): string {
+  return `${name}: str | None = ${value === undefined ? 'None' : pythonString(value)}`;
 }
 
 function omitUndefined(entries: Record<string, unknown>): Record<string, unknown> {
@@ -223,8 +289,8 @@ const RESUME_REQUEST = [
   'class AgentResumeRequest(BaseModel):',
   pythonDoc(
     'A checkpoint the caller already holds, and the answer to the question it asks. ' +
-      'The checkpoint carries the run, so this request is a bearer capability over it; ' +
-      'see the module docstring.',
+      'The runtime verifies its signature, its expiry and its nonce before it continues ' +
+      'the run; see the module docstring for what that proves and what it does not.',
     INDENT,
   ),
   `${INDENT}model_config = ConfigDict(extra="forbid")`,
@@ -232,6 +298,77 @@ const RESUME_REQUEST = [
   `${INDENT}checkpoint: dict[str, Any]`,
   `${INDENT}decision: HumanDecision`,
 ].join('\n');
+
+/**
+ * The signer and nonce store, or `(None, None)` when the spec declares no signing key.
+ *
+ * Both are read from the environment on each call rather than at import, which is how the
+ * rest of this app reads its credentials: a supervisor that sets the variable before the
+ * first request is the normal deployment shape, and a module that opened a database at
+ * import could not be imported by a test that only wants `DOCUMENT`.
+ *
+ * `(None, None)` is not a fallback that weakens a declared spec -- it is the emitted form of
+ * a spec that declared no key, and `ir/resume-unsigned` is the diagnostic that refuses it
+ * under `profile: enterprise`. The store is resolved only when a signer exists, because a
+ * nonce nothing claims is a variable the app has no reason to demand.
+ */
+function resumeProtection(ttl: boolean): string {
+  const signer =
+    ttl === true
+      ? 'signer_from_env(CHECKPOINT_SIGNING_KEY_ENV, ttl_seconds=CHECKPOINT_TTL_SECONDS)'
+      : 'signer_from_env(CHECKPOINT_SIGNING_KEY_ENV)';
+  return [
+    'def _resume_protection() -> tuple[CheckpointSigner | None, NonceStore | None]:',
+    pythonDoc(
+      'The signer and the store that refuses a spent checkpoint, or (None, None) when ' +
+        'this spec declares no signing key.',
+      INDENT,
+    ),
+    `${INDENT}if CHECKPOINT_SIGNING_KEY_ENV is None:`,
+    `${INDENT}${INDENT}return None, None`,
+    `${INDENT}return (`,
+    `${INDENT}${INDENT}${signer},`,
+    `${INDENT}${INDENT}nonce_store_from_env(CHECKPOINT_STATE_KIND, CHECKPOINT_STATE_URL_ENV),`,
+    `${INDENT})`,
+  ].join('\n');
+}
+
+function buildRuntime(resume: boolean): string {
+  const signature = [
+    'def build_runtime(',
+    `${INDENT}*,`,
+    `${INDENT}gateway: ModelGateway,`,
+    `${INDENT}tools: Iterable[Tool],`,
+    ') -> AgentRuntime:',
+    pythonDoc(
+      'Build a runtime over this app, reusing the caller-supplied gateway and tools. ' +
+        'Taking both as arguments rather than constructing them here is what keeps the agent ' +
+        'route on the same ledger, the same provider overrides and the same tool objects as ' +
+        'the pipeline routes: `AgentRuntime.from_ir` builds a gateway of its own from a ' +
+        'provider mapping, which would put a second ledger and a second set of overrides ' +
+        'beside the first, so the document is resolved by `from_ir` and the gateway is passed ' +
+        'in instead.',
+      INDENT,
+    ),
+  ];
+  if (!resume) {
+    return [
+      ...signature,
+      `${INDENT}return AgentRuntime(from_ir(DOCUMENT), gateway, tools=tools)`,
+    ].join('\n');
+  }
+  return [
+    ...signature,
+    `${INDENT}signer, nonces = _resume_protection()`,
+    `${INDENT}return AgentRuntime(`,
+    `${INDENT}${INDENT}from_ir(DOCUMENT),`,
+    `${INDENT}${INDENT}gateway,`,
+    `${INDENT}${INDENT}tools=tools,`,
+    `${INDENT}${INDENT}signer=signer,`,
+    `${INDENT}${INDENT}nonces=nonces,`,
+    `${INDENT})`,
+  ].join('\n');
+}
 
 function response(resume: boolean): string {
   return [
@@ -253,25 +390,6 @@ function response(resume: boolean): string {
     `${INDENT}checkpoint: dict[str, Any] | None = None`,
   ].join('\n');
 }
-
-const BUILD_RUNTIME = [
-  'def build_runtime(',
-  `${INDENT}*,`,
-  `${INDENT}gateway: ModelGateway,`,
-  `${INDENT}tools: Iterable[Tool],`,
-  ') -> AgentRuntime:',
-  pythonDoc(
-    'Build a runtime over this app, reusing the caller-supplied gateway and tools. ' +
-      'Taking both as arguments rather than constructing them here is what keeps the agent ' +
-      'route on the same ledger, the same provider overrides and the same tool objects as ' +
-      'the pipeline routes: `AgentRuntime.from_ir` builds a gateway of its own from a ' +
-      'provider mapping, which would put a second ledger and a second set of overrides ' +
-      'beside the first, so the document is resolved by `from_ir` and the gateway is passed ' +
-      'in instead.',
-    INDENT,
-  ),
-  `${INDENT}return AgentRuntime(from_ir(DOCUMENT), gateway, tools=tools)`,
-].join('\n');
 
 /**
  * One keyword argument of a call whose value is a conditional expression.
@@ -334,8 +452,10 @@ const RESUME_ROUTE = [
   `${INDENT}deps: Annotated[Deps, Depends(get_deps)],`,
   ') -> AgentRunResponse:',
   pythonDoc(
-    'Continue a paused run. The checkpoint is validated into the runtime type first, so a body ' +
-      'this app did not issue is a 422 rather than a runtime error mid-conversation.',
+    'Continue a paused run. Two different refusals, kept apart on purpose: a body this app ' +
+      'did not issue as a checkpoint at all is a 422, and a checkpoint it issued but will not ' +
+      'honour -- edited, expired, unsigned, or already spent -- is a 403 carrying ' +
+      '`detail.reason`, so a caller can tell which without parsing prose.',
     INDENT,
   ),
   `${INDENT}try:`,
@@ -343,7 +463,13 @@ const RESUME_ROUTE = [
   `${INDENT}except ValidationError as error:`,
   `${INDENT}${INDENT}raise HTTPException(status_code=422, detail=str(error)) from error`,
   `${INDENT}runtime = build_runtime(gateway=deps.gateway, tools=deps.agent_tools)`,
-  `${INDENT}result = await runtime.resume(checkpoint, event.decision)`,
+  `${INDENT}try:`,
+  `${INDENT}${INDENT}result = await runtime.resume(checkpoint, event.decision)`,
+  `${INDENT}except CheckpointRefusalError as refusal:`,
+  `${INDENT}${INDENT}raise HTTPException(`,
+  `${INDENT}${INDENT}${INDENT}status_code=403,`,
+  `${INDENT}${INDENT}${INDENT}detail={"reason": refusal.reason, "message": str(refusal)},`,
+  `${INDENT}${INDENT}) from refusal`,
   `${INDENT}return _response(result)`,
 ].join('\n');
 
@@ -364,6 +490,8 @@ function exports(ir: IR): string {
 export function emitAgents(ir: IR): EmittedFile {
   const agents = orderedAgents(ir);
   const resume = hasResumeRoute(ir);
+  const state = resumeState(ir);
+  const ttl = state?.checkpointTtlMinutes !== undefined;
   const ids = agents.map((agent) => pythonString(agent.id));
   return generated(
     AGENTS_PATH,
@@ -377,10 +505,11 @@ export function emitAgents(ir: IR): EmittedFile {
         ['from collections.abc import Iterable', 'from typing import Annotated, Any'],
         [
           importFrom('aid_runtime', [
-            ...(resume ? ['AgentCheckpoint'] : []),
+            ...(resume ? ['AgentCheckpoint', 'CheckpointRefusalError', 'CheckpointSigner'] : []),
             'AgentRuntime',
             ...(resume ? ['HumanDecision'] : []),
             'ModelGateway',
+            ...(resume ? ['NonceStore', 'nonce_store_from_env', 'signer_from_env'] : []),
             'RunResult',
             'Tool',
           ]),
@@ -398,10 +527,12 @@ export function emitAgents(ir: IR): EmittedFile {
       `AGENT_IDS: tuple[str, ...] = ${tupleLiteral(ids, '', 'AGENT_IDS: tuple[str, ...] = ')}`,
       pythonStatement('DOCUMENT: dict[str, Any] = ', agentDocument(ir)),
       PROMPT_DOCUMENT,
+      ...(resume ? [resumeConfig(state)] : []),
       REQUEST,
       ...(resume ? [RESUME_REQUEST] : []),
       response(resume),
-      BUILD_RUNTIME,
+      ...(resume ? [resumeProtection(ttl)] : []),
+      buildRuntime(resume),
       TO_RESPONSE,
       ROUTER,
       RUN_ROUTE,

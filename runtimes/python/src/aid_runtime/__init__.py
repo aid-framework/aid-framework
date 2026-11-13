@@ -29,12 +29,15 @@ from aid_runtime.agents import (
     AgentCheckpoint,
     AgentDefinition,
     AgentRuntime,
+    CheckpointRefusalError,
+    CheckpointSigner,
     FileMemoryStore,
     HumanApproval,
     HumanDecision,
     InProcessMemoryStore,
     MemoryDefinition,
     MemoryStore,
+    NonceStore,
     PendingApproval,
     Principal,
     RunResult,
@@ -44,6 +47,8 @@ from aid_runtime.agents import (
     StepRecord,
     ThreadMemory,
     ToolSpec,
+    nonce_store_from_env,
+    signer_from_env,
 )
 from aid_runtime.cache import CompletionCache, cache_key_for
 from aid_runtime.concurrency import ConcurrencyLimiter
@@ -351,7 +356,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.162"
+__version__ = "0.1.163"
 
 __all__ = [
     "AGENT_LABEL",
@@ -409,6 +414,8 @@ __all__ = [
     "Capability",
     "CapabilityMismatchError",
     "CaseOutcome",
+    "CheckpointRefusalError",
+    "CheckpointSigner",
     "Chunk",
     "Chunker",
     "ChunkingSpec",
@@ -495,6 +502,7 @@ __all__ = [
     "ModelCacheConfig",
     "ModelGateway",
     "ModelSpec",
+    "NonceStore",
     "NormalizedContains",
     "OpenAICompatibleEmbedder",
     "OpenAICompatibleProvider",
@@ -627,6 +635,7 @@ __all__ = [
     "local_trace_enabled",
     "map_step",
     "metric_names",
+    "nonce_store_from_env",
     "normalize",
     "open_connector",
     "parallel",
@@ -652,6 +661,7 @@ __all__ = [
     "rrf_score",
     "run_evaluation",
     "run_structured",
+    "signer_from_env",
     "similarity",
     "sync_support",
     "tokenize",

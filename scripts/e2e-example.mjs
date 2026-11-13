@@ -44,6 +44,24 @@ const exampleSpec = join(exampleRoot, 'app', 'app.spec.yaml');
 const cli = join(repoRoot, 'packages', 'cli', 'dist', 'cli.js');
 const python = process.env.AID_PYTHON ?? 'python';
 
+/**
+ * The example declares `state.signingKeyEnv: AID_CHECKPOINT_KEY`, which the generated resume
+ * route reads to sign the checkpoint a pause hands back. Declaring the key makes it mandatory
+ * for every agent run, not only a pausing one, so the booted app is handed a value here the
+ * same way `examples/support-copilot/tests/conftest.py` hands one to the test suite. Only the
+ * length and unpredictability matter; nothing outside this process ever sees it.
+ */
+const CHECKPOINT_KEY_ENV = 'AID_CHECKPOINT_KEY';
+const CHECKPOINT_KEY = 'e2e-checkpoint-key-'.padEnd(64, 'x');
+
+/**
+ * The same spec declares a `sqlite` state store, so the record of a spent checkpoint has to
+ * be written somewhere. Each booted app gets its own file, removed with the process: sharing
+ * one file between the pipeline and agent boots would carry a spent nonce across them and
+ * make the second boot's failure depend on the first's history.
+ */
+const STATE_DB_ENV = 'AID_STATE_DB';
+
 /** The request the example's own test suite sends, so the two agree by construction. */
 const REQUEST = {
   subject: 'Acme: I was charged twice this month',
@@ -269,12 +287,19 @@ function waitForExit(child, timeoutMs) {
  */
 async function bootApp(directory, mode) {
   const port = await freePort();
+  const stateDir = mkdtempSync(join(tmpdir(), 'aid-e2e-state-'));
   const child = spawn(python, ['-c', SERVER_SHIM, String(port), directory, mode], {
     cwd: directory,
     stdio: ['ignore', 'pipe', 'pipe'],
     // The regenerated tree wins over the installed distribution, whatever the order the
     // interpreter would otherwise resolve `app` in. The shim asserts it actually did.
-    env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONPATH: directory },
+    env: {
+      ...process.env,
+      PYTHONUNBUFFERED: '1',
+      PYTHONPATH: directory,
+      [CHECKPOINT_KEY_ENV]: CHECKPOINT_KEY,
+      [STATE_DB_ENV]: join(stateDir, 'aid-state.db'),
+    },
   });
   let output = '';
   child.stdout?.setEncoding('utf8').on('data', (chunk) => {
@@ -283,7 +308,7 @@ async function bootApp(directory, mode) {
   child.stderr?.setEncoding('utf8').on('data', (chunk) => {
     output += chunk;
   });
-  return { child, port, output: () => output };
+  return { child, port, stateDir, output: () => output };
 }
 
 /**
@@ -319,7 +344,33 @@ async function postWhenReady(server, path, body) {
 }
 
 /**
- * @param {{ child: import('node:child_process').ChildProcess }} server
+ * Remove a directory the app has just released, yielding between attempts.
+ *
+ * Windows keeps the sqlite file locked for a moment after the process that opened it exits,
+ * and a synchronous retry never gives the closing handle the event-loop turn it needs. A
+ * directory left in the OS temp area is not worth failing a run over, so the last attempt
+ * warns instead of throwing.
+ *
+ * @param {string} directory
+ */
+async function removeEventually(directory) {
+  const attempts = 25;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      rmSync(directory, { recursive: true, force: true });
+      return;
+    } catch (cause) {
+      if (attempt === attempts) {
+        log(`    (left ${directory} behind: ${String(cause)})`);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+}
+
+/**
+ * @param {{ child: import('node:child_process').ChildProcess, stateDir: string }} server
  */
 async function stopApp(server) {
   server.child.kill('SIGTERM');
@@ -327,6 +378,7 @@ async function stopApp(server) {
     server.child.kill('SIGKILL');
     await waitForExit(server.child, 5_000);
   }
+  await removeEventually(server.stateDir);
 }
 
 /**

@@ -1,4 +1,4 @@
-specVersion: "0.30"
+specVersion: "0.32"
 
 project:
   name: prior-auth-review
@@ -98,6 +98,12 @@ state:
   kind: postgres
   urlEnv: DATABASE_URL
   ttlHours: 168
+  # A paused run is approved by someone holding the checkpoint, so the checkpoint is
+  # signed with a key the operator supplies and expires on its own. The key is a name,
+  # never a value: `ir/resume-key-alias` refuses a name that already holds another
+  # credential of this app.
+  signingKeyEnv: AID_CHECKPOINT_KEY
+  checkpointTtlMinutes: 30
 
 guardrails:
   inbound:
@@ -136,6 +142,8 @@ agents:
       kind: postgres
       urlEnv: DATABASE_URL
       ttlHours: 48
+      signingKeyEnv: AID_CHECKPOINT_KEY
+      checkpointTtlMinutes: 30
     humanInTheLoop:
       when: "not hasRole('auto_adjudicator')"
       channel: medical-review

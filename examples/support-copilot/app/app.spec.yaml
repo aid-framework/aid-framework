@@ -1,4 +1,4 @@
-specVersion: "0.27"
+specVersion: "0.32"
 
 # The example app: the smallest spec that still exercises every contract the
 # py-fastapi target emits -- a model gateway with a pinned model and a fallback, a
@@ -429,6 +429,19 @@ memory:
     kind: buffer
     scope: thread
     tokenBudget: 2000
+
+state:
+  # `refund_agent` pauses, so the checkpoint it hands back is a bearer capability over a
+  # held refund: whoever holds it can approve the call. Both values are *names*, never
+  # secrets -- `signingKeyEnv` names the variable the generated resume route reads the
+  # signing key from, and the deploy plan carries that name (as a secret) into the release.
+  # The store is what refuses a *spent* checkpoint: sqlite keeps the nonce record beside
+  # the app, so a replay is refused after a restart and, on one filesystem, by a second
+  # replica. A `profile: enterprise` document gets the same pair with postgres instead.
+  kind: sqlite
+  urlEnv: AID_STATE_DB
+  signingKeyEnv: AID_CHECKPOINT_KEY
+  checkpointTtlMinutes: 60
 
 agents:
   # The one agent a pipeline step is allowed to run, and the absences are the point: no

@@ -51,8 +51,16 @@ const PROMOTION = [
  * one possible verdict and `--suite` stays optional.
  */
 function promotableSpec(options: { readonly withApproval?: boolean } = {}): string {
-  let text = patched(EXAMPLE_SPEC, 'specVersion: "0.27"', 'specVersion: "0.28"');
-  text = patched(text, '  classify_ticket:\n    version: 1', '  classify_ticket:\n    version: 2');
+  // No version rewrite: the example declares a version well above the one the promotion
+  // policy needs, so the patch this fixture used to apply (0.27 -> 0.28) has nothing left
+  // to prove. The baseline bump below is still the part that matters -- `classify_ticket`
+  // is at version 1 because the gate refuses a policy whose baseline is not behind the
+  // prompt it names, so a candidate that has not bumped the prompt has no candidate at all.
+  const text = patched(
+    EXAMPLE_SPEC,
+    '  classify_ticket:\n    version: 1',
+    '  classify_ticket:\n    version: 2',
+  );
 
   const marker = '\n  handbook_quality:';
   const at = text.indexOf(marker);

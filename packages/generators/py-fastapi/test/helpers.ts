@@ -27,6 +27,7 @@ import { buildIR, runGates } from '@aid-framework/ir';
 import {
   AGENT_EVAL_TARGET_MIN_VERSION,
   checkSpecText,
+  RUN_STATE_MIN_VERSION,
   type SpecVersion,
   specVersionAtLeast,
 } from '@aid-framework/spec';
@@ -142,12 +143,13 @@ export function exampleSpecText(): string {
 /**
  * The example at `version`, with what that version cannot express removed.
  *
- * The example is the only fixture, and it declares an `agent:` eval, which the spec layer
- * refuses below `AGENT_EVAL_TARGET_MIN_VERSION`. A plain version rewrite therefore produces
- * a spec that is refused for a reason unrelated to whatever the caller is testing, so the
- * agent eval is dropped when the target version predates it. That is the honest
- * reconstruction of what the example looked like at that version, rather than a second
- * hand-maintained fixture that could drift from this one.
+ * The example is the only fixture, so a plain version rewrite would produce a spec that
+ * is refused for a reason unrelated to whatever the caller is testing: it declares an
+ * `agent:` eval, which the spec layer refuses below `AGENT_EVAL_TARGET_MIN_VERSION`, and a
+ * `state:` block, which it refuses below `RUN_STATE_MIN_VERSION`. Each section is dropped
+ * when the target version predates it. That is the honest reconstruction of what the
+ * example looked like at that version, rather than a second hand-maintained fixture that
+ * could drift from this one.
  *
  * The rewrite is asserted: a silent no-op here would leave the caller testing the current
  * version while believing it tested an old one.
@@ -157,20 +159,31 @@ export function exampleSpecTextAt(version: SpecVersion): string {
   if (!text.includes(`specVersion: "${version}"`)) {
     throw new Error(`the example does not declare a replaceable specVersion for ${version}`);
   }
-  if (specVersionAtLeast(version, AGENT_EVAL_TARGET_MIN_VERSION)) return text;
-
-  const lines = text.split('\n');
-  const start = lines.indexOf('  refund_trajectory:');
-  const end = lines.indexOf('pipelines:');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('the example no longer declares refund_trajectory before pipelines');
+  let lines = text.split('\n');
+  if (!specVersionAtLeast(version, RUN_STATE_MIN_VERSION)) {
+    lines = withoutSection(lines, 'state:', 'agents:');
   }
-  // Walk back over the comment block that introduces the eval, so the derived spec does not
-  // carry a comment about an eval it does not declare.
-  let from = start;
-  while (from > 0 && (lines[from - 1] ?? '').startsWith('  #')) from -= 1;
+  if (!specVersionAtLeast(version, AGENT_EVAL_TARGET_MIN_VERSION)) {
+    lines = withoutSection(lines, '  refund_trajectory:', 'pipelines:');
+  }
+  return lines.join('\n');
+}
 
-  return [...lines.slice(0, from), '', ...lines.slice(end)].join('\n');
+/**
+ * `lines` with the section that starts at `heading` and ends at `until` removed.
+ *
+ * The comment block above the heading goes with it: a derived spec that kept a comment
+ * about a section it does not declare would describe a document that is not there.
+ */
+function withoutSection(lines: string[], heading: string, until: string): string[] {
+  const start = lines.indexOf(heading);
+  const end = lines.indexOf(until);
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error(`the example no longer declares ${heading} before ${until}`);
+  }
+  let from = start;
+  while (from > 0 && (lines[from - 1] ?? '').trimStart().startsWith('#')) from -= 1;
+  return [...lines.slice(0, from), '', ...lines.slice(end)];
 }
 
 let exampleBuild: ExampleBuild | undefined;

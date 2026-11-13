@@ -405,6 +405,64 @@ escalation to `specVersion` rather than to a flag also means an overlay cannot o
 resolved document carries the version, so `enterprise` coverage is a property of what is delivered
 rather than of who wrote it.
 
+## 0.31 to 0.32: the checkpoint a pause hands back
+
+An agent that pauses returns a checkpoint, and a caller hands it back to `POST /agents/resume` to
+continue the run. That made the checkpoint a bearer capability over the call it holds: whoever held
+it could approve a refund. 0.32 makes the checkpoint signed and expiring, and adds the two fields
+that say where the key and the replay record come from.
+
+> **What 0.32 protects, and what it does not.** A signed checkpoint cannot be edited into a
+> different call, and an expired one cannot be presented late. A *replay* -- the same checkpoint
+> presented twice -- is refused only where the document declares a `state` store, because the
+> record of a spent nonce has to outlive the process that issued it. Without a store, `standard`
+> accepts a signed-but-replayable checkpoint and `ir/resume-replay-weak` warns about it; under
+> `enterprise` that warning is an error. No hosted service is involved either way: the record
+> lives in the store the document already names.
+
+### What 0.32 adds
+
+| Construct | What it says |
+| --- | --- |
+| `state.signingKeyEnv` | The environment variable holding the checkpoint signing key. A name, never a value. |
+| `state.checkpointTtlMinutes` | How long an issued checkpoint may be presented. Omitted means 15 minutes. |
+
+Both are accepted on the document's `state` and on an agent's own `state`, and an agent that
+declares neither inherits the document's. The generated resume route now refuses a checkpoint it
+did not sign, one past its deadline, and one the store has already spent, each as a `403` whose
+`detail.reason` names which of the three it was.
+
+### Nothing to do for a 0.31 document
+
+Nothing in the language moved: a 0.31 document still parses, and every rule below is scoped to
+`specVersion: "0.32"` and above or to the `enterprise` profile. A 0.31 document that pauses keeps
+the behaviour it was written against, and `aid validate` warns with `ir/resume-unsigned` and
+`ir/resume-replay-weak` so the gap is visible rather than silent.
+
+### What a 0.32 document must declare
+
+| Refusal | What is missing | The fix |
+| --- | --- | --- |
+| `ir/resume-unsigned` | Under `profile: enterprise`, an agent that can pause and no `signingKeyEnv`. | Declare `state.signingKeyEnv`, and set the variable it names in the deployment. |
+| `ir/resume-replay-weak` | Under `profile: enterprise`, an agent that can pause and no durable `state`. | Declare a `state` store, `postgres` for more than one replica. |
+| `ir/resume-key-conflict` | Two pausing agents naming different signing keys, stores or deadlines. | One checkpoint format: make the declarations agree. |
+| `ir/resume-key-alias` | A `signingKeyEnv` whose name already holds another declared credential, or one declared again in `deployment.env`. | Name a variable of its own, and declare it only through `signingKeyEnv`. |
+
+### Why the key is a name and not a value
+
+Every credential in a spec is a variable name: `models.*.apiKeyEnv`, `state.urlEnv`,
+`observability.endpointEnv`. The signing key follows the same rule, so a document moves between
+environments without edit and no secret enters git. The deploy plan lifts the name into the
+release as a secret, which is why declaring the same name in `deployment.env` is refused rather
+than merged: one name would otherwise mean two things in one plan.
+
+### Why the deadline is separate from `ttlHours`
+
+`ttlHours` is how long a saved run is kept. `checkpointTtlMinutes` is how long the capability to
+approve it lives. They answer different questions -- a run may be resumable for a week while the
+approval it is waiting on expires in fifteen minutes -- so collapsing them would let a long
+retention silently extend every approval.
+
 ## 0.27 to 0.28: promoting a candidate, and the feedback that starts a loop
 
 What a document is allowed to do with a candidate, and which feedback it takes back from its users.

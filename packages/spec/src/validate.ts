@@ -85,6 +85,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.29',
   '0.30',
   '0.31',
+  '0.32',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -231,6 +232,17 @@ export const ALERTS_MIN_VERSION: SpecVersion = '0.30';
  * that has it -- and the eval would then pass every case by measuring less.
  */
 export const TRAJECTORY_METRIC_MIN_VERSION: SpecVersion = '0.31';
+
+/**
+ * The first spec version that accepts `agentState.signingKeyEnv` and
+ * `agentState.checkpointTtlMinutes`. A checkpoint is the *authority* to continue a paused
+ * run, including a paused write, so before 0.32 the generated resume route was a bearer
+ * capability: whoever held the checkpoint could resume it and could edit the pending call
+ * on the way. A 0.31 document is not silently upgraded -- it keeps building the
+ * unsigned route it declared, and `ir/resume-unsigned` refuses it only when the profile
+ * asks for the guarantee.
+ */
+export const RESUME_SIGNING_MIN_VERSION: SpecVersion = '0.32';
 
 /** The metric kinds that version introduced. */
 const TRAJECTORY_METRIC_KINDS = new Set<string>([
@@ -707,6 +719,7 @@ function scopeDiagnostics(
   alertsVersionDiagnostics(spec, diagnostics, reported);
   evalPromotionVersionDiagnostics(spec, diagnostics, reported);
   trajectoryMetricVersionDiagnostics(spec, diagnostics, reported);
+  resumeSigningVersionDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
   routeDiagnostics(spec, diagnostics, reported);
@@ -1203,6 +1216,38 @@ function feedbackVersionDiagnostics(
     }),
   );
   reported.add(JSON.stringify(['observability', 'feedback']));
+}
+
+/**
+ * `agentState.signingKeyEnv` and `agentState.checkpointTtlMinutes` arrived in 0.32,
+ * nested inside `agentState`, which no version gate covers. Reading either as absent in an
+ * older document would emit the unsigned resume route while the reviewer approved a
+ * document that asked for a signed one -- and the difference is invisible until someone
+ * edits a checkpoint.
+ */
+function resumeSigningVersionDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) return;
+  if (specVersionAtLeast(declared, RESUME_SIGNING_MIN_VERSION)) return;
+  const state = asRecord(spec.agentState);
+  for (const field of ['signingKeyEnv', 'checkpointTtlMinutes'] as const) {
+    if (!(field in state)) continue;
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.notSupported,
+        message: `'agentState.${field}' requires specVersion ${RESUME_SIGNING_MIN_VERSION}, but this specification declares version ${declared}`,
+        path: ['agentState', field],
+        hint: `set specVersion: "${RESUME_SIGNING_MIN_VERSION}"; a document that declares neither field keeps the unsigned checkpoint route it had`,
+      }),
+    );
+    reported.add(JSON.stringify(['agentState', field]));
+  }
 }
 
 /**

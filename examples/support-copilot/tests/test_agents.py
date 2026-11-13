@@ -104,6 +104,46 @@ def test_the_paused_checkpoint_is_json_a_client_can_hold(client: TestClient) -> 
     assert replayed.status_code == 200, replayed.text
 
 
+def test_a_tampered_checkpoint_is_refused(client: TestClient) -> None:
+    """Editing the JSON a client holds is not enough to change the call it approves.
+
+    `spent_usd` is the edit with a motive: reset it and the resumed run starts with a
+    fresh budget. It is inside the signed payload, so the route refuses with 403 and
+    names the reason instead of resuming a run the app did not issue.
+    """
+
+    paused = client.post("/agents/refund_agent/run", json={"text": REQUEST["subject"]}).json()
+    checkpoint = paused["checkpoint"]
+    checkpoint["spent_usd"] = 0.0
+
+    refused = client.post(
+        "/agents/resume",
+        json={"checkpoint": checkpoint, "decision": "approve"},
+    )
+
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"]["reason"] == "tampered"
+
+
+def test_a_spent_checkpoint_is_refused_on_the_second_resume(client: TestClient) -> None:
+    """The checkpoint is a single-use capability, not a standing right to approve.
+
+    The first resume spends the nonce; the store remembers it, so the same checkpoint
+    presented again is refused even though its signature still verifies.
+    """
+
+    paused = client.post("/agents/refund_agent/run", json={"text": REQUEST["subject"]}).json()
+    body = {"checkpoint": paused["checkpoint"], "decision": "approve"}
+
+    first = client.post("/agents/resume", json=body)
+    assert first.status_code == 200, first.text
+
+    second = client.post("/agents/resume", json=body)
+
+    assert second.status_code == 403, second.text
+    assert second.json()["detail"]["reason"] == "replayed"
+
+
 def test_the_run_route_refuses_an_agent_the_app_does_not_declare(client: TestClient) -> None:
     """A 404 from the app, naming nothing about the document it holds."""
 

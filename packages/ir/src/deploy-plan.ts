@@ -103,7 +103,7 @@ export interface DeployEnvVar {
   /** Only ever set for a non-secret declaration made in the spec. */
   value?: string;
   /** Which IR collection supplied the name, so a plan diff explains itself. */
-  from: 'deployment' | 'store' | 'model' | 'decision';
+  from: 'deployment' | 'store' | 'model' | 'decision' | 'agent';
 }
 
 export interface DeployEndpoint {
@@ -531,6 +531,25 @@ function httpEndpoints(ir: IR): DeployEndpoint[] {
  * then what a store's uri implies, then a model's API-key name. The first source to
  * claim a name wins, so a spec can always override a derived variable explicitly.
  */
+/**
+ * The env an agent's resume route reads: the store a spent checkpoint is claimed in, and
+ * the key that proves one was issued here. The generated app raises ConfigurationError on
+ * its first pause unless both are set, so the plan has to name them rather than leave the
+ * operator to work them out from the spec.
+ */
+function agentStateEnv(ir: IR): { name: string; secret: boolean }[] {
+  const found: { name: string; secret: boolean }[] = [];
+  for (const agent of ir.agents) {
+    const store = agent.state;
+    if (store === undefined) continue;
+    if (store.signingKeyEnv !== undefined) {
+      found.push({ name: store.signingKeyEnv, secret: true });
+    }
+    found.push({ name: store.urlEnv, secret: true });
+  }
+  return found;
+}
+
 function serviceEnv(
   ir: IR,
   declared: { name: string; value?: string; secret?: boolean }[],
@@ -559,6 +578,10 @@ function serviceEnv(
     if (name !== undefined && !byName.has(name)) {
       byName.set(name, { name, secret: true, from: 'model' });
     }
+  }
+
+  for (const { name, secret } of agentStateEnv(ir)) {
+    if (!byName.has(name)) byName.set(name, { name, secret, from: 'agent' });
   }
 
   for (const name of decisionSecrets(ir)) {
@@ -601,6 +624,7 @@ function serviceSecrets(
   for (const model of ir.models) {
     if (model.apiKeyEnv !== undefined) names.add(model.apiKeyEnv);
   }
+  for (const { name } of agentStateEnv(ir)) names.add(name);
   for (const name of decisionSecrets(ir)) names.add(name);
   return uniqueSorted([...names]);
 }

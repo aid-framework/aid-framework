@@ -43,7 +43,7 @@ Publishing takes two steps, and declaring the export is only the first: the seri
 
 ## Spec language
 
-The current spec language version is `0.31`.
+The current spec language version is `0.32`.
 A construct that needs a later version is reported as `spec/not-supported`, naming the version it needs, instead of being ignored.
 
 Retriever chunking strategies are all implemented in both runtimes:

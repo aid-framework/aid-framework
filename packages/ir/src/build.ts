@@ -1536,6 +1536,12 @@ function buildState(
   const shape: AgentStateShape = { kind: kind as AgentStateKind, urlEnv };
   const ttlHours = asNumber(state.ttlHours);
   if (ttlHours !== undefined) shape.ttlHours = ttlHours;
+  const signingKeyEnv = asString(state.signingKeyEnv);
+  // Projected as a name. The secret itself never enters the IR, because the IR is
+  // committed, hashed into the manifest and printed by `aid explain`.
+  if (signingKeyEnv !== undefined) shape.signingKeyEnv = signingKeyEnv;
+  const checkpointTtlMinutes = asNumber(state.checkpointTtlMinutes);
+  if (checkpointTtlMinutes !== undefined) shape.checkpointTtlMinutes = checkpointTtlMinutes;
   return shape;
 }
 

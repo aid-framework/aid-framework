@@ -27,6 +27,7 @@ from aid_runtime.types import Message, ToolCall
 
 __all__ = [
     "AgentCheckpoint",
+    "CheckpointIntegrity",
     "HumanDecision",
     "PendingApproval",
     "RunResult",
@@ -87,6 +88,25 @@ class HumanDecision(StrEnum):
     REJECT = "reject"
 
 
+class CheckpointIntegrity(BaseModel):
+    """What makes a checkpoint something this app issued rather than something it parsed.
+
+    Every field sits inside the signed payload, so ``expires_at`` cannot be extended
+    without breaking the signature and ``nonce`` cannot be swapped to replay a spent
+    checkpoint under a fresh identity. The signature itself does not cover itself.
+
+    Absent on a runtime built without a signer (a library embedding the loop directly);
+    the generated app always passes one, so an HTTP checkpoint is never unsigned.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    issued_at: int = Field(ge=0)
+    expires_at: int = Field(ge=0)
+    nonce: str = Field(min_length=1)
+    signature: str = ""
+
+
 class AgentCheckpoint(BaseModel):
     """Everything a paused agent needs to continue, and nothing that is derived."""
 
@@ -120,6 +140,10 @@ class AgentCheckpoint(BaseModel):
     # answer to release on approval, a `tool-call` one holds `calls` to execute.
     escalation: GuardrailEscalation | None = None
     guardrails: tuple[GuardrailRecord, ...] = ()
+    # Set by the signer when the app was built with one. It is part of the model rather
+    # than a sibling value on the wire so a resumed request carries it in the same body a
+    # caller already holds, and so `extra: forbid` keeps rejecting anything else.
+    integrity: CheckpointIntegrity | None = None
 
 
 class PendingApproval(BaseModel):
