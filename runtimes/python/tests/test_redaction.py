@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from aid_runtime import REDACTED_FORMAT, CompletionRequest, PromptTemplate, redact_values
+from aid_runtime import (
+    REDACTED_FORMAT,
+    CompletionRequest,
+    PromptTemplate,
+    bind_redactions,
+    redact_values,
+)
 from aid_runtime.gateway import _prompt_text
 
 EMAIL = "ada@example.com"
@@ -74,3 +80,47 @@ def test_redactions_do_not_change_the_fingerprint() -> None:
     redacted = CompletionRequest.prompt("hello", redactions=(("email", EMAIL),))
 
     assert plain.fingerprint() == redacted.fingerprint()
+
+
+def test_a_binding_is_learned_from_a_structured_record_by_field_name() -> None:
+    """An agent run has no render, so the name comes off the record's own keys."""
+    payload = {"email": EMAIL, "note": "refund please"}
+
+    assert bind_redactions(["email"], payload) == (("email", EMAIL),)
+
+
+def test_a_name_that_is_not_declared_is_not_bound() -> None:
+    assert bind_redactions(["phone"], {"email": EMAIL}) == ()
+
+
+def test_a_nested_record_is_searched_because_a_tool_argument_may_hold_one() -> None:
+    payload = {"customer": {"contact": {"email": EMAIL}}, "tags": [{"email": "bob@example.com"}]}
+
+    bound = bind_redactions(["email"], payload)
+
+    assert bound[0] == ("email", EMAIL)
+    assert ("email", "bob@example.com") in bound
+
+
+def test_only_a_string_value_can_be_bound() -> None:
+    """A number has no text to match in a transcript, so binding it would be a no-op."""
+    assert bind_redactions(["count"], {"count": 3}) == ()
+    assert bind_redactions(["email"], {"email": None}) == ()
+
+
+def test_a_blank_value_is_never_bound() -> None:
+    """``str.replace("")`` would insert a marker everywhere and destroy the copy."""
+    assert bind_redactions(["email"], {"email": "   "}) == ()
+
+
+def test_every_value_seen_for_a_name_is_bound_not_just_the_first() -> None:
+    """Keeping only the first would leave a second customer's address in the copy."""
+    bound = bind_redactions(["email"], [{"email": EMAIL}, {"email": "other@example.com"}])
+
+    assert bound == (("email", EMAIL), ("email", "other@example.com"))
+
+
+def test_the_same_value_seen_twice_is_bound_once() -> None:
+    bound = bind_redactions(["email"], [{"email": EMAIL}, {"customer": {"email": EMAIL}}])
+
+    assert bound == (("email", EMAIL),)

@@ -281,16 +281,34 @@ function exportPolicy(context: CliContext, specPath: string): PolicyRead {
     };
   }
 
+  // `observability.redact` and `observability.feedback.redact` are both withheld from the
+  // copy this command writes, because naming more fields can only remove more values.
+  const observabilityRedact = [...lowered.ir.observability.redact].sort();
+  const feedbackRedact = lowered.ir.observability.feedback?.redact ?? [];
   const policy: ExportPolicy = {
     specPath,
     profile: lowered.ir.profile,
-    withheld: [
-      ...new Set([
-        ...lowered.ir.observability.redact,
-        ...(lowered.ir.observability.feedback?.redact ?? []),
-      ]),
-    ].sort(),
+    withheld: [...new Set([...observabilityRedact, ...feedbackRedact])].sort(),
   };
+
+  // A document that runs an agent records a transcript, and the runner withholds
+  // `observability.redact` from the copy the gateway writes -- by binding the value at each
+  // tool call. `feedback.redact` governs feedback payloads, not model-call text, so it is not
+  // proof that a transcript was redacted: accepting it would let an enterprise agent
+  // document export captured content while nothing removed a value from it.
+  const unprovenAgent = policy.profile === 'enterprise' && lowered.ir.agents.length > 0;
+  if (unprovenAgent && observabilityRedact.length === 0) {
+    return {
+      ok: false,
+      outcome: refusal(
+        CLI_DIAGNOSTIC_CODES.traceExportAgentUnredacted,
+        `"${specPath}" runs an agent and records a transcript, and an enterprise profile does not export captured content that nothing redacted.`,
+        'Declare observability.redact. The runner withholds each named field value from the tool-call arguments it executes, so a value that travels through a tool argument is replaced before the recorded copy is written; a value that reaches a run only through free text has no field name to match and is not covered, which is why this command does not treat observability.feedback.pii.redact as proof -- that list governs feedback payloads, not model-call text. Alternatively record the runs without AID_TRACE_CONTENT=1 to export structure only.',
+        'aid: an enterprise profile does not export unredacted agent transcripts.\n',
+        EXIT_USAGE,
+      ),
+    };
+  }
 
   // `enterprise` promises that what leaves a deployment can be accounted for. The runtime
   // redacts at capture, but only for the fields the document names: an enterprise document

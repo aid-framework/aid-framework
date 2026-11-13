@@ -207,7 +207,7 @@ from aid_runtime.providers import (
     default_bedrock_base_url,
     default_vertex_base_url,
 )
-from aid_runtime.redaction import REDACTED_FORMAT, redact_values
+from aid_runtime.redaction import REDACTED_FORMAT, bind_redactions, redact_values
 from aid_runtime.retrieval import (
     DEFAULT_CANDIDATE_FACTOR,
     DEFAULT_SYNC_TIMEOUT_SECONDS,
@@ -356,7 +356,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.164"
+__version__ = "0.1.165"
 
 __all__ = [
     "AGENT_LABEL",
@@ -596,6 +596,7 @@ __all__ = [
     "agent_span",
     "aid_attributes",
     "assemble_context",
+    "bind_redactions",
     "binding_from_managed_spec",
     "binding_from_spec",
     "bm25_scores",

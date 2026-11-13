@@ -79,6 +79,12 @@ interface Options {
   readonly specVersion?: string;
   /** A `state` block under the agent, for the checkpoint protection cases. */
   readonly agentState?: string;
+  /** Raw YAML appended at document level, for a declaration the fixture does not own. */
+  readonly documentExtra?: string;
+  /** Adds an `email` field to `Customer`, so the security gate derives a withheld name. */
+  readonly customerEmail?: boolean;
+  /** Drops the tool block and the agent's `tools:` list, leaving a prose-only run. */
+  readonly noTools?: boolean;
 }
 
 /**
@@ -102,6 +108,31 @@ memory:
     tokenBudget: 2000${options.memoryExtra ?? ''}
 `;
   const agentMemory = options.memory === false ? '' : '\n    memory: [thread]';
+  const agentTools = options.noTools === true ? '' : `\n    tools: [${tool}]`;
+  const tools =
+    options.noTools === true
+      ? ''
+      : `
+tools:
+  lookup_customer:
+    description: Look up the account that filed a ticket.
+    input: Customer
+    output: Customer
+    handler:
+      kind: business
+      symbol: lookup_customer
+    sideEffects: read
+  issue_refund:
+    description: Issue a refund against the account that filed a ticket.
+    input: Refund
+    output: RefundReceipt
+    handler:
+      kind: business
+      symbol: issue_refund
+    sideEffects: write
+    requiresConfirmation: true
+    auth: isAuthenticated()
+`;
   const approval =
     options.humanInTheLoop === true
       ? `
@@ -138,7 +169,14 @@ types:
     fields:
       id:
         type: string
-        required: true
+        required: true${
+          options.customerEmail === true
+            ? `
+      email:
+        type: string
+        required: true`
+            : ''
+        }
   Refund:
     kind: struct
     fields:
@@ -180,27 +218,7 @@ prompts:
       Look the account up, then answer in one sentence.
     output:
       kind: text${variables}
-
-tools:
-  lookup_customer:
-    description: Look up the account that filed a ticket.
-    input: Customer
-    output: Customer
-    handler:
-      kind: business
-      symbol: lookup_customer
-    sideEffects: read
-  issue_refund:
-    description: Issue a refund against the account that filed a ticket.
-    input: Refund
-    output: RefundReceipt
-    handler:
-      kind: business
-      symbol: issue_refund
-    sideEffects: write
-    requiresConfirmation: true
-    auth: isAuthenticated()
-
+${tools}
 guardrails:
   inspected:
     stages: [tool-call]
@@ -221,12 +239,11 @@ agents:
   helper:
     name: Helper
     instructions: agent_instructions
-    model: triage
-    tools: [${tool}]
+    model: triage${agentTools}
     guardrails: ${guardrails}${agentMemory}
     maxSteps: 4
     maxCostBudget: 0.05${options.agentState ?? ''}${approval}${options.agentExtra ?? ''}
-`;
+${options.documentExtra ?? ''}`;
 }
 
 type Built = ReturnType<typeof buildForSpecText>;
@@ -476,6 +493,66 @@ describe('the emitted agent surface', () => {
     expect(source).toContain('"sideEffects": "write"');
     expect(source).toContain('"kind": "call"');
     expect(source).toContain('"name": "isAuthenticated"');
+  });
+
+  /**
+   * The withdrawal set is the one declaration where the *emission* is the whole guarantee.
+   *
+   * A pipeline's set travels as a rendered-request argument; an agent's travels only inside
+   * `DOCUMENT`, which `RuntimeSpec.from_ir` reads before the loop can bind anything. A field
+   * this projection drops is a field the run records in full while the spec says otherwise,
+   * so the bytes are worth pinning rather than trusting the type.
+   */
+  describe('the withdrawal set an agent run binds from', () => {
+    it('carries the declared fields into the document the runtime reads', () => {
+      const built = buildForSpecText(
+        specText({
+          specVersion: '0.33',
+          documentExtra: '\nobservability:\n  redact: [subject]\n',
+        }),
+      );
+      const source = agentsSource(built) ?? '';
+
+      expect(checkPlan(built.ir)).toEqual([]);
+      expect(source).toContain('"observability": {"redact": ["subject"]}');
+    });
+
+    it('carries a set the security gate derived, with nothing declared', () => {
+      // The default is not empty: an omitted `redact` becomes every field whose name the
+      // security gate derives as sensitive. A projection reading only the declared field
+      // would be right about the explicit case and silently wrong about this one.
+      const built = buildForSpecText(specText({ customerEmail: true }));
+      const source = agentsSource(built) ?? '';
+
+      expect(checkPlan(built.ir)).toEqual([]);
+      expect(source).toContain('"observability": {"redact": ["email"]}');
+    });
+
+    it('emits no set at all when the document withholds nothing', () => {
+      // The falsifier: an emitter writing the block unconditionally would satisfy both
+      // tests above while moving the bytes of every app that never asked for redaction.
+      const source = agentsSource(buildForSpecText(specText())) ?? '';
+
+      expect(source).not.toContain('"observability"');
+    });
+
+    it('refuses the set when no agent declares a tool to bind it to', () => {
+      // The one shape with no boundary at all: every other ingress is prose, and a field
+      // name cannot match prose. Declaring the tool is the fix, so the refusal names the
+      // alternative rather than emitting a document whose guarantee nothing keeps.
+      const ir = lowerForSpecText(
+        specText({
+          specVersion: '0.33',
+          noTools: true,
+          documentExtra: '\nobservability:\n  redact: [subject]\n',
+        }),
+      );
+      const refused = checkPlan(ir).filter((entry) => entry.code === 'unsupported-redact');
+
+      expect(refused.map((entry) => entry.path)).toEqual(['observability.redact']);
+      expect(refused[0]?.message).toContain('none of its agents declares a tool');
+      expect(refused[0]?.message).toContain('subject');
+    });
   });
 
   it('narrows the document to the models the agent route can actually reach', () => {

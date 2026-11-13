@@ -193,16 +193,26 @@ export function checkCollections(
 }
 
 /**
- * Whether this document runs an agent, and so cannot honour a redaction.
+ * Whether this document runs an agent, and so withholds values differently.
  *
  * A pipeline redacts where it renders: `PromptTemplate.render` knows which text came from
  * which declared field, so the runtime can replace exactly those values in the copy it
- * records. An agent run has no such boundary. The runner builds its own transcript -- the
- * system prompt, the conversation so far, every tool result -- and re-sends it whole, so
- * no render exists to bind a field name to a value. A trace of that run would therefore
- * carry the value verbatim, and exporting it would break the guarantee the document
- * declared. Generating anyway would be the approximation this file refuses; the document
- * is told to serve the same work through a pipeline, which does redact.
+ * records. An agent run has no render. The runner builds its own transcript -- the system
+ * prompt, the conversation so far, every tool result -- and re-sends it whole, so a field
+ * name cannot be matched against a value at the point the prompt is built.
+ *
+ * It can be matched somewhere else, and that is what the runtime does: every tool call the
+ * loop executes arrives as a mapping whose keys are declared argument names, so the loop
+ * binds `name -> value` there and hands those bindings to the gateway. The gateway is the
+ * only code that writes model text to a span, and it redacts both the prompt it records and
+ * the answer it records with whatever bindings the request carries. So an agent document
+ * can keep this declaration for every value that reaches the run through a tool argument.
+ *
+ * The limit is stated rather than papered over: a value that enters only through the free
+ * text of the run request, and is never passed as a tool argument under its declared name,
+ * has no field name to match on and is recorded as written. That is why a document whose
+ * agents declare no tool at all is still refused -- it has no structured record to bind,
+ * so the declaration would be a guarantee nothing keeps.
  */
 function runsAgent(ir: IR): boolean {
   return ir.agents.length > 0;
@@ -212,21 +222,26 @@ function runsAgent(ir: IR): boolean {
  * The trace-redaction declaration, honoured where it can be and refused where it cannot.
  *
  * `redact` names the fields a trace must not carry. A pipeline's recorded prompt is
- * redacted by the runtime, so the declaration is emitted as part of the request; an agent
- * run has no render to strip values out of, so a document that runs an agent and withholds
- * a field is refused rather than emitted with a guarantee nothing keeps.
+ * redacted by the runtime, so the declaration is emitted as part of the request. An agent
+ * document's tool calls are the same kind of boundary -- see `runsAgent` -- so it is emitted
+ * into the agent document and bound at each call. What is left is the document that runs an
+ * agent and declares no tool: nothing in that run is ever a mapping with a declared key, so
+ * no binding can exist and the declaration is refused rather than emitted unkept.
  */
 export function checkObservability(ir: IR): PlanProblem[] {
   const redact = ir.observability?.redact ?? [];
   if (redact.length === 0 || !runsAgent(ir)) return [];
+  if (ir.tools.length > 0) return [];
   return [
     problem(
       'unsupported-redact',
       'observability.redact',
       `the document runs an agent and withholds ${[...redact].sort(compareIds).join(', ')} ` +
-        'from its traces, but an agent run records the transcript it was handed rather than a ' +
-        'rendered prompt, so no emitted code can strip those values; remove the declaration, ' +
-        'or serve the same work through a pipeline, whose recorded prompt is redacted',
+        'from its traces, but none of its agents declares a tool, so the run has no ' +
+        'structured record whose declared fields could be bound: the only text it carries is ' +
+        'free prose, which a field name cannot match. Declare the tool whose arguments carry ' +
+        'those fields, remove the declaration, or serve the same work through a pipeline, ' +
+        'whose recorded prompt is redacted',
     ),
   ];
 }
@@ -1877,19 +1892,6 @@ export function checkPipelines(ir: IR): PlanProblem[] {
           `${base}.trigger`,
           `Phase 0 wires an 'http' trigger to a FastAPI route and a 'manual' one to a batch ` +
             `job; got '${kind ?? '<none>'}'`,
-        ),
-      );
-    }
-    const redact = pipeline.observability?.redact ?? [];
-    if (redact.length > 0 && runsAgent(ir)) {
-      problems.push(
-        problem(
-          'unsupported-redact',
-          `${base}.observability.redact`,
-          `the document runs an agent and withholds ${[...redact].sort(compareIds).join(', ')} ` +
-            'from this pipeline, but an agent run records the transcript it was handed rather ' +
-            'than a rendered prompt, so no emitted code can strip those values; remove the ' +
-            'declaration, or remove the agents the document declares',
         ),
       );
     }

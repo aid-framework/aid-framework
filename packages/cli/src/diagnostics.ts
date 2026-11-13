@@ -121,6 +121,11 @@ export const CLI_DIAGNOSTIC_CODES = {
   // `AID_TRACE_CONTENT` asks for it, so that refusal names the variable rather than
   // leaving a reader to wonder why an expensive run produced no cases.
   traceExportDatasetRequired: 'cli/trace-export-dataset-required',
+  // A document that runs an agent records a transcript, so what it withholds from that
+  // transcript is `observability.redact` alone: `feedback.redact` governs feedback payloads
+  // and has no bearing on model-call text. Accepting the second as proof would let an
+  // enterprise agent document export captured content while nothing removed a value.
+  traceExportAgentUnredacted: 'cli/trace-export-agent-unredacted',
   traceExportEnterpriseCapture: 'cli/trace-export-enterprise-capture',
   traceExportFilterInvalid: 'cli/trace-export-filter-invalid',
   traceExportFilterNoMatch: 'cli/trace-export-filter-no-match',

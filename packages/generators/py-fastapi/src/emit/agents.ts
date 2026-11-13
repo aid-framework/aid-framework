@@ -251,13 +251,22 @@ function agentEntry(agent: AgentShape): Record<string, unknown> {
  * (see `PROMPT_DOCUMENT`), because the prompt modules already own that text.
  */
 export function agentDocument(ir: IR): Record<string, unknown> {
-  return {
+  const document: Record<string, unknown> = {
     models: agentModelClosure(ir).map(modelEntry),
     tools: orderedTools(ir).map(toolEntry),
     memory: orderedMemory(ir).map(memoryEntry),
     guardrails: orderedGuardrails(ir).map(guardrailEntry),
     agents: orderedAgents(ir).map(agentEntry),
   };
+  // The loop has no render to bind values from, so it learns them from the tool calls it
+  // executes: `redact` is the list of field names whose values must not reach a span. It
+  // is emitted only when something declared a name -- either explicitly or through the
+  // sensitive set -- so an app that withholds nothing carries no empty block claiming it
+  // was considered.
+  if (ir.observability.redact.length > 0) {
+    document.observability = { redact: [...ir.observability.redact] };
+  }
+  return document;
 }
 
 /**

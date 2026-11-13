@@ -783,3 +783,37 @@ compared like any other metric and is unrelated to the promotion allowance.
 Same reason as `0.1.150`, `0.1.160` and `0.1.161`: a bump is owed to a **spec language change**. The
 edits here are descriptions in the JSON schema, behaviour in the runtime and the CLI, and one gate
 rule narrowed. No document gains or loses a key.
+
+## 0.1.165: an agent run redacts where its values arrive named {#agent-redaction-release}
+
+This is a **release**, not a spec version. `specVersion` stays `0.33`: no key, enum value or
+constraint changed. What changed is that `observability.redact` reaches a document that runs an
+agent, which the previous release refused outright.
+
+### What changed
+
+| Before | Now |
+| --- | --- |
+| Any document that ran an agent and withheld a field failed the build with `unsupported-redact`, because a run has no rendered prompt to bind a value to. | An agent run binds the declared names against the arguments of the tool calls its model composes, recursing into nested objects and lists, and withholds those values from the copy a trace records while the model still receives them. The refusal survives only for a document that runs an agent and **declares no tool at all**, which has no argument to bind. |
+| `aid trace export` refused enterprise capture only when `observability.redact` was empty, without looking at what the document actually ran. | It refuses an agent document under `profile: enterprise` on the same test, and does not accept `observability.feedback.redact` in its place: a set declared for stored signals says nothing about what a trace kept (`cli/trace-export-agent-unredacted`). |
+
+### What the set does not reach
+
+A value that enters a run only through prose. `AgentRuntime.run` is handed a plain string, so a
+prompt-side identifier has no field name for the runner to match, and it is recorded as written.
+Where that applies, redact before the value reaches the prompt or leave payload capture off.
+
+A value recorded by another route -- your own log line, or text a tool body writes -- remains
+outside the guarantee, exactly as it is for a pipeline.
+
+### What you have to do
+
+Nothing, unless you removed `observability.redact` to get past the old refusal. If you did, put it
+back: an agent document that declares its tools now builds, and a document that declares none is
+refused with the field names and both fixes in the message.
+
+### Why there is no `specVersion` bump
+
+A bump is owed to a **spec language change**. The grammar has accepted `observability.redact` since
+`0.27`; this release makes an emitted runtime and a gate honour it for agents, and narrows one gate
+rule. No document gains or loses a key.
