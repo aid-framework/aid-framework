@@ -128,6 +128,10 @@ export const SPEC_VERSIONS = [
     version: '0.31',
     adds: 'Adds the `step-count`, `forbidden-tool` and `approval-respected` eval metrics, which score a run rather than an answer: how many model calls a case took, whether it reached for a tool it was told never to call, and whether it stopped at the pauses it was given and honoured the decision it was handed. Each is only meaningful on an `agent:` target, so a spec that declares one elsewhere is refused by name. From `0.31`, an `enterprise` document with a pipeline or retriever no eval covers is refused rather than warned about, which is the same coverage rule with the consequence an enterprise delivery needs.',
   },
+  {
+    version: '0.32',
+    adds: 'Makes the checkpoint an agent hands back on a pause a signed, expiring capability, and adds `state.signingKeyEnv` (the variable the signing key is read from, a name and never a value) and `state.checkpointTtlMinutes` (how long an issued checkpoint may be presented, 15 minutes when omitted). The generated resume route refuses a checkpoint it did not sign, one past its deadline, and one the declared store has already spent, each as a `403` naming the reason. From `0.32`, an `enterprise` document whose agent can pause is refused by `ir/resume-unsigned` with no signing key and by `ir/resume-replay-weak` with no durable store, because a checkpoint nobody signs is a bearer capability over the call it holds and a nonce nobody remembers refuses nothing across a restart. `ir/resume-key-conflict` and `ir/resume-key-alias` keep the pair unambiguous: one key, one store, one deadline, and never a name another credential already holds.',
+  },
 ];
 /**
  * Corrections to labels published outside this page.

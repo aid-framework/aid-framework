@@ -29,7 +29,7 @@ from aid_runtime.agents import (
     AgentCheckpoint,
     AgentDefinition,
     AgentRuntime,
-    CheckpointRefusal,
+    CheckpointRefusalError,
     CheckpointSigner,
     FileMemoryStore,
     HumanApproval,
@@ -356,7 +356,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.162"
+__version__ = "0.1.163"
 
 __all__ = [
     "AGENT_LABEL",
@@ -414,7 +414,7 @@ __all__ = [
     "Capability",
     "CapabilityMismatchError",
     "CaseOutcome",
-    "CheckpointRefusal",
+    "CheckpointRefusalError",
     "CheckpointSigner",
     "Chunk",
     "Chunker",

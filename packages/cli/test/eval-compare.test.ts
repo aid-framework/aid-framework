@@ -56,7 +56,7 @@ function promotableSpec(options: { readonly withApproval?: boolean } = {}): stri
   // to prove. The baseline bump below is still the part that matters -- `classify_ticket`
   // is at version 1 because the gate refuses a policy whose baseline is not behind the
   // prompt it names, so a candidate that has not bumped the prompt has no candidate at all.
-  let text = patched(
+  const text = patched(
     EXAMPLE_SPEC,
     '  classify_ticket:\n    version: 1',
     '  classify_ticket:\n    version: 2',

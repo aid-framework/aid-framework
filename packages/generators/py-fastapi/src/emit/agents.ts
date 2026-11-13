@@ -352,9 +352,10 @@ function buildRuntime(resume: boolean): string {
     ),
   ];
   if (!resume) {
-    return [...signature, `${INDENT}return AgentRuntime(from_ir(DOCUMENT), gateway, tools=tools)`].join(
-      '\n',
-    );
+    return [
+      ...signature,
+      `${INDENT}return AgentRuntime(from_ir(DOCUMENT), gateway, tools=tools)`,
+    ].join('\n');
   }
   return [
     ...signature,
@@ -464,7 +465,7 @@ const RESUME_ROUTE = [
   `${INDENT}runtime = build_runtime(gateway=deps.gateway, tools=deps.agent_tools)`,
   `${INDENT}try:`,
   `${INDENT}${INDENT}result = await runtime.resume(checkpoint, event.decision)`,
-  `${INDENT}except CheckpointRefusal as refusal:`,
+  `${INDENT}except CheckpointRefusalError as refusal:`,
   `${INDENT}${INDENT}raise HTTPException(`,
   `${INDENT}${INDENT}${INDENT}status_code=403,`,
   `${INDENT}${INDENT}${INDENT}detail={"reason": refusal.reason, "message": str(refusal)},`,
@@ -504,7 +505,7 @@ export function emitAgents(ir: IR): EmittedFile {
         ['from collections.abc import Iterable', 'from typing import Annotated, Any'],
         [
           importFrom('aid_runtime', [
-            ...(resume ? ['AgentCheckpoint', 'CheckpointRefusal', 'CheckpointSigner'] : []),
+            ...(resume ? ['AgentCheckpoint', 'CheckpointRefusalError', 'CheckpointSigner'] : []),
             'AgentRuntime',
             ...(resume ? ['HumanDecision'] : []),
             'ModelGateway',

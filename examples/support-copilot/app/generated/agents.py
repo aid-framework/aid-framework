@@ -13,7 +13,7 @@ from typing import Annotated, Any
 from aid_runtime import (
     AgentCheckpoint,
     AgentRuntime,
-    CheckpointRefusal,
+    CheckpointRefusalError,
     CheckpointSigner,
     HumanDecision,
     ModelGateway,
@@ -288,7 +288,7 @@ async def resume_agent(
     runtime = build_runtime(gateway=deps.gateway, tools=deps.agent_tools)
     try:
         result = await runtime.resume(checkpoint, event.decision)
-    except CheckpointRefusal as refusal:
+    except CheckpointRefusalError as refusal:
         raise HTTPException(
             status_code=403,
             detail={"reason": refusal.reason, "message": str(refusal)},

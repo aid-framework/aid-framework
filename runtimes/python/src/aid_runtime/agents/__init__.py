@@ -62,7 +62,7 @@ from aid_runtime.agents.memory import (
 from aid_runtime.agents.policy import Principal, evaluate_policy, policy_source
 from aid_runtime.agents.resume import (
     DEFAULT_CHECKPOINT_TTL_MINUTES,
-    CheckpointRefusal,
+    CheckpointRefusalError,
     CheckpointSigner,
     InProcessNonceStore,
     NonceStore,
@@ -84,8 +84,8 @@ from aid_runtime.agents.state import (
 )
 
 __all__ = [
-    "DETECTORS",
     "DEFAULT_CHECKPOINT_TTL_MINUTES",
+    "DETECTORS",
     "GUARDRAIL_ACTIONS",
     "GUARDRAIL_STAGES",
     "IMPLEMENTED_MEMORY_KINDS",
@@ -97,7 +97,7 @@ __all__ = [
     "BedrockGuardrailClient",
     "BedrockGuardrailPolicy",
     "CheckpointIntegrity",
-    "CheckpointRefusal",
+    "CheckpointRefusalError",
     "CheckpointSigner",
     "DecisionAsker",
     "DecisionDefinition",
@@ -121,8 +121,8 @@ __all__ = [
     "ModelArmorGuardrailSettings",
     "NonceStore",
     "PendingApproval",
-    "Principal",
     "PostgresNonceStore",
+    "Principal",
     "RunResult",
     "RunStatus",
     "RuntimeSpec",

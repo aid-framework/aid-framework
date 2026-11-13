@@ -19,7 +19,7 @@ import pytest
 
 from agent_support import ADMIN_ONLY, build, recording_tool, solo, tool_def
 from aid_runtime.agents import (
-    CheckpointRefusal,
+    CheckpointRefusalError,
     CheckpointSigner,
     HumanDecision,
     InProcessNonceStore,
@@ -80,7 +80,7 @@ async def test_an_edited_approval_decision_is_refused() -> None:
     harness, recorder, checkpoint = await _paused(signer=_signer())
     edited = checkpoint.model_copy(update={"channel": "someone-elses-queue"})
 
-    with pytest.raises(CheckpointRefusal) as caught:
+    with pytest.raises(CheckpointRefusalError) as caught:
         await harness.runtime.resume(edited, HumanDecision.APPROVE)
 
     assert caught.value.reason == "tampered"
@@ -95,7 +95,7 @@ async def test_swapping_the_held_call_arguments_is_refused() -> None:
         update={"calls": (call.model_copy(update={"arguments": {"query": "everything"}}),)}
     )
 
-    with pytest.raises(CheckpointRefusal) as caught:
+    with pytest.raises(CheckpointRefusalError) as caught:
         await harness.runtime.resume(swapped, HumanDecision.APPROVE)
 
     assert caught.value.reason == "tampered"
@@ -114,7 +114,7 @@ async def test_an_extended_deadline_is_refused_as_tampering() -> None:
         }
     )
 
-    with pytest.raises(CheckpointRefusal) as caught:
+    with pytest.raises(CheckpointRefusalError) as caught:
         await harness.runtime.resume(extended, HumanDecision.APPROVE)
 
     assert caught.value.reason == "tampered"
@@ -139,7 +139,7 @@ async def test_a_genuine_expiry_is_refused() -> None:
     assert integrity is not None
     now = int(time.time())
     # Accept at a moment past the recorded expiry, without touching the signed bytes.
-    with pytest.raises(CheckpointRefusal) as caught:
+    with pytest.raises(CheckpointRefusalError) as caught:
         await _signer().accept(paused.checkpoint, harness.runtime._nonces, now=integrity.expires_at)
 
     assert caught.value.reason == "expired"
@@ -153,7 +153,7 @@ async def test_the_same_checkpoint_is_spendable_once() -> None:
     assert first.completed
     assert recorder.calls == 1
 
-    with pytest.raises(CheckpointRefusal) as caught:
+    with pytest.raises(CheckpointRefusalError) as caught:
         await harness.runtime.resume(checkpoint, HumanDecision.APPROVE)
 
     assert caught.value.reason == "replayed"
@@ -172,7 +172,7 @@ async def test_the_nonce_is_signed_so_it_cannot_be_swapped_to_replay() -> None:
         update={"integrity": checkpoint.integrity.model_copy(update={"nonce": "never-seen"})}
     )
 
-    with pytest.raises(CheckpointRefusal) as caught:
+    with pytest.raises(CheckpointRefusalError) as caught:
         await harness.runtime.resume(respent, HumanDecision.APPROVE)
 
     assert caught.value.reason == "tampered"
@@ -184,7 +184,7 @@ async def test_an_unsigned_checkpoint_is_refused_by_a_signed_app() -> None:
     harness, _, _ = await _paused(signer=_signer())
     harness.runtime._nonces = InProcessNonceStore()
 
-    with pytest.raises(CheckpointRefusal) as caught:
+    with pytest.raises(CheckpointRefusalError) as caught:
         await harness.runtime.resume(checkpoint, HumanDecision.APPROVE)
 
     assert caught.value.reason == "unsigned"
@@ -192,10 +192,12 @@ async def test_an_unsigned_checkpoint_is_refused_by_a_signed_app() -> None:
 
 
 async def test_a_checkpoint_signed_with_another_key_is_refused() -> None:
-    _, recorder, checkpoint = await _paused(signer=CheckpointSigner(secret="b" * 64, ttl_seconds=TTL))
+    _, recorder, checkpoint = await _paused(
+        signer=CheckpointSigner(secret="b" * 64, ttl_seconds=TTL)
+    )
     harness, _, _ = await _paused(signer=_signer())
 
-    with pytest.raises(CheckpointRefusal) as caught:
+    with pytest.raises(CheckpointRefusalError) as caught:
         await harness.runtime.resume(checkpoint, HumanDecision.APPROVE)
 
     assert caught.value.reason == "tampered"

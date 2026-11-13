@@ -144,7 +144,8 @@ function checkUnsigned(
   enforceable: boolean,
 ): void {
   const unsigned = pausing.filter((agent) => agent.state?.signingKeyEnv === undefined);
-  if (unsigned.length === 0) return;
+  const [first] = unsigned;
+  if (first === undefined) return;
   const ids = unsigned.map((agent) => `"${agent.id}"`).join(', ');
   const enforced = enterprise && enforceable;
 
@@ -153,7 +154,7 @@ function checkUnsigned(
       report.warn({
         code: IR_DIAGNOSTIC_CODES.resumeUnsigned,
         message: `the resume gate flagged ${ids}: ${unsigned.length === 1 ? 'this agent can pause' : 'these agents can pause'}, the document names no checkpoint signing key, and specVersion "${ir.specVersion}" is before ${RESUME_SIGNING_ENFORCED_MIN_VERSION} -- so POST /agents/resume accepts any well-formed checkpoint and a caller can approve the held call`,
-        path: ['agents', unsigned[0]!.id, 'state'],
+        path: ['agents', first.id, 'state'],
         hint: `set specVersion: "${RESUME_SIGNING_ENFORCED_MIN_VERSION}" and declare \`state: { kind: postgres, urlEnv: DATABASE_URL, signingKeyEnv: AID_CHECKPOINT_KEY }\`; before ${RESUME_SIGNING_ENFORCED_MIN_VERSION} a document cannot name the key, so this cannot be enforced`,
       }),
     );
@@ -165,13 +166,13 @@ function checkUnsigned(
       ? report.error({
           code: IR_DIAGNOSTIC_CODES.resumeUnsigned,
           message: `the resume gate rejected ${ids}: ${unsigned.length === 1 ? 'this agent can pause' : 'these agents can pause'}, and an unsigned checkpoint is a bearer capability over the pending call -- under profile enterprise anyone holding one can approve the paused write`,
-          path: ['agents', unsigned[0]!.id, 'state'],
+          path: ['agents', first.id, 'state'],
           hint: 'declare `state.signingKeyEnv` naming the environment variable that holds the signing key, so a checkpoint this app did not issue and one whose answer was edited are both refused',
         })
       : report.warn({
           code: IR_DIAGNOSTIC_CODES.resumeUnsigned,
           message: `the resume gate flagged ${ids}: ${unsigned.length === 1 ? 'this agent can pause' : 'these agents can pause'} and no checkpoint signing key is declared, so a resume accepts any well-formed checkpoint and a caller can approve or edit the held call`,
-          path: ['agents', unsigned[0]!.id, 'state'],
+          path: ['agents', first.id, 'state'],
           hint: 'declare `state.signingKeyEnv` naming the environment variable that holds the signing key; the generated resume route then refuses a checkpoint it did not issue',
         }),
   );
@@ -232,7 +233,10 @@ function checkAgreement(
   }
 
   if (keys.size > 1) {
-    const names = [...keys].sort().map((key) => `"${key}"`).join(', ');
+    const names = [...keys]
+      .sort()
+      .map((key) => `"${key}"`)
+      .join(', ');
     diagnostics.push(
       report.error({
         code: IR_DIAGNOSTIC_CODES.resumeKeyConflict,
@@ -269,4 +273,3 @@ function checkAgreement(
     );
   }
 }
-

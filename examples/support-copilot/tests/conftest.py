@@ -24,10 +24,7 @@ def checkpoint_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator
     """Point the checkpoint signer and the replay store at throwaway resources."""
 
     state_db = tmp_path_factory.mktemp("state") / "aid-state.db"
-    previous = {
-        name: os.environ.get(name)
-        for name in ("AID_CHECKPOINT_KEY", "AID_STATE_DB")
-    }
+    previous = {name: os.environ.get(name) for name in ("AID_CHECKPOINT_KEY", "AID_STATE_DB")}
     os.environ["AID_CHECKPOINT_KEY"] = "test-key-not-used-in-a-deployment"
     os.environ["AID_STATE_DB"] = str(state_db)
     try:

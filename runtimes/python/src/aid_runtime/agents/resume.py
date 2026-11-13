@@ -49,7 +49,7 @@ from aid_runtime.errors import AidRuntimeError, ConfigurationError
 
 __all__ = [
     "DEFAULT_CHECKPOINT_TTL_MINUTES",
-    "CheckpointRefusal",
+    "CheckpointRefusalError",
     "CheckpointSigner",
     "InProcessNonceStore",
     "NonceStore",
@@ -65,7 +65,7 @@ __all__ = [
 DEFAULT_CHECKPOINT_TTL_MINUTES = 15
 
 
-class CheckpointRefusal(AidRuntimeError):
+class CheckpointRefusalError(AidRuntimeError):
     """A resume body this app will not honour, with a stable machine-readable reason.
 
     ``reason`` is one of ``tampered``, ``expired``, ``replayed``, ``unsigned``. The
@@ -114,9 +114,7 @@ class InProcessNonceStore:
 
     async def claim(self, *, nonce: str, expires_at: int, now: int) -> bool:
         async with self._lock:
-            self._seen = {
-                seen: expiry for seen, expiry in self._seen.items() if expiry > now
-            }
+            self._seen = {seen: expiry for seen, expiry in self._seen.items() if expiry > now}
             if nonce in self._seen:
                 return False
             self._seen[nonce] = expires_at
@@ -221,9 +219,7 @@ def checkpoint_payload(checkpoint: AgentCheckpoint) -> bytes:
     Sorted keys and no separator padding make the encoding reproducible in a second
     process, which a signature requires.
     """
-    document = checkpoint.model_dump(
-        mode="json", exclude={"integrity": {"signature"}}
-    )
+    document = checkpoint.model_dump(mode="json", exclude={"integrity": {"signature"}})
     return json.dumps(
         document,
         sort_keys=True,
@@ -291,9 +287,7 @@ class CheckpointSigner:
             update={"integrity": integrity.model_copy(update={"signature": signature})}
         )
 
-    def verify(
-        self, checkpoint: AgentCheckpoint, *, now: int | None = None
-    ) -> CheckpointIntegrity:
+    def verify(self, checkpoint: AgentCheckpoint, *, now: int | None = None) -> CheckpointIntegrity:
         """Check signature and expiry. Returns the integrity block, or raises.
 
         Replay is *not* checked here: it needs the store, and therefore an ``await``.
@@ -301,21 +295,21 @@ class CheckpointSigner:
         """
         integrity = checkpoint.integrity
         if integrity is None:
-            raise CheckpointRefusal(
+            raise CheckpointRefusalError(
                 "unsigned",
                 "this checkpoint carries no signature, so it was not issued by an app "
                 "built with checkpoint signing",
             )
         expected = self._digest(checkpoint)
         if not hmac.compare_digest(expected, integrity.signature):
-            raise CheckpointRefusal(
+            raise CheckpointRefusalError(
                 "tampered",
                 "this checkpoint's signature does not match its contents; it was edited "
                 "after it was issued",
             )
         moment = int(time.time()) if now is None else int(now)
         if integrity.expires_at <= moment:
-            raise CheckpointRefusal(
+            raise CheckpointRefusalError(
                 "expired",
                 f"this checkpoint expired at {integrity.expires_at}; a pause is valid for "
                 f"{self.ttl_seconds} seconds, so resume it sooner or start the run again",
@@ -336,7 +330,7 @@ class CheckpointSigner:
             nonce=integrity.nonce, expires_at=integrity.expires_at, now=moment
         )
         if not claimed:
-            raise CheckpointRefusal(
+            raise CheckpointRefusalError(
                 "replayed",
                 "this checkpoint has already been spent; a resume is accepted once, so a "
                 "second presentation of the same checkpoint is refused",
