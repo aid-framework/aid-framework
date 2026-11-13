@@ -65,6 +65,7 @@ export const IR_DIAGNOSTIC_CODES = {
   profileGuardrail: 'ir/profile-guardrail',
   profileIdentity: 'ir/profile-identity',
   profileNetwork: 'ir/profile-network',
+  identityVerifiedBy: 'ir/identity-verified-by',
   profileApprovals: 'ir/profile-approvals',
   agentsStateStore: 'ir/agents-state-store',
   resumeUnsigned: 'ir/resume-unsigned',

@@ -42,11 +42,12 @@
         "0.29",
         "0.30",
         "0.31",
-        "0.32"
+        "0.32",
+        "0.33"
       ]
     },
     "profile": {
-      "description": "The operating profile: a named bundle of defaults and required controls, not a mode. `standard` is the default and is what an absent `profile` means, so every spec written before 0.25 keeps exactly the behaviour it had. `enterprise` requires the controls a regulated deployment cannot go without, and the profile gate refuses a spec that declares it and then omits them: a region pin, an audit sink, a declared identity provider, private networking and an approval policy on every deployment, plus at least one guardrail that runs on output. A requirement that a spec could not satisfy is never added to a profile, so `enterprise` is always passable. Declarable from spec v0.25; the identity, network and approval requirements are enforced from 0.26.",
+      "description": "The operating profile: a named bundle of defaults and required controls, not a mode. `standard` is the default and is what an absent `profile` means, so every spec written before 0.25 keeps exactly the behaviour it had. `enterprise` requires the controls a regulated deployment cannot go without, and the profile gate refuses a spec that declares it and then omits them: a region pin, an audit sink, a declared identity provider, private networking and an approval policy on every deployment, plus at least one guardrail that runs on output. A requirement that a spec could not satisfy is never added to a profile, so `enterprise` is always passable. Declarable from spec v0.25; the identity, network and approval requirements are enforced from 0.26. From 0.33 the identity requirement also covers `verifiedBy`: AID generates no token verification, so an `enterprise` deployment must name the component that performs it (`ir/identity-verified-by`).",
       "enum": ["standard", "enterprise"]
     },
     "project": { "$ref": "#/$defs/project" },
@@ -1595,7 +1596,7 @@
           }
         },
         "state": {
-          "description": "A durable run store for this agent, overriding the project-level `state`. Spec 0.26. Required when the agent can call a tool with side effects, because a run that pauses for a human decision cannot outlive the process without one.",
+          "description": "A durable run store for this agent, overriding the project-level `state`. Spec 0.26. Required when the agent can call a tool with side effects, so a replayed resume is refused across replicas and a paused run has a declared place to live; note that AID generates the nonce claim, not the run persistence.",
           "$ref": "#/$defs/agentState"
         }
       }
@@ -1943,7 +1944,7 @@
           "$ref": "#/$defs/audit"
         },
         "identity": {
-          "description": "The identity provider this deployment trusts. Spec 0.26. A reference to an IdP the customer already runs -- an issuer URL and an audience -- never a secret and never a credential. AID compiles it into the generated app's token enforcement: a request whose token names another issuer or audience is refused, and the token's role and scope claims become the runtime `Principal` that every `auth` policy is evaluated against. Signature verification stays a `business/` function, because the verification keys belong to the customer's IdP. `enterprise` requires one on every deployment.",
+          "description": "The identity provider this deployment trusts. Spec 0.26. A reference to an IdP the customer already runs -- an issuer URL and an audience -- never a secret and never a credential. AID records the reference and gates its presence; it generates no token verification. The generated app's `current_principal` dependency returns an anonymous principal, and the application replaces it with its own verifier, named in `verifiedBy` (spec 0.33). `enterprise` requires this block and a `verifiedBy` on every deployment.",
           "$ref": "#/$defs/identity"
         },
         "network": {
@@ -2039,32 +2040,37 @@
       }
     },
     "identity": {
-      "description": "The identity provider a deployment trusts, as a reference: an issuer URL a reader can fetch and an audience name. No field accepts a credential, and the generated enforcement pins the issuer literally, so moving to another IdP is a spec change that regenerates rather than an environment variable nobody reviews.",
+      "description": "The identity provider a deployment trusts, as a reference: an issuer URL a reader can fetch and an audience name. No field accepts a credential. AID records the reference and gates its presence; it does not generate token verification, so `verifiedBy` (spec 0.33) names the component that really checks a token. Moving to another IdP is a reviewed spec change rather than an environment variable nobody reads.",
       "type": "object",
       "required": ["kind", "issuer"],
       "additionalProperties": false,
       "properties": {
         "kind": {
-          "description": "`oidc` is a JWT issuer the app validates tokens from. `saml` is declared for an organisation whose SSO asserts identity before the gateway forwards it; the generated enforcement is the same claim check, and the assertion is the provider's business.",
+          "description": "`oidc` is a JWT issuer the app validates tokens from. `saml` is declared for an organisation whose SSO asserts identity before the gateway forwards it; either way the check is the verifier named in `verifiedBy`, not something AID emits.",
           "enum": ["oidc", "saml"]
         },
         "issuer": {
-          "description": "The issuer URL the token's `iss` claim must equal exactly.",
+          "description": "The issuer URL the token's `iss` claim must equal exactly. AID records it in the IR and the profile gate refuses an `enterprise` deployment that names no identity provider; no generated code compares this value, so the verifier named in `verifiedBy` is what checks it.",
           "type": "string",
           "pattern": "^https://[^\\s]+$"
         },
         "audience": {
-          "description": "The `aud` claim the token must carry. Omitted means the project id, which is what a generated app registers as its client.",
+          "description": "The `aud` claim the token must carry. Omitted means the project id, which is the audience a verifier should expect. AID records it and emits no check.",
           "type": "string",
           "minLength": 1
         },
         "rolesClaim": {
-          "description": "Which claim holds the token's roles, mapped onto the runtime `Principal` that `auth` policies read. Omitted means `roles`.",
+          "description": "Which claim holds the token's roles, so the verifier named in `verifiedBy` can map them onto the runtime `Principal` that `auth` policies read. Omitted means `roles`. AID records the name; it reads no claim itself.",
           "type": "string",
           "minLength": 1
         },
         "scopesClaim": {
-          "description": "Which claim holds the token's scopes. Omitted means `scp`, which is what OIDC providers issue.",
+          "description": "Which claim holds the token's scopes. Omitted means `scp`, which is what OIDC providers issue. AID records the name; the verifier applies it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "verifiedBy": {
+          "description": "Who verifies tokens for this deployment, named so a reviewer can point at it: a module path such as `app.business.principal:current_principal`, a gateway, or a service. Spec 0.33. AID generates no token verification, so this is what turns the responsibility into a declaration instead of an implication -- `enterprise` refuses a deployment that declares `identity` without it (`ir/identity-verified-by`).",
           "type": "string",
           "minLength": 1
         }
@@ -2111,7 +2117,7 @@
       }
     },
     "agentState": {
-      "description": "A durable run store, so a paused or long-running run outlives the process that started it. `urlEnv` is the *name* of an environment variable holding the connection string, following the `models.*.apiKeyEnv` precedent: the value stays in the platform and never enters the spec. Deliberately not `stores`, which is a vector store whose `dimensions` the normalize gate compares against the embedding model's width; run state is neither embedded nor a width, so putting it there would force a meaningless `dimensions`. An agent that can pause hands the caller a checkpoint, and that checkpoint is a bearer capability over the call it holds: whoever has it can approve it. So a checkpoint is signed, and it expires. `signingKeyEnv` names the variable the key comes from -- a name, never a value, for the same reason as `urlEnv` -- and the generated resume route refuses a checkpoint whose signature does not verify, whose deadline has passed, or whose nonce the store already holds. From spec v0.32 an `enterprise` document whose agent can pause and declares no `signingKeyEnv` is refused with `ir/resume-unsigned`; below that version, and under `profile: standard`, it is a warning naming what a resume accepts. A store is a second, separate guarantee: without one, a spent checkpoint is refused only by the process that issued it, so a replay reaches a second replica or a restarted process and is accepted. `ir/resume-replay-weak` says exactly that, as a warning under `standard` and an error under `enterprise`. The nonce record lives where this block points -- `postgres` for a store more than one replica shares, `sqlite` for one filesystem -- and the key named by `signingKeyEnv` is read at request time, so a deployment missing it refuses the run rather than pausing into a checkpoint it cannot sign. Signing is not authentication: the route trusts the checkpoint, not a caller identity, so whatever fronts the app still decides who may present one.",
+      "description": "A durable run store: where the nonce that refuses a replayed resume is claimed, and a declared place for a paused or long-running run to live. AID generates the nonce claim; it does not write the run itself, so the checkpoint for a paused run returns to the caller until the app persists it. `urlEnv` is the *name* of an environment variable holding the connection string, following the `models.*.apiKeyEnv` precedent: the value stays in the platform and never enters the spec. Deliberately not `stores`, which is a vector store whose `dimensions` the normalize gate compares against the embedding model's width; run state is neither embedded nor a width, so putting it there would force a meaningless `dimensions`. An agent that can pause hands the caller a checkpoint, and that checkpoint is a bearer capability over the call it holds: whoever has it can approve it. So a checkpoint is signed, and it expires. `signingKeyEnv` names the variable the key comes from -- a name, never a value, for the same reason as `urlEnv` -- and the generated resume route refuses a checkpoint whose signature does not verify, whose deadline has passed, or whose nonce the store already holds. From spec v0.32 an `enterprise` document whose agent can pause and declares no `signingKeyEnv` is refused with `ir/resume-unsigned`; below that version, and under `profile: standard`, it is a warning naming what a resume accepts. A store is a second, separate guarantee: without one, a spent checkpoint is refused only by the process that issued it, so a replay reaches a second replica or a restarted process and is accepted. `ir/resume-replay-weak` says exactly that, as a warning under `standard` and an error under `enterprise`. The nonce record lives where this block points -- `postgres` for a store more than one replica shares, `sqlite` for one filesystem -- and the key named by `signingKeyEnv` is read at request time, so a deployment missing it refuses the run rather than pausing into a checkpoint it cannot sign. Signing is not authentication: the route trusts the checkpoint, not a caller identity, so whatever fronts the app still decides who may present one.",
       "type": "object",
       "required": ["kind", "urlEnv"],
       "additionalProperties": false,
@@ -2126,7 +2132,7 @@
           "pattern": "^[A-Z][A-Z0-9_]*$"
         },
         "ttlHours": {
-          "description": "How long a saved run is kept before the store may delete it. Omitted means no expiry, which is accepted and documented rather than defaulted. Retention is not the same as the window a pause may be resumed in: a run kept for a week may still only be resumable for an hour, and `checkpointTtlMinutes` governs that.",
+          "description": "How long the app keeps a saved run before the store may delete it. Recorded, not acted on: AID emits no deletion job, because it does not delete an operator's rows on a policy it invented. Omitted means no expiry, which is accepted and documented rather than defaulted. Retention is not the same as the window a pause may be resumed in: a run kept for a week may still only be resumable for an hour, and `checkpointTtlMinutes` governs that.",
           "type": "integer",
           "minimum": 1
         },

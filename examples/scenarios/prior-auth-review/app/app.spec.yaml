@@ -1,4 +1,4 @@
-specVersion: "0.32"
+specVersion: "0.33"
 
 project:
   name: prior-auth-review
@@ -219,6 +219,7 @@ deployments:
       kind: oidc
       issuer: https://login.example-health.com
       audience: aid-prior-auth
+      verifiedBy: hospital-idp-gateway
     network:
       private: true
       egress: declared-only

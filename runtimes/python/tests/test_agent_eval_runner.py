@@ -18,7 +18,7 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
-from agent_support import AUTHENTICATED, recording_tool, solo, tool_def
+from agent_support import ADMIN_ONLY, AUTHENTICATED, recording_tool, solo, tool_def
 from aid_runtime import (
     AgentEvalRunner,
     ApprovalPolicy,
@@ -32,16 +32,21 @@ from aid_runtime import (
     RecordingProvider,
     RunStatus,
     ScriptedTurn,
+    ToolPermissionError,
     ToolTrace,
     evaluate_once,
 )
-from aid_runtime.agents import HumanDecision
+from aid_runtime.agents import HumanDecision, Principal
 from aid_runtime.evals.dataset import Dataset
 from aid_runtime.providers.recorded import Transcript
 
 PROVIDER = "fake"
 PROMPT = "You refund orders and nothing else."
 QUESTION = "Refund order 4471."
+
+#: The caller these fixtures simulate: signed in, with no roles or scopes of its own, so
+#: an ``isAuthenticated()`` policy holds and a ``hasRole(...)`` one does not.
+_SIGNED_IN = Principal(authenticated=True)
 
 
 def _agent(**agent_fields: Any) -> dict[str, Any]:
@@ -57,14 +62,28 @@ def _agent(**agent_fields: Any) -> dict[str, Any]:
 def _gated(**agent_fields: Any) -> dict[str, Any]:
     """The same agent, except every step waits for a person.
 
-    ``isAuthenticated()`` is true for the default principal, which makes it the
-    unconditional ``when`` a spec can actually express -- there is no ``kind: always``.
+    ``isAuthenticated()`` is the unconditional ``when`` a spec can actually express --
+    there is no ``kind: always`` -- so this fixture only pauses for a principal that is
+    authenticated, which is the principal every runner in this module simulates.
     """
     return _agent(hitl={"when": AUTHENTICATED, "channel": "ops"}, **agent_fields)
 
 
 def _provider(*turns: ScriptedTurn) -> FakeProvider:
     return FakeProvider(name=PROVIDER, script=list(turns))
+
+
+def _write_agent(*, auth: dict[str, Any] | None = None) -> dict[str, Any]:
+    """One agent whose only tool mutates, so ``isAuthenticated()`` stands between it and a caller.
+
+    ``tool_def`` supplies that policy when the tool writes, because the security gate
+    rejects a mutating tool without one: this is the shape a compiled document really has.
+    """
+    return solo(
+        prompt=PROMPT,
+        tool_specs=[tool_def("t1", "search", side_effects="write", auth=auth)],
+        tools=["t1"],
+    )
 
 
 def _runner(
@@ -74,11 +93,16 @@ def _runner(
     tools: Any = None,
     policy: ApprovalPolicy | str = ApprovalPolicy.FROM_CASE,
     max_resumes: int = 8,
+    principal: Principal | None = _SIGNED_IN,
 ) -> AgentEvalRunner:
     """A runner over ``document``, registering ``search`` unless the test says otherwise.
 
     Registering the documented tool by default keeps every test driving a document whose
     declared tools are present. A test that cares about the tool passes its own recorder.
+
+    The default principal is a signed-in one because these fixtures describe an app that
+    verified a token; the runner's own default is anonymous on purpose, and the tests in
+    :class:`TestPrincipal` are the ones that exercise it.
     """
     registered = (recording_tool()[0],) if tools is None else tools
     return AgentEvalRunner(
@@ -88,6 +112,7 @@ def _runner(
         tools=registered,
         approval_policy=policy,
         max_resumes=max_resumes,
+        principal=principal,
     )
 
 
@@ -451,6 +476,56 @@ class TestRefusal:
         case = EvalCase(id="c1", input=QUESTION, approvals=cast(Any, "approve"))
 
         assert case.approvals == (HumanDecision.APPROVE,)
+
+
+class TestPrincipal:
+    """What an eval claims when it does not name the caller it simulates."""
+
+    async def test_with_no_principal_a_write_tool_is_refused(self) -> None:
+        """The default is anonymous, so a mutating tool is refused, not permitted.
+
+        An eval that silently ran as an authenticated caller would report a tool path
+        production could not take behind an app that never verified a token.
+        """
+        tool, recorder = recording_tool()
+        document = _write_agent()
+        provider = _provider(ScriptedTurn.tool("search", {"query": "4471"}))
+
+        with pytest.raises(ToolPermissionError) as raised:
+            await _runner(document, provider, tools=(tool,), principal=None)(
+                EvalCase(id="refund", input=QUESTION)
+            )
+
+        assert recorder.queries == []
+        assert "denies this principal" in raised.value.reason
+
+    async def test_a_signed_in_principal_can_reach_the_same_tool(self) -> None:
+        """The positive control for the case above: the refusal was the caller, not the tool."""
+        tool, recorder = recording_tool()
+        document = _write_agent()
+        provider = _provider(
+            ScriptedTurn.tool("search", {"query": "4471"}),
+            ScriptedTurn.answer("refunded"),
+        )
+
+        await _runner(document, provider, tools=(tool,), principal=_SIGNED_IN)(
+            EvalCase(id="refund", input=QUESTION)
+        )
+
+        assert recorder.queries == ["4471"]
+
+    async def test_an_unprivileged_principal_still_cannot_use_an_admin_role(self) -> None:
+        """Signed in is not the same as privileged: roles are still evaluated per tool."""
+        tool, recorder = recording_tool()
+        document = _write_agent(auth=ADMIN_ONLY)
+        provider = _provider(ScriptedTurn.tool("search", {"query": "4471"}))
+
+        with pytest.raises(ToolPermissionError):
+            await _runner(document, provider, tools=(tool,), principal=_SIGNED_IN)(
+                EvalCase(id="refund", input=QUESTION)
+            )
+
+        assert recorder.queries == []
 
 
 class TestReplay:

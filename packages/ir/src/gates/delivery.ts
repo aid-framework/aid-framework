@@ -92,9 +92,9 @@ export function stateGate(ir: IR, options: GateOptions): GateResult {
     diagnostics.push(
       report.error({
         code: IR_DIAGNOSTIC_CODES.agentsStateStore,
-        message: `the state gate rejected "${agent.id}": it can call ${named}, which ${writers.length === 1 ? 'has' : 'have'} side effects, and it declares no durable state, so a paused run cannot outlive the process`,
+        message: `the state gate rejected "${agent.id}": it can call ${named}, which ${writers.length === 1 ? 'has' : 'have'} side effects, and it declares no durable state, so the first resume of a paused write is remembered only by the process that issued it -- a replayed answer reaches a second replica, or a restarted one, and is accepted`,
         path: ['agents', agent.id, 'state'],
-        hint: 'add `state: { kind: postgres, urlEnv: DATABASE_URL }` to the agent or to the document, so a paused run has somewhere to wait',
+        hint: 'add `state: { kind: postgres, urlEnv: DATABASE_URL }` to the agent or to the document, so the checkpoint nonce is claimed where the store already points and the app has a declared place to persist a paused run (AID generates the claim, not the persistence)',
       }),
     );
   }
@@ -129,9 +129,9 @@ export function approvalGate(ir: IR, options: GateOptions): GateResult {
         diagnostics.push(
           report.error({
             code: IR_DIAGNOSTIC_CODES.approvalStepTool,
-            message: `the approval gate rejected "${pipeline.id}": step ${path.join('.')} waits for approval, and the document declares no durable state store, so the paused run has nowhere to wait`,
+            message: `the approval gate rejected "${pipeline.id}": step ${path.join('.')} waits for approval and the document declares no durable state store, so the pending decision has no declared place to live and the checkpoint nonce is remembered only in the process that issued it`,
             path: ['state'],
-            hint: 'add a top-level `state: { kind: postgres, urlEnv: DATABASE_URL }` so a paused run outlives the request that started it',
+            hint: 'add a top-level `state: { kind: postgres, urlEnv: DATABASE_URL }` so the checkpoint nonce is claimed durably and the app has a declared place to persist the paused run (AID generates the claim, not the persistence)',
           }),
         );
       }

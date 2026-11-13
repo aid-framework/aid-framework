@@ -882,18 +882,23 @@ export type AgentStateKind = (typeof AGENT_STATE_KINDS)[number];
  * approval, or that outlives a single request -- has to write step results somewhere the
  * next request can read.
  *
- * `urlEnv` names an environment variable, mirroring `models.*.apiKeyEnv`: the connection
- * string is a credential and never enters the spec, so the generated code reads it at
- * boot and the deploy refuses to start without it.
+ * What the build does with it: the `state` gate refuses an agent that can call a
+ * side-effecting tool with no store declared (`ir/agents-state-store`), and the signing key
+ * `signingKeyEnv` names is what the generated resume route verifies a checkpoint against.
+ *
+ * What the build does not do with it: nothing constructs a store from this shape. The
+ * generated resume route hands the checkpoint back to the caller instead of writing it, so
+ * a run outlives the request and not the process. `urlEnv` is recorded, not read.
  */
 export interface AgentStateShape {
   kind: AgentStateKind;
   /** The environment variable holding the connection string. */
   urlEnv: string;
   /**
-   * How long a saved run is kept, in hours. Absent leaves retention to the store; the
-   * generated sweep only runs when a value is set, because AID does not delete an
-   * operator's rows on a policy it invented.
+   * How long a saved run is kept, in hours. Recorded for the store's own retention policy;
+   * AID emits no deletion job, because it does not delete an operator's rows on a policy it
+   * invented. Unrelated to the window a pause may be resumed in -- `checkpointTtlMinutes`
+   * governs that.
    */
   ttlHours?: number;
   /**
@@ -1289,9 +1294,10 @@ export interface DeploymentAuditShape {
 /**
  * The identity provider a deployment trusts, from spec 0.26.
  *
- * A reference, never a secret: `issuer` and `audience` are what a token has to claim, and
- * the generated middleware refuses one that does not. Verifying the signature needs the
- * provider's keys, which belong to the customer, so that half stays in `business/`.
+ * A reference, never a secret: `issuer` and `audience` are what a token has to claim. AID
+ * generates no token verification, so `verifiedBy` (spec 0.33) names the component that
+ * actually checks a token -- a `business/` callable, a gateway, or a service -- and the
+ * `enterprise` profile refuses a deployment that names none.
  */
 export interface DeploymentIdentityShape {
   kind: DeploymentIdentityKind;
@@ -1303,6 +1309,11 @@ export interface DeploymentIdentityShape {
   rolesClaim?: string;
   /** The claim carrying the caller's scopes. Absent means the deployment has no scopes. */
   scopesClaim?: string;
+  /**
+   * Who verifies tokens, named for a reviewer. Required by `enterprise` from spec 0.33,
+   * because a claim of identity with nothing behind it is what this field replaces.
+   */
+  verifiedBy?: string;
 }
 
 /** The token protocols a deployment can trust. `oidc` covers every OIDC-compliant IdP. */

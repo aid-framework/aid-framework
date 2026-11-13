@@ -17,6 +17,7 @@ import {
   CAPABILITY_FAMILIES,
   CLOUD_REFUSALS,
   CLOUD_SERVICES,
+  DECLARED_FEATURES,
   REFUSALS,
   SHIPPED_FEATURES,
 } from './features-data.mjs';
@@ -190,7 +191,7 @@ describe('the features page data', () => {
   it('dates every feature to a release that shipped it, not a future one', () => {
     const shipped = (currentVersion() ?? '').replace(/^v/, '');
     expect(shipped).toMatch(/^\d+\.\d+\.\d+/);
-    for (const entry of [...SHIPPED_FEATURES, ...AI_INFRA]) {
+    for (const entry of [...SHIPPED_FEATURES, ...AI_INFRA, ...DECLARED_FEATURES]) {
       expect(entry.since, `"${entry.title ?? entry.id}" has no version`).toMatch(/^\d+\.\d+\.\d+$/);
       expect(
         atOrBefore(entry.since, shipped),
@@ -205,6 +206,7 @@ describe('the features page data', () => {
     const declarations = [
       ...SHIPPED_FEATURES.map((entry) => [entry.id, entry.declaredBy]),
       ...AI_INFRA.map((entry) => [entry.id, entry.declares]),
+      ...DECLARED_FEATURES.map((entry) => [entry.id, entry.declares]),
     ];
     for (const [id, declaredBy] of declarations) {
       if (declaredBy.startsWith('aid ')) {
@@ -227,7 +229,7 @@ describe('the features page data', () => {
   });
 
   it('links every feature to a heading that exists', () => {
-    for (const entry of SHIPPED_FEATURES) {
+    for (const entry of [...SHIPPED_FEATURES, ...DECLARED_FEATURES]) {
       expect(
         entry.href,
         `"${entry.id}" must be a relative \`.md\` link with a fragment, or the docs-claims and link checks resolve different paths`,
@@ -251,15 +253,31 @@ describe('the features page data', () => {
   });
 
   it('ships every registry row onto the page', () => {
-    for (const entry of SHIPPED_FEATURES) {
+    for (const entry of [...SHIPPED_FEATURES, ...AI_INFRA, ...DECLARED_FEATURES]) {
       expect(page, `"${entry.title}" is registered but not rendered`).toContain(
         `### ${entry.title}`,
       );
     }
-    for (const entry of AI_INFRA) {
-      expect(page, `"${entry.title}" is registered but not rendered`).toContain(
-        `### ${entry.title}`,
+  });
+
+  it('lists a declared-but-ungenerated construct below the generated inventory', () => {
+    const declaredHeading = page.indexOf('## Declared and gated, not generated');
+    expect(declaredHeading, 'the page has no section for declared-only constructs').toBeGreaterThan(
+      -1,
+    );
+    const refusedHeading = page.indexOf('## Refused, on purpose');
+    expect(refusedHeading).toBeGreaterThan(declaredHeading);
+    for (const entry of DECLARED_FEATURES) {
+      const at = page.indexOf(`### ${entry.title}`);
+      expect(
+        at,
+        `"${entry.title}" is declared and gated but the page does not say so`,
+      ).toBeGreaterThan(declaredHeading);
+      expect(at, `"${entry.title}" is listed among the generated features`).toBeLessThan(
+        refusedHeading,
       );
+      expect(page.slice(at, at + 1200)).toContain('**Not yet generated:**');
+      expect(page.slice(at, at + 1200)).toContain(entry.enforces.split(',')[0]?.trim() ?? '');
     }
   });
 });
@@ -273,18 +291,20 @@ describe('the features page data', () => {
 describe('homepage capability band', () => {
   const registered = [...SHIPPED_FEATURES, ...AI_INFRA];
   const registeredIds = new Set(registered.map((entry) => entry.id));
+  const declaredIds = new Set(DECLARED_FEATURES.map((entry) => entry.id));
+  const claimableIds = new Set([...registeredIds, ...declaredIds]);
   const bandStart = homepage.indexOf('<!-- capability-band:start -->');
   const bandEnd = homepage.indexOf('<!-- capability-band:end -->');
   const band = homepage.slice(bandStart, bandEnd);
 
-  it('partitions the shipped inventory with no gap and no overlap', () => {
+  it('partitions the inventory with no gap and no overlap', () => {
     const claimed = CAPABILITY_FAMILIES.flatMap((family) => family.featureIds);
     expect(new Set(claimed).size, 'a feature is claimed by two families').toBe(claimed.length);
     for (const id of claimed) {
-      expect(registeredIds.has(id), `"${id}" is claimed but no registry declares it`).toBe(true);
+      expect(claimableIds.has(id), `"${id}" is claimed but no registry declares it`).toBe(true);
     }
-    for (const id of registeredIds) {
-      expect(claimed, `"${id}" shipped but no family sells it`).toContain(id);
+    for (const id of claimableIds) {
+      expect(claimed, `"${id}" is registered but no family sells it`).toContain(id);
     }
   });
 
@@ -296,6 +316,27 @@ describe('homepage capability band', () => {
       expect(shipped, `"${family.id}" claims nothing that shipped`).toBeGreaterThan(0);
       expect(band).toContain(`**[${family.title}](${family.href})**`);
       expect(band).toContain(`| ${shipped} |`);
+    }
+  });
+
+  it('counts a declared-only construct nowhere on the band', () => {
+    for (const family of CAPABILITY_FAMILIES) {
+      const shipped = family.featureIds.filter((id) => registeredIds.has(id)).length;
+      const overclaimed = family.featureIds.filter((id) => declaredIds.has(id)).length + shipped;
+      const row = band
+        .split('\n')
+        .find((line) => line.includes(`**[${family.title}](${family.href})**`));
+      expect(row, `"${family.id}" has no row on the band`).toBeDefined();
+      expect(
+        row.trim().endsWith(`| ${shipped} |`),
+        `"${family.id}" misstates its shipped count`,
+      ).toBe(true);
+      if (overclaimed !== shipped) {
+        expect(
+          row.trim().endsWith(`| ${overclaimed} |`),
+          `"${family.id}" would claim ${overclaimed} if a declared-only construct counted`,
+        ).toBe(false);
+      }
     }
   });
 

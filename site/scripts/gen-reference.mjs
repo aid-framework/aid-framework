@@ -16,7 +16,7 @@
  *   node scripts/gen-reference.mjs --check   fail if the committed pages differ
  */
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -25,11 +25,15 @@ import {
   CAPABILITY_FAMILIES,
   CLOUD_REFUSALS,
   CLOUD_SERVICES,
+  DECLARED_FEATURES,
   REFUSALS,
   SHIPPED_FEATURES,
 } from './features-data.mjs';
 import { SPEC_VERSION_CORRECTIONS, SPEC_VERSIONS } from './spec-changelog-data.mjs';
-import { loadSupportData } from './support-data.mjs';
+import {
+  generatorDirectories as listGeneratorDirectories,
+  loadSupportData,
+} from './support-data.mjs';
 
 const siteRoot = fileURLToPath(new URL('..', import.meta.url));
 const repoRoot = join(siteRoot, '..');
@@ -387,19 +391,23 @@ function specPage() {
 // CLI reference
 // ---------------------------------------------------------------------------
 
+/**
+ * The generator packages, read through the support-data reader so both pages discover
+ * targets identically.
+ */
+function generatorDirectories() {
+  try {
+    return listGeneratorDirectories();
+  } catch (cause) {
+    failures.push(String(cause instanceof Error ? cause.message : cause));
+    return [];
+  }
+}
+
 /** Registered target ids, discovered the same way the CLI discovers them. */
 function targetIds() {
   const root = 'packages/generators';
-  let names = [];
-  try {
-    names = readdirSync(join(repoRoot, root), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
-  } catch (cause) {
-    failures.push(`cannot list ${root}: ${String(cause)}`);
-    return [];
-  }
+  const names = generatorDirectories();
   /** @type {string[]} */
   const ids = [];
   for (const name of names) {
@@ -628,13 +636,10 @@ function targetsPage() {
   /** @type {{ target: string, name: string, version: string, irRange: string, capabilities: string[], emitsAgainst: Record<string, string>, output: Record<string, string> }[]} */
   const manifests = [];
   for (const id of ids) {
-    const directory = readdirSync(join(repoRoot, 'packages/generators'), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .find((name) => {
-        const source = readSource(`packages/generators/${name}/src/manifest.ts`);
-        return source.includes(`= '${id}'`);
-      });
+    const directory = generatorDirectories().find((name) => {
+      const source = readSource(`packages/generators/${name}/src/manifest.ts`);
+      return source.includes(`= '${id}'`);
+    });
     if (directory === undefined) {
       failures.push(`cannot find the generator package that declares \`${id}\``);
       continue;
@@ -1134,6 +1139,25 @@ function featuresPage() {
     lines.push(cell(feature.detail));
     lines.push('');
     lines.push(`- **Turned on by:** \`${feature.declaredBy}\``);
+    lines.push(`- **Reference:** [${section}](${feature.href})`);
+    lines.push(`- **Since:** \`${feature.since}\``);
+    lines.push('');
+  }
+
+  lines.push('## Declared and gated, not generated');
+  lines.push('');
+  lines.push(
+    'These constructs are in the spec language and a gate enforces them, but no generator emits the behaviour they name, so they are listed apart from the inventory above and are not counted on the homepage. The declaration is what a reviewer reads before an apply; the last bullet is the part still to write.',
+  );
+  lines.push('');
+  for (const feature of DECLARED_FEATURES) {
+    const section =
+      feature.href.split('#')[0]?.split('/').pop()?.replace(/\.md$/, '') ?? 'reference';
+    lines.push(`### ${feature.title}`);
+    lines.push('');
+    lines.push(`- **Declared by:** \`${feature.declares}\``);
+    lines.push(`- **Enforced by:** \`${feature.enforces}\``);
+    lines.push(`- **Not yet generated:** ${cell(feature.missing)}`);
     lines.push(`- **Reference:** [${section}](${feature.href})`);
     lines.push(`- **Since:** \`${feature.since}\``);
     lines.push('');

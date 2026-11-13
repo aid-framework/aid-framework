@@ -132,6 +132,10 @@ export const SPEC_VERSIONS = [
     version: '0.32',
     adds: 'Makes the checkpoint an agent hands back on a pause a signed, expiring capability, and adds `state.signingKeyEnv` (the variable the signing key is read from, a name and never a value) and `state.checkpointTtlMinutes` (how long an issued checkpoint may be presented, 15 minutes when omitted). The generated resume route refuses a checkpoint it did not sign, one past its deadline, and one the declared store has already spent, each as a `403` naming the reason. From `0.32`, an `enterprise` document whose agent can pause is refused by `ir/resume-unsigned` with no signing key and by `ir/resume-replay-weak` with no durable store, because a checkpoint nobody signs is a bearer capability over the call it holds and a nonce nobody remembers refuses nothing across a restart. `ir/resume-key-conflict` and `ir/resume-key-alias` keep the pair unambiguous: one key, one store, one deadline, and never a name another credential already holds.',
   },
+  {
+    version: '0.33',
+    adds: 'Adds `deployments[].identity.verifiedBy`, the name of the component that turns a token into a principal. AID generates no token verification -- the signing keys belong to the customer identity provider -- so an `identity` block alone named an issuer and left the check to nobody in particular, while the docs read as though the generated app enforced it. `verifiedBy` is a declaration, not a generator: it is a module path, a gateway or a service, it never holds a secret, and `enterprise` refuses a deployment that declares `identity` without it (`ir/identity-verified-by`). The generated agent routes keep seeding the anonymous principal and exposing one `current_principal` dependency for the application to override, so a document that omits `verifiedBy` is unchanged and an `enterprise` one cannot ship the seam unexplained.',
+  },
 ];
 /**
  * Corrections to labels published outside this page.

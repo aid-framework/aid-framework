@@ -18,6 +18,7 @@ from aid_runtime import (
     HumanDecision,
     ModelGateway,
     NonceStore,
+    Principal,
     RunResult,
     Tool,
     nonce_store_from_env,
@@ -252,12 +253,29 @@ def _response(result: RunResult) -> AgentRunResponse:
 
 agent_router = APIRouter()
 
+#: The caller a generated route seeds: anonymous and unauthenticated on purpose, because
+#: nothing a generated app emits verifies a token.
+ANONYMOUS_PRINCIPAL = Principal.unauthenticated()
+
+
+def current_principal() -> Principal:
+    """Who the caller is, for the `auth` policies this app declares. No token verification is
+    generated: this returns an anonymous, *unauthenticated* principal, so a tool whose policy is
+    `isAuthenticated()` refuses the call instead of admitting every caller. The application that
+    mounts this router replaces it -- `app.dependency_overrides[current_principal] = your_verifier`
+    -- and names that verifier in `deployments.<id>.identity.verifiedBy`, which `enterprise`
+    requires from spec 0.33.
+    """
+
+    return ANONYMOUS_PRINCIPAL
+
 
 @agent_router.post("/agents/{agent_id}/run", response_model=AgentRunResponse)
 async def run_agent(
     agent_id: str,
     event: AgentRunRequest,
     deps: Annotated[Deps, Depends(get_deps)],
+    principal: Annotated[Principal, Depends(current_principal)],
 ) -> AgentRunResponse:
     """Run one agent to a stop condition on one user message. The 404 is this app answering for its
     own declarations rather than the runtime raising out of the request.
@@ -266,7 +284,9 @@ async def run_agent(
     if agent_id not in AGENT_IDS:
         raise HTTPException(status_code=404, detail=f"unknown agent {agent_id!r}")
     runtime = build_runtime(gateway=deps.gateway, tools=deps.agent_tools)
-    result = await runtime.run(agent_id, event.text, memory_key=event.memory_key)
+    result = await runtime.run(
+        agent_id, event.text, principal=principal, memory_key=event.memory_key
+    )
     return _response(result)
 
 
@@ -274,6 +294,7 @@ async def run_agent(
 async def resume_agent(
     event: AgentResumeRequest,
     deps: Annotated[Deps, Depends(get_deps)],
+    principal: Annotated[Principal, Depends(current_principal)],
 ) -> AgentRunResponse:
     """Continue a paused run. Two different refusals, kept apart on purpose: a body this app did not
     issue as a checkpoint at all is a 422, and a checkpoint it issued but will not honour -- edited,
@@ -287,7 +308,7 @@ async def resume_agent(
         raise HTTPException(status_code=422, detail=str(error)) from error
     runtime = build_runtime(gateway=deps.gateway, tools=deps.agent_tools)
     try:
-        result = await runtime.resume(checkpoint, event.decision)
+        result = await runtime.resume(checkpoint, event.decision, principal=principal)
     except CheckpointRefusalError as refusal:
         raise HTTPException(
             status_code=403,
@@ -296,4 +317,12 @@ async def resume_agent(
     return _response(result)
 
 
-__all__ = ["AGENT_IDS", "DOCUMENT", "agent_router", "build_runtime", "resume_agent", "run_agent"]
+__all__ = [
+    "AGENT_IDS",
+    "DOCUMENT",
+    "agent_router",
+    "build_runtime",
+    "current_principal",
+    "resume_agent",
+    "run_agent",
+]

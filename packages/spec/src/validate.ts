@@ -86,6 +86,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.30',
   '0.31',
   '0.32',
+  '0.33',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -243,6 +244,15 @@ export const TRAJECTORY_METRIC_MIN_VERSION: SpecVersion = '0.31';
  * asks for the guarantee.
  */
 export const RESUME_SIGNING_MIN_VERSION: SpecVersion = '0.32';
+
+/**
+ * The first spec version that accepts `deployments[].identity.verifiedBy`. Nested for the
+ * same reason: `identity` exists from 0.26, so only this key dates the document. Before
+ * 0.33 the document could name an issuer and leave the checking to nobody in particular;
+ * reading `verifiedBy` as absent in an older document would report the responsibility as
+ * undeclared when the author had in fact declared it.
+ */
+export const IDENTITY_VERIFIED_BY_MIN_VERSION: SpecVersion = '0.33';
 
 /** The metric kinds that version introduced. */
 const TRAJECTORY_METRIC_KINDS = new Set<string>([
@@ -720,6 +730,7 @@ function scopeDiagnostics(
   evalPromotionVersionDiagnostics(spec, diagnostics, reported);
   trajectoryMetricVersionDiagnostics(spec, diagnostics, reported);
   resumeSigningVersionDiagnostics(spec, diagnostics, reported);
+  identityVerifiedByVersionDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
   routeDiagnostics(spec, diagnostics, reported);
@@ -1247,6 +1258,42 @@ function resumeSigningVersionDiagnostics(
       }),
     );
     reported.add(JSON.stringify(['agentState', field]));
+  }
+}
+
+/**
+ * `identity.verifiedBy` arrived in 0.33, nested inside `identity`, which is itself nested
+ * inside a deployment, so no version gate covers it. Before 0.33 a document could name an
+ * issuer and leave the token check to an unnamed somebody; reading `verifiedBy` as absent
+ * in an older document would report that unnamed-somebody state when the author had
+ * actually declared who verifies. It is reported rather than ignored so the enterprise
+ * profile gate is not handed a document that says more than it is being read as saying.
+ */
+function identityVerifiedByVersionDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) return;
+  if (specVersionAtLeast(declared, IDENTITY_VERIFIED_BY_MIN_VERSION)) return;
+  const deployments = spec.deployments;
+  if (deployments === null || typeof deployments !== 'object' || Array.isArray(deployments)) return;
+  for (const [id, rawDeployment] of Object.entries(deployments as Record<string, unknown>)) {
+    const identity = asRecord(asRecord(rawDeployment).identity);
+    if (!('verifiedBy' in identity)) continue;
+    const path = ['deployments', id, 'identity', 'verifiedBy'];
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.notSupported,
+        message: `'deployments.${id}.identity.verifiedBy' requires specVersion ${IDENTITY_VERIFIED_BY_MIN_VERSION}, but this specification declares version ${declared}`,
+        path,
+        hint: `set specVersion: "${IDENTITY_VERIFIED_BY_MIN_VERSION}"; every other identity key is unchanged, and a document that omits verifiedBy keeps the profile gate it had`,
+      }),
+    );
+    reported.add(JSON.stringify(path));
   }
 }
 

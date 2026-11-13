@@ -36,14 +36,23 @@ _LOGICAL = frozenset({"and", "or"})
 class Principal:
     """Who a policy is evaluated for.
 
-    Defaults are the anonymous-but-authenticated caller an app with no auth layer
-    has: ``isAuthenticated()`` is true and both role and scope sets are empty, so
-    ``hasRole('admin')`` is false rather than undefined.
+    ``authenticated`` defaults to **false** on purpose. A default that is authenticated is
+    a silent authorization bug: ``isAuthenticated()`` is the weakest policy the security
+    gate accepts on a mutating tool, so a caller the app never identified would satisfy it.
+    :meth:`unauthenticated` is the caller an app with no auth layer has -- no roles, no
+    scopes, and ``isAuthenticated()`` false, which is the closed answer. Pass
+    ``authenticated=True`` only from code that actually verified a token.
     """
 
     roles: frozenset[str] = frozenset()
     scopes: frozenset[str] = frozenset()
-    authenticated: bool = True
+    authenticated: bool = False
+
+    @classmethod
+    def unauthenticated(cls) -> Principal:
+        """The caller a route seeds when nothing verified a token: anonymous, fail-closed."""
+
+        return cls(authenticated=False)
 
 
 def evaluate_policy(node: Mapping[str, Any], principal: Principal) -> bool:

@@ -14,7 +14,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { AI_INFRA, CAPABILITY_FAMILIES, SHIPPED_FEATURES } from './features-data.mjs';
+import {
+  AI_INFRA,
+  CAPABILITY_FAMILIES,
+  DECLARED_FEATURES,
+  SHIPPED_FEATURES,
+} from './features-data.mjs';
 import { repoRoot } from './support-data.mjs';
 
 const usage = readFileSync(join(repoRoot, 'docs', 'usage.md'), 'utf8');
@@ -22,7 +27,7 @@ const homepage = readFileSync(join(repoRoot, 'docs', 'index.md'), 'utf8');
 const config = readFileSync(join(repoRoot, 'site', '.vitepress', 'config.mts'), 'utf8');
 
 const registered = new Map(
-  [...SHIPPED_FEATURES, ...AI_INFRA].map((entry) => [entry.id, entry.title]),
+  [...SHIPPED_FEATURES, ...AI_INFRA, ...DECLARED_FEATURES].map((entry) => [entry.id, entry.title]),
 );
 
 /** @type {Map<string, string>} */

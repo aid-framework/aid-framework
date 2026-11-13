@@ -362,6 +362,7 @@ deployments:
       kind: oidc
       issuer: https://login.example.com
       audience: aid-claims
+      verifiedBy: app/business/principal.py
     network:
       private: true
       egress: declared-only
@@ -459,7 +460,13 @@ function enterpriseApprovalsReadme(projectName: string): string {
     '',
     '## What the enterprise profile requires here',
     '',
-    '- **Identity.** `deployments.prod.identity` names an OIDC issuer and audience.',
+    '- **Identity.** `deployments.prod.identity` names an OIDC issuer and audience, and',
+    '  `verifiedBy` names who checks the token. AID generates no token verification: the',
+    '  generated `current_principal` dependency returns an anonymous principal, and',
+    '  `verifiedBy` is the declaration that turns "somebody verifies this" from an implied',
+    '  feature into a named responsibility. `app/business/principal.py` is the file the',
+    '  template ships and `verifiedBy` names: it returns the anonymous principal until you',
+    '  fill it in, so every `auth` policy refuses rather than admitting an unverified caller.',
     '- **Private networking.** `network.private: true` with `egress: declared-only`.',
     '- **Audit.** `audit.sink` and a `retentionDays` floor.',
     '- **Approvals on a production change.** `deployments.prod.approvals` requires two',
@@ -513,6 +520,19 @@ function enterpriseApprovalsReadme(projectName: string): string {
     'the alarm hooks are derived from. Neither call raises, so an unset endpoint leaves the',
     'service serving instead of crash-looping.',
     '',
+    'The entrypoint is also where `identity.verifiedBy` gets wired. `app/generated/agents.py`',
+    'reads the caller through a `current_principal` dependency that returns the anonymous',
+    'principal -- AID generates the seam, not the check. `app/business/principal.py` is the',
+    'stub that replaces it, and until the entrypoint overrides that dependency the stub is not',
+    'consulted at all and every `auth` policy refuses. One line, in your `main.py`:',
+    '',
+    '```python',
+    'from app.business.principal import current_principal as verify_token',
+    'from app.generated.agents import current_principal',
+    '',
+    'app.dependency_overrides[current_principal] = verify_token',
+    '```',
+    '',
     '## Next',
     '',
     '```bash',
@@ -528,6 +548,57 @@ function enterpriseApprovalsReadme(projectName: string): string {
     'you can read at a glance.',
     '',
   ].join('\n');
+}
+
+/**
+ * The file `deployments.prod.identity.verifiedBy` names.
+ *
+ * It is a stub on purpose. AID generates no token verification, and the signing keys belong
+ * to the customer's identity provider, so the check that turns a token into a `Principal`
+ * is application code -- this file. Until it is filled in it returns the anonymous
+ * principal, which means every `auth` policy on a tool refuses, which is the safe direction
+ * to be wrong in. Replacing the body is the one edit that makes the enterprise deployment
+ * actually authenticate anybody.
+ */
+function enterprisePrincipalStub(): string {
+  return `"""Who the caller is. Named by \`deployments.prod.identity.verifiedBy\`.
+
+This file is hand-written and yours: \`aid gen\` does not create it, overwrite it, or delete
+it, and \`aid eject\` leaves it where it is. It exists because AID generates **no** token
+verification -- the signing keys belong to the customer's identity provider, so the check
+that turns a token into a \`Principal\` is application code.
+
+Fill this in before production. The shape of a real implementation:
+
+  1. Read the bearer token from the \`Authorization\` header.
+  2. Fetch the issuer's JWKS from the discovery document and verify the signature.
+  3. Check \`iss\`, \`aud\` and the expiry against \`deployments.prod.identity\`
+     (issuer \`https://login.example.com\`, audience \`aid-claims\`).
+  4. Map the role and scope claims onto the \`Principal\` and return it with
+     \`authenticated=True\`.
+
+Until then it returns \`Principal.unauthenticated()\`, so every tool whose policy is
+\`isAuthenticated()\` refuses. That is deliberate: an unverified caller must not be able to
+reach a writing tool because the template was scaffolded and deployed unedited.
+"""
+
+from __future__ import annotations
+
+from fastapi import Request
+
+from aid_runtime import Principal
+
+
+async def current_principal(request: Request) -> Principal:
+    """The caller, as this deployment identifies them: not verified yet.
+
+    Returns the anonymous principal so the generated routes refuse rather than admit. Wire
+    the identity provider in here, then return an authenticated principal instead.
+    """
+
+    del request
+    return Principal.unauthenticated()
+`;
 }
 
 export function templateSpec(name: TemplateName, projectName: string): string {
@@ -558,6 +629,13 @@ export interface TemplateFile {
  * base's own `overridable` block -- it moves a region, and for the mid-size template
  * tightens a budget -- so it resolves on the day it ships and doubles as the worked
  * example the `overridable` contract is explained with.
+ *
+ * The enterprise template also ships `app/business/principal.py`, because its spec names
+ * that path in `identity.verifiedBy` and a declaration that points at a file which does
+ * not exist is worse than no declaration: the reader opens the path, finds nothing, and has
+ * no way to tell an unfinished template from a missing feature. The stub verifies nobody --
+ * it returns the anonymous principal -- so the generated behaviour is unchanged until the
+ * customer fills it in, which is exactly the ownership boundary stated in one file.
  */
 export function templateFiles(name: TemplateName, specPath: string): readonly TemplateFile[] {
   // An overlay at `customers/<name>.yaml` reaches the spec the same way a reader does, by
@@ -586,5 +664,19 @@ export function templateFiles(name: TemplateName, specPath: string): readonly Te
           'overrides:',
           '  deployments.prod.region: us-east-1',
         ];
-  return [{ path: `customers/${customer}.yaml`, text: `${overlay.join('\n')}\n` }];
+  const files: TemplateFile[] = [
+    { path: `customers/${customer}.yaml`, text: `${overlay.join('\n')}\n` },
+  ];
+  if (name === 'enterprise-approvals') {
+    // `app/` and `app/business/` are never written by `aid gen`, so the template ships the
+    // package marker itself: without it a project root on `sys.path` imports `app` as a
+    // namespace package but cannot reach `app.business.principal`, which is the module
+    // `identity.verifiedBy` names.
+    files.push({
+      path: 'app/business/__init__.py',
+      text: '"""Your code. `aid gen` writes `app/generated/` and never this package."""\n',
+    });
+    files.push({ path: 'app/business/principal.py', text: enterprisePrincipalStub() });
+  }
+  return files;
 }

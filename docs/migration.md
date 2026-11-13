@@ -463,6 +463,57 @@ approve it lives. They answer different questions -- a run may be resumable for 
 approval it is waiting on expires in fifteen minutes -- so collapsing them would let a long
 retention silently extend every approval.
 
+## 0.32 to 0.33: who verifies the token
+
+`deployments[].identity` has named an OIDC issuer since 0.26, and the reference read as though the
+generated app checked tokens against it. It never did: the signing keys belong to the customer's
+identity provider, and a generator that shipped a verifier would be shipping a half-configured one.
+What the generated app emits is the *seam* -- a `current_principal` dependency that returns the
+anonymous principal -- and the application replaces it. 0.33 adds the field that says who does the
+replacing, so the responsibility is declared instead of implied.
+
+> **What 0.33 is.** A declaration and a gate, not a generator. `verifiedBy` names a module path, a
+> gateway or a service; it never holds a secret and AID never calls it. `enterprise` refuses a
+> deployment that declares `identity` without it, which is the whole enforcement. Nothing about
+> token verification is generated, before this version or after it.
+
+### What 0.33 adds
+
+| Construct | What it says |
+| --- | --- |
+| `deployments[].identity.verifiedBy` | Which component turns a token into a principal. A name, not a credential. |
+
+It is projected into the IR, where the profile gate reads it, and no generated code reads it
+at all: the field records a responsibility, so a reviewer sees next to the issuer and the
+audience who is responsible for checking them, instead of an implied somebody.
+
+### Nothing to do for a 0.32 document
+
+A 0.32 document still parses and keeps its behaviour: no generated code depends on `verifiedBy`, so
+its absence changes nothing at build time. `aid validate` reports `spec/not-supported` on a 0.32
+document that *declares* the key, naming 0.33 as the version it needs, because reading it as absent
+would report an undeclared responsibility when the author had declared one.
+
+### What a 0.33 `enterprise` document must now declare
+
+| Refusal | What is missing | The fix |
+| --- | --- | --- |
+| `ir/identity-verified-by` | Under `profile: enterprise`, an `identity` block with no `verifiedBy`. | Name what verifies tokens, such as `verifiedBy: app/business/principal.py` or `verifiedBy: api-gateway`. |
+
+A `standard` document is unaffected: it may declare `identity` with or without the key, because
+nothing gated on it. The refusal is version-gated to 0.33 and later for the reason every nested
+field is -- a 0.32 document has no key to satisfy it with, and a gate no edit to the document could
+satisfy is the approximation this layer refuses.
+
+### Why the anonymous principal is the generated default
+
+`Principal.authenticated` defaults to `False`, and the generated routes read the caller through one
+dependency that returns `Principal.unauthenticated()`. Before this release both routes called the
+runtime with no principal at all and the runtime filled in `Principal()` -- which defaulted to
+authenticated -- so the seamed-out dependency was not merely unused, it was bypassed. A `write` tool
+guarded by `isAuthenticated()` was reachable by anyone who could reach the route, which is the exact
+failure such a policy exists to prevent. Every caller that wants to claim a caller now says so.
+
 ## 0.27 to 0.28: promoting a candidate, and the feedback that starts a loop
 
 What a document is allowed to do with a candidate, and which feedback it takes back from its users.

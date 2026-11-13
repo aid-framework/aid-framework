@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.32`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.33`.
 
 ## Deployment targets
 
@@ -216,14 +216,6 @@ A tool that writes something pauses the run for a person, and the approved run c
 - **Reference:** [spec](./reference/spec.md#agent-humanintheloop)
 - **Since:** `0.1.27`
 
-### Durable run state
-
-A paused or long-running run outlives the process that started it: the checkpoint goes to the store the spec names, and an agent that can call a side-effecting tool is refused without one.
-
-- **Turned on by:** `state, agents[].state`
-- **Reference:** [spec](./reference/spec.md#agentstate)
-- **Since:** `0.1.143`
-
 ### Memory tiers
 
 What is remembered, for how long, within what token budget, and where it lives.
@@ -360,14 +352,6 @@ A top-level `profile` names a bundle of required controls -- `standard` is the d
 - **Reference:** [spec](./reference/spec.md#top-level-keys)
 - **Since:** `0.1.142`
 
-### Durable run state, deployment identity, private network and change approval
-
-Spec 0.26 declares the controls an enterprise delivery is held to: a `state` store that outlives the process, an `identity` reference (issuer, audience and claim names) that becomes the runtime `Principal`, a `network` block whose `private` pin is required, an `approvals` policy for production change, and `requiresApproval` on a pipeline tool step. The `state` and `approvals` gates refuse a document that declares a control it cannot honour -- an enterprise agent that can write with no store, an approval on a read, or a pause with nowhere to wait.
-
-- **Turned on by:** `state, deployments[].identity, deployments[].network, deployments[].approvals`
-- **Reference:** [spec](./reference/spec.md#top-level-keys)
-- **Since:** `0.1.143`
-
 ### A declared place for the spans, and an exporter that reaches it
 
 Spec 0.27 gives a document an `observability` block: whether to record spans, what to redact, and whether they belong somewhere other than the process (`export: otlp`, with `endpointEnv` naming the variable that holds the collector address). The `observability/export` gate refuses an `otlp` export beside `trace: false`, and an `enterprise` profile that exports nothing, because an audit trail whose spans stay in the process is not one. Generating with py-fastapi emits `tracing_export_status()` into `app/generated/observability.py`, which the app calls at startup to install an OTLP/HTTP exporter over a batched processor from `aid-runtime-python[otlp]`; nothing is installed on import, so embedding AID does not decide telemetry for you. A target that installs no exporter refuses `export: otlp` rather than accept a destination nothing is sent to.
@@ -503,6 +487,26 @@ The coverage rule has always named the HTTP pipelines no CI-gating eval claims; 
 - **Turned on by:** `profile: enterprise`
 - **Reference:** [spec](./reference/spec.md#top-level-keys)
 - **Since:** `0.1.159`
+
+## Declared and gated, not generated
+
+These constructs are in the spec language and a gate enforces them, but no generator emits the behaviour they name, so they are listed apart from the inventory above and are not counted on the homepage. The declaration is what a reviewer reads before an apply; the last bullet is the part still to write.
+
+### Durable run state
+
+- **Declared by:** `state, agents[].state`
+- **Enforced by:** `ir/agents-state-store`
+- **Not yet generated:** The declared store is used for one thing: the checkpoint nonce, claimed in the database the `state` block names so a replay across replicas is refused. The run itself is not persisted -- the generated resume route hands the checkpoint back to the caller -- so a paused run outlives the request, not the process, and resuming after a restart is the application's to arrange. The `state` gate refuses an agent that can write with no store at all.
+- **Reference:** [spec](./reference/spec.md#agentstate)
+- **Since:** `0.1.143`
+
+### Durable run state, deployment identity, private network and change approval
+
+- **Declared by:** `state, deployments[].identity, deployments[].network, deployments[].approvals`
+- **Enforced by:** `ir/profile-identity, ir/identity-verified-by`
+- **Not yet generated:** What *is* generated: the region pin, the audit sink and the private-network setting reach the OpenTofu, the profile gate refuses an `enterprise` deployment missing any of them, `requiresApproval` reaches the generated tool step, the checkpoint is signed with the key `resume.signingKeyEnv` names, and a declared `state` store holds the checkpoint nonce. What is not: no generator verifies a token (`identity.verifiedBy` names who does), and no generated code persists the paused run itself, so the checkpoint still returns to the caller.
+- **Reference:** [spec](./reference/spec.md#top-level-keys)
+- **Since:** `0.1.143`
 
 ## Refused, on purpose
 

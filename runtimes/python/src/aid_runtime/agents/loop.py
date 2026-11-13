@@ -294,7 +294,7 @@ class AgentRuntime:
         try:
             outcome = await self._drive(
                 frame,
-                principal=principal if principal is not None else Principal(),
+                principal=principal if principal is not None else Principal.unauthenticated(),
                 memory_key=key,
             )
         except BaseException:
@@ -321,7 +321,7 @@ class AgentRuntime:
             outcome = await self._resume(
                 checkpoint,
                 resolved,
-                principal if principal is not None else Principal(),
+                principal if principal is not None else Principal.unauthenticated(),
             )
         except BaseException:
             # Same rule as `run`: a resumed run that fails has been billed too.
