@@ -500,3 +500,34 @@ Reintroducing `observability.feedback.redact` into `docs/guide/delivery.md:190` 
 `cites \`observability.feedback.redact\`, which the spec schema does not admit: \`redact\` is not a
 field of \`observability.feedback\`, whose fields are \`persistent\`, \`pii\`, \`retentionDays\`,
 \`signals\``. The file was restored and the check returned to 0.
+
+---
+
+## 11. Phase D: the resume review brief
+
+Phase D shipped as a separate document, [appendix](./0007-appendix-resume-review.md), because it
+is written for a different reader: a security reviewer with an hour, not a maintainer following
+the round's logic.
+
+It walks nine items against `runtimes/python/src/aid_runtime/agents/resume.py` and the emitted
+route, states PASS, FAIL or UNCLEAR for each with the lines that decide it, and files nine
+findings (D-1 to D-9) rather than fixing any of them. The verdicts, in one line: constant-time
+comparison, canonical serialization, expiry and argument binding hold up; there is no rotation
+window, no minimum key length, and an unauthenticated caller can tell `tampered` from `expired`
+from `replayed` from `unsigned`.
+
+The finding that outranks the rest is outside the checklist's framing. Signing makes a
+checkpoint unforgeable, expiring and single-use. It does not make it owner-bound:
+`current_principal` returns `ANONYMOUS_PRINCIPAL` (`emit/agents.ts:451`), so holding an unspent
+checkpoint is enough to approve the paused call. That is a deliberate division of labour that
+the `enterprise` profile makes declarable through `deployments.<id>.identity.verifiedBy`, but it
+had not been written down anywhere a reviewer would meet it.
+
+**One defect of this round's own class, in source rather than docs.** `gates/resume.ts:24` names
+`ir/resume-secret-inline`, which no registry declares; the concern is served by
+`ir/resume-key-alias` at `:109`. The Phase A gate reads `docs/` and the README, so it cannot see
+a source comment — recorded as D-1 and as a candidate for the next round, not fixed here.
+
+**No version stamp.** Phase D changes no generator, gate or spec, so the release stays at
+0.1.174 and the manifests are untouched. `pnpm check` over the whole tree: 13 passed, 0 failed,
+9 skipped for the absent Python venv, which is the same result Phase C recorded.
