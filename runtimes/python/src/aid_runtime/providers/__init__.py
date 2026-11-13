@@ -35,6 +35,7 @@ from aid_runtime.providers.http import DEFAULT_BASE_URL, OpenAICompatibleProvide
 from aid_runtime.providers.recorded import (
     RecordedProvider,
     RecordingProvider,
+    RecordingProviders,
     ReplayDivergenceError,
     Transcript,
     TranscriptEntry,
@@ -65,6 +66,7 @@ __all__ = [
     "Provider",
     "RecordedProvider",
     "RecordingProvider",
+    "RecordingProviders",
     "ReplayDivergenceError",
     "ScriptedTurn",
     "Transcript",

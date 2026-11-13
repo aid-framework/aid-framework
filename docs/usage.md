@@ -429,6 +429,36 @@ What is refused:
 A trajectory metric declared on a pipeline target is still the `ir/eval-trajectory` refusal
 above, with the same hint.
 
+**A real run, captured so CI can replay it.** A trajectory case can drive the agent with a
+scripted model, but a scripted model says nothing about the model the spec pins. `aid eval
+--record` is how a recording of the pinned provider gets made.
+
+```bash
+aid eval refund_trajectory --record evals/refund_trajectory.transcript.json
+```
+
+What comes out:
+
+- A transcript at `<path>` in the same shape `AID_EVAL_TRANSCRIPT` replays, so a run is captured
+  once against a real model and then re-executed offline on every later CI run.
+- A `provenance:` line after every agent eval's summary — `scripted` when the agent is declared
+  on the `fake` provider, `recorded` when the turns came from a transcript, `live` otherwise,
+  with the capture path appended when one was written — because a green gate means something
+  different in each mode.
+
+What is refused:
+
+- `--record` beside `--compare`, `--record` unless exactly one suite runs, and `--record` on a
+  target that is not an `agent:`, all as `cli/eval-record-unsupported`.
+- From the generated evaluator: a capture while `AID_EVAL_TRANSCRIPT` is also set, a capture of
+  an agent on the scripted provider, a path that already exists, and a run that made no model
+  call.
+
+Recording is never automatic: only a run that asked for it writes a transcript. A captured run
+is still a check on policy and plumbing rather than on model quality — it describes what the
+model did when the capture was taken, so a stale recording is a statement about the model that
+was pinned then.
+
 **Coverage an enterprise document cannot waive.** `profile: enterprise` promises change control,
 and a route no CI-gating eval measures has nothing to hold a change against. From spec 0.31 an
 HTTP pipeline — or a retrieval surface with no `retrieval` metric — that no CI-gating eval covers
@@ -445,6 +475,7 @@ Covers:
 - **A dataset from the runs you already have**
 - **A trajectory eval that runs an agent**
 - **Metrics that score the run, not the answer**
+- **A real run, captured so CI can replay it**
 - **Coverage an enterprise document cannot waive**
 
 ## Agents and tools

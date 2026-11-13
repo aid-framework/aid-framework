@@ -293,6 +293,19 @@ approval really pauses the run. It does not measure model behaviour. A trajector
 tells you the guardrail wiring holds; it does not tell you the agent answers well, and it must not
 be read as a quality number. Keep a separate quality metric, over real runs, for that.
 
+Which turns fed the run decides how much the pass is worth, so every agent eval prints one
+`provenance:` line after its summary: `scripted` when the spec's model is the `fake` provider,
+`recorded` when the run replayed a transcript, `live` (with the capture path, when one was written)
+when a model actually answered. `aid eval --record <path>` is how a recording is made — a real run
+that also writes every request and response in the `AID_EVAL_TRANSCRIPT` shape that replay reads.
+Recording is never automatic, in a local run, in CI or in a generated service: it is a per-run flag
+and a per-run variable, and the walkthrough in
+[exporting traces](../walkthroughs/observability-export.md#capturing-a-real-run-so-a-trajectory-eval-can-replay-it)
+lists the combinations that are refused rather than allowed to produce a misleading file. A
+recorded run measures the plumbing against turns a model really produced, but it still measures
+only the run that was captured. Re-capture when the prompt, the model or a tool contract changes; a
+stale recording is a statement about the model that was pinned when it was taken.
+
 **Promote by merging.** Nothing in this loop deploys. Promotion is the gate pass plus the merge
 that carries the bumped prompt version; the record in the tree is what an auditor reads later.
 A quality allowance on an eval with no quality metric, a cost allowance on an eval with no `cost`

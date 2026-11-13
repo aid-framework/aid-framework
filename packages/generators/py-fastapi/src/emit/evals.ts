@@ -80,6 +80,16 @@ export const EVALS_INIT_PATH = `${GENERATED_ROOT}/evals/__init__.py`;
  */
 const AGENT_TRANSCRIPT_ENV = 'AID_EVAL_TRANSCRIPT';
 
+/**
+ * The environment variable an agent eval writes a recording to.
+ *
+ * The other half of `AID_EVAL_TRANSCRIPT`, and an environment variable for the same
+ * reason: whether this run captures the model's turns is a property of the run, not of the
+ * document. Setting both at once is refused in the generated module rather than resolved
+ * here, because only the run knows whether it is the one that was meant.
+ */
+const AGENT_RECORD_ENV = 'AID_EVAL_RECORD';
+
 export function evalModulePath(evalId: string): string {
   return `${GENERATED_ROOT}/evals/${moduleName(evalId)}.py`;
 }
@@ -587,6 +597,16 @@ function emitAgentEval(ir: IR, evaluation: EvalShape, agentId: string): EmittedF
     (metric): metric is Extract<MetricShape, { kind: 'forbidden-tool' }> =>
       metric.kind === 'forbidden-tool',
   );
+  // Whether a capture would record a model or the script standing in for one. Read from
+  // the document rather than from the runtime, because the generated module refuses a
+  // capture *before* running anything and cannot ask a provider that does not exist yet.
+  const agent = require(ir.agents?.find(
+    (candidate) => candidate.id === agentId,
+  ), `agent '${agentId}'`);
+  const model = require(ir.models.find(
+    (candidate) => candidate.id === agent.model,
+  ), `the model of agent '${agentId}'`);
+  const scripted = model.provider === 'fake';
 
   const constants = [
     `EVAL_ID = ${pythonString(evaluation.id)}`,
@@ -596,6 +616,18 @@ function emitAgentEval(ir: IR, evaluation: EvalShape, agentId: string): EmittedF
     // under MODEL keeps that reader uniform instead of special-casing this module.
     'MODEL = AGENT',
     `TRANSCRIPT_ENV = ${pythonString(AGENT_TRANSCRIPT_ENV)}`,
+    `RECORD_ENV = ${pythonString(AGENT_RECORD_ENV)}`,
+    // A recording describes the document it was made under, so the file carries the
+    // version that produced it rather than leaving a reader to guess.
+    `SPEC_VERSION = ${pythonString(ir.specVersion)}`,
+    // Whether the agent's model is the scripted one, decided here rather than read off the
+    // document at run time: it is a property of the spec, and a module that had to inspect
+    // its own document to answer it could not refuse a capture before running one.
+    `SCRIPTED = ${scripted ? 'True' : 'False'}`,
+    // The one live object a run mutates: `providers()` builds it when asked to capture, and
+    // `save_recording()` writes it after the run. Module scope because the run, the gate and
+    // the capture are three calls the harness makes in that order.
+    '_RECORDER: RecordingProviders | None = None',
     `SAMPLES = ${pythonNumber(evaluation.gate.samples)}`,
     `MAX_REGRESSION = ${pythonNumber(evaluation.gate.maxRegression)}`,
     traced === undefined
@@ -646,6 +678,7 @@ function emitAgentEval(ir: IR, evaluation: EvalShape, agentId: string): EmittedF
           importFrom('typing', ['TYPE_CHECKING']),
         ],
         [
+          importFrom('aid_runtime.errors', ['EvalError']),
           importFrom('aid_runtime.evals', [
             'AgentEvalRunner',
             'BaselineGate',
@@ -657,7 +690,11 @@ function emitAgentEval(ir: IR, evaluation: EvalShape, agentId: string): EmittedF
             'Threshold',
             'run_evaluation',
           ]),
-          importFrom('aid_runtime.providers', ['Provider', 'RecordedProvider']),
+          importFrom('aid_runtime.providers', [
+            'Provider',
+            'RecordedProvider',
+            'RecordingProviders',
+          ]),
         ],
         [
           importFrom('..agents', ['DOCUMENT']),
@@ -675,15 +712,41 @@ function emitAgentEval(ir: IR, evaluation: EvalShape, agentId: string): EmittedF
         'def providers() -> dict[str, Provider]:',
         pythonDoc(
           'The model providers the run calls.\n\n' +
-            'With `AID_EVAL_TRANSCRIPT` set the run is offline: one recording replays every ' +
-            'model call, so the eval takes the same path on a laptop as in CI and spends ' +
-            'nothing. Without it the app is provider-wired as usual and the run is a live ' +
-            'one. The recording serves every provider key because it is the sequence of calls ' +
-            'the run makes, not a per-vendor cache -- which provider answered is part of what ' +
-            'it replays.',
+            'Three modes, and none of them implicit. With `AID_EVAL_TRANSCRIPT` set the run ' +
+            'is offline: one recording replays every model call, so the eval takes the same ' +
+            'path on a laptop as in CI and spends nothing. With `AID_EVAL_RECORD` set the run ' +
+            'is live and keeps every call, so the same run can be written out as the ' +
+            'recording the next one replays -- that is how a real-model trajectory becomes a ' +
+            'committed fixture. With neither, the run is live and nothing is kept.\n\n' +
+            'Replaying and capturing together is refused. A run that captured what it ' +
+            'replayed would write a transcript of the recording it read: a copy that ' +
+            'describes itself as a recording of this document while containing another ' +
+            "one's turns.",
           INDENT,
         ),
+        `${INDENT}global _RECORDER`,
         `${INDENT}recording = os.environ.get(TRANSCRIPT_ENV)`,
+        `${INDENT}capturing = os.environ.get(RECORD_ENV)`,
+        `${INDENT}if recording is not None and capturing is not None:`,
+        `${INDENT}${INDENT}raise EvalError(`,
+        `${INDENT}${INDENT}${INDENT}f"{TRANSCRIPT_ENV} and {RECORD_ENV} are both set: a run replays a recording "`,
+        `${INDENT}${INDENT}${INDENT}"or captures one, never both. Unset one of them."`,
+        `${INDENT}${INDENT})`,
+        `${INDENT}if capturing is not None:`,
+        `${INDENT}${INDENT}if SCRIPTED:`,
+        `${INDENT}${INDENT}${INDENT}raise EvalError(`,
+        `${INDENT}${INDENT}${INDENT}${INDENT}f"{RECORD_ENV} is set but this agent runs on the scripted provider: "`,
+        `${INDENT}${INDENT}${INDENT}${INDENT}"a capture of it would record the script, not a model's calls. Point the agent "`,
+        `${INDENT}${INDENT}${INDENT}${INDENT}"at a pinned provider to record a trajectory, or unset ${AGENT_RECORD_ENV}."`,
+        `${INDENT}${INDENT}${INDENT})`,
+        `${INDENT}${INDENT}target = Path(capturing)`,
+        `${INDENT}${INDENT}if target.exists():`,
+        `${INDENT}${INDENT}${INDENT}raise EvalError(`,
+        `${INDENT}${INDENT}${INDENT}${INDENT}f"{target} already holds a recording and a capture never overwrites one: "`,
+        `${INDENT}${INDENT}${INDENT}${INDENT}"delete it to record again, or point ${AGENT_RECORD_ENV} at a new path."`,
+        `${INDENT}${INDENT}${INDENT})`,
+        `${INDENT}${INDENT}_RECORDER = RecordingProviders(default_providers(), spec_version=SPEC_VERSION)`,
+        `${INDENT}${INDENT}return _RECORDER.providers`,
         `${INDENT}if recording is None:`,
         `${INDENT}${INDENT}return default_providers()`,
         `${INDENT}replayed: Provider = RecordedProvider.from_path(Path(recording))`,
@@ -691,6 +754,51 @@ function emitAgentEval(ir: IR, evaluation: EvalShape, agentId: string): EmittedF
         // `C4` on, and `{key: replayed for key in PROVIDER_KEYS}` is the exact shape C420
         // rejects -- every value is the same object, which is the point here.
         `${INDENT}return dict.fromkeys(PROVIDER_KEYS, replayed)`,
+      ].join('\n'),
+      [
+        'def save_recording() -> None:',
+        pythonDoc(
+          'Write the capture this run was asked for, if it was asked for one.\n\n' +
+            'Called after the run and before the gate. A run that failed its gate is exactly ' +
+            'the run worth keeping -- the trajectory that found the regression is a better ' +
+            'fixture than the one that passed -- and the verdict does not depend on the file, ' +
+            'so writing first then judging keeps the two independent.\n\n' +
+            'A run that captured nothing is refused rather than saved empty: a transcript ' +
+            'with no call in it replays a run that never reached the model, which would ' +
+            'gate the next run on a shorter trajectory than this one took.',
+          INDENT,
+        ),
+        `${INDENT}if _RECORDER is None:`,
+        `${INDENT}${INDENT}return`,
+        `${INDENT}target = Path(os.environ[RECORD_ENV])`,
+        `${INDENT}capture = _RECORDER.transcript()`,
+        `${INDENT}if not capture:`,
+        `${INDENT}${INDENT}raise EvalError(`,
+        `${INDENT}${INDENT}${INDENT}f"this run was asked to record to {target} but made no model call, so there is nothing "`,
+        `${INDENT}${INDENT}${INDENT}"to replay. Run it against a provider it can reach, or unset ${AGENT_RECORD_ENV}."`,
+        `${INDENT}${INDENT})`,
+        `${INDENT}capture.save(target)`,
+      ].join('\n'),
+      [
+        'def provenance() -> str:',
+        pythonDoc(
+          "Where this run's model turns came from.\n\n" +
+            '`scripted` when the agent is declared on the scripted provider, `recorded` when ' +
+            'the run replayed a transcript, and `live` when a model was actually called -- ' +
+            'with the capture path appended when one was written. Printed beside every ' +
+            'summary because a green gate means something different in each mode: only a ' +
+            'live run says anything about how the model behaves, and only a recorded one is ' +
+            'the same measurement twice.',
+          INDENT,
+        ),
+        `${INDENT}if SCRIPTED:`,
+        `${INDENT}${INDENT}return "scripted"`,
+        `${INDENT}capturing = os.environ.get(RECORD_ENV)`,
+        `${INDENT}if capturing is not None:`,
+        `${INDENT}${INDENT}return f"live, capturing to {capturing}"`,
+        `${INDENT}if os.environ.get(TRANSCRIPT_ENV) is not None:`,
+        `${INDENT}${INDENT}return "recorded"`,
+        `${INDENT}return "live"`,
       ].join('\n'),
       [
         'def thresholds() -> tuple[Threshold, ...]:',
@@ -774,14 +882,30 @@ function agentGateEntrypoints(): string[] {
   return [
     [
       'async def evaluate() -> GateResult:',
-      pythonDoc('Measure the agent and compare the result against the stored baseline.', INDENT),
-      `${INDENT}return gate(await run(), load_baseline())`,
+      pythonDoc(
+        'Measure the agent and compare the result against the stored baseline.\n\n' +
+          'A capture, when one was asked for, is written between the two: the gate is about to ' +
+          'decide whether this run is good, and a trajectory worth keeping is worth keeping ' +
+          'either way.',
+        INDENT,
+      ),
+      `${INDENT}result = await run()`,
+      `${INDENT}save_recording()`,
+      `${INDENT}return gate(result, load_baseline())`,
     ].join('\n'),
     [
       'def main() -> int:',
-      pythonDoc('Run the gate, print its summary, and exit non-zero on a regression.', INDENT),
+      pythonDoc(
+        'Run the gate, print its summary and where the run came from, and exit non-zero on a ' +
+          'regression.\n\n' +
+          'The provenance line is printed, not gated on: it reports what the run was, and a ' +
+          'verdict that changed with the mode of the run would make the same suite mean ' +
+          'different things on a laptop and in CI.',
+        INDENT,
+      ),
       `${INDENT}result = asyncio.run(evaluate())`,
       `${INDENT}print(result.summary())`,
+      `${INDENT}print(f"provenance: {provenance()}")`,
       `${INDENT}return 1 if result.failures() else 0`,
     ].join('\n'),
     ['if __name__ == "__main__":', `${INDENT}raise SystemExit(main())`].join('\n'),

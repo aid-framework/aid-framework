@@ -17,10 +17,12 @@ from aid_runtime import (
     Capability,
     CompletionRequest,
     CompletionResponse,
+    EvalError,
     Message,
     ModelSpec,
     RecordedProvider,
     RecordingProvider,
+    RecordingProviders,
     ReplayDivergenceError,
     TokenUsage,
     ToolCall,
@@ -244,3 +246,70 @@ class TestRecording:
 
         assert replayed.text == recorded.text == "refunded"
         assert replayed.usage == recorded.usage
+
+
+class TestRecordingEverythingARunCalls:
+    """The capture half: one run, every provider it reached, one file to commit.
+
+    A generated eval holds a *mapping* of providers, because the gateway chooses one per
+    model. Capturing only the entry that answered would drop a fallback from the file and
+    turn a replayed run into a shorter one -- which is why the mapping is wrapped whole.
+    """
+
+    async def test_two_vendors_land_in_one_capture(self) -> None:
+        from aid_runtime.providers.fake import FakeProvider, ScriptedTurn
+
+        recorder = RecordingProviders(
+            {
+                "primary": FakeProvider(script=[ScriptedTurn.answer("first")], name="openai"),
+                "fallback": FakeProvider(script=[ScriptedTurn.answer("second")], name="anthropic"),
+            },
+            spec_version="0.33",
+        )
+        wrapped = recorder.providers
+        first = await wrapped["primary"].complete(ASK, model=MODEL)
+        second = await wrapped["fallback"].complete(
+            CompletionRequest.prompt("and the second one"), model=MODEL
+        )
+
+        transcript = recorder.transcript()
+
+        assert [first.text, second.text] == ["first", "second"]
+        assert len(transcript) == 2
+        assert transcript.spec_version == "0.33"
+        # Both vendors answered, so both are named -- a capture that spans a fallback must
+        # not describe itself as the one provider it called last.
+        assert transcript.provider == "openai,anthropic"
+        assert transcript.model == MODEL.name
+
+    async def test_a_capture_of_the_whole_mapping_replays_as_one_run(self) -> None:
+        from aid_runtime.providers.fake import FakeProvider, ScriptedTurn
+
+        recorder = RecordingProviders(
+            {
+                "primary": FakeProvider(script=[ScriptedTurn.answer("first")]),
+                "fallback": FakeProvider(script=[ScriptedTurn.answer("second")]),
+            }
+        )
+        wrapped = recorder.providers
+        await wrapped["primary"].complete(ASK, model=MODEL)
+        await wrapped["fallback"].complete(
+            CompletionRequest.prompt("and the second one"), model=MODEL
+        )
+
+        replay = RecordedProvider(recorder.transcript())
+
+        assert (await replay.complete(ASK, model=MODEL)).text == "first"
+        assert (
+            await replay.complete(CompletionRequest.prompt("and the second one"), model=MODEL)
+        ).text == "second"
+        assert replay.remaining == 0
+
+    def test_a_capture_with_no_provider_is_refused(self) -> None:
+        """An empty mapping would write a transcript that replays no call, which is not a
+        recording of anything; refusing here means the file is never created."""
+        raised = pytest.raises(EvalError)
+        with raised as caught:
+            RecordingProviders({})
+
+        assert "no model provider to record" in str(caught.value)

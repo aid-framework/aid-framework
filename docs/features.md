@@ -472,6 +472,14 @@ An eval can name an agent (`target: agent:&lt;id&gt;`) instead of a pipeline, an
 - **Reference:** [spec](./reference/spec.md#eval)
 - **Since:** `0.1.158`
 
+### A real run, captured so CI can replay it
+
+`aid eval --record &lt;path&gt;` makes the recording `AID_EVAL_TRANSCRIPT` replays: it runs the agent against the provider the spec pins and writes each request and response to `&lt;path&gt;` in the same shape replay reads, so a trajectory can be captured once against a real model and then re-run offline. Every agent eval prints a `provenance:` line after its summary -- `scripted` when the agent is declared on the `fake` provider, `recorded` when the turns came from a transcript, `live` otherwise, with the capture path appended when one was written -- because a green gate means something different in each mode. Recording is never automatic: only a run that asked for it writes a transcript, and the combinations that would produce a misleading one are refused instead. The command refuses `--record` beside `--compare`, `--record` unless exactly one suite runs, and `--record` on a target that is not an `agent:`, all as `cli/eval-record-unsupported`; the generated evaluator refuses a capture while `AID_EVAL_TRANSCRIPT` is also set, a capture of a scripted agent, a path that already exists, and a run that made no model call. A captured run is still a check on policy and plumbing rather than on model quality: it describes what the model did when the capture was taken, so a stale recording is a statement about the model that was pinned then.
+
+- **Turned on by:** `aid eval --record`
+- **Reference:** [cli](./reference/cli.md#eval)
+- **Since:** `0.1.166`
+
 ### Metrics that score the run, not the answer
 
 Spec 0.31 adds three metrics for an agent run: `step-count` (how many model calls a case took, against a ceiling the case sets), `forbidden-tool` (whether the run reached for a tool it was told never to call) and `approval-respected` (whether it stopped at the pauses it was given and honoured the decision it was handed). Each reads the trajectory the offline agent evaluator already produces, so all three need an `agent:` target and a spec naming one elsewhere is refused. The `evals/metrics` gate then refuses a metric that could only ever pass: a `step-count` ceiling at or above the agent's own `maxSteps` is reached by the agent's budget first, and an `approval-respected` metric on an agent with no `humanInTheLoop` and no tool declaring `requiresConfirmation` has no decision to score.

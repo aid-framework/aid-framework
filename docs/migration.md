@@ -817,3 +817,73 @@ refused with the field names and both fixes in the message.
 A bump is owed to a **spec language change**. The grammar has accepted `observability.redact` since
 `0.27`; this release makes an emitted runtime and a gate honour it for agents, and narrows one gate
 rule. No document gains or loses a key.
+
+## 0.1.166: capturing a run so CI can replay it {#trajectory-capture-release}
+
+Replay has shipped since 0.27 and capture had not: `AID_EVAL_TRANSCRIPT` pointed the agent
+evaluator at a recording, and nothing in AID wrote one. The only trajectory anyone could score
+offline was the scripted one, so a case could show that an approval pause works against turns its
+author wrote, and not that it works against turns a model drove.
+
+`aid eval --record <path>` closes that. It is a real run -- the agent calls the provider the spec
+pins -- that also writes every request and response to `<path>` in the shape `AID_EVAL_TRANSCRIPT`
+reads, so the capture can be committed and the next run is offline:
+
+```bash
+aid eval --record app/evals/refund_trajectory.json --suite refund_trajectory app/app.spec.yaml
+```
+
+`AID_EVAL_RECORD` is the variable the flag sets, and the only other way to ask for a capture. There
+is no mode in which a plain `aid eval`, a CI run or a generated service records: recording is
+opt-in per run, and a green gate is not a reason to start writing files.
+
+### What a green gate means now
+
+Every agent eval prints one line after its summary, and it is the run that decides the meaning:
+
+| `provenance:` | The turns came from |
+| --- | --- |
+| `scripted` | The `fake` provider, because the agent's model is declared on it |
+| `live, capturing to <path>` | A real provider, and the turns were written to `<path>` |
+| `recorded` | A transcript, replayed in order |
+| `live` | A real provider, and nothing was written |
+
+The line is printed, not gated on. A verdict that changed with the mode of a run would make one
+suite mean two things, on a laptop and in CI.
+
+A captured run is a real improvement in what a case can claim and it is still not a quality number.
+It measures policy and plumbing against turns a model really produced; it does not measure how good
+those turns were, and it describes the model and prompt that were pinned when the capture was taken.
+Re-record when either changes. A stale recording is not a failing test, which is the problem with
+it.
+
+### The captures that are refused
+
+Refusing a file that would mislead is the point, so both layers refuse rather than proceed. The
+command raises `cli/eval-record-unsupported` before anything runs:
+
+- `--record` beside `--compare`, because a comparison judges two baselines and a capture describes
+  one run.
+- `--record` unless exactly one suite runs, because one file cannot be the recording of several.
+- `--record` on an eval whose target is not an `agent:`, because a pipeline has no trajectory --
+  the same fact `ir/eval-trajectory` states for a trajectory metric.
+
+The generated evaluator refuses with an `EvalError`, for the cases only a run can see:
+
+- a capture while `AID_EVAL_TRANSCRIPT` is also set, because one run either replays or captures.
+  Accepting both would write a file that describes one document while holding another's turns.
+- a capture on an agent whose model is the `fake` provider, because the turns were never generated.
+- a capture onto a path that already exists, because an appended transcript is a recording of
+  nothing in particular.
+- a capture of a run that made no model call, because an empty transcript replays forever and
+  asserts nothing.
+
+### What you have to do
+
+Nothing. No generated file changes shape, and a document that was valid is still valid.
+
+### Why there is no `specVersion` bump
+
+The grammar has not moved. `evals[].target` has accepted `agent:<id>` since `0.27`, and a recording
+was never a spec construct -- it is a file a run reads or writes. `--record` is a flag on an
+existing command, so no document gains or loses a key.

@@ -18,13 +18,21 @@ the request it is handed. A prompt edit, a changed tool result or a reordered st
 that digest, and the run stops with the call index and the first differing message instead
 of quietly serving an answer to a question nobody asked. The alternative -- matching on
 content -- would turn a diverged run into a permissive one.
+
+Recording is the other half, and it is never automatic: a suite that recorded itself would
+gate the build on whatever the model did on the day it ran, so capture happens only when a
+run is asked to capture. :class:`RecordingProvider` wraps one live provider;
+:class:`RecordingProviders` wraps the whole provider mapping, because the gateway picks a
+provider per model and a run that fell back between vendors would otherwise leave the
+fallback out of the file. Either way what is written is a :class:`Transcript` -- the same
+shape replay reads, so there is one format and one digest, not two.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +54,7 @@ from aid_runtime.types import (
 __all__ = [
     "RecordedProvider",
     "RecordingProvider",
+    "RecordingProviders",
     "ReplayDivergenceError",
     "Transcript",
     "TranscriptEntry",
@@ -107,6 +116,8 @@ class Transcript(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     provider: str
+    #: One vendor, or several comma-joined when the capture spanned a fallback. `model`
+    #: follows the same rule, because one run can answer under more than one model.
     model: str
     #: The spec version the recording was made under. A transcript is evidence about a
     #: particular document, so a bump that changes what an eval runs should prompt a
@@ -256,19 +267,65 @@ class RecordedProvider:
         )
 
 
+class _Recorder:
+    """The calls the wrapped providers answered, kept as one transcript.
+
+    Shared by every provider a :class:`RecordingProviders` wraps. The two names it collects
+    are comma-joined rather than last-wins, because a capture that spanned a fallback would
+    otherwise describe itself as the one vendor it happened to call last.
+    """
+
+    def __init__(self, spec_version: str) -> None:
+        self.spec_version = spec_version
+        self.entries: list[TranscriptEntry] = []
+        self._providers: list[str] = []
+        self._models: list[str] = []
+
+    def note(self, *, provider: str, model: str) -> None:
+        if provider and provider not in self._providers:
+            self._providers.append(provider)
+        if model and model not in self._models:
+            self._models.append(model)
+
+    def append(self, entry: TranscriptEntry, *, provider: str, model: str) -> None:
+        self.note(provider=provider, model=model)
+        self.entries.append(entry)
+
+    def transcript(self) -> Transcript:
+        return Transcript(
+            provider=",".join(self._providers),
+            model=",".join(self._models),
+            spec_version=self.spec_version,
+            entries=tuple(self.entries),
+        )
+
+
 class RecordingProvider:
     """Wraps a live provider and keeps every exchange, so a run can be replayed offline.
 
     Recording is opt-in and explicit. Nothing here is enabled by an eval run that merely
     happens to have a network connection: a suite that recorded itself would gate the
     build on whatever the model did on the day it ran.
+
+    `recorder` shares the capture with the other providers of the same run, which is what
+    :class:`RecordingProviders` uses; given one, `spec_version` is the recorder's.
     """
 
-    def __init__(self, inner: Provider, *, spec_version: str = "") -> None:
+    def __init__(
+        self,
+        inner: Provider,
+        *,
+        spec_version: str = "",
+        recorder: _Recorder | None = None,
+    ) -> None:
         self._inner = inner
-        self._spec_version = spec_version
-        self._entries: list[TranscriptEntry] = []
-        self._model = ""
+        if recorder is None:
+            self._recorder = _Recorder(spec_version)
+            # Named here rather than only on the first call, so an empty recorder still
+            # says what it was going to record.
+            self._recorder.note(provider=str(inner.name), model="")
+        else:
+            self._recorder = recorder
 
     @property
     def name(self) -> str:
@@ -280,27 +337,28 @@ class RecordingProvider:
 
     @property
     def entries(self) -> tuple[TranscriptEntry, ...]:
-        return tuple(self._entries)
+        return tuple(self._recorder.entries)
 
     def transcript(self) -> Transcript:
-        return Transcript(
-            provider=self.name,
-            model=self._model,
-            spec_version=self._spec_version,
-            entries=tuple(self._entries),
-        )
+        return self._recorder.transcript()
 
-    async def complete(self, request: CompletionRequest, *, model: ModelSpec) -> CompletionResponse:
-        response = await self._inner.complete(request, model=model)
-        self._model = model.name
+    def _record(
+        self, request: CompletionRequest, response: CompletionResponse, *, model: ModelSpec
+    ) -> None:
         user = next((message.content for message in request.messages if message.role == "user"), "")
-        self._entries.append(
+        self._recorder.append(
             TranscriptEntry(
                 request_digest=_digest(request.messages),
                 response=response,
                 prompt_preview=user[:200],
-            )
+            ),
+            provider=self.name,
+            model=model.name,
         )
+
+    async def complete(self, request: CompletionRequest, *, model: ModelSpec) -> CompletionResponse:
+        response = await self._inner.complete(request, model=model)
+        self._record(request, response, model=model)
         return response
 
     async def stream(
@@ -318,25 +376,49 @@ class RecordingProvider:
             (chunk.finish_reason for chunk in reversed(chunks) if chunk.finish_reason is not None),
             "stop",
         )
-        self._model = model.name
-        user = next((message.content for message in request.messages if message.role == "user"), "")
-        self._entries.append(
-            TranscriptEntry(
-                request_digest=_digest(request.messages),
-                response=CompletionResponse(
-                    text=text,
-                    model=model.name,
-                    provider=self.name,
-                    usage=usage
-                    if usage is not None
-                    else TokenUsage(input_tokens=0, output_tokens=0),
-                    finish_reason=finish,
-                ),
-                prompt_preview=user[:200],
-            )
+        self._record(
+            request,
+            CompletionResponse(
+                text=text,
+                model=model.name,
+                provider=self.name,
+                usage=usage if usage is not None else TokenUsage(input_tokens=0, output_tokens=0),
+                finish_reason=finish,
+            ),
+            model=model,
         )
         for chunk in chunks:
             yield chunk
 
     async def aclose(self) -> None:
         return None
+
+
+class RecordingProviders:
+    """Wraps every provider a run could call, so one capture covers the whole run.
+
+    `default_providers()` is keyed by provider name because the gateway selects a provider
+    per model, so wrapping a single entry would leave a fallback -- or a second agent on a
+    different vendor -- uncaptured, and the recording would silently replay as a shorter
+    run. This wraps the mapping instead and keys each wrapper the way the gateway expects.
+    """
+
+    def __init__(self, providers: Mapping[str, Provider], *, spec_version: str = "") -> None:
+        if not providers:
+            raise EvalError(
+                "there is no model provider to record: a capture of nothing would produce a "
+                "transcript that replays no call, so point the agent at a model before "
+                "recording one"
+            )
+        self._recorder = _Recorder(spec_version)
+        self._wrapped = {
+            name: RecordingProvider(provider, recorder=self._recorder)
+            for name, provider in providers.items()
+        }
+
+    @property
+    def providers(self) -> dict[str, Provider]:
+        return dict(self._wrapped)
+
+    def transcript(self) -> Transcript:
+        return self._recorder.transcript()

@@ -227,6 +227,83 @@ score the pipeline that ran the agent and lose the trajectory with it. The hint 
 way: keep `target: agent:<id>` and let the evaluator report the calls, which is what the first half
 of this walkthrough validates.
 
+## Capturing a real run so a trajectory eval can replay it
+
+Replay shipped before capture: `AID_EVAL_TRANSCRIPT` already pointed the evaluator at a recording,
+but nothing in AID wrote one, so the only evaluator anyone could run offline was the scripted one.
+`aid eval --record` writes the file that replay reads:
+
+```bash
+aid eval --record app/evals/refund_trajectory.json --suite refund_trajectory app/app.spec.yaml
+```
+
+The run itself is real — the agent calls the provider the spec pins, and every request and response
+is appended to the file as it goes. Nothing about the eval changes: the same metrics score the same
+cases, and the summary is the one the suite already printed. The only new line comes after it, and
+it names the absolute path the capture was written to:
+
+```text
+provenance: live, capturing to C:\work\support-copilot\app\evals\refund_trajectory.json
+```
+
+The file is in the `AID_EVAL_TRANSCRIPT` shape, so the next run is offline, and its last line says
+so:
+
+```bash
+AID_EVAL_TRANSCRIPT=app/evals/refund_trajectory.json aid eval app/app.spec.yaml
+```
+
+```text
+provenance: recorded
+```
+
+Every run prints one `provenance:` line after the summary, and it is the only place the run says
+what it measured against:
+
+| `provenance:` | What it means |
+| --- | --- |
+| `scripted` | The agent's model is the `fake` provider, so no vendor was called at all |
+| `live, capturing to <path>` | A real provider answered, and every call was written to `<path>` |
+| `recorded` | The turns came from `AID_EVAL_TRANSCRIPT`, replayed in order |
+| `live` | A real provider answered and nothing was recorded |
+
+The marker matters because `scripted` and `recorded` are not the same claim. A scripted run
+measures the plumbing against turns the test author wrote. A recorded run measures the plumbing
+against turns a model really produced, which is the difference between "the approval pause works
+when I decided it should" and "the approval pause works on a run this model drove". Neither
+measures a model's *quality* — a replay of a capture describes what the model did when the capture
+was taken, so a stale recording silently becomes a statement about the old model. Re-capture when
+the prompt, the model or the tool contracts change, and treat the file as a fixture you meant to
+commit rather than a cache.
+
+Recording is never automatic. There is no mode in which a normal `aid eval`, a CI run or a
+generated service writes a transcript: the only ways to write one are `--record` and the
+`AID_EVAL_RECORD` variable it sets, and both are per-run. The refusals are split between the
+command, which refuses `cli/eval-record-unsupported` before anything runs, and the generated
+evaluator, which refuses with the same `EvalError` it raises for any other unmet precondition.
+
+The command refuses:
+
+- `--record` beside `--compare`, because a comparison judges two baselines and a capture describes
+  one run.
+- `--record` with no `--suite`, or a `--suite` naming more than one eval, because one file cannot
+  be the recording of several runs.
+- `--record` on an eval whose target is not an `agent:`, because a pipeline has no trajectory, which
+  is the same fact `ir/eval-trajectory` states for a trajectory metric.
+
+The evaluator refuses:
+
+- `--record` together with `AID_EVAL_TRANSCRIPT` in the environment, because one run either replays
+  a recording or captures one — accepting both would produce a file that describes one document
+  while holding another's turns.
+- `--record` when the agent's model is the `fake` provider, because the capture would hold turns
+  that were never generated. The `scripted` marker exists to say that about a run, not to hide it
+  behind a file that looks like a recording.
+- `--record` onto a path that already exists, because a transcript that is appended to is a
+  recording of nothing in particular. Name a new file, or delete the old one deliberately.
+- writing a capture for a run that made no model call at all, because an empty transcript replays
+  forever and asserts nothing.
+
 ## What this build does not do
 
 Being precise about the boundary is the point of the phase:

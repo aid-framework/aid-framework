@@ -26,6 +26,11 @@ export const CLI_DIAGNOSTIC_CODES = {
   pythonMissing: 'cli/python-missing',
   suiteNotFound: 'cli/suite-not-found',
   evalModulesMissing: 'cli/eval-modules-missing',
+  // `aid eval --record` asks a generated eval module to keep its model calls. Only an
+  // agent eval can: it is the only kind that calls a model through a provider mapping it
+  // builds itself. Asking a prompt eval to record would print nothing and write nothing,
+  // which reads as success, so the request is refused instead.
+  evalRecordUnsupported: 'cli/eval-record-unsupported',
   // `aid eval --compare` originates these. The split is the usual one: a comparison with
   // no policy, with two possible verdicts, with a baseline that cannot be read, or across
   // two datasets judged nothing and exits 2; a candidate that regressed, or a required
