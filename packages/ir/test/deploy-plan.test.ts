@@ -444,3 +444,56 @@ describe('knowledgeBaseEnvName', () => {
     expect(knowledgeBaseEnvName('', 'aws-bedrock')).toBe('BEDROCK_KNOWLEDGE_BASE_');
   });
 });
+
+describe('an agent whose run can pause', () => {
+  /** The agent the fixture already declares, paused onto a store the plan must carry. */
+  function pausing(state: Record<string, unknown>) {
+    return {
+      agents: {
+        assistant: {
+          name: 'Assistant',
+          instructions: 'chat_prompt',
+          model: 'chat',
+          maxSteps: 2,
+          maxCostBudget: 12,
+          maxTokensBudget: 100_000,
+          state,
+        },
+      },
+    };
+  }
+
+  it('carries the signing key and the store, or deploys an app that cannot start', () => {
+    const { plan } = planOf(
+      pausing({
+        kind: 'postgres',
+        urlEnv: 'AGENT_STATE_URL',
+        signingKeyEnv: 'AID_CHECKPOINT_KEY',
+      }),
+    );
+    const service = plan.services[0];
+    expect(service?.env).toContainEqual({
+      name: 'AID_CHECKPOINT_KEY',
+      secret: true,
+      from: 'agent',
+    });
+    expect(service?.env).toContainEqual({ name: 'AGENT_STATE_URL', secret: true, from: 'agent' });
+    expect(service?.secrets).toContain('AID_CHECKPOINT_KEY');
+    expect(service?.secrets).toContain('AGENT_STATE_URL');
+  });
+
+  it('leaves the name with the source that already declared it', () => {
+    // PGVECTOR_URL reaches the app through `stores`. An agent pointed at the same
+    // variable adds nothing, and reporting it twice would look like two variables.
+    const { plan } = planOf(
+      pausing({ kind: 'postgres', urlEnv: 'PGVECTOR_URL', signingKeyEnv: 'AID_CHECKPOINT_KEY' }),
+    );
+    const matches = plan.services[0]?.env?.filter((entry) => entry.name === 'PGVECTOR_URL');
+    expect(matches).toEqual([{ name: 'PGVECTOR_URL', secret: true, from: 'store' }]);
+  });
+
+  it('adds nothing when the store names no key', () => {
+    const { plan } = planOf(pausing({ kind: 'postgres', urlEnv: 'AGENT_STATE_URL' }));
+    expect(plan.services[0]?.env?.map((entry) => entry.name)).not.toContain('AID_CHECKPOINT_KEY');
+  });
+});

@@ -75,6 +75,10 @@ interface Options {
   readonly agentModelFallback?: boolean;
   /** Makes the agent's instructions prompt take a variable. */
   readonly instructionsWithVariables?: boolean;
+  /** Overrides the document's `specVersion`, for the versions that gate a field. */
+  readonly specVersion?: string;
+  /** A `state` block under the agent, for the checkpoint protection cases. */
+  readonly agentState?: string;
 }
 
 /**
@@ -114,7 +118,7 @@ memory:
         required: true`
       : '';
 
-  return `specVersion: "0.2"
+  return `specVersion: "${options.specVersion ?? '0.2'}"
 
 project:
   name: agents
@@ -221,7 +225,7 @@ agents:
     tools: [${tool}]
     guardrails: ${guardrails}${agentMemory}
     maxSteps: 4
-    maxCostBudget: 0.05${approval}${options.agentExtra ?? ''}
+    maxCostBudget: 0.05${options.agentState ?? ''}${approval}${options.agentExtra ?? ''}
 `;
 }
 
@@ -356,6 +360,81 @@ describe('the resume route is emitted for each way a run can pause', () => {
     // The prose follows the route too: a checkpoint nobody can hand back is not "what
     // `/agents/resume` takes back", and ruff does not catch a docstring that lies.
     expect(source).not.toContain('/agents/resume');
+  });
+});
+
+describe('the checkpoint protection the spec declares', () => {
+  /** A store that signs and remembers, declared under an agent that can pause. */
+  const SIGNED = `
+    state:
+      kind: postgres
+      urlEnv: DATABASE_URL
+      signingKeyEnv: AID_CHECKPOINT_KEY
+      checkpointTtlMinutes: 30`;
+
+  /** The same app on spec 0.32, where naming the key is what the gate asks for. */
+  const signed: Options = {
+    specVersion: '0.32',
+    humanInTheLoop: true,
+    agentState: SIGNED,
+  };
+
+  it('emits the key, the store and the lifetime the spec named', () => {
+    const source = agentsSource(buildForSpecText(specText(signed))) ?? '';
+
+    expect(source).toContain('CHECKPOINT_SIGNING_KEY_ENV: str | None = "AID_CHECKPOINT_KEY"');
+    expect(source).toContain('CHECKPOINT_STATE_KIND: str | None = "postgres"');
+    expect(source).toContain('CHECKPOINT_STATE_URL_ENV: str | None = "DATABASE_URL"');
+    expect(source).toContain('CHECKPOINT_TTL_SECONDS = 1800');
+    expect(source).toContain(
+      'signer_from_env(CHECKPOINT_SIGNING_KEY_ENV, ttl_seconds=CHECKPOINT_TTL_SECONDS)',
+    );
+    expect(source).toContain(
+      'nonce_store_from_env(CHECKPOINT_STATE_KIND, CHECKPOINT_STATE_URL_ENV)',
+    );
+    // The runtime is built with both, or the route would verify nothing and remember nothing.
+    expect(source).toContain('        signer=signer,');
+    expect(source).toContain('        nonces=nonces,');
+  });
+
+  it('lets the runtime own the default lifetime rather than repeating it', () => {
+    // A second copy of the number here is a copy that can drift from the runtime's default,
+    // so an undeclared lifetime emits the constant not at all and omits the argument.
+    const undeclared = SIGNED.replace('\n      checkpointTtlMinutes: 30', '');
+    const source = agentsSource(buildForSpecText(specText({ ...signed, agentState: undeclared })))
+      ?? '';
+
+    expect(source).not.toContain('CHECKPOINT_TTL_SECONDS');
+    expect(source).toContain('signer_from_env(CHECKPOINT_SIGNING_KEY_ENV),');
+  });
+
+  it('returns no protection at all when the spec named no key', () => {
+    const unsigned = `
+    state:
+      kind: postgres
+      urlEnv: DATABASE_URL`;
+    const source =
+      agentsSource(
+        buildForSpecText(specText({ specVersion: '0.32', humanInTheLoop: true, agentState: unsigned })),
+      ) ?? '';
+
+    expect(source).toContain('CHECKPOINT_SIGNING_KEY_ENV: str | None = None');
+
+    // The early return precedes the store: a nonce nothing claims must not become a
+    // variable the app demands, or an app that declared no key would refuse to start.
+    const guard = source.indexOf('return None, None');
+    const store = source.indexOf('nonce_store_from_env(');
+    expect(guard).toBeGreaterThan(-1);
+    expect(store).toBeGreaterThan(guard);
+  });
+
+  it('carries none of it when nothing can pause, even with a store declared', () => {
+    const built = buildForSpecText(specText({ specVersion: '0.32', agentState: SIGNED }));
+    const source = agentsSource(built) ?? '';
+
+    expect(source).not.toContain('CHECKPOINT_');
+    expect(source).not.toContain('signer_from_env');
+    expect(source).not.toContain('nonce_store_from_env');
   });
 });
 

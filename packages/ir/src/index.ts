@@ -190,6 +190,8 @@ export type {
   AgentEngine,
   AgentOnBudgetExhausted,
   AgentShape,
+  AgentStateKind,
+  AgentStateShape,
   AgentStep,
   BedrockContentFilter,
   BedrockContentStrength,

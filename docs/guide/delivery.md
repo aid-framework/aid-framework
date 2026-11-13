@@ -303,25 +303,36 @@ today.
 | Change approval | `deployments.<d>.approvals` for production | `ir/profile-approvals` | Gated and generated as a pause |
 | Eval coverage | a `gate.ci` eval claiming each HTTP pipeline | `ir/eval-coverage` | A warning below spec `0.31`, a refusal for `enterprise` from `0.31` |
 | Identity | `deployments.<d>.identity` — issuer, audience, claims | `ir/profile-identity` | Gated only. **No token verification is generated** |
-| Durable state | `state`, for an agent that can call a writing tool | `ir/agents-state-store` | Gated only. The pause hands the checkpoint to the caller |
+| Durable state | `state`, for an agent that can pause or call a writing tool | `ir/agents-state-store`; from spec `0.32`, `ir/resume-replay-weak` | Generated into the resume route, which keeps the record of a spent checkpoint there, so a replay is refused even after a restart. The paused run itself is still carried by the checkpoint, not by this store |
 
-The two "gated only" rows are the ones that decide your deployment plan, so read them as
-instructions rather than caveats:
+The identity row is the one that decides your deployment plan, so read it as an instruction rather
+than a caveat:
 
-- **You must put your own authentication in front of the app.** The generated routes seed an
-  *unauthenticated* principal when something branches on the caller, and it is deliberately not
-  authenticated: a default authenticated principal would be a silent authorization bug. AID
-  validates that you named an identity and generates nothing that verifies a token, so the
-  identity check is yours to wire until it ships.
-- **`POST /agents/resume` is a bearer capability.** The body of a resume request is the
-  checkpoint the previous call returned, and a checkpoint replays the conversation and its
-  pending tool calls. Whoever holds one can continue that run. The route refuses nothing on its
-  own, so front it with the same authentication as the rest of the app and treat a checkpoint as
-  a secret.
+- **You must put your own authentication in front of the app.** AID validates that you named an
+  identity and generates nothing that verifies a token, so the identity check is yours to wire
+  until it ships. An agent route reaches its tools with whatever principal the ASGI layer gives
+  it; nothing is synthesized, and nothing is checked.
+
+The checkpoint no longer travels unprotected. From spec `0.32` an agent that can pause is obliged
+to name a signing key (`state.signingKeyEnv`), and the generated route refuses a checkpoint it did
+not sign, one past its deadline, and -- where the document declares a durable `state` -- one the
+store has already spent, each as a `403` whose `detail.reason` says which. Read the rest of this
+row the same way as the identity one:
+
+- **A checkpoint is still a capability, and still a secret.** Signing proves the app issued it; it
+  does not prove the person presenting it should have it. The signature stops an edited checkpoint
+  from approving a different call, the deadline bounds how long a stolen one is useful, and the
+  store stops a replay -- none of the three identifies the caller. Front `/agents/resume` with the
+  same authentication as the rest of the app, and hand the checkpoint only to the person whose
+  approval it asks for.
+- **Without a durable store, a replay still gets through.** Under `profile: standard` a document
+  that pauses and declares no `state` gets a signed checkpoint whose replay is refused only by the
+  process that issued it, and `ir/resume-replay-weak` says so at build time. `enterprise` refuses
+  the same document outright.
 
 Both are recorded in the reference and on the features page rather than left for an operator to
-discover by reading generated code. Neither blocks a delivery: they are two lines in your
-networking plan.
+discover by reading generated code. Neither blocks a delivery: they are a line in your networking
+plan and an environment variable in your release.
 
 ## Leave the boundary clean
 

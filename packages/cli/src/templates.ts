@@ -262,7 +262,8 @@ state:
   kind: postgres
   urlEnv: DATABASE_URL
   ttlHours: 168
-
+  signingKeyEnv: AID_CHECKPOINT_KEY
+  checkpointTtlMinutes: 30
 agents:
   triage_agent:
     name: Claims adjudicator
@@ -276,6 +277,8 @@ agents:
       kind: postgres
       urlEnv: DATABASE_URL
       ttlHours: 24
+      signingKeyEnv: AID_CHECKPOINT_KEY
+      checkpointTtlMinutes: 30
     humanInTheLoop:
       when: "not hasRole('auto_approver')"
       channel: claims-review
@@ -476,10 +479,23 @@ function enterpriseApprovalsReadme(projectName: string): string {
     '',
     '`issue_refund` is `sideEffects: write`, so three gates apply at once: it needs an `auth`',
     'policy, it needs a `tool-call` stage guardrail, and it needs a confirmation flow.',
-    '`triage_agent.humanInTheLoop` supplies the last one, and `state` supplies somewhere for',
-    'the paused run to wait. Because the agent can pause, it is served only over',
-    '`/agents/triage_agent/run`; a pipeline step has no checkpoint to return to, and the',
-    'generator refuses one that would need it.',
+    '`triage_agent.humanInTheLoop` supplies the last one, and `state` supplies the record of',
+    'which checkpoints have already been spent, so a replayed resume is refused. Because the',
+    'agent can pause, it is served only over `/agents/triage_agent/run`; a pipeline step has',
+    'no checkpoint to return to, and the generator refuses one that would need it.',
+    '',
+    '## The checkpoint is signed, and it expires',
+    '',
+    'A pause hands the caller a checkpoint, and a checkpoint replays a conversation and its',
+    'pending tool calls. So `state.signingKeyEnv` names an HMAC key in the environment —',
+    '`AID_CHECKPOINT_KEY`, never inline — and `state.checkpointTtlMinutes: 30` bounds how long',
+    'a checkpoint is worth anything. The generated route refuses a checkpoint it did not sign,',
+    'one past its deadline, and one the store has already spent, each as a `403` whose',
+    '`detail.reason` says which. Set the key before you deploy: it is required on every agent',
+    'run, not only the one that pauses.',
+    '',
+    'A signature proves the app issued a checkpoint. It does not prove the caller should hold',
+    'one, so `/agents/resume` still wants your authentication in front of it.',
     '',
     '## Promotion is gated, never automatic',
     '',

@@ -21,8 +21,8 @@ features:
     details: You find out at build time, not in production. Streaming on a target that cannot stream, a batch deployment with no pipeline, a cloud and target with no module — each is a named diagnostic with the fix.
   - title: Know what a run costs before you ship it
     details: A model alias resolves to one pinned id, never a floating vendor default, and a cost profile prices every call so the budget gate compares the declared ceiling with the recorded total.
-  - title: Unprotected endpoints cannot ship
-    details: The security gate refuses a POST route that passes caller text to a prompt with no input guardrail, so the check happens at generation time instead of during an incident review.
+  - title: Prompt injection is a build error
+    details: The security gate refuses a POST route that passes caller text to a prompt with no input guardrail, so the check happens at generation time instead of during an incident review. An agent that can pause also gets a signed, expiring checkpoint. Your own authentication in front of the app is still yours to wire, and the delivery playbook says so.
   - title: Evals gate like tests
     details: A quality or spend regression fails the build, not a dashboard. An eval declares a regression budget over a dataset, and `aid eval --compare` exits non-zero when either allowance is exceeded.
   - title: Infrastructure from the same spec

@@ -13,10 +13,15 @@ from typing import Annotated, Any
 from aid_runtime import (
     AgentCheckpoint,
     AgentRuntime,
+    CheckpointRefusal,
+    CheckpointSigner,
     HumanDecision,
     ModelGateway,
+    NonceStore,
     RunResult,
     Tool,
+    nonce_store_from_env,
+    signer_from_env,
 )
 from aid_runtime.agents.ir import from_ir
 from fastapi import APIRouter, Depends, HTTPException
@@ -150,6 +155,11 @@ DOCUMENT["prompts"] = [
     {"id": template.name, "template": template.template} for template in TEMPLATES
 ]
 
+CHECKPOINT_SIGNING_KEY_ENV: str | None = "AID_CHECKPOINT_KEY"
+CHECKPOINT_STATE_KIND: str | None = "sqlite"
+CHECKPOINT_STATE_URL_ENV: str | None = "AID_STATE_DB"
+CHECKPOINT_TTL_SECONDS = 3600
+
 
 class AgentRunRequest(BaseModel):
     """One user message for one agent."""
@@ -161,8 +171,9 @@ class AgentRunRequest(BaseModel):
 
 
 class AgentResumeRequest(BaseModel):
-    """A checkpoint the caller already holds, and the answer to the question it asks. The checkpoint
-    carries the run, so this request is a bearer capability over it; see the module docstring.
+    """A checkpoint the caller already holds, and the answer to the question it asks. The runtime
+    verifies its signature, its expiry and its nonce before it continues the run; see the module
+    docstring for what that proves and what it does not.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -187,6 +198,19 @@ class AgentRunResponse(BaseModel):
     checkpoint: dict[str, Any] | None = None
 
 
+def _resume_protection() -> tuple[CheckpointSigner | None, NonceStore | None]:
+    """The signer and the store that refuses a spent checkpoint, or (None, None) when this spec
+    declares no signing key.
+    """
+
+    if CHECKPOINT_SIGNING_KEY_ENV is None:
+        return None, None
+    return (
+        signer_from_env(CHECKPOINT_SIGNING_KEY_ENV, ttl_seconds=CHECKPOINT_TTL_SECONDS),
+        nonce_store_from_env(CHECKPOINT_STATE_KIND, CHECKPOINT_STATE_URL_ENV),
+    )
+
+
 def build_runtime(
     *,
     gateway: ModelGateway,
@@ -200,7 +224,14 @@ def build_runtime(
     `from_ir` and the gateway is passed in instead.
     """
 
-    return AgentRuntime(from_ir(DOCUMENT), gateway, tools=tools)
+    signer, nonces = _resume_protection()
+    return AgentRuntime(
+        from_ir(DOCUMENT),
+        gateway,
+        tools=tools,
+        signer=signer,
+        nonces=nonces,
+    )
 
 
 def _response(result: RunResult) -> AgentRunResponse:
@@ -244,8 +275,10 @@ async def resume_agent(
     event: AgentResumeRequest,
     deps: Annotated[Deps, Depends(get_deps)],
 ) -> AgentRunResponse:
-    """Continue a paused run. The checkpoint is validated into the runtime type first, so a body
-    this app did not issue is a 422 rather than a runtime error mid-conversation.
+    """Continue a paused run. Two different refusals, kept apart on purpose: a body this app did not
+    issue as a checkpoint at all is a 422, and a checkpoint it issued but will not honour -- edited,
+    expired, unsigned, or already spent -- is a 403 carrying `detail.reason`, so a caller can tell
+    which without parsing prose.
     """
 
     try:
@@ -253,7 +286,13 @@ async def resume_agent(
     except ValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     runtime = build_runtime(gateway=deps.gateway, tools=deps.agent_tools)
-    result = await runtime.resume(checkpoint, event.decision)
+    try:
+        result = await runtime.resume(checkpoint, event.decision)
+    except CheckpointRefusal as refusal:
+        raise HTTPException(
+            status_code=403,
+            detail={"reason": refusal.reason, "message": str(refusal)},
+        ) from refusal
     return _response(result)
 
 

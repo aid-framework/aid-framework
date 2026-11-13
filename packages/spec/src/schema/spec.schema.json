@@ -41,7 +41,8 @@
         "0.28",
         "0.29",
         "0.30",
-        "0.31"
+        "0.31",
+        "0.32"
       ]
     },
     "profile": {
@@ -2125,9 +2126,20 @@
           "pattern": "^[A-Z][A-Z0-9_]*$"
         },
         "ttlHours": {
-          "description": "How long a saved run is kept before the store may delete it. Omitted means no expiry, which is accepted and documented rather than defaulted.",
+          "description": "How long a saved run is kept before the store may delete it. Omitted means no expiry, which is accepted and documented rather than defaulted. Retention is not the same as the window a pause may be resumed in: a run kept for a week may still only be resumable for an hour, and `checkpointTtlMinutes` governs that.",
           "type": "integer",
           "minimum": 1
+        },
+        "signingKeyEnv": {
+          "description": "The environment variable holding the HMAC key the app signs its run checkpoints with. A name, never the key. A checkpoint carries the pending tool call and the human's answer, so holding one is authority to continue a paused run -- including a paused write. Signed, a checkpoint this app did not issue, one whose answer or pending arguments were edited, and one whose deadline was moved forward are all refused by the generated resume route. Omitted, the route keeps the pre-0.32 behaviour and accepts any well-formed checkpoint; `profile: enterprise` refuses that with `ir/resume-unsigned` rather than shipping a bearer capability. The key never enters the spec for the same reason a connection string does not: it is a credential, and it has to be rotatable without editing the document.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "checkpointTtlMinutes": {
+          "description": "How long a paused run may be resumed for, in minutes. Defaults to 15. The deadline is inside the signature, so it cannot be extended by the holder of a checkpoint; a fresh run is the only way to get a longer one. Set this to the longest a human approval may realistically take, because too short a window refuses a real approval and too long a one keeps a live capability in circulation.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10080
         }
       }
     },

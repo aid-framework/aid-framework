@@ -76,6 +76,11 @@ from aid_runtime.agents.state import (
     StepKind,
     StepRecord,
 )
+from aid_runtime.agents.resume import (
+    CheckpointSigner,
+    InProcessNonceStore,
+    NonceStore,
+)
 from aid_runtime.concurrency import ConcurrencyLimiter
 from aid_runtime.cost import Budget, CostLedger, LedgerEntry
 from aid_runtime.errors import (
@@ -193,6 +198,8 @@ class AgentRuntime:
         memory_store: MemoryStore | None = None,
         tracer: Tracer | None = None,
         limiter: ConcurrencyLimiter | None = None,
+        signer: CheckpointSigner | None = None,
+        nonces: NonceStore | None = None,
     ) -> None:
         self._spec = spec
         self._gateway = gateway
@@ -202,6 +209,11 @@ class AgentRuntime:
             memory_store if memory_store is not None else InProcessMemoryStore()
         )
         self._tracer = tracer
+        # A run that pauses hands its checkpoint to whoever called `run`, so the app that
+        # exposes a resume route must sign. Left `None`, the loop behaves exactly as it did
+        # before: a library embedding it directly is not silently given a key.
+        self._signer = signer
+        self._nonces: NonceStore = nonces if nonces is not None else InProcessNonceStore()
         self._guardrails = GuardrailEngine(spec.guardrails, decisions=spec.decisions)
         self._tools_by_name: dict[str, ToolSpec] = {
             definition.name: definition for definition in spec.tools.values()
@@ -220,6 +232,8 @@ class AgentRuntime:
         ledger: CostLedger | None = None,
         budget: Budget | None = None,
         tracer: Tracer | None = None,
+        signer: CheckpointSigner | None = None,
+        nonces: NonceStore | None = None,
     ) -> AgentRuntime:
         """Build a runtime from an emitted IR document.
 
@@ -240,6 +254,8 @@ class AgentRuntime:
             memory_store=memory_store,
             tracer=tracer,
             limiter=limiter,
+            signer=signer,
+            nonces=nonces,
         )
 
     @property
@@ -296,6 +312,7 @@ class AgentRuntime:
         principal: Principal | None = None,
     ) -> RunResult:
         """Continue a paused run from its checkpoint, with a human's answer."""
+        checkpoint = await self._accept(checkpoint)
         resolved = HumanDecision(decision)
         self._restore_ledger(checkpoint)
         start_cost = self._gateway.ledger.cost_usd
@@ -311,6 +328,18 @@ class AgentRuntime:
             self._publish_spend(checkpoint.agent_id, start_cost, start_tokens)
             raise
         return self._wrap(outcome, start_cost, start_tokens)
+
+    async def _accept(self, checkpoint: AgentCheckpoint) -> AgentCheckpoint:
+        """Refuse a checkpoint this app did not issue, has expired, or already spent.
+
+        Called before anything the checkpoint carries is read, so a tampered pending call
+        is never authorized, priced or observed. A runtime built without a signer keeps the
+        pre-signing behaviour, which is what a direct library embedder already had.
+        """
+        if self._signer is None:
+            return checkpoint
+        await self._signer.accept(checkpoint, self._nonces)
+        return checkpoint
 
     async def _resume(
         self,
@@ -1057,7 +1086,7 @@ class AgentRuntime:
             channel = approval.channel
         else:
             channel = _TOOL_CONFIRMATION
-        return AgentCheckpoint(
+        checkpoint = AgentCheckpoint(
             agent_id=frame.agent.id,
             step=frame.step,
             messages=tuple(frame.messages),
@@ -1076,6 +1105,10 @@ class AgentRuntime:
             escalation=escalation,
             guardrails=tuple(frame.guardrails),
         )
+        # Signed here rather than at the route, so every pause path -- approval, tool
+        # confirmation, guardrail escalation, and the nested caller of a delegate -- is
+        # issued by the same key. A second signing site is a second thing to forget.
+        return checkpoint if self._signer is None else self._signer.sign(checkpoint)
 
     def _restore_ledger(self, checkpoint: AgentCheckpoint) -> None:
         """Carry a pause's spend into this process's ledger before resuming.

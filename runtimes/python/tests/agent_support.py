@@ -341,6 +341,8 @@ def build(
     tracer: Tracer | None = None,
     ledger: CostLedger | None = None,
     provider: FakeProvider | None = None,
+    signer: Any = None,
+    nonces: Any = None,
 ) -> Harness:
     fake = provider if provider is not None else FakeProvider(name=PROVIDER, script=script)
     runtime = AgentRuntime.from_ir(
@@ -351,5 +353,7 @@ def build(
         memory_store=memory_store,
         ledger=ledger,
         tracer=tracer,
+        signer=signer,
+        nonces=nonces,
     )
     return Harness(runtime=runtime, provider=fake, ledger=runtime.gateway.ledger)
