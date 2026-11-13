@@ -191,11 +191,23 @@ export captured content when that set is empty (`cli/trace-export-enterprise-cap
 document that names nothing is declaring that nothing it records is sensitive, and the command
 does not take that declaration at face value.
 
-This covers pipelines. A document that runs an **agent** cannot declare a redact set at all — the
-build refuses it, because the runner re-sends a transcript it assembled and no emitted code can
-strip a value back out of it. If the capability you are delivering is an agent and its prompts can
-carry a customer identifier, redact before the value reaches the prompt, or leave payload capture
-off.
+That is the pipeline path. An agent run has no rendered prompt to bind to, so it binds where values
+arrive named: the arguments of the tool calls its model composes. A named argument is withheld from
+the recorded copy and still reaches the model, so a tool call carrying `email` masks the address in
+the trace while the tool body works with the real one. The set is re-derived from the transcript a
+checkpoint carries, so a resumed run is protected too. Two limits stand:
+
+- **Prose has no field name.** The runner is handed a plain string, so a value that enters only
+  through the input text is recorded as written. If your prompts can carry a customer identifier
+  and it arrives in prose rather than in a tool argument, redact before the value reaches the
+  prompt, or leave payload capture off.
+- **A document that declares no tool has nothing to bind.** `aid validate` refuses it
+  (`unsupported-redact`) rather than emit a guarantee nothing keeps. Declare the tool whose
+  arguments carry the fields, or serve the same work through a pipeline.
+
+`aid trace export` holds an agent document to the same test, and does not accept
+`observability.feedback.redact` in its place: a set declared for stored signals says nothing about
+what a trace already recorded.
 
 What the set does not cover either way is a value you record by another route — your own log line,
 or text a tool body writes somewhere. Redaction is a property of the prompt the gateway renders and
@@ -297,7 +309,7 @@ today.
 | Profile | `profile: enterprise` | `ir/profile-unknown` | Gated, and it is what makes the rows below non-optional |
 | Region pin | `deployments.<d>.region` | `ir/profile-region` | Gated and generated into the infra module |
 | Audit sink | `deployments.<d>.audit` | `ir/profile-audit` | Gated and generated; the archive is declared only when the document pins one |
-| Redaction of recorded text | `observability.redact` | `ir/security-redaction-incomplete` | Enforced by the pipeline and honoured by `aid trace export`. **Not available for an agent run**, which the build refuses |
+| Redaction of recorded text | `observability.redact` | `ir/security-redaction-incomplete` | Enforced by the pipeline at the render and by an agent run at its tool arguments, and honoured by `aid trace export` for both. Two stated limits: a value arriving only in prose, and a document that declares no tool, which the build refuses |
 | Output guardrail | any guardrail inspecting model output | `ir/profile-guardrail` | Gated and generated |
 | Private network | `deployments.<d>.network.private: true` | `ir/profile-network` | Gated and generated; a two-AZ VPC with private task subnets and one NAT gateway |
 | Change approval | `deployments.<d>.approvals` for production | `ir/profile-approvals` | Gated and generated as a pause |

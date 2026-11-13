@@ -225,6 +225,7 @@ class DeepAgentsEngine:
             budget=budget,
             allowed_tools=frozenset(allowed),
             max_calls=max(agent.max_steps - frame.step, 0),
+            redact=self._runtime.spec.redact,
         )
         models.append((agent.id, model))
         return model
@@ -311,12 +312,18 @@ class DeepAgentsEngine:
             definition = self._runtime._executor.definition(spec.name)
 
             async def _call(
-                _agent: AgentDefinition = agent, _name: str = spec.name, **kwargs: Any
+                _agent: AgentDefinition = agent,
+                _name: str = spec.name,
+                _frame: _Frame = frame,
+                **kwargs: Any,
             ) -> str:
                 # The id is derived, not random: the harness pairs a result with its
                 # call by id, and a random one would make two identical runs differ.
                 call = ToolCall(id=f"{_agent.id}:{_name}", name=_name, arguments=kwargs)
-                observations = await self._runtime._observe(_agent, [call], principal)
+                # The run's frame, so the value a tool call carries is bound for
+                # redaction exactly as it is under the native engine; `agent` keeps
+                # the delegate's own grant in force for a delegated call.
+                observations = await self._runtime._observe(_frame, [call], principal, agent=_agent)
                 return observations[0].content
 
             tools.append(

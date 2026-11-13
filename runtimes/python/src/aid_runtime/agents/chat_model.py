@@ -51,6 +51,7 @@ from pydantic import Field
 from aid_runtime.cost import Budget
 from aid_runtime.errors import DeepAgentsEngineError, DeepAgentsMaxStepsError
 from aid_runtime.gateway import ModelGateway
+from aid_runtime.redaction import bind_redactions
 from aid_runtime.types import CompletionRequest, Message, ToolCall, ToolDefinition
 
 __all__ = [
@@ -80,6 +81,14 @@ class GatewayChatModel(BaseChatModel):
     #: harness's own limiter completes the run with a synthetic answer instead of
     #: failing. ``None`` disables the counter (used by the offline fixtures).
     max_calls: int | None = None
+    #: ``observability.redact``: the fields the recorded copy of each generation must
+    #: not carry. The harness hands this adapter a conversation, not a render, so the
+    #: values are bound from the tool calls in that conversation -- the same source the
+    #: native loop uses.
+    redact: tuple[str, ...] = ()
+    #: The ``(name, value)`` pairs learned so far. Kept because the harness may trim the
+    #: conversation it hands back, and a value learned once stays withheld.
+    redactions: tuple[tuple[str, str], ...] = ()
     #: What ``bind_tools`` last admitted. Read by tests, never by the harness.
     bound_tools: tuple[ToolDefinition, ...] = ()
     #: Every generation this model produced, in order. The proof that the harness
@@ -125,6 +134,28 @@ class GatewayChatModel(BaseChatModel):
             "accounting path. Use ainvoke."
         )
 
+    def _withhold(self, conversation: Sequence[Message]) -> tuple[tuple[str, str], ...]:
+        """Learn what to withhold from the tool calls the harness handed back.
+
+        Called before every generation, so a value that entered the conversation one
+        call ago is withheld from the moment it appears. Only declared field names are
+        bound and only string values -- the same rule as the native loop, and it carries
+        the same limit: a value the model mentions in free text has no field name to
+        match, so ``observability.redact`` cannot reach it.
+        """
+        if not self.redact:
+            return ()
+        known = list(self.redactions)
+        for message in conversation:
+            for call in message.tool_calls:
+                for pair in bind_redactions(self.redact, call.arguments):
+                    if pair not in known:
+                        known.append(pair)
+        learned = tuple(known)
+        if learned != self.redactions:
+            self.redactions = learned
+        return learned
+
     async def _agenerate(
         self,
         messages: list[BaseMessage],
@@ -139,9 +170,11 @@ class GatewayChatModel(BaseChatModel):
         breach is raised, not returned: the harness must not be able to continue
         past a budget the ledger already refused.
         """
+        conversation = to_aid_messages(messages)
         request = CompletionRequest(
-            messages=to_aid_messages(messages),
+            messages=conversation,
             tools=self.bound_tools,
+            redactions=self._withhold(conversation),
         )
         if self.max_calls is not None and len(self.calls) >= self.max_calls:
             # Refused before the call, not after: an agent that has spent its step

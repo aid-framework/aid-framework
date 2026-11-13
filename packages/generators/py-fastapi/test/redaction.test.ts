@@ -6,9 +6,12 @@
  * tell it which fields, at the one place a value is known -- the rendered prompt, whose
  * bindings turn a name into the text that must not travel. These tests pin that wiring.
  *
- * They also pin the refusal that stands where no render exists. An agent run re-sends a
- * transcript it assembled, so there is no field to bind and the guarantee cannot be kept;
- * emitting the module anyway would be the approximation the gates exist to prevent.
+ * They also pin the other half of the same boundary. An agent run's structured record is
+ * its tool calls, so a document whose agents declare a tool binds the withheld names from
+ * the arguments the model composes and keeps the guarantee -- those are the tests below.
+ * The one shape that cannot is an agent document with no tool at all, which is refused
+ * rather than emitted unkept; that refusal needs a tool-less fixture, so it lives beside
+ * the fixture that can omit the tool, in `agents-memory.test.ts`.
  *
  * The third case is what keeps the feature from costing every other document: a spec that
  * withholds nothing emits no redaction table at all, so the bytes of an app that never
@@ -23,8 +26,6 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { PyFastApiPlanError } from '../src/errors.js';
-import type { PlanProblem } from '../src/validate.js';
 import { buildForSpecText, exampleSpecText, fileMap } from './helpers.js';
 
 /** The accounts-payable app: one prompt, one pipeline, no agent. */
@@ -43,7 +44,7 @@ const INVOICE_SPEC = readFileSync(
  */
 const REDACTING = `${INVOICE_SPEC}\nobservability:\n  redact: [invoice]\n`;
 
-/** The example agent app -- the document the refusal is about, unmodified. */
+/** The example agent app -- the document that must accept a set, unmodified. */
 const AGENT_SPEC = exampleSpecText();
 
 /** A field of that app's own types, and a name the security gate derives a mark from. */
@@ -56,17 +57,6 @@ function source(text: string, path: string): string {
   const found = fileMap(buildForSpecText(text).plan.files).get(path);
   expect(found, `${path} is not in the plan`).toBeTypeOf('string');
   return found ?? '';
-}
-
-/** The problems a refused plan reports; a refused plan throws instead of returning one. */
-function problems(text: string): readonly PlanProblem[] {
-  try {
-    buildForSpecText(text);
-  } catch (error) {
-    if (error instanceof PyFastApiPlanError) return error.problems;
-    throw error;
-  }
-  throw new Error('the spec planned without a problem');
 }
 
 describe('a withheld field reaches the request that records it', () => {
@@ -102,34 +92,41 @@ describe('a withheld field reaches the request that records it', () => {
   });
 });
 
-describe('a document that runs an agent cannot honour a withheld field', () => {
-  it('refuses a declared set, and says why no emitted code can strip it', () => {
-    const [problem] = problems(`${AGENT_SPEC}\nobservability:\n  redact: [email]\n`);
+/**
+ * The other side of the same refusal: an agent document that *does* have a record to bind.
+ *
+ * `examples/support-copilot` declares two tools, so an agent run there composes tool calls
+ * whose arguments are mappings with declared keys -- the boundary the runtime binds. The set
+ * therefore crosses into `app/generated/agents.py`, and a gate that refused it would be
+ * refusing a guarantee the emitted run actually keeps.
+ */
+describe('an agent document with a tool honours the withheld field', () => {
+  it('accepts a declared set and carries it into the agent document', () => {
+    const agents = source(
+      `${AGENT_SPEC}\nobservability:\n  redact: [email]\n`,
+      'app/generated/agents.py',
+    );
 
-    expect(problem?.code).toBe('unsupported-redact');
-    expect(problem?.path).toBe('observability.redact');
-    expect(problem?.message).toContain('the document runs an agent');
-    expect(problem?.message).toContain('transcript it was handed');
+    // The names, not the marker: the runtime resolves each to the tool-call argument it
+    // names, so a document that dropped this block would record the value in full.
+    expect(agents).toContain('"observability": {"redact": ["email"]}');
   });
 
-  it('refuses a field whose name derives the set, with nothing declared at all', () => {
-    // `observability.redact` is omitted here and the document still withholds `email`,
+  it('accepts a field whose name derives the set, with nothing declared at all', () => {
+    // `observability.redact` is omitted here and the document withholds `email` anyway,
     // because an omitted set defaults to the names the security gate derives from field
-    // names. That is the same guarantee arriving by a route the document never spells
-    // out, which is why it is refused rather than quietly dropped.
+    // names. The derived route reaches the same document by a path the spec never spells
+    // out, so it is the one more likely to be lost in a projection.
     const derived = AGENT_SPEC.replace(ANCHOR, `${ANCHOR}${DERIVED}`);
     expect(derived).not.toBe(AGENT_SPEC);
 
-    const refused = problems(derived).filter((entry) => entry.code === 'unsupported-redact');
-
-    expect(refused.map((entry) => entry.path)).toContain('observability.redact');
-    expect(refused.some((entry) => entry.message.includes('email'))).toBe(true);
+    expect(source(derived, 'app/generated/agents.py')).toContain('"redact": ["email"]');
   });
 
-  it('accepts the same withheld field once the work is served through a pipeline', () => {
-    // The refusal's own advice, taken: this document names no agent, and the first block
-    // proves it plans and emits the table. The refusal is a dead end only if the author
-    // leaves the agent in place.
+  it('accepts the same withheld field when the work is served through a pipeline', () => {
+    // A pipeline binds at its render, which exists with or without an agent in the
+    // document, so the declaration is honoured there too -- and emitted as the request's
+    // own constant rather than into the agent document.
     expect(AGENT_SPEC).toContain('agents:');
     expect(source(REDACTING, 'app/generated/pipelines/extract_invoice.py')).toContain('REDACT');
   });

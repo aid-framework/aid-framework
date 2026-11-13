@@ -96,6 +96,7 @@ from aid_runtime.errors import (
 from aid_runtime.gateway import ModelGateway
 from aid_runtime.metrics import record_agent_run
 from aid_runtime.providers.base import Provider
+from aid_runtime.redaction import Redaction, bind_redactions
 from aid_runtime.tools import Tool, ToolExecutor
 from aid_runtime.tracing import agent_span, record_attributes, record_guardrail, record_hitl
 from aid_runtime.types import (
@@ -170,6 +171,12 @@ class _Frame:
     # the input stage already ran.
     input_checked: bool = False
     guardrails: list[GuardrailRecord] = field(default_factory=list)
+    # `(name, value)` pairs the declared redact set can strip from the *recorded* copy
+    # of every model call this frame makes. Seeded from what the caller supplied and
+    # from the tool-call arguments already in the transcript, and grown as the model
+    # composes more calls: an agent run has no render, so this is where its bindings
+    # come from. The live transcript is never edited -- see `aid_runtime.redaction`.
+    redactions: list[Redaction] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -274,8 +281,17 @@ class AgentRuntime:
         principal: Principal | None = None,
         memory_key: str | None = None,
         conversation: Sequence[Message] = (),
+        redactions: Sequence[Redaction] = (),
     ) -> RunResult:
-        """Run ``agent_id`` to a stop condition on one user message."""
+        """Run ``agent_id`` to a stop condition on one user message.
+
+        ``redactions`` is the caller's ``(name, value)`` bindings for the fields
+        ``observability.redact`` withholds. A pipeline binds them when it renders a
+        prompt; an agent run has no render, so an application that already holds the
+        values -- a typed request, a database row -- supplies them here, and the loop
+        adds every value it learns from the tool calls the model composes. They are
+        applied to the *recorded* copy only: the model still receives the real text.
+        """
         agent = self._spec.agent(agent_id)
         self._require_engine(agent)
         key = memory_key or agent.id
@@ -289,6 +305,7 @@ class AgentRuntime:
             path=(agent.id,),
             memory_key=key,
         )
+        frame.redactions[0:0] = list(redactions)
         start_cost = self._gateway.ledger.cost_usd
         start_tokens = self._gateway.ledger.total_tokens
         try:
@@ -367,7 +384,7 @@ class AgentRuntime:
                 frame.messages.append(Message.assistant(answer))
                 await self._remember(agent, answer, checkpoint.memory_key)
                 return self._guardrail_completed(frame, answer)
-            frame.messages.extend(await self._observe(agent, checkpoint.calls, principal))
+            frame.messages.extend(await self._observe(frame, checkpoint.calls, principal))
         elif escalation is not None:
             # A person declined to release what the guardrail flagged. That is a
             # decision, not an error, and the run stops here with the guardrail's
@@ -567,7 +584,7 @@ class AgentRuntime:
                     guardrails=tuple(frame.guardrails),
                 )
 
-            frame.messages.extend(await self._observe(agent, guarded, principal))
+            frame.messages.extend(await self._observe(frame, guarded, principal))
 
     async def _guardrail_text(
         self,
@@ -837,7 +854,12 @@ class AgentRuntime:
         )
 
     async def _observe(
-        self, agent: AgentDefinition, calls: Sequence[ToolCall], principal: Principal
+        self,
+        frame: _Frame,
+        calls: Sequence[ToolCall],
+        principal: Principal,
+        *,
+        agent: AgentDefinition | None = None,
     ) -> list[Message]:
         """Turn calls into observations, in the order the model asked for them.
 
@@ -851,10 +873,15 @@ class AgentRuntime:
         The grant is the agent's declared tool list, and a side-effecting tool
         additionally needs an ``auth`` policy that holds for this principal. A
         model cannot repair either: the spec is what is wrong.
+
+        ``agent`` defaults to the agent the frame is running. The harness engine
+        passes it explicitly, because a delegate's tool body executes inside the
+        delegate's grant while the run itself continues in the caller's frame.
         """
+        owner = agent if agent is not None else frame.agent
         known = [call for call in calls if call.name in self._executor.names]
         for call in known:
-            self._authorize(agent, call, principal)
+            self._authorize(owner, call, principal)
         executed = {result.call_id: result for result in await self._executor.execute_all(known)}
         observations: list[Message] = []
         for call in calls:
@@ -868,7 +895,10 @@ class AgentRuntime:
                     )
                 )
                 continue
-            observations.append(Message.tool(result.call_id, result.content, name=result.name))
+            observations.append(Message.tool(call.id, result.content, name=result.name))
+        # Bound after execution: a call this agent may not make raises, and a denied
+        # call's arguments are not something the run went on to act on.
+        self._bind_calls(frame, calls)
         return observations
 
     def _authorize(self, agent: AgentDefinition, call: ToolCall, principal: Principal) -> None:
@@ -935,7 +965,14 @@ class AgentRuntime:
             messages = frame.memory.thread.trim(messages)
         if frame.memory.context:
             messages = (messages[0], Message.system(frame.memory.context), *messages[1:])
-        return CompletionRequest(messages=messages, tools=self._tool_definitions(frame.agent))
+        return CompletionRequest(
+            messages=messages,
+            tools=self._tool_definitions(frame.agent),
+            # The gateway is the one place that writes model text to a trace, and this
+            # is the same pair list a rendered prompt hands it. The provider receives
+            # `messages` untouched; only the recorded copy is stripped.
+            redactions=tuple(frame.redactions),
+        )
 
     def _tool_definitions(self, agent: AgentDefinition) -> tuple[ToolDefinition, ...]:
         definitions = [
@@ -1145,7 +1182,7 @@ class AgentRuntime:
         self._require_engine(agent)
         memory = await self._memory_state(agent, memory_key)
         ledger = self._gateway.ledger
-        return _Frame(
+        frame = _Frame(
             agent=agent,
             messages=list(messages),
             alias=agent.model,
@@ -1155,11 +1192,13 @@ class AgentRuntime:
             cost_anchor=ledger.cost_usd,
             token_anchor=ledger.total_tokens,
         )
+        self._bind_message_calls(frame)
+        return frame
 
     async def _frame_from(self, checkpoint: AgentCheckpoint) -> _Frame:
         agent = self._spec.agent(checkpoint.agent_id)
         memory = await self._memory_state(agent, checkpoint.memory_key)
-        return _Frame(
+        frame = _Frame(
             agent=agent,
             messages=list(checkpoint.messages),
             alias=checkpoint.alias or agent.model,
@@ -1177,6 +1216,36 @@ class AgentRuntime:
             input_checked=True,
             guardrails=list(checkpoint.guardrails),
         )
+        # The checkpoint carries the transcript, and the transcript carries the calls,
+        # so the resumed frame re-learns its bindings instead of holding state the
+        # checkpoint would have to duplicate -- and duplicate *unredacted*.
+        self._bind_message_calls(frame)
+        return frame
+
+    def _bind_message_calls(self, frame: _Frame) -> None:
+        """Bind the declared names against every tool call the transcript carries."""
+        if not self._spec.redact:
+            return
+        for message in frame.messages:
+            self._bind_calls(frame, message.tool_calls)
+
+    def _bind_calls(self, frame: _Frame, calls: Sequence[ToolCall]) -> None:
+        """Grow the frame's bindings from the arguments the model composed.
+
+        A tool call's arguments are keyed by field name, which is exactly what a redact
+        set names and what prose cannot supply. Pairs already bound are left alone, but a
+        *new* value for an already-bound name is added: two customers' addresses in one
+        run are two values to strip, and keeping only the first would leave the second
+        in every copy recorded after it appeared.
+        """
+        if not self._spec.redact:
+            return
+        known = set(frame.redactions)
+        for call in calls:
+            for pair in bind_redactions(self._spec.redact, call.arguments):
+                if pair not in known:
+                    frame.redactions.append(pair)
+                    known.add(pair)
 
     async def _memory_state(self, agent: AgentDefinition, memory_key: str) -> _MemoryState:
         thread: ThreadMemory | None = None

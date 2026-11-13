@@ -260,6 +260,13 @@ class RuntimeSpec:
     #: ``None`` means unbounded: the runtime only shares a limiter when a deployment
     #: declares one, which keeps plain request/response usage free of surprises.
     concurrency: int | None = None
+    #: ``observability.redact``: the fields a recorded trace must not carry. A pipeline
+    #: binds them when it renders a prompt; the loop binds them from the structured
+    #: records it handles (tool-call arguments) and from any the caller supplies, and
+    #: the gateway strips them from the copy it writes. An agent run has no render, so
+    #: a value that appears only in free text is not bound -- the limit is documented
+    #: where the declaration is.
+    redact: tuple[str, ...] = ()
 
     def agent(self, agent_id: str) -> AgentDefinition:
         try:
@@ -365,6 +372,7 @@ def from_ir(document: Mapping[str, Any]) -> RuntimeSpec:
         guardrails=guardrails,
         decisions=decisions,
         concurrency=_concurrency(document.get("deployments")),
+        redact=_document_redact(document),
     )
 
 
@@ -758,6 +766,20 @@ def _concurrency(raw: Any) -> int | None:
         if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
             declared.append(value)
     return max(declared) if declared else None
+
+
+def _document_redact(document: Mapping[str, Any]) -> tuple[str, ...]:
+    """``observability.redact``, the fields a recorded trace must not carry.
+
+    Read rather than re-derived: the IR already lowered the set, including the fields
+    its sensitive-name rule added, and a second derivation here would be a policy the
+    gates never saw. An absent block is an empty set, not an error -- the runtime runs
+    documents the shipped templates emit, and they declare nothing to withhold.
+    """
+    observability = document.get("observability")
+    if not isinstance(observability, Mapping):
+        return ()
+    return tuple(_str_list(observability.get("redact"), "observability.redact"))
 
 
 def _memory(memory_id: str, entry: Mapping[str, Any]) -> MemoryDefinition:
