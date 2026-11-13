@@ -259,12 +259,12 @@ becomes "make the site's correctness detectable" rather than "correct the site".
 is first — it is the smallest change with the highest chance of catching the next round of the
 same complaint.
 
-| Phase | Work | Effort |
-| --- | --- | --- |
-| **A** | Post-deploy live assertion with backoff, plus a test that keeps the homepage example compiling | ~0.5 day |
-| **B** | One `pnpm check` that runs CI's checks in CI's order over the whole tree; truthful `lefthook.yml`; opt-in pre-push; the agent rule about `node_modules` | ~1 day |
-| **C** | Case-insensitive cloud refusal + the Windows `parentPath` fix | ~0.5 day |
-| **D** | `docs/guide/boundary.md`, linked from nav, Delivery playbook and homepage | ~1 day |
+| Phase | Work | Effort | Landed |
+| --- | --- | --- | --- |
+| **A** | Post-deploy live assertion with backoff, plus a test that keeps the homepage example compiling | ~0.5 day | [#207](https://github.com/aid-framework/aid-framework/pull/207) |
+| **B** | One `pnpm check` that runs CI's checks in CI's order over the whole tree; truthful `lefthook.yml`; opt-in pre-push; the agent rule about `node_modules` | ~1 day | [#208](https://github.com/aid-framework/aid-framework/pull/208) |
+| **C** | Case-insensitive cloud refusal + the Windows `parentPath` fix | ~0.5 day | this PR |
+| **D** | `docs/guide/boundary.md`, linked from nav, Delivery playbook and homepage | ~1 day | |
 
 ### Phase A — the site is checked, not assumed
 
@@ -324,6 +324,28 @@ is a spelling.
 
 Tests: one per capitalisation (`Azure`, `AZURE`, `Kubernetes`, `AWS`, `awz`), asserting the code
 *and* that the hint names the right destination. Plus the `parentPath` fix from §7 and its test.
+
+### Phase C outcome — what shipped, and the one deviation
+
+Shipped as planned: `buildSpecCloud` lowers the declared value once and branches three ways
+(`misspelled` → `ir/deploy-target-unknown` with the lower-case spelling; `known` →
+`ir/cloud-unsupported`; otherwise unchanged), the schema pattern widened, and it never returns a
+lowered value, so the quoted spelling in the message is always the document's own.
+
+**The deviation is §7's `parentPath` fix.** Loosening `parentPath` to split on `\` as well would
+have made the function accept two spellings of the same path and left the ambiguity in place at
+every call site. `parentPath` splits on `/` *by contract* — overlay `overridable` paths are
+repo-relative POSIX — so the bug is not there. It is that raw OS paths enter unnormalised, at
+three places: `--overlay` in `aid resolve`, `--dir` in `aid fleet`, and the `prefix` fleet derives
+from that `dir`. So the fix is one exported `repoPath()` in `packages/cli/src/paths.ts` that
+unifies separators and normalises, called at exactly those boundaries. It also fixes `./` and
+`../` spellings, which the one-line proposal did not cover.
+
+Tests: two in `packages/ir/test/build.test.ts` (the four capitalisations, and a capitalised served
+cloud getting its own spelling back), two in `packages/cli/test/overlays.test.ts` (a backslash
+overlay resolves, applies and `--check`s; a backslash `--dir` walks), and two in
+`packages/cli/test/validate.test.ts` proving `Azure` and `AWS` reach the IR through the real
+schema rather than the pattern. Each was falsified by reverting the fix and watching it fail.
 
 ### Phase D — the boundary page
 

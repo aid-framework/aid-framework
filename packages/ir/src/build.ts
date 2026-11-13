@@ -1484,26 +1484,43 @@ function buildDeployments(raw: unknown, context: BuildContext): DeploymentShape[
  * is `ir/cloud-unsupported` and gets the capability matrix, while a value that is not a cloud
  * name at all is `ir/deploy-target-unknown` and gets the supported set as a typo fix. The
  * schema admits both shapes so that this gate, not the schema, is what a reader meets.
+ *
+ * Both comparisons are case-insensitive, because `Azure` and `azure` are the same decision
+ * and a reader who capitalises is not making a different one. A schema that refused
+ * `Azure` answered `does not match ^[a-z][a-z0-9-]{1,30}$`, which names no cloud, no
+ * capability and no fix; admitting the shape here is what lets the refusal say which case
+ * of which problem it is. Capitalised names are still refused -- nothing here lowers the
+ * value it returns -- but the refusal is now the useful one: a cloud AID has deferred gets
+ * the capability matrix, and a served cloud spelled with a capital gets its spelling back.
  */
 function buildSpecCloud(raw: unknown, id: string, context: BuildContext): SpecCloud | undefined {
   const declared = asString(raw);
   if (declared === undefined) return undefined;
   if ((SPEC_CLOUDS as readonly string[]).includes(declared)) return declared as SpecCloud;
-  const known = (UNSERVED_CLOUDS as readonly string[]).includes(declared);
+  const lowered = declared.toLowerCase();
+  const misspelled = (SPEC_CLOUDS as readonly string[]).includes(lowered);
+  const known = (UNSERVED_CLOUDS as readonly string[]).includes(lowered);
   context.diagnostics.push(
-    known
+    misspelled
       ? errorDiagnostic({
-          code: IR_DIAGNOSTIC_CODES.cloudUnsupported,
-          message: `deployment "${id}" declares cloud "${declared}", which AID does not provision; the supported clouds are ${SPEC_CLOUDS.join(', ')}`,
-          path: ['deployments', id, 'cloud'],
-          hint: 'name a supported cloud, or drop `cloud` and pass `--cloud` to `aid infra`; the capability matrix in `docs/reference/support.md` lists what AID provisions, and a cloud outside it is deferred rather than approximated',
-        })
-      : errorDiagnostic({
           code: IR_DIAGNOSTIC_CODES.deployTargetUnknown,
           message: `deployment "${id}" declares cloud "${declared}", which is not one of ${SPEC_CLOUDS.join(', ')}`,
           path: ['deployments', id, 'cloud'],
-          hint: 'name a supported cloud, or drop `cloud` and pass `--cloud` to `aid infra`',
-        }),
+          hint: `cloud names are lower-case; did you mean \`${lowered}\`?`,
+        })
+      : known
+        ? errorDiagnostic({
+            code: IR_DIAGNOSTIC_CODES.cloudUnsupported,
+            message: `deployment "${id}" declares cloud "${declared}", which AID does not provision; the supported clouds are ${SPEC_CLOUDS.join(', ')}`,
+            path: ['deployments', id, 'cloud'],
+            hint: 'name a supported cloud, or drop `cloud` and pass `--cloud` to `aid infra`; the capability matrix in `docs/reference/support.md` lists what AID provisions, and a cloud outside it is deferred rather than approximated',
+          })
+        : errorDiagnostic({
+            code: IR_DIAGNOSTIC_CODES.deployTargetUnknown,
+            message: `deployment "${id}" declares cloud "${declared}", which is not one of ${SPEC_CLOUDS.join(', ')}`,
+            path: ['deployments', id, 'cloud'],
+            hint: 'name a supported cloud, or drop `cloud` and pass `--cloud` to `aid infra`',
+          }),
   );
   return undefined;
 }

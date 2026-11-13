@@ -30,7 +30,7 @@ import type { CommandOutcome } from '../output.js';
 import { outcome, usd } from '../output.js';
 import type { ResolvedOverlay } from '../overlays.js';
 import { resolveOverlay } from '../overlays.js';
-import { absolutePath } from '../paths.js';
+import { absolutePath, repoPath } from '../paths.js';
 
 export interface FleetOptions {
   readonly dir: string | undefined;
@@ -156,7 +156,7 @@ function rowOf(resolved: ResolvedOverlay, value: unknown): Row {
 
 export function fleet(context: CliContext, options: FleetOptions): CommandOutcome {
   const command = 'fleet';
-  const dir = options.dir ?? '.';
+  const dir = repoPath(options.dir ?? '.');
 
   try {
     if (!statSync(absolutePath(context.cwd, dir)).isDirectory()) throw new Error('not a directory');

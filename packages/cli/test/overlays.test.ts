@@ -113,6 +113,24 @@ describe('aid resolve', () => {
     expect(run.code).toBe(2);
     expect(diagnosticsOf(run)[0]?.code).toBe('cli/resolve-overlay-required');
   });
+
+  it('resolves an overlay spelled with the separator a Windows shell produces', () => {
+    const made = fleetRoot();
+    // `customers\acme-eu.yaml` used to lose its directory here, because `parentPath` splits
+    // on `/` alone: the base was then resolved against the working directory, and an
+    // overlay that resolves correctly was refused with `overlay/base-missing` plus a hint
+    // to check a path that was already right.
+    const run = aid(made, ['resolve', 'customers\\acme-eu.yaml', '--json']);
+    expect(run.code).toBe(0);
+    const report = run.json<{ overlay: string; customer: string; counts: { applied: number } }>();
+    expect(report.counts.applied).toBe(4);
+    expect(report.customer).toBe('acme-eu');
+    // Reported in the form the rest of the CLI speaks, so the artifact `--check` derives is
+    // the one a forward-slash invocation wrote.
+    expect(report.overlay).toBe(OVERLAY);
+    expect(aid(made, ['resolve', OVERLAY, '--out', RESOLVED]).code).toBe(0);
+    expect(aid(made, ['resolve', 'customers\\acme-eu.yaml', '--check']).code).toBe(0);
+  });
 });
 
 describe('the overlay gate, through the CLI', () => {
@@ -310,5 +328,20 @@ describe('aid fleet', () => {
       'customers/acme-eu.yaml',
       'customers/north/contoso.yaml',
     ]);
+  });
+
+  it('walks a directory spelled with the separator a Windows shell produces', () => {
+    const made = fleetRoot();
+    made.write('customers/north/contoso.yaml', GOOD.replace('acme-eu', 'contoso'));
+    // The prefix a walk reports is derived from the directory as it was typed, so a
+    // backslash one used to reach the resolver as `customers\north/contoso.yaml`: a path
+    // whose parent came out as the whole string, which sent the base lookup one level too
+    // deep and refused a customer whose overlay is fine.
+    const report = aid(made, ['fleet', 'customers\\north', '--json']).json<{
+      counts: { customers: number };
+      customers: { overlay: string; customer: string }[];
+    }>();
+    expect(report.counts.customers).toBe(1);
+    expect(report.customers[0]?.overlay).toBe('customers/north/contoso.yaml');
   });
 });
