@@ -73,6 +73,7 @@ export const IR_DIAGNOSTIC_CODES = {
   resumeKeyConflict: 'ir/resume-key-conflict',
   resumeKeyAlias: 'ir/resume-key-alias',
   approvalStepTool: 'ir/approval-step-tool',
+  cloudUnsupported: 'ir/cloud-unsupported',
   regionTarget: 'ir/region-target',
   auditTarget: 'ir/audit-target',
   cloudConflict: 'ir/cloud-conflict',

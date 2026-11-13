@@ -600,6 +600,32 @@ describe('deployments', () => {
     );
   });
 
+  it('names a cloud it does not provision, and lists the ones it does', () => {
+    const { diagnostics } = buildIR(spec({ target: 'container', secrets: [], cloud: 'azure' }));
+    const refusal = diagnostics.find(
+      (diagnostic) => diagnostic.code === IR_DIAGNOSTIC_CODES.cloudUnsupported,
+    );
+    expect(refusal?.message).toContain('"azure"');
+    expect(refusal?.message).toContain('the supported clouds are aws, gcp');
+    expect(refusal?.path).toEqual(['deployments', 'api', 'cloud']);
+  });
+
+  it('refuses Kubernetes by name, so the deferral reads as a decision', () => {
+    for (const cloud of ['kubernetes', 'k8s']) {
+      const { diagnostics } = buildIR(spec({ target: 'container', secrets: [], cloud }));
+      expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+        IR_DIAGNOSTIC_CODES.cloudUnsupported,
+      );
+    }
+  });
+
+  it('reports a cloud name it does not recognise as the typo it is', () => {
+    const { diagnostics } = buildIR(spec({ target: 'container', secrets: [], cloud: 'awz' }));
+    const codes = diagnostics.map((diagnostic) => diagnostic.code);
+    expect(codes).toContain(IR_DIAGNOSTIC_CODES.deployTargetUnknown);
+    expect(codes).not.toContain(IR_DIAGNOSTIC_CODES.cloudUnsupported);
+  });
+
   it('reports an autoscale block it would otherwise fill in itself', () => {
     const { diagnostics } = buildIR(
       spec({ target: 'container', secrets: [], autoscale: { min: 1 } }),

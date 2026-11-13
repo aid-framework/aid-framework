@@ -944,3 +944,52 @@ cost allowance -- that is the documented behaviour, not a regression.
 The grammar has not moved. Every construct the loop uses -- `observability.redact`,
 `evals[].dataset`, `eval.gate.promotion`, `approvals.path`, `profile: enterprise` -- was already
 accepted, and this release changes two sentences and one refusal message.
+
+## 0.1.168: a cloud name that is refused by name {#cloud-unsupported-release}
+
+### The refusal read as a typo
+
+`deployments[].cloud` was a schema `enum` of `aws` and `gcp`, so a document that named any other
+cloud was refused before the IR ever saw it:
+
+```text
+deployments.api.cloud: must be one of "aws", "gcp" [spec/schema-violation]
+```
+
+That sentence is accurate and tells the reader nothing. Azure and Kubernetes are deferred by
+decision, not by oversight -- adding one costs a module set per target, byte-asserted fixtures and
+`tofu validate` in CI -- but the message could not say so, and `cloud: azure` was indistinguishable
+from `cloud: awz`. A reader could not tell a decision from a typo, and the fix -- "name one of
+`aws`, `gcp`" -- was the same sentence either way.
+
+### What changed
+
+The schema now accepts any cloud-shaped name (`^[a-z][a-z0-9-]{1,30}$`), and the IR decides which
+refusal applies. A cloud AID knows of and does not provision is refused by a diagnostic that names
+the supported set and points at the capability matrix:
+
+```text
+deployment "api" declares cloud "azure", which AID does not provision;
+the supported clouds are aws, gcp [ir/cloud-unsupported]
+hint: name a supported cloud, or drop `cloud` and pass `--cloud` to `aid infra`; the capability
+matrix in `docs/reference/support.md` lists what AID provisions, and a cloud outside it is
+deferred rather than approximated
+```
+
+A value that is not a cloud name at all keeps `ir/deploy-target-unknown` and the shorter hint,
+because the fix there is a spelling. `k8s` and `kubernetes` both reach `ir/cloud-unsupported`, so a
+reader who named the platform they deploy on is told about the deferral rather than about the
+spelling of a name AID has no modules for.
+
+### What you have to do
+
+Nothing. A document that declared an unsupported cloud was refused in `0.1.167` and is refused in
+`0.1.168`; only the diagnostic code and message changed. No generated file changes shape, no
+construct is added or withdrawn, and a document that built still builds byte for byte.
+
+### Why there is no `specVersion` bump
+
+The spec language has not moved. The schema change widens what the grammar *admits* so that a gate,
+not the schema, is what a reader meets; the set of documents that build is identical, and
+`specVersion` stays at `0.33`. The decision behind the deferral, and the requirement that would
+reopen it, are recorded in [Support](./reference/support.md) rather than in a version.
