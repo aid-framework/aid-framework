@@ -11,6 +11,7 @@
     "check:head": "node scripts/check-head.mjs",
     "check:a11y": "node scripts/check-a11y.mjs",
     "check:browser": "node scripts/check-browser-a11y.mjs",
+    "check:live": "node scripts/check-live-version.mjs",
     "dev": "node scripts/gen-reference.mjs && vitepress dev",
     "build": "node scripts/gen-reference.mjs && vitepress build",
     "preview": "vitepress preview"
