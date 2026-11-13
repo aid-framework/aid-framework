@@ -712,6 +712,17 @@ service whose spans belong somewhere other than the process — `export: otlp` w
 naming the variable that holds the collector address. Where the spans go is then declared,
 reviewable in a diff, and gated, instead of living in whoever's shell ran the deploy.
 
+`redact` is the one value in that block the generated app keeps rather than declares. A pipeline
+renders its prompt from named bindings, so the app knows which value went where and replaces the
+value of each named field in the text it records with `[redacted:<name>]`. The provider still
+receives the original: the guarantee is about the copy that outlives the request, which is the
+trace. Omitting the list is not the same as asking for nothing — it defaults to the field names the
+security gate already derives as sensitive, so a document that declares no redaction still has one,
+and a field named `email` is covered by simply existing. A document that runs an agent is refused
+rather than promised this, because the agent runner re-sends a transcript it assembled and no
+emitted code can take a value back out of a string it was handed; the refusal names the fields and
+the route that can keep the guarantee, which is serving the same work through a pipeline.
+
 With py-fastapi the spans actually leave. `aid gen` emits `tracing_export_status()` into
 `app/generated/observability.py`, and your own `main.py` calls it once at startup:
 
@@ -785,12 +796,16 @@ What is refused:
 - A reduction the declared metric cannot answer, such as a `p95` over a cost total.
 - An alarm scoped to an agent or eval name the document does not declare, because the typo would
   become a dimension nothing writes.
+- A document that runs an agent and withholds a field, because the runner re-sends a transcript it
+  assembled and no emitted code can strip a value out of it; the message names the fields and the
+  pipeline route.
 
 Covers:
 
 - **Local trace capture**
 - **Cost and latency ceilings in CI**
 - **A declared place for the spans, and an exporter that reaches it**
+- **A withheld field is removed from the text a trace keeps**
 - **Alarms as generated infrastructure**
 - **The series the alarms watch, recorded and exported**
 - **A report across every deployment**

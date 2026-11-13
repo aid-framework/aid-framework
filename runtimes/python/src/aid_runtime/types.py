@@ -264,18 +264,29 @@ class CompletionRequest(BaseModel):
     tools: tuple[ToolDefinition, ...] = ()
     stop: tuple[str, ...] = ()
     metadata: dict[str, str] = Field(default_factory=dict)
+    #: ``(name, value)`` pairs bound by the redact set, used only for the recorded
+    #: copy of this call. They never reach the provider and never change a fingerprint.
+    redactions: tuple[tuple[str, str], ...] = ()
 
     @classmethod
-    def prompt(cls, text: str, *, system: str | None = None) -> CompletionRequest:
+    def prompt(
+        cls,
+        text: str,
+        *,
+        system: str | None = None,
+        redactions: tuple[tuple[str, str], ...] = (),
+    ) -> CompletionRequest:
         messages = []
         if system is not None:
             messages.append(Message.system(system))
         messages.append(Message.user(text))
-        return cls(messages=tuple(messages))
+        return cls(messages=tuple(messages), redactions=redactions)
 
     def fingerprint(self) -> str:
         """Stable hash of everything that can change the model's output."""
-        payload = self.model_dump(mode="json", exclude_none=True)
+        # ``redactions`` is excluded: it describes how the call is *recorded*, so two
+        # calls that differ only in their redact set must share one cache entry.
+        payload = self.model_dump(mode="json", exclude_none=True, exclude={"redactions"})
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 

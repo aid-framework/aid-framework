@@ -43,6 +43,7 @@ import {
   pythonStatement,
   pythonString,
   pythonTuple,
+  pythonTupleConstant,
 } from '../python.js';
 import {
   assemble,
@@ -254,6 +255,23 @@ function metricsBuilder(
 }
 
 /**
+ * The names an eval module records redacted.
+ *
+ * An eval renders a prompt outside any pipeline, so there is no single pipeline whose
+ * `observability.redact` it inherits. The process-wide declaration is the floor and every
+ * pipeline's own set is added to it: a value one pipeline refuses to record must not
+ * become recordable by running the same prompt through an eval. Redacting more than the
+ * pipelines do is the safe direction, and the reverse is the leak this exists to stop.
+ */
+function evalRedact(ir: IR): string[] {
+  const names = new Set<string>(ir.observability.redact);
+  for (const pipeline of ir.pipelines) {
+    for (const name of pipeline.observability?.redact ?? []) names.add(name);
+  }
+  return [...names].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+}
+
+/**
  * The `render` call, wrapped when it would overflow the line.
  *
  * The argument list grew by one constant when a retrieval step started feeding the prompt,
@@ -276,7 +294,7 @@ function renderCall(contextVariable: string | undefined): string[] {
   return [head, ...args.map((arg) => `${INDENT}${INDENT}${INDENT}${arg},`), `${INDENT}${INDENT})`];
 }
 
-function runnerBuilder(contextVariable: string | undefined): string {
+function runnerBuilder(contextVariable: string | undefined, redacts: boolean): string {
   return [
     'def build_runner(deps: Deps) -> GatewayRunner:',
     pythonDoc(
@@ -296,7 +314,10 @@ function runnerBuilder(contextVariable: string | undefined): string {
     '',
     `${INDENT}def request_for(case: EvalCase) -> CompletionRequest:`,
     ...renderCall(contextVariable),
-    `${INDENT}${INDENT}return CompletionRequest.prompt(rendered.text)`,
+    redacts
+      ? `${INDENT}${INDENT}return CompletionRequest.prompt(` +
+        'rendered.text, redactions=rendered.redactions(REDACT))'
+      : `${INDENT}${INDENT}return CompletionRequest.prompt(rendered.text)`,
     '',
     `${INDENT}return GatewayRunner(`,
     `${INDENT}${INDENT}deps.gateway, MODEL, request_for=request_for, fallbacks=FALLBACKS.get(MODEL, ())`,
@@ -434,6 +455,12 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
       ? undefined
       : pythonStatement('ASSERT_EXPR = ', asserted.expr);
 
+  // A document that redacts nothing emits no constant, so an app whose traces carry no
+  // declared-protected value keeps the module it always had.
+  const redact = evalRedact(ir);
+  const redactConstant =
+    redact.length === 0 ? undefined : pythonTupleConstant('REDACT', redact.map(pythonString));
+
   const constants = [
     `EVAL_ID = ${pythonString(evaluation.id)}`,
     `MODEL = ${pythonString(model)}`,
@@ -453,6 +480,7 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
     `BASELINE_PATH = ${pathExpression(baselineRelativePath(evaluation.id))}`,
     assertConstant,
     scoreConstant,
+    redactConstant,
   ].filter((line): line is string => line !== undefined);
 
   const thresholds = inline.map((binding) => {
@@ -509,7 +537,7 @@ export function emitEval(ir: IR, evaluation: EvalShape): EmittedFile {
           : `LlmJudge(judge_call, rubric=${pythonString(rubric)})`,
         scoredMetric?.expression,
       ),
-      runnerBuilder(contextVariable),
+      runnerBuilder(contextVariable, redact.length > 0),
       runBuilder(evaluation.gate.samples, judged, evaluation.gate.ci),
       [
         'def gate(measured: EvalRun, baseline: EvalBaseline) -> GateResult:',

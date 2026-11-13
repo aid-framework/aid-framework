@@ -39,6 +39,7 @@ import {
   pythonNumber,
   pythonString,
   pythonTuple,
+  pythonTupleConstant,
   pythonValue,
 } from '../python.js';
 import { streamedStepIndex, streams } from '../streaming.js';
@@ -488,26 +489,39 @@ function guardrailCheck(
   return `enforce_guardrail(ENGINE.check_${stage}(${table}, ${value}))`;
 }
 
+/**
+ * The one field a completion request carries for the trace rather than for the model:
+ * which of the values rendered into it must not be recorded. Omitted when the pipeline
+ * redacts nothing, so a document that declares no redaction emits the request it always
+ * did and the runtime falls back to its no-op default.
+ */
+function redactionsArgument(redact: boolean): (readonly [string, string])[] {
+  return redact ? [['redactions', '_rendered.redactions(REDACT)']] : [];
+}
+
 /** The closure that makes one gateway call, so a retry re-sends rather than re-renders. */
 function callClosure(
   alias: string,
   params: readonly (readonly [string, string])[],
   hasFallbacks: boolean,
   outputCheck: string | undefined,
+  redact: boolean,
 ): string[] {
   const inner = INDENT + INDENT;
   const lines = [`${INDENT}async def _call(text: str) -> str:`];
   lines.push(pythonDoc('Ask the model for one completion.', inner));
-  if (params.length === 0) {
+  if (params.length === 0 && !redact) {
     lines.push(`${inner}_request = CompletionRequest.prompt(text)`);
   } else {
     lines.push(
       callStatement(
         '_request = ',
         'CompletionRequest',
-        sortedPairs([['messages', '(Message.user(text),)'], ...params]).map(
-          ([name, value]) => `${name}=${value}`,
-        ),
+        sortedPairs([
+          ['messages', '(Message.user(text),)'],
+          ...params,
+          ...redactionsArgument(redact),
+        ]).map(([name, value]) => `${name}=${value}`),
         inner,
       ),
     );
@@ -535,6 +549,7 @@ function emitGenerateStep(
   imports: StepImports,
   request: string,
   bodyName?: string,
+  redact = false,
 ): string {
   const prompt = require(step.kind === 'generate'
     ? promptOf(ir, step.prompt)
@@ -570,7 +585,7 @@ function emitGenerateStep(
   );
   lines.push(...localLines(step, context, imports, request).map((line) => `${INDENT}${line}`));
   lines.push('');
-  lines.push(...callClosure(pythonString(alias), params, hasFallbacks, outputCheck));
+  lines.push(...callClosure(pythonString(alias), params, hasFallbacks, outputCheck, redact));
   lines.push('');
   lines.push(
     callStatement(
@@ -1107,7 +1122,7 @@ export function contextSeed(pipeline: PipelineShape, deps: string): [string, str
  * heard of. The `referencedRoots` recursion is not the mechanism: it is total over all
  * eight kinds, but has no live caller for a composite wrapper, which opens no locals.
  */
-function emitCompositeSteps(emitter: PipelineEmitter, step: StepShape): string[] {
+function emitCompositeSteps(emitter: PipelineEmitter, step: StepShape, redact: boolean): string[] {
   const { ir, names, imports } = emitter;
   const name = require(names.get(step), 'a function name for a composite step');
   const inner = INDENT + INDENT;
@@ -1187,7 +1202,15 @@ function emitCompositeSteps(emitter: PipelineEmitter, step: StepShape): string[]
     };
     const bodyName = `${name}_item`;
     extra.push(
-      emitGenerateStep(ir, body, contextOf(emitter, step), imports, emitter.request, bodyName),
+      emitGenerateStep(
+        ir,
+        body,
+        contextOf(emitter, step),
+        imports,
+        emitter.request,
+        bodyName,
+        redact,
+      ),
     );
     callee = 'reduce_step';
     args = [
@@ -1332,16 +1355,19 @@ function emitStreamRequest(
   const inputCheck = guardrailCheck(ir, 'input', imports, '_rendered.text');
   const text = inputCheck === undefined ? '_rendered.text' : '_verdict.text';
   if (inputCheck !== undefined) lines.push(`${INDENT}_verdict = ${inputCheck}`);
-  if (params.length === 0) {
+  const redact = (pipeline.observability?.redact ?? []).length > 0;
+  if (params.length === 0 && !redact) {
     lines.push(`${INDENT}_request = CompletionRequest.prompt(${text})`);
   } else {
     lines.push(
       callStatement(
         '_request = ',
         'CompletionRequest',
-        sortedPairs([['messages', `(Message.user(${text}),)`], ...params]).map(
-          ([name, value]) => `${name}=${value}`,
-        ),
+        sortedPairs([
+          ['messages', `(Message.user(${text}),)`],
+          ...params,
+          ...redactionsArgument(redact),
+        ]).map(([name, value]) => `${name}=${value}`),
         INDENT,
       ),
     );
@@ -1366,10 +1392,11 @@ function stepBlock(
   imports: StepImports,
   request: string,
   bodyName: string | undefined,
+  redact: boolean,
 ): string {
   switch (step.kind) {
     case 'generate':
-      return emitGenerateStep(ir, step, context, imports, request, bodyName);
+      return emitGenerateStep(ir, step, context, imports, request, bodyName, redact);
     case 'retrieve':
       return emitRetrieveStep(ir, step, context, imports, request, bodyName);
     case 'tool':
@@ -1412,6 +1439,13 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
   const emitter = emitterFor(ir, pipeline);
   const { scopes, imports, request, names } = emitter;
   const blocks: string[] = [];
+  /* The fields this pipeline's traces must not carry. `sensitive` derivation already ran
+   * in the IR, so this is the declared set plus every name the deny-list inferred; a
+   * pipeline that inherits the process-wide declaration gets that inheritance resolved
+   * here rather than at runtime, which is what keeps the recorded copy and the spec in
+   * one place. */
+  const redact = [...new Set(pipeline.observability?.redact ?? [])].sort(byName);
+  const redacts = redact.length > 0;
 
   /* Composites nest: an arm is a step list that may itself hold a composite, down to the
    * depth the spec gate enforces. Every step in the tree becomes its own function, so the
@@ -1422,7 +1456,7 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
       if (step.kind === 'emit') continue;
       if (isCompositeStep(step)) {
         emitSteps(childrenOf(step));
-        blocks.push(...emitCompositeSteps(emitter, step));
+        blocks.push(...emitCompositeSteps(emitter, step, redacts));
         continue;
       }
       const context: ExpressionContext = {
@@ -1433,7 +1467,7 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
       // A nested step is defined under its position-qualified name; a top-level one keeps
       // its binding name, which is what the name map leaves unmapped.
       const bodyName = names.get(step);
-      blocks.push(stepBlock(ir, step, context, imports, request, bodyName));
+      blocks.push(stepBlock(ir, step, context, imports, request, bodyName, redacts));
     }
   };
   emitSteps(pipeline.steps ?? []);
@@ -1501,6 +1535,10 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
           ].join('\n'),
         ];
 
+  /* The set goes above the step functions because every request in the module reads it.
+   * Named `REDACT` after `observability.redact`, the key it is resolved from. */
+  const redactTable = redacts ? [pythonTupleConstant('REDACT', redact.map(pythonString))] : [];
+
   return generated(
     pipelinePath(pipeline.id),
     assemble([
@@ -1508,6 +1546,7 @@ export function emitPipeline(ir: IR, pipeline: PipelineShape): EmittedFile {
       pythonDoc(`Pipeline \`${pipeline.id}\`, generated from the spec. Do not edit.`),
       headers,
       ...decisionTable,
+      ...redactTable,
       ...blocks,
       factory,
     ]),

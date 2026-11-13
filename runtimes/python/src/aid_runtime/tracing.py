@@ -194,9 +194,11 @@ def record_content(span: Span, *, input_text: str | None, output_text: str | Non
 
     - The sink writes to a local directory that a repository may commit and a CI log
       may echo, so text that is off by default cannot leak by accident.
-    - Nothing here redacts. A captured prompt is captured as it was sent, and the
-      operator who set the variable owns that decision; the spec's ``pii.redact``
-      governs the deployed feedback path, not this local switch.
+    - Redaction happens before this call, in the caller that rendered the prompt: the
+      gateway replaces every value the spec withholds with ``[redacted:<name>]`` in the
+      text it hands to this function, so what arrives here is already the recordable
+      form. This function does not redact, and must not: it receives prose, not the
+      field bindings a value could be recognised by.
     - ``aid trace export --dataset`` is the one reader that wants the text, and it
       can only build a case from a run that recorded one.
 

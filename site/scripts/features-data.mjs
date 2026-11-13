@@ -441,6 +441,17 @@ export const SHIPPED_FEATURES = [
     since: '0.1.150',
   },
   {
+    id: 'redact-recording',
+    title: 'A withheld field is removed from the text a trace keeps',
+    detail:
+      '`observability.redact` stopped being a declaration. A pipeline renders a prompt from named bindings, so the generated app knows which value went where and replaces the value of each named field in the text it records with `[redacted:<name>]`: the provider still receives the original, and the copy that outlives the request does not. An omitted list defaults to the field names the security gate already derives as sensitive, so a document that declares nothing is still covered. `aid trace export` withholds the same union, reports it as `withheld`, and under `profile: enterprise` refuses a document that withholds nothing. A document that runs an agent is refused by name instead, because the runner re-sends a transcript it assembled and no emitted code can strip a value back out of it.',
+    declaredBy: 'observability.redact',
+    href: './reference/spec.md#observability',
+    // Pipeline-scoped on purpose. The agent runner records the transcript it was handed,
+    // with no render to bind a value to, so the refusal is the honest half of the release.
+    since: '0.1.161',
+  },
+  {
     id: 'metrics-series',
     title: 'The series the alarms watch, recorded and exported',
     detail:
@@ -529,7 +540,7 @@ export const SHIPPED_FEATURES = [
     id: 'trace-export',
     title: 'A dataset from the runs you already have',
     detail:
-      '`aid trace export --dataset <name>` turns a directory of traced runs into an eval dataset, so the first cases for a new agent come from production traffic instead of from someone guessing what people will ask. One run is one case: the prompt it was first given, the answer it last produced, and the calls, cost, wall time, model and tools beside it. The file is written in the same canonical form the Python `Dataset` writes, so a regenerated dataset diffs cleanly. The exit code separates the two failures that matter -- a run that recorded no payloads (the sink keeps text only when the application ran with `AID_TRACE_CONTENT=1`, and the refusal names that variable) and a file that already exists (refused without `--force`, because it may have been curated by hand since). Every case is tagged `unreviewed`, because `expected` is what the run happened to output: it is a record of behaviour, not a judgement about a good answer, and the honest next step is a person editing the file. The export reads the spec first and applies the policy it finds: a document that names a field a trace must never carry, or one under `profile: enterprise`, refuses the export rather than writing text it has no way to redact.',
+      '`aid trace export --dataset <name>` turns a directory of traced runs into an eval dataset, so the first cases for a new agent come from production traffic instead of from someone guessing what people will ask. One run is one case: the prompt it was first given, the answer it last produced, and the calls, cost, wall time, model and tools beside it. The file is written in the same canonical form the Python `Dataset` writes, so a regenerated dataset diffs cleanly. The exit code separates the two failures that matter -- a run that recorded no payloads (the sink keeps text only when the application ran with `AID_TRACE_CONTENT=1`, and the refusal names that variable) and a file that already exists (refused without `--force`, because it may have been curated by hand since). Every case is tagged `unreviewed`, because `expected` is what the run happened to output: it is a record of behaviour, not a judgement about a good answer, and the honest next step is a person editing the file. The export reads the spec first and applies the policy it finds: it withholds the union of `observability.redact` and `observability.feedback.pii.redact`, reports that set as `withheld` in its JSON output, and under `profile: enterprise` refuses a document that withholds nothing, because nothing would have removed a value before the trace was written.',
     declaredBy: 'aid trace export',
     href: './reference/cli.md#trace',
     since: '0.1.154',
@@ -934,6 +945,7 @@ export const CAPABILITY_FAMILIES = [
       'cost-metric',
       'metrics-series',
       'observability-export',
+      'redact-recording',
       'generated-alarms',
       'fleet-report',
     ],
