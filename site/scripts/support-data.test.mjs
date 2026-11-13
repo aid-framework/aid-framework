@@ -11,7 +11,14 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { generatorDirectories, repoRoot, targetIds } from './support-data.mjs';
+import {
+  generatorDirectories,
+  loadSupportData,
+  parsePlanProblemCodes,
+  planProblemCodes,
+  repoRoot,
+  targetIds,
+} from './support-data.mjs';
 
 const generatorsRoot = join(repoRoot, 'packages', 'generators');
 
@@ -40,5 +47,34 @@ describe('generator discovery', () => {
       rmSync(probe, { recursive: true, force: true });
       if (!preExisted) rmSync(stray, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * A plan-time refusal the features page cites has to exist in the union its target reports.
+ *
+ * Round 6 shipped `unsupported-streaming` on the features page while no table the page reads
+ * defined it, so the page named a gate and the site's own suite could not tell whether the
+ * gate was there. The unions are the registry now.
+ */
+describe('the plan-time codes a target reports', () => {
+  it('reads the members of the union rather than a hand-kept list', () => {
+    const codes = planProblemCodes();
+
+    expect(codes).toContain('unsupported-guardrail');
+    expect(codes).toContain('streaming-unsupported');
+  });
+
+  it('offers them to the page checker beside every registered table', () => {
+    const data = loadSupportData();
+
+    expect(data.diagnostics).toContain('streaming-unsupported');
+    expect(data.diagnostics).toContain('unsupported-guardrail');
+  });
+
+  it('fails rather than reporting nothing when the union cannot be read', () => {
+    expect(() => parsePlanProblemCodes('export type PlanProblemCode = never;')).toThrow(
+      /cannot parse a plan problem code union/,
+    );
   });
 });

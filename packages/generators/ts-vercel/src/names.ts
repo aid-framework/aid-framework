@@ -329,8 +329,8 @@ export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, ReadonlySet<
   ]),
   // The TS runtime's Messages adapter validates every turn but does not stream.
   AnthropicProvider: new Set<Capability>(['structured-output', 'tool-calling']),
-  // Converse has no embeddings endpoint and /converse-stream is a binary event
-  // stream the adapter does not decode.
+  // The TS provider seam is request/response only, so Bedrock does not advertise
+  // streaming here even though the Python adapter decodes `/converse-stream`.
   // Embeddings are served: Titan answers on `InvokeModel`, which this adapter signs
   // with the same identity as Converse.
   BedrockProvider: new Set<Capability>(['embeddings', 'structured-output', 'tool-calling']),

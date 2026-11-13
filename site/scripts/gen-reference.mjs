@@ -182,6 +182,21 @@ function fieldTable(properties, required) {
 const MAX_NESTING = 3;
 
 /**
+ * Adapter limits that are about the wire format, not the provider's API.
+ *
+ * The `Refuses` line names the capability an adapter leaves out; on its own it reads as a
+ * claim about the provider, which is the one thing it is not. Keyed `Adapter.MEMBER`, so a
+ * note disappears the moment the adapter starts advertising the capability -- an
+ * explanation that outlived its cause would be a second, quieter untruth.
+ *
+ * Every capability the current adapters omit is one the provider does not serve -- Anthropic
+ * publishes no embeddings endpoint -- so no note is needed today. Re-add one beside the
+ * capability it explains rather than letting a `Refuses` line about the adapter stand in for a
+ * fact about the provider.
+ */
+const ADAPTER_NOTES = {};
+
+/**
  * Emit a subsection for every field of `owner` that is an object with named fields.
  *
  * The schema inlines these objects instead of naming them in `$defs`, so a table that stopped at
@@ -1081,6 +1096,10 @@ function featuresPage() {
     "Every provider in `SERVED_PROVIDERS` has a section. The capabilities it advertises are the ones the spec's `capabilities` enum may declare; a spec that names one the adapter does not advertise is refused with `ir/model-capability-missing`, because the provider's API has no such endpoint.",
   );
   lines.push('');
+  lines.push(
+    'The **Catalog** count is not coverage of the provider. `models[]` requires only `provider` and `modelId`, and `modelId` is an open string, so any id the provider serves can be pinned. A catalog entry exists to supply default `limits` and a verified price: an id with no entry builds from the `limits` and `costProfile` the spec declares, and is refused with `ir/cost-profile-unknown` if an eval declares a budget that cannot be priced. The table is offline and deterministic by design, so it never learns about a model the provider launches until someone verifies its rates by hand.',
+  );
+  lines.push('');
   for (const provider of data.providers) {
     const adapter = data.providerAdapters[provider] ?? '';
     const advertised = data.adapterCapabilities[adapter] ?? [];
@@ -1104,6 +1123,10 @@ function featuresPage() {
           )
           .join(', ')}.`,
       );
+      for (const axis of no) {
+        const note = ADAPTER_NOTES[`${adapter}.${axis.member}`];
+        if (note !== undefined) lines.push(`- **Why:** ${note}`);
+      }
     }
     lines.push(
       catalog === undefined

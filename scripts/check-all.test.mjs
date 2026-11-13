@@ -8,7 +8,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
@@ -65,6 +65,16 @@ describe('the step plan', () => {
     const steps = allSteps();
     expect(steps.filter((step) => !step.job)).toEqual([]);
     expect(new Set(steps.map((step) => step.id)).size).toBe(steps.length);
+  });
+
+  // A step whose directory does not exist fails only where the interpreter is installed, so
+  // the mistake stays invisible on a machine that skips it -- which is how `evals:test` pointed
+  // at a directory no checkout has while every local run reported it as an environment skip.
+  it('runs every step in a directory the checkout has', () => {
+    const missing = allSteps()
+      .filter((step) => step.cwd !== undefined && !existsSync(join(root, step.cwd)))
+      .map((step) => `${step.id} -> ${step.cwd}`);
+    expect(missing).toEqual([]);
   });
 });
 

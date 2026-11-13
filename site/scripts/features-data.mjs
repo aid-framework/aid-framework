@@ -87,7 +87,7 @@ export const AI_INFRA = [
     title: 'Bedrock from the AWS module',
     declares: 'models[].provider: bedrock',
     emits:
-      '`bedrock:InvokeModel`, plus `bedrock:InvokeModelWithResponseStream` when a service declares `streaming`, scoped to the foundation-model and inference-profile ARNs',
+      '`bedrock:InvokeModel`, plus `bedrock:InvokeModelWithResponseStream` when a service declares `streaming`, scoped to the foundation-model and inference-profile ARNs. The stream grant follows the service flag, so it is written for a Bedrock app too, and a streaming route now spends it — `BedrockProvider` decodes `ConverseStream` — see the `bedrock` provider section',
     credential: 'the IAM role the module creates for the service',
     since: '0.1.81',
   },
@@ -651,6 +651,13 @@ export const REFUSALS = [
     reason:
       'A deployment whose transport cannot stream is refused instead of buffering the response and calling it streaming.',
     code: 'ir/deploy-streaming',
+  },
+  {
+    id: 'streaming-on-a-model-that-cannot',
+    title: 'A stream from a model whose adapter returns the whole reply',
+    reason:
+      'Streaming is refused three ways. `ir/deploy-streaming` catches a transport that cannot stream at all. On `ts-vercel`, whose provider seam answers every request with one buffered body, the emitted route calls the gateway stream on the one model the pipeline generates with, so a model whose adapter cannot frame a reply is refused with `streaming-unsupported` when the app is generated instead of raising on the first request. `py-fastapi` no longer has that case: all six of its adapters decode a frame stream -- Bedrock included, from `ConverseStream` -- so a deployment that streams generates there and the plan-time refusals that remain under `unsupported-streaming` are the transport, the output guardrail and the pipeline shape.',
+    code: 'streaming-unsupported',
   },
   {
     id: 'unknown-image-registry',

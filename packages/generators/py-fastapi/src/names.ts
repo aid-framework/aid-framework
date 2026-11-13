@@ -320,17 +320,17 @@ export const ADAPTER_CAPABILITIES: Readonly<Record<ProviderAdapter, readonly str
     'Capability.STRUCTURED_OUTPUT',
     'Capability.TOOL_CALLING',
   ],
-  // `/converse-stream` is a binary event stream the adapter does not decode, so no
-  // `STREAMING`. Embeddings are served: Titan answers on `InvokeModel`, which the
-  // adapter signs with the same identity as Converse.
+  // `/converse-stream` is a binary event stream, which the adapter decodes and
+  // checksums, so `STREAMING` is honest. Embeddings are served: Titan answers on
+  // `InvokeModel`, which the adapter signs with the same identity as Converse.
   BedrockProvider: [
     'Capability.EMBEDDINGS',
+    'Capability.STREAMING',
     'Capability.STRUCTURED_OUTPUT',
     'Capability.TOOL_CALLING',
   ],
-  // Vertex serves SSE, so `streaming` is honest here -- unlike Converse, whose
-  // event stream the adapter cannot decode. Embeddings ride `:predict` under the
-  // same project, location and bearer token, so the adapter serves them too.
+  // Vertex serves SSE, so `streaming` is honest here. Embeddings ride `:predict`
+  // under the same project, location and bearer token, so the adapter serves them too.
   VertexProvider: [
     'Capability.EMBEDDINGS',
     'Capability.STREAMING',

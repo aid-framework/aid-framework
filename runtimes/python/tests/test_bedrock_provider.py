@@ -9,6 +9,7 @@ than an argument, so the tests drive the environment instead.
 from __future__ import annotations
 
 import json
+import zlib
 from datetime import UTC, datetime
 from typing import Any
 
@@ -627,31 +628,148 @@ async def test_rejects_a_body_with_no_content_blocks() -> None:
         await _provider(recorder).complete(_ask("x"), model=_model())
 
 
-def test_claims_tool_calling_structured_output_and_embeddings_but_not_streaming() -> None:
+def test_claims_tool_calling_structured_output_embeddings_and_streaming() -> None:
     # Converse serves chat; embeddings ride `POST /model/{id}/invoke` because that
-    # is where Titan lives, and `:predict`-style sizes are not involved. Streaming
-    # is still absent: /converse-stream is a binary event stream this adapter
-    # cannot read, and claiming it would let a spec bind a model that can only
-    # fail when it is finally called.
+    # is where Titan lives, and streaming is `/converse-stream`, the same request
+    # body on a sibling path, so one adapter owns all four.
     subject = BedrockProvider()
     assert Capability.TOOL_CALLING in subject.capabilities
     assert Capability.STRUCTURED_OUTPUT in subject.capabilities
     assert Capability.EMBEDDINGS in subject.capabilities
-    assert Capability.STREAMING not in subject.capabilities
+    assert Capability.STREAMING in subject.capabilities
+
+
+def _header(name: str, value: str) -> bytes:
+    """One event-stream header: name length, name, value type 7 (string), value."""
+    raw_name = name.encode()
+    raw_value = value.encode()
+    return (
+        len(raw_name).to_bytes(1, "big")
+        + raw_name
+        + b"\x07"
+        + len(raw_value).to_bytes(2, "big")
+        + raw_value
+    )
+
+
+class _Frames(httpx.AsyncByteStream):
+    """Deliver bytes in the pieces a test controls, so framing can be split mid-frame."""
+
+    def __init__(self, *chunks: bytes) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self) -> Any:
+        for chunk in self._chunks:
+            yield chunk
+
+
+def _frame(event: str, payload: dict[str, Any], *, message_type: str = "event") -> bytes:
+    """One AWS event-stream frame: prelude, headers, JSON payload, message CRC32."""
+    # An exception frame names its kind in `:exception-type`; there is no `:event-type`.
+    kind = (":exception-type", ":event-type")[message_type == "event"]
+    encoded = b"".join(
+        _header(name, value)
+        for name, value in (
+            (":message-type", message_type),
+            (kind, event),
+            (":content-type", "application/json"),
+        )
+    )
+    body_bytes = json.dumps(payload, separators=(",", ":")).encode()
+    total = 12 + len(encoded) + len(body_bytes) + 4
+    prelude = total.to_bytes(4, "big") + len(encoded).to_bytes(4, "big")
+    prelude += (zlib.crc32(prelude) & 0xFFFFFFFF).to_bytes(4, "big")
+    body = prelude + encoded + body_bytes
+    return body + (zlib.crc32(body) & 0xFFFFFFFF).to_bytes(4, "big")
+
+
+def _stream(*frames: bytes) -> httpx.Response:
+    return httpx.Response(200, stream=_Frames(b"".join(frames)))
+
+
+@pytest.mark.asyncio
+async def test_streams_text_deltas_then_the_stop_reason_and_the_usage() -> None:
+    recorder = Recorder(
+        _stream(
+            _frame("messageStart", {"role": "assistant"}),
+            _frame("contentBlockDelta", {"contentBlockIndex": 0, "delta": {"text": "Hel"}}),
+            _frame("contentBlockDelta", {"contentBlockIndex": 0, "delta": {"text": "lo"}}),
+            _frame("contentBlockStop", {"contentBlockIndex": 0}),
+            _frame("messageStop", {"stopReason": "end_turn"}),
+            _frame("metadata", {"usage": {"inputTokens": 7, "outputTokens": 2}}),
+        )
+    )
+
+    chunks = [chunk async for chunk in _provider(recorder).stream(_ask("hi"), model=_model())]
+
+    assert [chunk.delta for chunk in chunks if chunk.delta] == ["Hel", "lo"]
+    assert chunks[-2].finish_reason == "stop"
+    assert chunks[-1].usage is not None
+    assert chunks[-1].usage.input_tokens == 7
+    assert chunks[-1].usage.output_tokens == 2
+    request = recorder.requests[0]
+    assert f"/model/{rfc3986(MODEL_ID)}/converse-stream" in str(request.url)
+    assert "v1%3A0" in str(request.url)
+    assert _sent(recorder)["messages"] == [{"role": "user", "content": [{"text": "hi"}]}]
+
+
+@pytest.mark.asyncio
+async def test_reassembles_a_frame_delivered_in_pieces() -> None:
+    whole = _frame("contentBlockDelta", {"contentBlockIndex": 0, "delta": {"text": "split"}})
+    recorder = Recorder(httpx.Response(200, stream=_Frames(whole[:7], whole[7:19], whole[19:])))
+
+    chunks = [chunk async for chunk in _provider(recorder).stream(_ask("hi"), model=_model())]
+
+    assert "".join(chunk.delta for chunk in chunks) == "split"
+
+
+@pytest.mark.asyncio
+async def test_refuses_a_frame_whose_message_checksum_does_not_match() -> None:
+    frame = bytearray(
+        _frame("contentBlockDelta", {"contentBlockIndex": 0, "delta": {"text": "tampered"}})
+    )
+    frame[-5] ^= 0xFF
+    recorder = Recorder(_stream(bytes(frame)))
+
+    with pytest.raises(ProviderResponseError, match="message checksum does not match"):
+        async for _ in _provider(recorder).stream(_ask("hi"), model=_model()):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_refuses_a_frame_whose_prelude_checksum_does_not_match() -> None:
+    frame = bytearray(_frame("messageStop", {"stopReason": "end_turn"}))
+    frame[9] ^= 0xFF
+    recorder = Recorder(_stream(bytes(frame)))
+
+    with pytest.raises(ProviderResponseError, match="prelude checksum does not match"):
+        async for _ in _provider(recorder).stream(_ask("hi"), model=_model()):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_reports_an_error_event_rather_than_ending_the_stream_quietly() -> None:
+    recorder = Recorder(
+        _stream(_frame("throttlingException", {"message": "slow down"}, message_type="exception"))
+    )
+
+    with pytest.raises(ProviderResponseError, match="throttlingException"):
+        async for _ in _provider(recorder).stream(_ask("hi"), model=_model()):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_reports_a_stream_that_is_refused_before_any_event() -> None:
+    recorder = Recorder(httpx.Response(403, text="denied"))
+
+    with pytest.raises(ProviderError, match="403"):
+        async for _ in _provider(recorder).stream(_ask("hi"), model=_model()):
+            pass
 
 
 def test_names_itself_bedrock_by_default_and_honours_a_custom_name() -> None:
     assert BedrockProvider().name == "bedrock"
     assert BedrockProvider(name="stub").name == "stub"
-
-
-@pytest.mark.asyncio
-async def test_refuses_to_stream_rather_than_buffering() -> None:
-    provider = BedrockProvider()
-
-    with pytest.raises(ProviderError, match="does not stream"):
-        async for _ in provider.stream(_ask("x"), model=_model()):
-            pass
 
 
 @pytest.mark.asyncio

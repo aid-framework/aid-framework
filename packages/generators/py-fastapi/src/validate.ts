@@ -2914,18 +2914,20 @@ function checkDeployments(ir: IR): PlanProblem[] {
     }
     for (const pipeline of ir.pipelines) {
       if (pipeline.trigger?.kind !== 'http') continue;
-      if (streamablePipeline(pipeline)) continue;
-      problems.push(
-        problem(
-          'unsupported-streaming',
-          `pipelines.${pipeline.id}.steps`,
-          `'${deployment.id}' streams, but pipeline '${pipeline.id}' cannot: a stream carries ` +
-            "the model's text as it arrives, so exactly one step may generate and every " +
-            'step after it may only project the response -- an emit step. A second `generate` ' +
-            'step, or a later step that performs an effect, would be skipped on the ' +
-            'streaming path while the JSON path still performed it',
-        ),
-      );
+      if (!streamablePipeline(pipeline)) {
+        problems.push(
+          problem(
+            'unsupported-streaming',
+            `pipelines.${pipeline.id}.steps`,
+            `'${deployment.id}' streams, but pipeline '${pipeline.id}' cannot: a stream carries ` +
+              "the model's text as it arrives, so exactly one step may generate and every " +
+              'step after it may only project the response -- an emit step. A second `generate` ' +
+              'step, or a later step that performs an effect, would be skipped on the ' +
+              'streaming path while the JSON path still performed it',
+          ),
+        );
+        continue;
+      }
     }
   }
   return problems;

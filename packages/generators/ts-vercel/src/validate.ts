@@ -232,6 +232,7 @@ export function checkDeployments(ir: IR): PlanProblem[] {
  */
 export function checkStreaming(ir: IR): PlanProblem[] {
   const problems: PlanProblem[] = [];
+  const models = new Map(ir.models.map((model) => [model.id, model]));
   const asking = ir.deployments.filter(
     (deployment) => deployment.streaming && deployment.target !== 'batch',
   );
@@ -254,7 +255,29 @@ export function checkStreaming(ir: IR): PlanProblem[] {
     const reason = nonStreamableReason(pipeline);
     if (reason !== undefined) {
       problems.push(problem('streaming-unsupported', `pipelines.${pipeline.id}`, reason));
+      continue;
     }
+    // `nonStreamableReason` asks whether a stream could carry this pipeline's shape. This
+    // asks whether the model it generates with can produce one: the emitted route calls
+    // `gateway.stream()` on that alias, which requires the adapter to serve `streaming`,
+    // and a pinned model advertising a member its adapter lacks is refused separately --
+    // but a spec that only sets `deployments[].streaming` declares no model capability at
+    // all, so nothing tied the two together.
+    const step = pipeline.steps.find((candidate) => candidate.kind === 'generate');
+    const model = step === undefined ? undefined : models.get(step.model);
+    const adapter = model === undefined ? undefined : providerAdapter(model.provider);
+    if (model === undefined || adapter === undefined) continue;
+    if (ADAPTER_CAPABILITIES[adapter].has('streaming')) continue;
+    problems.push(
+      problem(
+        'streaming-unsupported',
+        `pipelines.${pipeline.id}`,
+        `pipeline '${pipeline.id}' generates with model '${model.id}' (${model.modelId}), which ` +
+          `provider '${model.provider}' serves through ${adapter}; that adapter does not serve ` +
+          "`streaming`, so the emitted route's `gateway.stream()` would raise on the first " +
+          'request instead of streaming. Pin a model whose adapter streams, or drop `streaming`',
+      ),
+    );
   }
   return problems;
 }

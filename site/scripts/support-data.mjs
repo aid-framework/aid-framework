@@ -238,6 +238,34 @@ export function parseDiagnosticCodes(source) {
   return codes;
 }
 
+/**
+ * The plan-time codes a target can report.
+ *
+ * These are not in a `*DIAGNOSTIC_CODES` table: each target's `PlanProblemCode` is a type
+ * union, and `aid gen` prints the members verbatim. The features page names one beside a
+ * refusal, so the same rule applies -- a cited code has to exist in the source that reports
+ * it, or the page is describing a gate nobody wrote.
+ *
+ * @param {string} source
+ * @returns {string[]}
+ */
+export function parsePlanProblemCodes(source) {
+  const block = source.match(/export type PlanProblemCode =([\s\S]*?);/);
+  const codes = [...(block?.[1] ?? '').matchAll(/'([a-z0-9-]+)'/g)].map((match) => match[1] ?? '');
+  if (codes.length === 0) {
+    throw new Error('cannot parse a plan problem code union');
+  }
+  return codes;
+}
+
+/** Every target's plan-time codes, read from the union each one declares. */
+export function planProblemCodes() {
+  return generatorDirectories().flatMap((directory) => {
+    const path = `packages/generators/${directory}/src/validate.ts`;
+    return existsSync(join(repoRoot, path)) ? parsePlanProblemCodes(readText(path)) : [];
+  });
+}
+
 /** Registered generator package directories, sorted, so both target parsers walk one list. */
 export function generatorDirectories() {
   const root = 'packages/generators';
@@ -407,6 +435,7 @@ export function loadSupportData() {
         ...parseDiagnosticCodes(cliDiagnostics),
         ...parseDiagnosticCodes(specDiagnostics),
         ...parseDiagnosticCodes(overlayDiagnostics),
+        ...planProblemCodes(),
       ]),
     ],
     corpus: {

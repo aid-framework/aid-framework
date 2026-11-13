@@ -34,6 +34,8 @@ A deployment names one target, and the generated infrastructure runs it on one c
 
 Every provider in `SERVED_PROVIDERS` has a section. The capabilities it advertises are the ones the spec's `capabilities` enum may declare; a spec that names one the adapter does not advertise is refused with `ir/model-capability-missing`, because the provider's API has no such endpoint.
 
+The **Catalog** count is not coverage of the provider. `models[]` requires only `provider` and `modelId`, and `modelId` is an open string, so any id the provider serves can be pinned. A catalog entry exists to supply default `limits` and a verified price: an id with no entry builds from the `limits` and `costProfile` the spec declares, and is refused with `ir/cost-profile-unknown` if an eval declares a budget that cannot be priced. The table is offline and deterministic by design, so it never learns about a model the provider launches until someone verifies its rates by hand.
+
 ### `anthropic`
 
 - **Adapter:** `AnthropicProvider`
@@ -44,8 +46,7 @@ Every provider in `SERVED_PROVIDERS` has a section. The capabilities it advertis
 ### `bedrock`
 
 - **Adapter:** `BedrockProvider`
-- **Advertises:** tools, structured output, embeddings
-- **Refuses:** streaming (`BedrockProvider` does not advertise `STREAMING`).
+- **Advertises:** tools, structured output, streaming, embeddings
 - **Catalog:** 3 models, 3 priced
 
 ### `gemini`
@@ -85,7 +86,7 @@ The generated infrastructure does not only run the service; it grants the servic
 ### Bedrock from the AWS module
 
 - **Declared by:** `models[].provider: bedrock`
-- **Emitted:** `bedrock:InvokeModel`, plus `bedrock:InvokeModelWithResponseStream` when a service declares `streaming`, scoped to the foundation-model and inference-profile ARNs
+- **Emitted:** `bedrock:InvokeModel`, plus `bedrock:InvokeModelWithResponseStream` when a service declares `streaming`, scoped to the foundation-model and inference-profile ARNs. The stream grant follows the service flag, so it is written for a Bedrock app too, and a streaming route now spends it — `BedrockProvider` decodes `ConverseStream` — see the `bedrock` provider section
 - **Runtime credential:** the IAM role the module creates for the service
 - **Since:** `0.1.81`
 
@@ -537,6 +538,12 @@ The Anthropic Messages API serves chat only, so its adapter does not advertise `
 A deployment whose transport cannot stream is refused instead of buffering the response and calling it streaming.
 
 - **Enforced by:** `ir/deploy-streaming`
+
+### A stream from a model whose adapter returns the whole reply
+
+Streaming is refused three ways. `ir/deploy-streaming` catches a transport that cannot stream at all. On `ts-vercel`, whose provider seam answers every request with one buffered body, the emitted route calls the gateway stream on the one model the pipeline generates with, so a model whose adapter cannot frame a reply is refused with `streaming-unsupported` when the app is generated instead of raising on the first request. `py-fastapi` no longer has that case: all six of its adapters decode a frame stream -- Bedrock included, from `ConverseStream` -- so a deployment that streams generates there and the plan-time refusals that remain under `unsupported-streaming` are the transport, the output guardrail and the pipeline shape.
+
+- **Enforced by:** `streaming-unsupported`
 
 ### An image registry the release workflow cannot log in to
 

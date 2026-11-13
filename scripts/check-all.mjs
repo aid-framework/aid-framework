@@ -200,7 +200,7 @@ export const EXTERNAL_STEPS = [
     id: 'evals:test',
     job: 'evals',
     argv: ['python', '-m', 'pytest'],
-    cwd: 'examples/evals',
+    cwd: 'examples/support-copilot',
     tools: ['python'],
   },
   {

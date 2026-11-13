@@ -183,13 +183,21 @@ describe('bedrock provider', () => {
     expect(models).not.toContain('class BedrockProvider');
   });
 
-  it('does not advertise the streaming it cannot frame', () => {
+  it('advertises the streaming it decodes from the event stream', () => {
     const models = files(bedrockSpecText()).get('app/generated/gateway/models.py') ?? '';
     const pinned = aliasBlock(models, 'fast');
 
     expect(pinned).toContain('Capability.STRUCTURED_OUTPUT');
     expect(pinned).toContain('Capability.TOOL_CALLING');
-    expect(pinned).not.toContain('Capability.STREAMING');
+    expect(pinned).toContain('Capability.STREAMING');
+  });
+
+  it('plans a streaming deployment instead of refusing it', () => {
+    // `/converse-stream` is a binary event stream, which the runtime adapter decodes and
+    // checksums, so a Bedrock-pinned model advertises `STREAMING` and the emitted route's
+    // `gateway.stream()` call is served rather than raising on the first request.
+    expect(buildForSpecText(bedrockSpecText()).plan.files.length).toBeGreaterThan(0);
+    expect(() => buildForSpecText(bedrockSpecText())).not.toThrow(/unsupported-streaming/);
   });
 
   it('advertises the embeddings Titan serves over InvokeModel', () => {
@@ -383,26 +391,21 @@ describe('provider conformance', () => {
     ]);
   });
 
-  it('records the capability an adapter cannot serve, without touching anything else', () => {
-    const openai = files(exampleSpecText());
-    const bedrock = files(bedrockSpecText());
-
-    expect(differingFiles(openai, bedrock)).toEqual([
-      'app/generated/evals/refund_trajectory.py',
-      'app/generated/gateway/models.py',
-      'app/generated/observability.py',
-    ]);
-
-    const observability = (source: Map<string, string>) =>
-      source.get('app/generated/observability.py') ?? '';
-    // Converse cannot frame a stream, so the capability moves from `modelWired` to
-    // `unrepresentable` for the pinned alias while remaining declared. The other
-    // aliases are fake-backed and do stream, so the assertion is per alias.
-    expect(observability(openai)).not.toContain('"fast": ["streaming"]');
-    expect(observability(bedrock)).toContain('"fast": ["streaming"]');
-    expect(observability(bedrock)).toContain(
-      '"fast": ["Capability.STRUCTURED_OUTPUT", "Capability.TOOL_CALLING"]',
+  it('wires the declared stream for the pinned alias instead of recording a shortfall', () => {
+    // The adapter decodes `/converse-stream`, so no declared capability is dropped: the
+    // pinned alias' wired set is the declaration, `streaming` included.
+    const observability = files(bedrockSpecText()).get('app/generated/observability.py') ?? '';
+    // The report wraps once it outgrows the line budget, so the two halves are asserted
+    // by shape rather than by pinning one layout.
+    const models = observability.slice(
+      observability.indexOf('"models":'),
+      observability.indexOf('"observability":'),
     );
+
+    expect(models).toContain('"Capability.STREAMING"');
+    const unrepresentable = models.slice(models.indexOf('"unrepresentable":'));
+    expect(unrepresentable).toContain('"fast": []');
+    expect(unrepresentable).not.toContain('Capability.STREAMING');
   });
 });
 
