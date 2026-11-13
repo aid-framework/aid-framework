@@ -952,7 +952,7 @@
               "maximum": 1
             },
             "promotion": {
-              "description": "The policy a candidate release must satisfy before it replaces the accepted baseline for this eval. Declarable from spec v0.28. `aid eval --compare` applies this policy to two recorded baselines and refuses a candidate whose quality drops more than the allowance permits. The cost allowance is not judged: a baseline records a pass rate per metric, not a dollar total, so the comparison warns that it could not compute the increase. Nothing promotes automatically -- the refusal is a failed check in CI, and the promotion is still a merged pull request.",
+              "description": "The policy a candidate release must satisfy before it replaces the accepted baseline for this eval. Declarable from spec v0.28. `aid eval --compare` applies this policy to two recorded baselines and refuses a candidate whose quality drops more than the allowance permits. A baseline also records the spend and latency of the run that produced it, so the cost allowance is judged rather than deferred -- and an allowance it cannot judge is refused, not passed. Nothing promotes automatically -- the refusal is a failed check in CI, and the promotion is still a merged pull request.",
               "type": "object",
               "additionalProperties": false,
               "required": ["allowedQualityDrop", "baseline"],
@@ -981,7 +981,7 @@
                   "maximum": 1
                 },
                 "allowedCostIncrease": {
-                  "description": "Largest tolerated relative increase in cost per run, as a fraction of the baseline's cost. A recorded baseline stores a mean pass rate per metric, never a dollar total, so this allowance is not judged: `aid eval --compare` warns that it could not compute the increase rather than passing silently. The per-case spend bound that does apply is the `cost` metric's `max` ceiling, which is compared like any other metric.",
+                  "description": "Largest tolerated relative increase in cost per run, as a fraction of the accepted baseline's spend. `aid eval --compare` computes the increase from the `cost` block both baselines record and refuses a candidate above the allowance; when either file records no spend it refuses the promotion as unjudged rather than passing it. The per-case spend bound is the separate `cost` metric's `max` ceiling, which is compared like any other metric.",
                   "type": "number",
                   "minimum": 0,
                   "maximum": 1

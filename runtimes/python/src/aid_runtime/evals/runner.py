@@ -69,6 +69,12 @@ class DatasetRun(BaseModel):
     dataset: str
     dataset_version: str
     outcomes: tuple[CaseOutcome, ...] = Field(min_length=1)
+    #: Model spend for this pass, in the run's currency, or ``None`` when the runner meters
+    #: nothing. ``None`` and ``0.0`` are different answers: only one of them can be compared
+    #: against a recorded baseline.
+    cost_usd: float | None = None
+    #: Wall-clock time of this pass's model calls, in milliseconds, excluding scoring.
+    latency_ms: float | None = None
 
     def means(self) -> dict[str, float]:
         """Mean score per metric across the cases of this pass."""
@@ -202,6 +208,9 @@ async def evaluate_once(
         raise ValueError("at least one metric is required")
     label = dataset.name if eval_id is None else eval_id
     outcomes: list[CaseOutcome] = []
+    spent = 0.0
+    elapsed = 0.0
+    metered = True
     for case in dataset.cases:
         cost_before = _runner_cost(runner)
         started = perf_counter()
@@ -213,8 +222,9 @@ async def evaluate_once(
         latency_ms = (perf_counter() - started) * 1000.0
         # Metrics see the pipeline's own spend, measured before scoring, because "what did
         # this task cost" is a property of the product and not of the harness auditing it.
+        case_cost = _spent_since(runner, cost_before)
         context = RunContext(
-            cost_usd=_spent_since(runner, cost_before),
+            cost_usd=case_cost,
             latency_ms=latency_ms,
             metered=cost_before is not None,
             trajectory=trajectory,
@@ -230,6 +240,11 @@ async def evaluate_once(
                 trajectory=trajectory,
             )
         )
+        # The pass total is the same pre-scoring figure the metrics saw, so a recorded
+        # baseline describes the product rather than the harness that audited it.
+        spent += case_cost
+        elapsed += latency_ms
+        metered = metered and cost_before is not None
         # The published series is read after scoring, because a model-backed metric spends
         # money too and a cost series that ignored the judge would report half the run.
         record_eval_case(
@@ -238,7 +253,11 @@ async def evaluate_once(
             latency_ms=latency_ms,
         )
     return DatasetRun(
-        dataset=dataset.name, dataset_version=dataset.version, outcomes=tuple(outcomes)
+        dataset=dataset.name,
+        dataset_version=dataset.version,
+        outcomes=tuple(outcomes),
+        cost_usd=spent if metered else None,
+        latency_ms=elapsed,
     )
 
 
@@ -291,11 +310,19 @@ async def run_evaluation(
         raise ValueError("at least one metric is required")
 
     collected: dict[str, list[float]] = {metric.name: [] for metric in metrics}
+    costs: list[float] = []
+    latencies: list[float] = []
     for _ in range(runs):
         pass_result = await evaluate_once(dataset, runner, metrics, eval_id=eval_id)
         means = pass_result.means()
         for metric in metrics:
             collected[metric.name].append(means[metric.name])
+        # A pass that metered nothing contributes no spend figure, so a run built from
+        # unmetered passes carries an empty tuple and a baseline recorded from it says so.
+        if pass_result.cost_usd is not None:
+            costs.append(pass_result.cost_usd)
+        if pass_result.latency_ms is not None:
+            latencies.append(pass_result.latency_ms)
 
     return EvalRun(
         dataset=dataset.name,
@@ -305,4 +332,6 @@ async def run_evaluation(
             MetricRun(metric=metric.name, values=tuple(collected[metric.name]))
             for metric in metrics
         ),
+        cost_usd=tuple(costs),
+        latency_ms=tuple(latencies),
     )

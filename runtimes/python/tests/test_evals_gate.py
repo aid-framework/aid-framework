@@ -11,6 +11,7 @@ alone would let the real regression through.
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from aid_runtime import (
     CostProfile,
     Dataset,
     EvalBaseline,
+    EvalCase,
     EvalError,
     EvalRun,
     ExactMatch,
@@ -422,3 +424,64 @@ async def test_a_failing_pass_names_the_cases_that_moved(dataset: Dataset) -> No
     assert len(failures) == 1
     assert f"FAIL {failures[0].case_id}:" in summary
     assert pass_result.outcome(failures[0].case_id).passed is False
+
+
+async def test_a_run_records_the_spend_and_latency_of_each_pass(dataset: Dataset) -> None:
+    """A baseline can only answer a cost comparison if the run that made it recorded one.
+
+    ``evaluate_once`` already measures both numbers to publish ``eval.cost`` and
+    ``eval.latency.p95``. A published series an alarm watches is not the same thing as a
+    committed baseline a promotion compares against, so this asserts the numbers survive
+    into the baseline as well.
+    """
+    run = await run_evaluation(
+        dataset, _runner(dataset, accuracy=1.0, seed=0), (ExactMatch(),), runs=3
+    )
+
+    assert len(run.cost_usd) == 3
+    assert len(run.latency_ms) == 3
+    assert all(value >= 0.0 for value in run.cost_usd)
+
+    baseline = EvalBaseline.from_run(run, model="fake-small-1")
+    assert baseline.cost is not None
+    assert baseline.cost.runs == 3
+    assert baseline.cost.mean == pytest.approx(sum(run.cost_usd) / 3)
+    assert baseline.latency is not None
+    assert baseline.latency.runs == 3
+
+
+def test_a_baseline_without_recorded_spend_omits_the_key_and_reads_as_absent() -> None:
+    """An old committed baseline keeps validating, and never claims a spend of zero.
+
+    Every baseline written before spend was recorded has no ``cost`` key. Reading one as
+    ``$0.00`` would make every candidate look like an infinite cost increase, so the
+    absent key has to mean "not recorded" -- which is exactly what ``None`` is.
+    """
+    payload = (
+        '{"dataset": "capitals", "dataset_version": "1.0.0", "model": "fake-small-1",'
+        ' "metrics": [{"metric": "exact-match", "runs": 2, "mean": 1.0, "stdev": 0.0}],'
+        ' "note": ""}'
+    )
+    baseline = EvalBaseline.from_json(payload)
+
+    assert baseline.cost is None
+    assert baseline.latency is None
+    assert "cost" not in json.loads(baseline.to_json())
+    assert json.loads(baseline.to_json()) == json.loads(payload)
+
+
+async def test_a_runner_that_meters_nothing_records_no_spend(dataset: Dataset) -> None:
+    """``None`` and ``0.0`` stay different answers all the way into the baseline.
+
+    A scripted runner spends nothing and cannot say so, because it has no ledger. A run
+    built from its passes carries no spend figure at all, so a baseline recorded from it
+    leaves the cost comparison unanswerable instead of answering it with zero.
+    """
+
+    async def answer(case: EvalCase) -> str:
+        return case.id
+
+    run = await run_evaluation(dataset, answer, (ExactMatch(),), runs=2)
+
+    assert run.cost_usd == ()
+    assert EvalBaseline.from_run(run, model="scripted").cost is None

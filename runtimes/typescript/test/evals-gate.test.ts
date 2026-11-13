@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Metric } from '../src/index.js';
 import {
+  AggregateBaseline,
   BaselineGate,
   EvalBaseline,
   EvalRun,
@@ -384,6 +385,66 @@ describe('EvalBaseline', () => {
 
     expect(EvalBaseline.fromJson(payload).datasetVersion).toBe('1.0.0');
     expect(EvalBaseline.fromJson(camel).datasetVersion).toBe('1.0.0');
+  });
+
+  it('records spend and latency and reads them back', () => {
+    const recorded = new EvalBaseline({
+      dataset: 'capitals',
+      datasetVersion: '1.0.0',
+      model: 'fake-small-1',
+      metrics: [MetricBaseline.fromValues('exact-match', [1.0, 0.5])],
+      cost: new AggregateBaseline({ runs: 2, mean: 0.03, stdev: 0.01 }),
+      latency: new AggregateBaseline({ runs: 2, mean: 200.0, stdev: 20.0 }),
+    });
+    const restored = EvalBaseline.fromJson(recorded.toJson());
+
+    expect(restored.cost?.mean).toBeCloseTo(0.03, 10);
+    expect(restored.cost?.runs).toBe(2);
+    expect(restored.latency?.mean).toBeCloseTo(200.0, 10);
+  });
+
+  /**
+   * The compatibility claim: a baseline written before spend was measured has to reach
+   * disk byte-for-byte as it did then, or every committed fixture in the repo churns.
+   */
+  it('writes no spend keys at all when a run recorded none', () => {
+    const recorded = EvalBaseline.fromRun(run([1.0, 0.5]), { model: 'fake-small-1' });
+    const parsed = JSON.parse(recorded.toJson()) as Record<string, unknown>;
+
+    expect('cost' in parsed).toBe(false);
+    expect('latency' in parsed).toBe(false);
+    expect(JSON.parse(recorded.toJson())).toEqual({
+      dataset: 'capitals',
+      dataset_version: '1.0.0',
+      model: 'fake-small-1',
+      metrics: [{ metric: 'exact-match', runs: 2, mean: 0.75, stdev: 0.353553390593 }],
+      note: '',
+    });
+    expect(EvalBaseline.fromJson(recorded.toJson()).cost).toBeNull();
+  });
+
+  it('reads a spend total a baseline is allowed to carry above one', () => {
+    const payload = JSON.stringify({
+      dataset: 'capitals',
+      dataset_version: '1.0.0',
+      model: 'fake-small-1',
+      metrics: [{ metric: 'exact-match', runs: 2, mean: 1.0, stdev: 0.0 }],
+      cost: { runs: 3, mean: 1.25, stdev: 0.1 },
+    });
+
+    expect(EvalBaseline.fromJson(payload).cost?.mean).toBeCloseTo(1.25, 10);
+  });
+
+  it('refuses a spend total that is not a run count and a mean', () => {
+    const payload = JSON.stringify({
+      dataset: 'capitals',
+      dataset_version: '1.0.0',
+      model: 'fake-small-1',
+      metrics: [{ metric: 'exact-match', runs: 2, mean: 1.0, stdev: 0.0 }],
+      cost: { runs: 0, mean: 0.1, stdev: 0.0 },
+    });
+
+    expect(() => EvalBaseline.fromJson(payload)).toThrow(/runs must be a positive integer/);
   });
 });
 

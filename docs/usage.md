@@ -278,12 +278,19 @@ was judged, which is not the same as a pass. Nothing promotes itself: the merge 
 bumped prompt version is the promotion, and under `profile: enterprise` the policy must name a
 committed approval record that exists and has content.
 
+A baseline records the spend and latency of the run that produced it alongside its metric means, so
+`allowedCostIncrease` is applied to two real measurements and a candidate that spends more than the
+allowance is refused. A baseline with no spend block -- recorded before spend was measured, or by a
+runner that meters nothing -- is refused as unjudged rather than read as "spent nothing".
+
 What is refused:
 
 - A policy whose `baseline.version` is not below the version the document declares, because an
   unchanged version means nothing has been bumped and a lower one is a rollback.
 - `allowedQualityDrop` on an eval that scores no quality metric, so the allowance governs nothing.
 - `allowedCostIncrease` on an eval with no `cost` metric, so there is no baseline cost to rise.
+- `allowedCostIncrease` when no target in the build declares the `metrics` capability, so no
+  generated runtime measures the spend the allowance would govern.
 
 **Declared feedback signals.** What the app takes back from the people who use it, and what
 happens to the text they send.
@@ -433,6 +440,7 @@ Covers:
 - **Eval coverage**
 - **A decision eval metric**
 - **Promotion policy for a candidate**
+- **A spend allowance judged against recorded runs**
 - **Declared feedback signals**
 - **A dataset from the runs you already have**
 - **A trajectory eval that runs an agent**

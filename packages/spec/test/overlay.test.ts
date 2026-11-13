@@ -44,6 +44,32 @@ function codesOf(result: { diagnostics: readonly { code: string }[] }): string[]
   return result.diagnostics.map((one) => one.code);
 }
 
+/**
+ * The base document plus a declared cost allowance on its one eval.
+ *
+ * The fixture predates `gate.promotion`, so the allowance is added here rather than in the
+ * fixture: only the Q6 cases below need it, and the byte-asserted golden has to keep
+ * resolving without one.
+ */
+function withCostAllowance(
+  base: Record<string, unknown>,
+  allowed: number,
+): Record<string, unknown> {
+  const evals = base.evals as Record<string, Record<string, unknown>>;
+  const gate = evals.triage_regression?.gate as Record<string, unknown>;
+  gate.promotion = { allowedQualityDrop: 0.05, allowedCostIncrease: allowed };
+  base.overridable = {
+    ...(base.overridable as object),
+    'evals.triage_regression.gate.promotion.allowedCostIncrease': true,
+  };
+  return base;
+}
+
+/** The eval ids a resolved document declares, which is what a baseline path is built from. */
+function evalIds(value: unknown): string[] {
+  return Object.keys((value as Record<string, unknown>).evals as object);
+}
+
 describe('parseOverlay', () => {
   it('parses the fixture overlay', () => {
     const parsed = parseOverlay(OVERLAY_TEXT, { file: 'acme.yaml' });
@@ -157,6 +183,41 @@ describe('applyOverlay', () => {
     const applied = applyOverlay(base, overlayOf({ 'deployments.prod.minApprovers': 1 }));
     expect(codesOf(applied)).toEqual([OVERLAY_DIAGNOSTIC_CODES.weakensControl]);
     expect(applied.diagnostics[0]?.message).toContain('2 to 1');
+  });
+
+  /**
+   * Q6: a promotion baseline belongs to an eval, so every customer sharing that eval shares
+   * one baseline. An overlay may tighten the cost allowance -- a stricter customer is the
+   * point of a per-customer overlay -- but it may not relax it, and it may not move the
+   * subject the baseline is keyed by.
+   */
+  it('lets a customer tighten the cost allowance without moving the eval it is keyed by', () => {
+    const base = withCostAllowance(baseDocument(), 0.1);
+    const strict = applyOverlay(
+      base,
+      overlayOf({ 'evals.triage_regression.gate.promotion.allowedCostIncrease': 0.05 }),
+    );
+    const looser = applyOverlay(
+      base,
+      overlayOf({ 'evals.triage_regression.gate.promotion.allowedCostIncrease': 0.08 }),
+    );
+
+    expect(strict.diagnostics).toEqual([]);
+    expect(looser.diagnostics).toEqual([]);
+    // Both customers resolve to the same subject, so `evals/<id>.baseline.json` is one
+    // file per eval rather than one per customer.
+    expect(evalIds(strict.value)).toEqual(['triage_regression']);
+    expect(evalIds(looser.value)).toEqual(['triage_regression']);
+  });
+
+  it('refuses relaxing the cost allowance, which is a weaker promotion gate', () => {
+    const applied = applyOverlay(
+      withCostAllowance(baseDocument(), 0.1),
+      overlayOf({ 'evals.triage_regression.gate.promotion.allowedCostIncrease': 0.2 }),
+    );
+
+    expect(codesOf(applied)).toEqual([OVERLAY_DIAGNOSTIC_CODES.weakensControl]);
+    expect(applied.diagnostics[0]?.message).toContain('0.1 to 0.2');
   });
 
   it('allows relaxing a control the base did mark allowWeaken', () => {

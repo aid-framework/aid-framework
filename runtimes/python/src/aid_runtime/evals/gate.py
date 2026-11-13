@@ -96,6 +96,12 @@ class EvalRun(BaseModel):
     dataset_version: str
     runs: int = Field(gt=0)
     metrics: tuple[MetricRun, ...] = Field(min_length=1)
+    #: Model spend per run, in the run's currency. Empty when the runner meters no cost,
+    #: which is a different answer from "every run spent zero": a promotion ceiling cannot
+    #: be judged against a runner that never measured anything.
+    cost_usd: tuple[float, ...] = ()
+    #: Wall-clock time of each run's model calls, in milliseconds, excluding scoring.
+    latency_ms: tuple[float, ...] = ()
 
     def means(self) -> dict[str, float]:
         return {entry.metric: statistics.fmean(entry.values) for entry in self.metrics}
@@ -142,6 +148,29 @@ class MetricBaseline(BaseModel):
         )
 
 
+class AggregateBaseline(BaseModel):
+    """A recorded mean and spread over runs, in the unit of whatever holds it.
+
+    ``mean`` is bounded below only. A metric's baseline is a pass rate and fits in
+    ``[0, 1]``, but a spend average is a currency figure and a duration is milliseconds,
+    so the unit lives in the field name that refers to this record
+    (``EvalBaseline.cost``, ``EvalBaseline.latency``) and not in the bound.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    runs: int = Field(gt=0)
+    mean: float = Field(ge=0.0)
+    stdev: float = Field(ge=0.0)
+
+
+def _aggregate(values: Sequence[float]) -> AggregateBaseline | None:
+    """The recorded mean and spread of ``values``, or ``None`` when none were measured."""
+    if not values:
+        return None
+    return AggregateBaseline(runs=len(values), mean=statistics.fmean(values), stdev=_stdev(values))
+
+
 class EvalBaseline(BaseModel):
     """A committed baseline: the accepted distribution for a dataset and model."""
 
@@ -152,6 +181,14 @@ class EvalBaseline(BaseModel):
     model: str
     metrics: tuple[MetricBaseline, ...] = Field(min_length=1)
     note: str = ""
+    #: Recorded model spend per run, when the run that produced this baseline metered it.
+    #: Absent on a baseline recorded before spend was measured, and on one recorded from a
+    #: runner that meters nothing -- a scripted model in CI, for instance. ``aid eval
+    #: --compare`` refuses to judge ``allowedCostIncrease`` against either, rather than
+    #: read "not measured" as "no increase".
+    cost: AggregateBaseline | None = None
+    #: Recorded wall-clock time per run, in milliseconds, on the same terms as ``cost``.
+    latency: AggregateBaseline | None = None
 
     @classmethod
     def from_run(cls, run: EvalRun, *, model: str, note: str = "") -> EvalBaseline:
@@ -163,6 +200,8 @@ class EvalBaseline(BaseModel):
                 MetricBaseline.from_values(entry.metric, entry.values) for entry in run.metrics
             ),
             note=note,
+            cost=_aggregate(run.cost_usd),
+            latency=_aggregate(run.latency_ms),
         )
 
     def metric(self, name: str) -> MetricBaseline:
@@ -180,7 +219,9 @@ class EvalBaseline(BaseModel):
         return cls.from_json(Path(path).read_text(encoding="utf-8"))
 
     def to_json(self) -> str:
-        return self.model_dump_json(indent=2) + "\n"
+        # ``exclude_none`` keeps a baseline that recorded no spend byte-identical to what
+        # this method wrote before cost and latency were recorded at all.
+        return self.model_dump_json(indent=2, exclude_none=True) + "\n"
 
 
 class Threshold(BaseModel):

@@ -110,6 +110,7 @@ export type { EvalCaseInit } from './evals/dataset.js';
 export { Dataset, EvalCase } from './evals/dataset.js';
 export type { BaselineGateOptions } from './evals/gate.js';
 export {
+  AggregateBaseline,
   BaselineGate,
   EvalBaseline,
   EvalRun,

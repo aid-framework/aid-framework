@@ -490,6 +490,15 @@ export const SHIPPED_FEATURES = [
     since: '0.1.146',
   },
   {
+    id: 'cost-allowance-judged',
+    title: 'A spend allowance judged against recorded runs',
+    detail:
+      'A recorded baseline carries the model spend and wall-clock time of the run that produced it, next to its metric means. `aid eval --compare` computes the relative increase in spend between the accepted and candidate baselines and refuses a candidate above `gate.promotion.allowedCostIncrease`, printing both dollar figures and the move between them. The block is written only when the run metered it, so "spent nothing" and "did not measure" stay distinguishable: a baseline without spend is refused as unjudged rather than read as a zero.',
+    declaredBy: 'aid eval --compare, evals[].gate.promotion.allowedCostIncrease',
+    href: './reference/cli.md#eval',
+    since: '0.1.162',
+  },
+  {
     id: 'overridable-contract',
     title: 'A stated list of what a customer may change',
     detail:
@@ -741,6 +750,13 @@ export const REFUSALS = [
     code: 'ir/promotion-cost',
   },
   {
+    id: 'promotion-cost-no-target-measures-spend',
+    title: 'A spend allowance no target in the build can measure',
+    reason:
+      'The allowance is judged against spend a runtime records. When every declared target lacks the `metrics` capability, no generated app will ever write that number, so the policy is refused rather than shipped as a promise nothing can keep. A mixed build still passes: one target that measures is enough.',
+    code: 'ir/promotion-cost',
+  },
+  {
     id: 'enterprise-promotion-without-an-approver',
     title: 'An `enterprise` promotion nobody has to approve',
     reason:
@@ -897,6 +913,7 @@ export const CAPABILITY_FAMILIES = [
       'eval-coverage',
       'evals-decision',
       'promotion-gate',
+      'cost-allowance-judged',
       'feedback-signals',
       'trace-export',
       'eval-unreviewed',
