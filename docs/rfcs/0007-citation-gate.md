@@ -297,3 +297,52 @@ Session artifacts, not committed: `files/extract-codes.mjs` (citations),
 (per-kind counts), `files/derive-severity.mjs` (severity derivability). Each runs as
 `node <script> <repo-root>` and reads the registries and pages directly; none of the figures in
 this RFC is hand-counted.
+
+## 8. Phase A: what shipped
+
+`diagnosticCodes` and `codeAnnotation` in `scripts/docs-claims.mjs`; `checkDiagnosticCodes`,
+`registeredDiagnosticCodes` and `reportUncitedDiagnostics` in `scripts/check-docs-claims.mjs`. The
+check runs from `lint:md`, so `pnpm check` and CI carry it with no workflow change.
+
+**The rule.** Every token in the five registered namespaces resolves exactly to a registered code.
+A wildcard must be marked `<!-- docs-claims: family; why -->` and must match at least one registered
+code. A token that does not resolve must be marked `<!-- docs-claims: retired; why -->`. Both
+markers are line-scoped HTML comments with a reason of at least twelve characters: invisible on the
+published page, unavoidable in review. A marker naming the wrong kind is itself a failure, so
+`family` cannot be used to wave through an invented code. `docs/rfcs/` keeps the proposal exemption
+the other checks already rely on, because naming a gate you are proposing is the job of an RFC.
+
+The registries are parsed from source rather than imported, so the check runs before anything is
+built and a registry that stops parsing fails instead of shrinking the legal set. Each of the five
+namespaces must contribute at least one code for the same reason.
+
+**The plan said four page fixes. The check found six sites**, because one retired code appears
+twice and one of the six is a generated row rather than a page:
+
+| Site | Was | Now |
+| --- | --- | --- |
+| `docs/guide/delivery.md:332` | `ir/eval-coverage`, "a warning below spec `0.31`" | `ir/eval-uncovered`, "a warning under `profile: standard`, a refusal for `enterprise` from spec `0.31`" |
+| `docs/reference/eval-metrics.md:121` | `ir/eval-coverage`, "both are warnings, not failures" | `ir/eval-uncovered`, and the `enterprise` escalation stated |
+| `docs/migration.md:709`, `:726` | `cli/trace-export-redaction-unapplied`, a retired code in a Before column | text unchanged, line marked `retired` |
+| `docs/guide/boundary.md:65` | `ir/policy-*` | text unchanged, line marked `family` |
+| `docs/reference/spec.md:774` | `ir/network-target`, which nothing registers | the row rewritten to what the code does |
+
+The last one is a source edit, not a prose edit: the row is generated from the `network`
+description in `packages/spec/src/schema/spec.schema.json`, so the description was corrected and
+`gen-reference.mjs` rerun. The `DeploymentNetworkShape` docstring in `packages/ir/src/shapes.ts`
+carried the same phantom code and was corrected with it — and while confirming the claim, the
+docstring's premise turned out to be false twice over: nothing refuses a cloud for lacking private
+placement, and no generator branches on the key at all, so the corrected text says the pin states a
+requirement rather than selecting a module. That is a Phase 0 item-5 finding the name test could
+never have produced, and it is recorded here rather than fixed: `docs/guide/delivery.md`'s private
+network row still claims "Gated and generated" for a key no emitter reads. Follow-up, not this PR.
+
+Observed after the fixes: 519 diagnostic-code citations resolve in the documents `markdownFiles()`
+returns, and 192 of the 292 registered codes are cited in no document (`cli` 88, `generator` 23,
+`ir` 42, `overlay` 3, `spec` 36). The reverse report prints those counts on every run and the names
+with `--uncited`, so an undocumentable diagnostic is visible without being a failure.
+
+**What this does not prove.** A name check proves the code exists and nothing about the sentence
+around it. `eval-metrics.md` had the right code in spirit and the wrong severity: it described two
+warnings that escalate to refusals. Phase A would have passed that page had the name been spelled
+correctly. Severity is Phase B's job, and it needs registry metadata that does not exist yet.

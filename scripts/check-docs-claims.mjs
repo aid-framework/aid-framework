@@ -20,7 +20,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   aidFlags,
   capabilityClaims,
+  codeAnnotation,
   commandsNamed,
+  DIAGNOSTIC_NAMESPACES,
+  diagnosticCodes,
   exactPins,
   headingSlugs,
   isProposalPage,
@@ -34,6 +37,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const failures = [];
 let claimsChecked = 0;
 let linksChecked = 0;
+let diagnosticCitations = 0;
 
 /**
  * @param {string} file
@@ -1263,6 +1267,259 @@ function checkHomepageSpecVersion() {
 
 checkHomepageSpecVersion();
 
+/**
+ * The packages that register diagnostic codes, each exporting one or more
+ * `*_DIAGNOSTIC_CODES` objects whose values are the codes themselves.
+ *
+ * `overlay` is the exception that proves the rule about reading rather than
+ * importing: its codes live beside the overlay loader in `overlay.ts`, not in a
+ * `diagnostics.ts`, which is why the loader searches any `*_DIAGNOSTIC_CODES`
+ * table in the file rather than one exported name.
+ */
+const DIAGNOSTIC_REGISTRIES = [
+  'packages/ir/src/diagnostics.ts',
+  'packages/spec/src/diagnostics.ts',
+  'packages/spec/src/overlay.ts',
+  'packages/cli/src/diagnostics.ts',
+  'packages/generator-sdk/src/diagnostics.ts',
+];
+
+/**
+ * Every registered diagnostic code, mapped to the file that registers it.
+ *
+ * Read from source rather than imported so the check runs before anything is
+ * built, and so a registry that stops parsing is itself a failure instead of
+ * silently shrinking the set of legal codes.
+ *
+ * @returns {Map<string, string>}
+ */
+function registeredDiagnosticCodes() {
+  /** @type {Map<string, string>} */
+  const codes = new Map();
+  for (const path of DIAGNOSTIC_REGISTRIES) {
+    const source = read(path);
+    if (source === undefined) continue;
+    let tables = 0;
+    for (const table of source.matchAll(
+      /export const [A-Z0-9_]*DIAGNOSTIC_CODES = \{([\s\S]*?)\n\} as const;/g,
+    )) {
+      tables += 1;
+      for (const code of (table[1] ?? '').matchAll(/'([a-z]+\/[a-z0-9-]+)'/g)) {
+        const value = code[1] ?? '';
+        if (!DIAGNOSTIC_NAMESPACES.includes(value.slice(0, value.indexOf('/')))) continue;
+        codes.set(value, path);
+      }
+    }
+    if (tables === 0)
+      fail(path, 1, 'declares no `*_DIAGNOSTIC_CODES` table for this check to read');
+  }
+
+  for (const namespace of DIAGNOSTIC_NAMESPACES) {
+    if ([...codes.keys()].some((code) => code.startsWith(`${namespace}/`))) continue;
+    fail(
+      'scripts/check-docs-claims.mjs',
+      1,
+      `found no registered \`${namespace}/\` diagnostic codes`,
+    );
+  }
+  return codes;
+}
+
+/**
+ * The number of single-character edits that turn one code into another, used to
+ * suggest the nearest registered code for a token that does not resolve.
+ *
+ * @param {string} left
+ * @param {string} right
+ * @returns {number}
+ */
+function editDistance(left, right) {
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= right.length; j += 1) {
+      const substitution = (previous[j - 1] ?? 0) + (left[i - 1] === right[j - 1] ? 0 : 1);
+      current[j] = Math.min((previous[j] ?? 0) + 1, (current[j - 1] ?? 0) + 1, substitution);
+    }
+    previous = current;
+  }
+  return previous[right.length] ?? 0;
+}
+
+/**
+ * The closest registered codes to a token, preferring the token's own namespace
+ * so a misspelt `ir/` code does not suggest a `cli/` one.
+ *
+ * @param {string} token
+ * @param {Iterable<string>} codes
+ * @param {number} [limit]
+ * @returns {string}
+ */
+function nearestCodes(token, codes, limit = 3) {
+  const namespace = token.slice(0, token.indexOf('/'));
+  return [...codes]
+    .map((code) => ({
+      code,
+      distance: editDistance(token, code),
+      foreign: code.startsWith(`${namespace}/`) ? 0 : 1,
+    }))
+    .sort(
+      (a, b) => a.distance - b.distance || a.foreign - b.foreign || a.code.localeCompare(b.code),
+    )
+    .slice(0, limit)
+    .map((entry) => `\`${entry.code}\``)
+    .join(', ');
+}
+
+/**
+ * A marker is only a spelling of an exemption if it says why. A bare marker would
+ * be a silent allow-list entry with extra steps.
+ *
+ * @param {string} file
+ * @param {number} line
+ * @param {{ kind: string, reason: string } | undefined} annotation
+ * @param {string} required
+ * @returns {boolean}
+ */
+function annotatedFor(file, line, annotation, required) {
+  if (annotation === undefined) return false;
+  if (annotation.kind !== required) {
+    fail(
+      file,
+      line,
+      `is marked \`docs-claims: ${annotation.kind}\`, but this citation needs \`${required}\``,
+    );
+    return true;
+  }
+  if (annotation.reason.length < 12) {
+    fail(
+      file,
+      line,
+      `is marked \`docs-claims: ${required}\` without a reason; say why in 12 characters or more`,
+    );
+    return true;
+  }
+  return true;
+}
+
+/**
+ * Every diagnostic code a document cites is a code the build actually registers.
+ *
+ * This is the class of error the rest of this file could not see. A page naming
+ * `ir/eval-coverage` reads exactly like a page naming `ir/eval-uncovered`: both are
+ * plausible, one refuses nothing. The registry is the only source of truth for
+ * which gates exist, so prose is compared against it rather than trusted.
+ *
+ * A design proposal under `docs/rfcs/` may name codes it is proposing, so the
+ * existing proposal exemption applies here too.
+ *
+ * @param {Map<string, string>} registered
+ * @returns {Set<string>} every code cited somewhere
+ */
+function checkDiagnosticCodes(registered) {
+  /** @type {Set<string>} */
+  const cited = new Set();
+
+  for (const file of documents) {
+    const text = read(file);
+    if (text === undefined) continue;
+    const lines = text.split('\n');
+    const proposal = isProposalPage(file);
+
+    for (const citation of diagnosticCodes(text)) {
+      const { token, wildcard } = citation;
+      const line = citation.line;
+      const annotation = codeAnnotation(lines[line - 1] ?? '');
+
+      if (wildcard) {
+        const prefix = token.slice(0, -1);
+        const family = [...registered.keys()].filter((code) => code.startsWith(prefix));
+        if (family.length === 0) {
+          fail(
+            file,
+            line,
+            `cites the family \`${token}\`, which covers no registered code; nearest registered: ${nearestCodes(
+              `${prefix}x`,
+              registered.keys(),
+            )}`,
+          );
+          continue;
+        }
+        claimsChecked += 1;
+        if (proposal || annotatedFor(file, line, annotation, 'family')) continue;
+        fail(
+          file,
+          line,
+          `cites the wildcard \`${token}\`, which names no registered code on its own (${family.length} codes match, for example \`${family[0]}\`); name the codes or mark the line \`<!-- docs-claims: family; why -->\``,
+        );
+        continue;
+      }
+
+      if (registered.has(token)) {
+        cited.add(token);
+        claimsChecked += 1;
+        diagnosticCitations += 1;
+        continue;
+      }
+
+      if (proposal) continue;
+      if (annotatedFor(file, line, annotation, 'retired')) {
+        claimsChecked += 1;
+        continue;
+      }
+      fail(
+        file,
+        line,
+        `cites \`${token}\`, which no diagnostic registry declares; nearest registered: ${nearestCodes(
+          token,
+          registered.keys(),
+        )}. If the code was retired, mark the line \`<!-- docs-claims: retired; why -->\``,
+      );
+    }
+  }
+
+  return cited;
+}
+
+const registeredDiagnostics = registeredDiagnosticCodes();
+const citedDiagnostics = checkDiagnosticCodes(registeredDiagnostics);
+
+/**
+ * Registered codes no document mentions.
+ *
+ * Reported, never failed: an undocumented code is a gap in the docs, not a broken
+ * claim, and failing on it would mean every new diagnostic has to be documented in
+ * the same commit as the gate that raises it. The names are printed only when
+ * asked for, because the list is long and `pnpm check` output is read by people.
+ *
+ * @param {Map<string, string>} registered
+ * @param {Set<string>} cited
+ */
+function reportUncitedDiagnostics(registered, cited) {
+  /** @type {Map<string, string[]>} */
+  const uncited = new Map();
+  for (const code of registered.keys()) {
+    if (cited.has(code)) continue;
+    const namespace = code.slice(0, code.indexOf('/'));
+    uncited.set(namespace, [...(uncited.get(namespace) ?? []), code]);
+  }
+  const total = [...uncited.values()].reduce((sum, list) => sum + list.length, 0);
+  if (total === 0) return;
+
+  const verbose = process.argv.includes('--uncited');
+  process.stdout.write(
+    `\n${total} of ${registered.size} registered diagnostic codes are cited in no document`,
+  );
+  process.stdout.write(verbose ? ':\n' : ' (pass --uncited for the list):\n');
+  for (const [namespace, list] of [...uncited].sort((a, b) => a[0].localeCompare(b[0]))) {
+    if (!verbose) {
+      process.stdout.write(`  ${namespace}: ${list.length}\n`);
+      continue;
+    }
+    process.stdout.write(`  ${namespace}: ${[...list].sort().join(', ')}\n`);
+  }
+}
+
 if (failures.length > 0) {
   for (const failure of failures.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)) {
     process.stderr.write(`${failure.file}:${failure.line}: ${failure.message}\n`);
@@ -1271,5 +1528,10 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
+reportUncitedDiagnostics(registeredDiagnostics, citedDiagnostics);
+
 const targetCount = `, ${claimsChecked} claim comparisons, ${linksChecked} relative links`;
 process.stdout.write(`Docs claims agree with the code${targetCount}.\n`);
+process.stdout.write(
+  `${diagnosticCitations} diagnostic-code citations resolve to a registered code.\n`,
+);

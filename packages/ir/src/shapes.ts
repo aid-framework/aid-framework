@@ -1351,8 +1351,11 @@ export type DeploymentIdentityKind = (typeof DEPLOYMENT_IDENTITY_KINDS)[number];
  *
  * `private` places the runtime where only the customer's network can reach it, and
  * `egress` says whether it may call anything it likes or only declared destinations.
- * Both are placement decisions, so a cloud with no private-placement module is refused by
- * `ir/network-target` rather than emitted as a resource the deploy cannot create.
+ * Both are placement decisions: `profile: enterprise` requires `private: true`, refused
+ * by `ir/profile-network` when it is missing or false, and the generated container module
+ * already builds a two-AZ VPC with private task subnets and one NAT gateway. No gate
+ * refuses a cloud for lacking a private-placement module, because no generator branches
+ * on this key yet: the pin states a requirement rather than selecting a different module.
  */
 export interface DeploymentNetworkShape {
   private: boolean;

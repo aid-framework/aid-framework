@@ -62,7 +62,7 @@ documented responsibility with a place to put the answer — not an implied feat
 
 ### Authorization: the policy is generated, the principal is yours
 
-Policies, predicates and the `ir/policy-*` family are generated and evaluated per request, and
+Policies, predicates and the `ir/policy-*`<!-- docs-claims: family; the policy, predicate and data-access refusals share this prefix --> family are generated and evaluated per request, and
 `ir/security-unauthenticated-path` refuses a path that authenticates nothing. The evaluation is
 only as good as the principal it sees, so this row is the identity row's consequence.
 
