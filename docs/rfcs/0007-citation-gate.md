@@ -274,6 +274,44 @@ module load. This is the one place where the round touches package source, and i
 behaviour; if the migration proves noisy, Phase B may instead add a sibling
 `DIAGNOSTIC_METADATA` map keyed by code string. The RFC will record which was chosen.
 
+**Chosen (Phase B): the sibling map, as the fallback above anticipated.** The illustration is not
+what shipped. `IR_DIAGNOSTIC_CODES` keeps its bare-string shape, so no call site moved, and the
+prose lives beside it:
+
+```ts
+export interface DiagnosticMetadata {
+  readonly condition: string;
+  readonly escalation?: string;
+}
+
+export const IR_DIAGNOSTIC_METADATA = {
+  'ir/agents-state-store': {
+    condition: 'a writing agent with no durable state, or a `state` block AID cannot use',
+  },
+  'ir/eval-uncovered': {
+    condition: 'an HTTP pipeline with no gate.ci eval claiming it',
+    escalation: 'a refusal under `profile: enterprise` from spec `0.31`',
+  },
+  // …38 entries
+} as const satisfies Readonly<Partial<Record<IrDiagnosticCode, DiagnosticMetadata>>>;
+```
+
+Three decisions are worth recording because they are the ones a later round would otherwise
+re-litigate:
+
+- **Severity is derived, not declared.** `site/scripts/diagnostic-severities.mjs` reads the
+  emit sites and records whether each code is raised through `report.error`, `report.warn`, a
+  ternary of the two, or neither. Declaring `severity` in metadata would be one more hand-written
+  copy of a fact the code already holds, and would let a doc stay green while the gate changed.
+- **`escalation` exists only where the emit sites disagree with themselves** — currently
+  `ir/cost-profile-unknown`, `ir/eval-uncovered`, `ir/resume-replay-weak`, `ir/resume-unsigned`.
+  A code emitted through a ternary the scan cannot follow has no derivable severity, so the
+  generator refuses to publish it until metadata supplies one. The inverse is also a refusal:
+  `escalation` on a code that emits exactly one severity everywhere is stale text.
+- **Version constants are substituted from source**, not restated. `0.31` and `0.32` above come
+  from `EVAL_COVERAGE_ENFORCED_MIN_VERSION` and `RESUME_SIGNING_ENFORCED_MIN_VERSION` via
+  `{const:NAME}` placeholders, so a version bump moves the page instead of contradicting it.
+
 ## 5. Smallest first increment
 
 Phase A as described, with the four page fixes and four fixtures: one detector, one comparison
@@ -346,3 +384,50 @@ with `--uncited`, so an undocumentable diagnostic is visible without being a fai
 around it. `eval-metrics.md` had the right code in spirit and the wrong severity: it described two
 warnings that escalate to refusals. Phase A would have passed that page had the name been spelled
 correctly. Severity is Phase B's job, and it needs registry metadata that does not exist yet.
+
+## 9. Phase B: what shipped
+
+The boundary table's factual columns are now generated. `docs/guide/boundary.md` keeps its prose,
+and between `<!-- boundary-table:start -->` and `<!-- boundary-table:end -->` the page is rendered
+from two inputs: the 38-entry `IR_DIAGNOSTIC_METADATA` registry plus the one `cli/` entry beside it,
+and 17 hand-written concern rows in `site/scripts/boundary-data.mjs` that carry only the columns no
+code can know — what you provide, and residual risk.
+
+| File | Role |
+| --- | --- |
+| `site/scripts/boundary-data.mjs` | Hand-written half: 17 concerns, each with its codes and prose columns |
+| `site/scripts/boundary-page.mjs` | Pure render and validation; no IO, so it is testable |
+| `site/scripts/diagnostic-severities.mjs` | Severity per code, derived from emit sites |
+| `site/scripts/gen-reference.mjs` | IO only: reads registries, calls the above, honours `--check` |
+| `site/scripts/boundary-page.test.mjs` | 18 tests, one per refusal path plus the render cases |
+
+**The generator refuses six things**, each with a message naming the offending row or code:
+
+1. a concern row that cites a code no registry registers;
+2. a cited code whose severity cannot be derived from its emit sites and has no `escalation`;
+3. an `escalation` on a code that emits exactly one severity everywhere;
+4. a concern with no hand-written row;
+5. a hand-written row with no concern;
+6. a published code that no row cites.
+
+Refusals 4 and 5 are what keep the two halves from drifting. Refusal 6 means adding metadata is not
+enough to hide a capability: a code the plan publishes must appear on the page.
+
+**Acceptance, both directions.** Flipping `report.warn` to `report.error` at
+`packages/ir/src/gates/cost.ts:109` changed the `ir/cost-budget-exceeded` row from "(warning)" to
+"(refusal)" on regeneration, which is the claim that severity is derived rather than asserted. The
+code was then reverted while the page was left stale, and `gen-reference.mjs --check` failed with
+`docs/guide/boundary.md differs from its source` and exit 1. The probe was reverted and both trees
+are clean; `--check` covers all 9 generated pages.
+
+**Six conditions were wrong when the prose first met the registry** — `agents-state-store`,
+`observability-export`, `feedback-pii`, `profile-network`, `security-store-secret` and
+`promotion-cost`. Each was corrected against the line that emits it, and `promotion-cost` turned out
+to describe one of two distinct emit sites. This is the same class of defect the round exists to
+close, found by generating the table rather than by reading it.
+
+**Still hand-written, deliberately.** The private-network row now says what is true: nothing reads
+`network.private`, `agent-runtime.ts` hardcodes `network_mode = "PUBLIC"`, and the key satisfies the
+gate without selecting a module. `docs/guide/delivery.md`'s private network row still claims "Gated
+and generated" — the follow-up recorded in §8, unchanged by this PR because a generated table is not
+a licence to edit an unrelated page.

@@ -16,9 +16,12 @@
  *   node scripts/gen-reference.mjs --check   fail if the committed pages differ
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BOUNDARY_CONCERNS, BOUNDARY_TABLE_METADATA } from './boundary-data.mjs';
+import { boundaryPage as renderBoundaryPage } from './boundary-page.mjs';
+import { closingBracket, emitSeverities } from './diagnostic-severities.mjs';
 import {
   AI_INFRA,
   CAPABILITY_AXES,
@@ -1287,6 +1290,160 @@ function homepagePage() {
   );
 }
 
+const DIAGNOSTIC_REGISTRIES = [
+  {
+    id: 'IR_DIAGNOSTIC_CODES',
+    metadata: 'IR_DIAGNOSTIC_METADATA',
+    path: 'packages/ir/src/diagnostics.ts',
+  },
+  {
+    id: 'CLI_DIAGNOSTIC_CODES',
+    metadata: 'CLI_DIAGNOSTIC_METADATA',
+    path: 'packages/cli/src/diagnostics.ts',
+  },
+];
+
+/** Directories under `packages` that hold built output or other people's code. */
+const SKIPPED_DIRECTORIES = new Set(['node_modules', 'dist', 'coverage', '.venv', '__pycache__']);
+
+/** Every author-written TypeScript source in `packages`, for the emit-site scan. */
+function typescriptSources() {
+  /** @type {string[]} */
+  const paths = [];
+  const walk = (directory) => {
+    for (const entry of readdirSync(join(repoRoot, directory), { withFileTypes: true })) {
+      const child = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (!SKIPPED_DIRECTORIES.has(entry.name)) walk(child);
+        continue;
+      }
+      const isSource =
+        entry.name.endsWith('.ts') &&
+        !entry.name.endsWith('.test.ts') &&
+        !entry.name.endsWith('.d.ts');
+      if (isSource) paths.push(child);
+    }
+  };
+  walk('packages');
+  return paths.map((path) => ({ path, text: readSource(path) }));
+}
+
+/**
+ * The registries, read from source: every code, and the metadata each published code carries.
+ *
+ * `codes` holds every registered code, whether or not a page publishes it, because a count a
+ * page states -- "the N parse errors it can report" -- is a fact about the registry, not about
+ * the subset that has been written up. `published` holds only the codes with metadata.
+ *
+ * @returns {{ codes: Map<string, { registry: string, key: string }>, published: Map<string, { registry: string, key: string, condition: string, escalation?: string }> }}
+ */
+function diagnosticRegistries() {
+  /** @type {Map<string, { registry: string, key: string }>} */
+  const codes = new Map();
+  /** @type {Map<string, { registry: string, key: string, condition: string, escalation?: string }>} */
+  const published = new Map();
+  for (const registry of DIAGNOSTIC_REGISTRIES) {
+    const source = readSource(registry.path);
+    if (source === '') continue;
+    const table = source.match(
+      new RegExp(`export const ${registry.id} = \\{([\\s\\S]*?)\\n\\} as const;`),
+    );
+    if (table === null) {
+      failures.push(`${registry.path}: cannot find the ${registry.id} table`);
+      continue;
+    }
+    for (const entry of table[1].matchAll(/(\w+):\s*'([^']+)'/g)) {
+      codes.set(entry[2], { registry: registry.id, key: entry[1] });
+    }
+    const metadataAt = source.indexOf(`export const ${registry.metadata} = {`);
+    if (metadataAt === -1) {
+      failures.push(`${registry.path}: cannot find the ${registry.metadata} table`);
+      continue;
+    }
+    for (const entry of source.slice(metadataAt).matchAll(/'([a-z-]+\/[a-z0-9-]+)':\s*\{/g)) {
+      const code = entry[1];
+      const known = codes.get(code);
+      if (known === undefined) {
+        failures.push(
+          `${registry.path}: ${registry.metadata} describes "${code}", which ${registry.id} does not register`,
+        );
+        continue;
+      }
+      const open = metadataAt + entry.index + entry[0].length - 1;
+      const body = source.slice(open + 1, closingBracket(source, open));
+      const condition = body.match(/condition:\s*'([^']*)'/)?.[1];
+      if (condition === undefined) {
+        failures.push(`${registry.path}: ${code} has no condition, so no page can describe it`);
+        continue;
+      }
+      const escalation = body.match(/escalation:\s*'([^']*)'/)?.[1];
+      published.set(code, {
+        ...known,
+        condition,
+        ...(escalation === undefined ? {} : { escalation }),
+      });
+    }
+  }
+  return { codes, published };
+}
+
+/**
+ * The published spec-version constants, so a page can name the version the code gates on
+ * without a second copy of the number. Keyed by constant name.
+ *
+ * @returns {Map<string, string>}
+ */
+function versionConstants() {
+  /** @type {Map<string, string>} */
+  const versions = new Map();
+  for (const file of typescriptSources()) {
+    for (const entry of file.text.matchAll(/export const ([A-Z0-9_]*_VERSION) = '([^']+)'/g)) {
+      versions.set(entry[1], entry[2]);
+    }
+  }
+  return versions;
+}
+
+/**
+ * The boundary page's inputs: the registries, the emit-site severities, and the published
+ * constants a row may cite by name. The reading happens here; the decisions live in
+ * `boundary-page.mjs`, so a test can drive them with a registry of its own.
+ *
+ * @returns {Parameters<typeof renderBoundaryPage>[1]}
+ */
+function boundaryInputs() {
+  const registries = diagnosticRegistries();
+  const values = new Map();
+  for (const [name, version] of versionConstants()) values.set(`const:${name}`, version);
+  return {
+    concerns: BOUNDARY_CONCERNS,
+    metadata: BOUNDARY_TABLE_METADATA,
+    codes: registries.codes,
+    published: registries.published,
+    severities: emitSeverities({
+      files: typescriptSources(),
+      registries: DIAGNOSTIC_REGISTRIES.map((registry) => registry.id),
+      only: new Set(
+        [...registries.published.values()].map((meta) => `${meta.registry}.${meta.key}`),
+      ),
+    }),
+    values,
+    fail: (/** @type {string} */ message) => failures.push(message),
+  };
+}
+
+/**
+ * `docs/guide/boundary.md` with its table region regenerated.
+ *
+ * @returns {string}
+ */
+function boundaryPage() {
+  return renderBoundaryPage(
+    readFileSync(join(repoRoot, 'docs', 'guide', 'boundary.md'), 'utf8'),
+    boundaryInputs(),
+  );
+}
+
 /**
  * The versions `specVersion` accepts, one row each, with the history that used to crowd the
  * `specVersion` row on the spec reference.
@@ -1377,6 +1534,7 @@ const pages = [
       ),
     ),
   ],
+  ['docs/guide/boundary.md', attempt(boundaryPage)],
   // The homepage is prose, so only the region between the capability-band markers is
   // generated; everything else on the page stays hand-written and reviewable.
   ['docs/index.md', attempt(homepagePage)],

@@ -13,6 +13,7 @@
  * produced a code from its shape, which is the point.
  */
 
+import type { DiagnosticMetadata } from '@aid-framework/ir';
 import type { Diagnostic } from '@aid-framework/spec';
 import { errorDiagnostic, warningDiagnostic } from '@aid-framework/spec';
 
@@ -206,6 +207,18 @@ export const CLI_DIAGNOSTIC_CODES = {
   reportNoDeployments: 'cli/report-no-deployments',
   reportBaselineInvalid: 'cli/report-baseline-invalid',
 } as const;
+
+/**
+ * The one-line condition a published `cli/*` refusal covers.
+ *
+ * The same shape the IR keeps for its codes, and partial for the same reason: only codes a
+ * page publishes need a condition. The boundary page cites exactly one.
+ */
+export const CLI_DIAGNOSTIC_METADATA = {
+  'cli/infra-cloud-conflict': {
+    condition: 'a `--cloud` flag that disagrees with the spec the modules were generated from',
+  },
+} as const satisfies Readonly<Partial<Record<CliDiagnosticCode, DiagnosticMetadata>>>;
 
 export type CliDiagnosticCode = (typeof CLI_DIAGNOSTIC_CODES)[keyof typeof CLI_DIAGNOSTIC_CODES];
 
