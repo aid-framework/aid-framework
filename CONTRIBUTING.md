@@ -87,10 +87,32 @@ Then, from the repository root:
 | `pnpm lint` | Biome, markdownlint, and config validation |
 | `pnpm lint:actions` | actionlint over `.github/workflows` |
 | `pnpm lint:licenses` | Dependency licence audit |
-| `pnpm check` | `pnpm lint && pnpm typecheck && pnpm test` — the full local gate |
+| `pnpm check` | Every CI check this machine can run, and a plain statement of the ones it could not |
+| `pnpm check:all` | The same, but a missing tool is a failure: the tier that cannot be skipped |
 | `pnpm format` | Apply Biome formatting |
 
-`pnpm check` is the gate CI runs, so run it before opening a pull request — but it is not the whole of CI.
+`pnpm check` replaced `pnpm lint && pnpm typecheck && pnpm test` because that command could not fail for
+the checks it did not run: the docs build, the accessibility scan, the licence audit, actionlint, the Python
+suites, `tofu validate` and `cdk synth` were all missing, so a green `pnpm check` was compatible with a red
+pull request. It now walks CI's jobs and, for each, either runs a step or prints `skip` with the tool that is
+missing and how to install it. The last line never says all checks passed while anything was skipped — it
+says how many were not verified and names them.
+
+`pnpm check:all` turns every skip into a failure. Install the tools it asks for and run it before asking for
+a review; on a machine set up as described above only `actionlint` and `tofu` are outside pnpm's reach.
+
+Three of CI's jobs stay local-invisible by design, and are listed with their reasons in
+`scripts/check-all.mjs` (`release-plan`, `tofu`, `cdk`) along with `conformance`. The gap cannot widen
+silently: `scripts/check-all.test.mjs` fails when `ci.yml` grows a job that no step stands in for, or when a
+step names a script `package.json` does not declare.
+
+To run `pnpm check` automatically before each push, add a pre-push hook of your own — `lefthook.yml` only
+covers staged files at commit time:
+
+```bash
+printf '#!/bin/sh\nexec pnpm check\n' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+```
+
 `pnpm docs:live` fetches the published site and asserts it reports the release this tree declares. It reads
 the live page, so it only means anything after a deploy: the `verify-live` job runs it after `deploy` on
 `main`, it retries for about ten minutes because GitHub Pages is CDN-cached, and it is not part of `check`
@@ -127,6 +149,18 @@ produce byte-identical output — and the end-to-end check extends that from "tw
 snapshot": it regenerates the example, compares the trees byte for byte, and then boots the regenerated app
 and answers a real request, so generated code that merely looks plausible still fails the build
 (`docs/design.md` §8.2, §12).
+
+### Invoking a check directly
+
+Prefer the `pnpm` script over hand-built `node_modules/...` paths. Several packages ship both a CLI and a
+library entry point with similar names, and the library one accepts whatever you give it and exits 0 — so a
+check invoked that way passes without reading a file. `markdownlint-cli2.mjs` is the case in this repository;
+the executable is `markdownlint-cli2-bin.mjs`, which is what `pnpm lint:md` uses. If you add a check, assert
+that it can fail: point it at a deliberate defect and confirm the non-zero exit before trusting a green run.
+
+Do not delete a `node_modules` directory anywhere under a pnpm workspace, including inside `packages/*`.
+Those directories hold the `@aid-framework/*` links the packages resolve each other through, and removing one
+breaks imports in a way that looks like a source error.
 
 ## Repository layout
 

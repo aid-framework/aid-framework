@@ -24,6 +24,7 @@
     "generate:guarded": "node packages/generators/py-fastapi/scripts/generate-example.mjs guarded-reply",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:typescript": "vitest run runtimes/typescript",
     "test:watch": "vitest --coverage.enabled=false",
     "e2e": "node scripts/e2e-example.mjs",
     "e2e:ts": "node scripts/e2e-example-ts.mjs",
@@ -35,7 +36,8 @@
     "docs:a11y": "pnpm --filter @aid-framework/docs check:a11y",
     "docs:browser": "pnpm --filter @aid-framework/docs check:browser",
     "docs:live": "pnpm --filter @aid-framework/docs check:live",
-    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "check": "node scripts/check-all.mjs",
+    "check:all": "node scripts/check-all.mjs --all",
     "prepare": "lefthook install"
   },
   "devDependencies": {

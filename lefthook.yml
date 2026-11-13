@@ -1,4 +1,9 @@
-# Convenience only; CI is the gate. `pnpm check` reproduces the full CI check.
+# Fast feedback only; CI is the gate.
+#
+# These hooks check the staged files they are given, nothing else, so a green commit says
+# nothing about the docs build, the Python suites or the generated fixtures. `pnpm check`
+# runs what this machine can run of CI's checks and prints what it could not; `pnpm check:all`
+# refuses to skip. `CONTRIBUTING.md` has the opt-in pre-push hook that runs the former.
 
 pre-commit:
   parallel: true
