@@ -551,14 +551,20 @@ export function compareBaselines(
   // control plane this framework does not have.
   const approval = chosen.policy.approval;
   if (approval !== undefined) {
+    // The record is a path in the spec, so it is resolved against the directory the
+    // command runs from, like every other path this CLI takes. Naming both the declared
+    // path and what it resolved to is what keeps a wrong directory from reading as a
+    // missing sign-off.
     const resolved = absolutePath(context.cwd, approval.record);
-    if (!existsSync(resolved) || readFileSync(resolved, 'utf8').trim() === '') {
+    const present = existsSync(resolved);
+    const empty = present && readFileSync(resolved, 'utf8').trim() === '';
+    if (!present || empty) {
       diagnostics.push(
         cliError({
           code: CLI_DIAGNOSTIC_CODES.compareApprovalMissing,
-          message: `The promotion was refused: "${chosen.evalId}" requires a recorded approval at ${approval.record}, and that file is missing or empty.`,
+          message: `The promotion was refused: "${chosen.evalId}" requires a recorded approval at ${approval.record}, and ${present ? `the file is empty (${resolved})` : `there is no file at ${resolved}`}.`,
           path: ['evals', chosen.evalId, 'gate', 'promotion', 'approval', 'record'],
-          hint: `Commit the approval record at ${approval.record}, signed off by one of: ${approval.by.join(', ')}.`,
+          hint: `Commit the approval record at ${approval.record}, signed off by one of: ${approval.by.join(', ')}. The path is resolved against the directory you run \`aid\` from, so run from the project root that holds the spec's \`app/\`.`,
         }),
       );
     }

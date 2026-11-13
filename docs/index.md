@@ -283,6 +283,10 @@ you. The app keeps booting because it never depended on a control plane.
 - Taking it to a customer? [The delivery playbook](guide/delivery.md) is the end-to-end
   checklist: which profile to start from, what a customer may change, the enterprise
   controls, and the limits that are stated rather than implied.
+- Making an agent better rather than older? [Improving an agent over time](guide/improvement-loop.md)
+  runs the loop end to end from git: traced runs become a curated dataset, a candidate is
+  measured against the accepted baseline, and a promotion needs a passing gate and a recorded
+  approval.
 - Delivering it to a second customer? [Overlays and the fleet table](walkthroughs/overlays-and-fleet.md)
   turns one base spec into one file per customer, and prints the table.
 - Want to know how each capability is used? [Usage](usage.md) is one worked example per

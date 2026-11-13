@@ -172,7 +172,8 @@ artifact download.
 
 This is the loop that makes a delivered agent get better instead of older: production traffic
 becomes cases, cases become a candidate, and a candidate becomes a release only by passing a
-gate.
+gate. [Improving an agent over time](./improvement-loop.md) is the same loop as a standalone
+playbook, with the order to run the commands in and what each one refuses.
 
 **Capture runs with their text.** The trace sink records spans by default and payloads only when
 you ask, because text at rest is your decision:

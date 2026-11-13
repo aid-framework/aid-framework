@@ -887,3 +887,60 @@ Nothing. No generated file changes shape, and a document that was valid is still
 The grammar has not moved. `evals[].target` has accepted `agent:<id>` since `0.27`, and a recording
 was never a spec construct -- it is a file a run reads or writes. `--record` is a flag on an
 existing command, so no document gains or loses a key.
+
+## 0.1.167: the improvement loop, end to end {#improvement-loop-release}
+
+Trace export, dataset wiring, `gate.promotion`, `eval --compare` and approval records all shipped
+before this release. Exercising them in order is what a release note is for, and doing it turned up
+two refusals that misreported why they refused.
+
+No new capability is claimed. [Improving an agent over time](guide/improvement-loop.md) is the loop
+written down as one ordered procedure -- traced run, export, curate, version, baseline, promote,
+approve -- with the diagnostic that stops each step. Phase E is a correction plus a playbook, not a
+feature.
+
+### The approval refusal names the file it looked at
+
+A `gate.promotion` approval record is resolved against the directory `aid` runs from, not against
+the directory of the spec it is given. Running `aid eval --compare` from a repository root with a
+customer spec passed by path therefore looked for the approval somewhere it was never going to be,
+and said so in a way that read like a wrong approval rather than a wrong directory:
+
+```text
+The approval record for triage is missing or empty.
+```
+
+The message now says which file was absent, and distinguishes an absent file from an empty one,
+because the fix is different (`cli/eval-compare-approval-missing`, exit 1):
+
+```text
+No approval record at C:\work\contoso\app\approvals\triage.md.
+  An empty file is a refusal as well; this one does not exist.
+  The path resolves against the directory you run `aid` from, not the spec's.
+```
+
+Nothing about what is accepted has changed. A missing approval, an empty one and one whose
+`decision` is not `approved` are all refused, as they were.
+
+### The `--compare` summary no longer says cost is unjudged
+
+The flag summary still described the shape of a comparison from `0.28`, when no runtime recorded
+cost, so it claimed cost "is reported as unjudged because no runtime records cost". A metered
+baseline has carried a `cost` block since trajectory capture, and `judgeCostAllowance` has refused
+an allowance neither file can judge since then, so the sentence outlived its own behaviour by two
+releases and was quoted verbatim in the generated CLI reference.
+
+The summary now says both allowances are judged and that one neither file can judge is refused
+rather than passed. `docs/reference/cli.md` is generated from it, so the reference follows.
+
+### What you have to do
+
+Nothing. No generated file changes shape, no diagnostic is added or removed, and a document that
+was valid is still valid. A pipeline whose baseline has no `cost` block still refuses to judge a
+cost allowance -- that is the documented behaviour, not a regression.
+
+### Why there is no `specVersion` bump
+
+The grammar has not moved. Every construct the loop uses -- `observability.redact`,
+`evals[].dataset`, `eval.gate.promotion`, `approvals.path`, `profile: enterprise` -- was already
+accepted, and this release changes two sentences and one refusal message.

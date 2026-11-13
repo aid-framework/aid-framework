@@ -206,7 +206,7 @@ aid eval [spec] [--target <name>] [--suite <id>] [--baseline] [--record <transcr
 | `--target <name>` | generator target; one of py-fastapi, ts-vercel |
 | `--baseline` | record a fresh baseline instead of gating |
 | `--record <path>` | run one agent eval live and write its model calls to a transcript `AID_EVAL_TRANSCRIPT` can replay. Refuses to overwrite an existing transcript, to capture a scripted provider, or to capture while replaying |
-| `--compare <path>` | apply gate.promotion to an accepted baseline and a candidate one. The quality allowance is judged; a declared cost ceiling is reported as unjudged because no runtime records cost |
+| `--compare <path>` | apply gate.promotion to an accepted baseline and a candidate one. Both allowances are judged from what the two files record, so a quality drop above allowedQualityDrop and a spend rise above allowedCostIncrease are both refused, and an allowance neither file can judge is refused rather than passed |
 | `--candidate <path>` | the candidate baseline --compare reads |
 | `--json` | print one JSON document on stdout |
 | `-h`, `--help` | print this command's usage |
