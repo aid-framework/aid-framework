@@ -368,6 +368,14 @@ name collision a real source of confusion for a reader who sees "azure" in the d
    the framework ever adds, and the matrix is the thing that keeps "refuse rather than
    approximate" true.
 
+**Landed in 0.1.168.** Recommendation 2 is built: `deployments[].cloud` is no longer a schema
+`enum`, so the refusal reaches the IR and is `ir/cloud-unsupported`, naming the supported set and
+pointing at the capability matrix. Azure, Kubernetes, `k8s` and the rest of `UNSERVED_CLOUDS` are
+refused that way; a value that is not a cloud name at all is still `ir/deploy-target-unknown`,
+because there the fix is a spelling. No `specVersion` bump: the set of documents that build is
+unchanged, and only the diagnostic moved. Recommendations 1 and 3 stand -- nothing was built, and
+the reopening trigger is unchanged and now recorded in the published matrix, not only here.
+
 ---
 
 ## 7. New finding — a sensitive field name makes an agent document unbuildable

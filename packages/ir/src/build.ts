@@ -143,6 +143,7 @@ import {
   type TypeRef,
   type TypeShape,
   toolIdentity,
+  UNSERVED_CLOUDS,
   type VectorStoreShape,
 } from './shapes.js';
 
@@ -1475,21 +1476,34 @@ function buildDeployments(raw: unknown, context: BuildContext): DeploymentShape[
  * The cloud a deployment pins, when it pins one.
  *
  * Absent is not an error: it means the spec did not decide, so the CLI's `--cloud` still
- * does, which is exactly the behaviour every document written before 0.25 relies on. A
- * value outside the enum is reported, because the projection would otherwise have to
- * choose a cloud for a deployment that named a different one.
+ * does, which is exactly the behaviour every document written before 0.25 relies on.
+ *
+ * A value outside `SPEC_CLOUDS` is refused, because the projection would otherwise have to
+ * choose a cloud for a deployment that named a different one. Which code refuses it matters
+ * to the person reading it: a cloud AID knows of and does not provision (Azure, Kubernetes)
+ * is `ir/cloud-unsupported` and gets the capability matrix, while a value that is not a cloud
+ * name at all is `ir/deploy-target-unknown` and gets the supported set as a typo fix. The
+ * schema admits both shapes so that this gate, not the schema, is what a reader meets.
  */
 function buildSpecCloud(raw: unknown, id: string, context: BuildContext): SpecCloud | undefined {
   const declared = asString(raw);
   if (declared === undefined) return undefined;
   if ((SPEC_CLOUDS as readonly string[]).includes(declared)) return declared as SpecCloud;
+  const known = (UNSERVED_CLOUDS as readonly string[]).includes(declared);
   context.diagnostics.push(
-    errorDiagnostic({
-      code: IR_DIAGNOSTIC_CODES.deployTargetUnknown,
-      message: `deployment "${id}" declares cloud "${declared}", which is not one of ${SPEC_CLOUDS.join(', ')}`,
-      path: ['deployments', id, 'cloud'],
-      hint: 'name a supported cloud, or drop `cloud` and pass `--cloud` to `aid infra`',
-    }),
+    known
+      ? errorDiagnostic({
+          code: IR_DIAGNOSTIC_CODES.cloudUnsupported,
+          message: `deployment "${id}" declares cloud "${declared}", which AID does not provision; the supported clouds are ${SPEC_CLOUDS.join(', ')}`,
+          path: ['deployments', id, 'cloud'],
+          hint: 'name a supported cloud, or drop `cloud` and pass `--cloud` to `aid infra`; the capability matrix in `docs/reference/support.md` lists what AID provisions, and a cloud outside it is deferred rather than approximated',
+        })
+      : errorDiagnostic({
+          code: IR_DIAGNOSTIC_CODES.deployTargetUnknown,
+          message: `deployment "${id}" declares cloud "${declared}", which is not one of ${SPEC_CLOUDS.join(', ')}`,
+          path: ['deployments', id, 'cloud'],
+          hint: 'name a supported cloud, or drop `cloud` and pass `--cloud` to `aid infra`',
+        }),
   );
   return undefined;
 }

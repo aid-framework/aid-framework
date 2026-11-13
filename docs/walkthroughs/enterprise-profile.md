@@ -44,6 +44,7 @@ And the three placement checks that apply to **every** profile, enterprise or no
 
 | Requirement | Diagnostic |
 | --- | --- |
+| The cloud must be one AID provisions -- [Azure and Kubernetes are deferred by decision](../reference/support.md) | `ir/cloud-unsupported` |
 | The region must be one the pinned cloud offers | `ir/region-target` |
 | The audit sink must be one the pinned cloud can create | `ir/audit-target` |
 | Deployments must agree on one cloud and one audit destination | `ir/cloud-conflict`, `ir/audit-conflict` |

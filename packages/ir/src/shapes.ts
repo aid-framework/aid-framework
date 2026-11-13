@@ -1180,6 +1180,31 @@ export const SPEC_CLOUDS = ['aws', 'gcp'] as const;
 export type SpecCloud = (typeof SPEC_CLOUDS)[number];
 
 /**
+ * Clouds a customer may name that AID does not provision.
+ *
+ * Azure and Kubernetes are deferred by decision, recorded in
+ * `docs/rfcs/0004-round-4-resume-and-agent-loop.md` §6: neither is built, and the reopening
+ * trigger is the first customer requirement that cannot be served on `aws` or `gcp`. The
+ * rest are simply not served. Naming any of them is `ir/cloud-unsupported` — a refusal that
+ * says what AID does provision — rather than `ir/deploy-target-unknown`, which is kept for a
+ * value that is not a cloud name at all (a typo). The distinction is the point: one reads as
+ * a decision, the other as a mistake.
+ */
+export const UNSERVED_CLOUDS = [
+  'azure',
+  'kubernetes',
+  'k8s',
+  'openshift',
+  'alibaba',
+  'alibabacloud',
+  'ibm',
+  'ibmcloud',
+  'oracle',
+  'oci',
+  'digitalocean',
+] as const;
+
+/**
  * The regions each cloud offers, as the gate's source of truth for `deployments[].region`.
  *
  * This table exists to refuse a cross-cloud mistake at validate time -- `region:

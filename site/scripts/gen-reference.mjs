@@ -931,6 +931,10 @@ function supportPage() {
     'The emitted infrastructure is OpenTofu. A plan targets one cloud at a time, because two providers in one state is a blast radius rather than a feature.',
   );
   lines.push('');
+  lines.push(
+    'Azure and Kubernetes are deferred by decision, and deferred means refused: `cloud: azure`, `cloud: kubernetes` or `cloud: k8s` is refused by `ir/cloud-unsupported`, which names the supported set and points here. The schema admits those names on purpose, so the refusal reads as a decision with a fix rather than a mistyped enum entry; a name that is not a cloud at all (`awz`) is `ir/deploy-target-unknown` instead. A cloud enters this table by way of a module set per target, byte-asserted fixtures and `tofu validate` in CI, so the trigger to reopen it is the first customer requirement that cannot be served on `aws` or `gcp` -- not a preference for a different vendor.',
+  );
+  lines.push('');
 
   const declaring = Object.entries(data.targetCapabilities);
   const publishing = declaring.filter(([, caps]) => caps.includes('metrics')).map(([id]) => id);
