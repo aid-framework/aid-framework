@@ -18,7 +18,9 @@ import { describe, expect, it } from 'vitest';
 import {
   aidFlags,
   capabilityClaims,
+  codeAnnotation,
   commandsNamed,
+  diagnosticCodes,
   exactPins,
   headingSlugs,
   isProposalPage,
@@ -356,6 +358,146 @@ describe('proposalStatus', () => {
 function read(repositoryPath) {
   return readFileSync(join(ROOT, repositoryPath), 'utf8');
 }
+
+describe('diagnosticCodes', () => {
+  it('finds a code and the line it is on', () => {
+    expect(
+      diagnosticCodes('# A page\n\nRefused by `ir/eval-uncovered`, which names the fix.\n'),
+    ).toEqual([{ line: 3, token: 'ir/eval-uncovered', wildcard: false }]);
+  });
+
+  it('catches an invented code, which is the failure the check exists for', () => {
+    const found = diagnosticCodes('`ir/eval-coverage` refuses nothing.\n');
+    expect(found).toHaveLength(1);
+    expect(found[0]?.token).toBe('ir/eval-coverage');
+  });
+
+  it('keeps a wildcard whole instead of reading the stem as a code', () => {
+    expect(diagnosticCodes('the `ir/policy-*` family\n')).toEqual([
+      { line: 1, token: 'ir/policy-*', wildcard: true },
+    ]);
+  });
+
+  it('reads a code followed by a full stop as one token', () => {
+    const found = diagnosticCodes('It refuses with `cli/doctor-dirty`.\n');
+    expect(found[0]?.token).toBe('cli/doctor-dirty');
+  });
+
+  it('does not read a file path as a code', () => {
+    expect(diagnosticCodes('see `ir/src/gates/promotion.ts:134` and `packages/ir/src`\n')).toEqual(
+      [],
+    );
+  });
+
+  it('does not read a link destination as a code', () => {
+    expect(diagnosticCodes('see [the gate](./ir/eval-uncovered)\n')).toEqual([]);
+    expect(diagnosticCodes('see <https://example.com/ir/eval-uncovered>\n')).toEqual([]);
+  });
+
+  it('finds every namespace', () => {
+    const found = diagnosticCodes(
+      '`ir/one` `spec/two` `overlay/three` `cli/four` `generator/five`\n',
+    );
+    expect(found.map((entry) => entry.token.split('/')[0])).toEqual([
+      'ir',
+      'spec',
+      'overlay',
+      'cli',
+      'generator',
+    ]);
+  });
+
+  it('ignores a token that is not in a registered namespace', () => {
+    expect(diagnosticCodes('`http/not-a-code` and `docs/a-file`\n')).toEqual([]);
+  });
+});
+
+describe('codeAnnotation', () => {
+  it('reads a retired marker and its reason', () => {
+    expect(codeAnnotation('| `a/b`<!-- docs-claims: retired; the old name --> |')).toEqual({
+      kind: 'retired',
+      reason: 'the old name',
+    });
+  });
+
+  it('reads a family marker', () => {
+    expect(codeAnnotation('the `ir/policy-*`<!-- docs-claims: family; shared prefix -->')).toEqual({
+      kind: 'family',
+      reason: 'shared prefix',
+    });
+  });
+
+  it('is undefined for a line with no marker, so an unmarked citation is still checked', () => {
+    expect(codeAnnotation('`ir/eval-coverage`')).toBeUndefined();
+  });
+
+  it('ignores a marker that names another kind', () => {
+    expect(codeAnnotation('<!-- docs-claims: allowed; because -->')).toBeUndefined();
+  });
+});
+
+describe('the diagnostic codes the docs cite', () => {
+  /**
+   * An independent read of the registries: the point of this test is that the
+   * published pages resolve, so it re-derives the set rather than trusting the
+   * checker's own parser to agree with itself.
+   *
+   * @returns {Set<string>}
+   */
+  function registered() {
+    /** @type {Set<string>} */
+    const codes = new Set();
+    const registries = [
+      'packages/ir/src/diagnostics.ts',
+      'packages/spec/src/diagnostics.ts',
+      'packages/spec/src/overlay.ts',
+      'packages/cli/src/diagnostics.ts',
+      'packages/generator-sdk/src/diagnostics.ts',
+    ];
+    for (const path of registries) {
+      for (const match of read(path).matchAll(
+        /export const [A-Z0-9_]*DIAGNOSTIC_CODES = \{([\s\S]*?)\n\} as const;/g,
+      )) {
+        for (const code of (match[1] ?? '').matchAll(/'([a-z]+\/[a-z0-9-]+)'/g)) {
+          if (code[1]) codes.add(code[1]);
+        }
+      }
+    }
+    return codes;
+  }
+
+  it('reads all five registries', () => {
+    const codes = registered();
+    expect(codes.size).toBeGreaterThan(200);
+    for (const namespace of ['ir', 'spec', 'overlay', 'cli', 'generator']) {
+      expect([...codes].some((code) => code.startsWith(`${namespace}/`))).toBe(true);
+    }
+  });
+
+  it('resolves every code a published page cites', () => {
+    const codes = registered();
+    /** @type {string[]} */
+    const unresolved = [];
+    for (const file of walkMarkdown().filter((path) => !isProposalPage(path))) {
+      const lines = read(file).split('\n');
+      for (const citation of diagnosticCodes(read(file))) {
+        const annotation = codeAnnotation(lines[citation.line - 1] ?? '');
+        if (citation.wildcard) {
+          const prefix = citation.token.slice(0, -1);
+          const family = [...codes].filter((code) => code.startsWith(prefix));
+          if (family.length === 0 || annotation?.kind !== 'family') {
+            unresolved.push(`${file}:${citation.line}: ${citation.token}`);
+          }
+          continue;
+        }
+        if (!codes.has(citation.token) && annotation?.kind !== 'retired') {
+          unresolved.push(`${file}:${citation.line}: ${citation.token}`);
+        }
+      }
+    }
+    expect(unresolved).toEqual([]);
+  });
+});
 
 /**
  * @returns {string[]}

@@ -706,7 +706,7 @@ is now one the generated app keeps, in the place it was always meant to be kept.
 | Before | Now |
 | --- | --- |
 | `observability.redact` was refused everywhere. Any document that declared it failed the build with `unsupported-redact`, because no target applied the set, and the docs said so. | A pipeline honours it: the generated app replaces the value of each named field in the text it records with `[redacted:<name>]`, while the model still receives the original. The refusal survives only for a document that runs an **agent**, which has no render to bind a value to. |
-| `aid trace export` refused a document whose withheld set was non-empty (`cli/trace-export-redaction-unapplied`), and refused any export under `profile: enterprise`. | It exports a document that withholds a field, because recording already removed those values before the trace was written. Under `profile: enterprise` it still refuses while the set is empty, because such a document has said nothing about what may leave. |
+| `aid trace export` refused a document whose withheld set was non-empty (`cli/trace-export-redaction-unapplied`)<!-- docs-claims: retired; the Before column quotes the release it describes -->, and refused any export under `profile: enterprise`. | It exports a document that withholds a field, because recording already removed those values before the trace was written. Under `profile: enterprise` it still refuses while the set is empty, because such a document has said nothing about what may leave. |
 
 The redaction happens where the prompt is rendered, so it covers a value that was rendered into a
 prompt and nothing else. A value the application records by another route -- its own log line, a
@@ -723,7 +723,7 @@ Two smaller consequences for scripts:
 
 | Change | What to do |
 | --- | --- |
-| `cli/trace-export-redaction-unapplied` no longer exists. An export that withholds a field succeeds instead of failing. | Match on `cli/trace-export-enterprise-capture` if you were using the old code to detect "nothing may leave". It now fires only for an enterprise document that withholds nothing. |
+| `cli/trace-export-redaction-unapplied`<!-- docs-claims: retired; the row's subject is the code that no longer exists --> no longer exists. An export that withholds a field succeeds instead of failing. | Match on `cli/trace-export-enterprise-capture` if you were using the old code to detect "nothing may leave". It now fires only for an enterprise document that withholds nothing. |
 | `aid trace export` reports the withheld set as `withheld` in its JSON output. | Read `withheld` rather than parsing the human-readable `policy:` line. |
 
 A document that runs an agent stops here. The refusal names the fields it withholds and says the

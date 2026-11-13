@@ -167,6 +167,88 @@ export function aidFlags(text) {
 }
 
 /**
+ * The namespaces a diagnostic code can belong to, each backed by a
+ * `*DIAGNOSTIC_CODES` constant in the package that emits it.
+ */
+export const DIAGNOSTIC_NAMESPACES = Object.freeze(['ir', 'spec', 'overlay', 'cli', 'generator']);
+
+/**
+ * A diagnostic code, or a family of them written with a trailing `*`.
+ *
+ * The surrounding guards are what keep this from matching a file path: a token may
+ * not be preceded by a path character and may not be followed by `/`, so
+ * `ir/src/gates/promotion.ts` is a path rather than a code named `ir/src`. A
+ * trailing `.` is allowed, because a code often ends a sentence, and a trailing `*`
+ * is captured rather than left behind, so `ir/policy-*` is one token and not the
+ * code `ir/policy-` followed by an asterisk.
+ */
+const DIAGNOSTIC_CODE = new RegExp(
+  String.raw`(?<![\w/.-])(?:${DIAGNOSTIC_NAMESPACES.join('|')})\/[a-z0-9][a-z0-9-]*\*?(?![\w/-])`,
+  'g',
+);
+
+/**
+ * A Markdown link destination, or an autolink, replaced by spaces of the same
+ * length so column positions survive. A path in a link target is a link, not a
+ * citation: `[...](./ir/eval-uncovered)` names a file.
+ *
+ * @param {string} line
+ * @returns {string}
+ */
+function withoutLinkTargets(line) {
+  return line
+    .replace(/\]\([^)\s]*\)/g, (match) => ' '.repeat(match.length))
+    .replace(/<https?:\/\/[^>\s]*>/g, (match) => ' '.repeat(match.length));
+}
+
+/**
+ * Every diagnostic code a document cites, including the wildcard form.
+ *
+ * A code is a claim that a named gate exists, so it is checked against the
+ * registry rather than trusted — which is the failure this detector exists to
+ * catch: a page citing a gate that was never registered reads exactly like one
+ * citing a gate that is.
+ *
+ * Fenced blocks are scanned, unlike the prose detectors above: sample `aid validate`
+ * output cites codes, and it is published claims of the same kind.
+ *
+ * @param {string} text
+ * @returns {{ line: number, token: string, wildcard: boolean }[]}
+ */
+export function diagnosticCodes(text) {
+  /** @type {{ line: number, token: string, wildcard: boolean }[]} */
+  const found = [];
+  text.split('\n').forEach((raw, index) => {
+    for (const match of withoutLinkTargets(raw).matchAll(DIAGNOSTIC_CODE)) {
+      const token = match[0];
+      found.push({ line: index + 1, token, wildcard: token.endsWith('*') });
+    }
+  });
+  return found;
+}
+
+/**
+ * The line-level marker that says a code-shaped token is not a citation of a
+ * registered gate.
+ *
+ * Two kinds, and no others. `retired` marks a code that a migration note names on
+ * purpose, in the column describing what the old release said. `family` marks a
+ * wildcard, such as `ir/policy-*`, that stands for a group of registered codes.
+ * Each requires a written reason, because this marker is the one place a bad
+ * citation could hide, and a reason is what a reviewer reads.
+ *
+ * The marker is an HTML comment, so the published page does not show it.
+ *
+ * @param {string} line
+ * @returns {{ kind: string, reason: string } | undefined}
+ */
+export function codeAnnotation(line) {
+  const match = line.match(/<!--\s*docs-claims:\s*(retired|family);\s*(.*?)\s*-->/);
+  if (match === null) return undefined;
+  return { kind: match[1] ?? '', reason: (match[2] ?? '').trim() };
+}
+
+/**
  * Exact pins stated in prose, such as `deepagents==0.7.32`.
  *
  * A version written into a sentence is a claim about a manifest the project does

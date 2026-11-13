@@ -121,6 +121,10 @@ faithfully records the score of an empty index.
 
 ## Coverage
 
-`ir/eval-coverage` warns when an HTTP-triggered pipeline has no eval with `gate.ci: true`, and it
-warns again when a spec declares retrievers and no eval measures them. Both are warnings, not
-failures - they appear on a successful `aid validate` and are meant to be read.
+`ir/eval-uncovered` warns when an HTTP-triggered pipeline has no eval with `gate.ci: true`, and it
+warns again when a spec declares retrievers and no eval carries a `retrieval` metric.
+
+Under `profile: standard` both are warnings: they appear on a successful `aid validate` and are
+meant to be read. Under `profile: enterprise` from spec `0.31` the same code refuses. An enterprise
+service that cannot measure its own pipelines has no baseline to regress, so the gate makes the
+measurement the condition of the build rather than a suggestion in a review.

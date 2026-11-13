@@ -329,7 +329,7 @@ and the risk that remains — beside the checklist to run before the review.
 | Output guardrail | any guardrail inspecting model output | `ir/profile-guardrail` | Gated and generated |
 | Private network | `deployments.<d>.network.private: true` | `ir/profile-network` | Gated and generated; a two-AZ VPC with private task subnets and one NAT gateway |
 | Change approval | `deployments.<d>.approvals` for production | `ir/profile-approvals` | Gated and generated as a pause |
-| Eval coverage | a `gate.ci` eval claiming each HTTP pipeline | `ir/eval-coverage` | A warning below spec `0.31`, a refusal for `enterprise` from `0.31` |
+| Eval coverage | a `gate.ci` eval claiming each HTTP pipeline | `ir/eval-uncovered` | A warning under `profile: standard`, a refusal for `enterprise` from spec `0.31` |
 | Identity | `deployments.<d>.identity` — issuer, audience, claims | `ir/profile-identity` | Gated only. **No token verification is generated** |
 | Durable state | `state`, for an agent that can pause or call a writing tool | `ir/agents-state-store`; from spec `0.32`, `ir/resume-replay-weak` | Generated into the resume route, which keeps the record of a spent checkpoint there, so a replay is refused even after a restart. The paused run itself is still carried by the checkpoint, not by this store |
 

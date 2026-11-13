@@ -1949,7 +1949,7 @@
           "$ref": "#/$defs/identity"
         },
         "network": {
-          "description": "Where this deployment's compute sits on the network. Spec 0.26. `private: true` places the workload in private subnets with no public address and emits the egress path its declared dependencies need; a cloud with no private-placement module is refused (`ir/network-target`) rather than emitted as a resource that could not apply. `enterprise` requires `private: true` on every deployment.",
+          "description": "Where this deployment's compute sits on the network. Spec 0.26. `private: true` is the placement pin, and `enterprise` requires it on every deployment: the profile gate refuses a missing or false pin with `ir/profile-network`. The generated container module already builds a two-AZ VPC with private task subnets and one NAT gateway, so the pin states a requirement rather than selecting a different module, and no gate refuses a cloud for lacking a private-placement module because no generator branches on this key yet.",
           "$ref": "#/$defs/network"
         },
         "approvals": {
