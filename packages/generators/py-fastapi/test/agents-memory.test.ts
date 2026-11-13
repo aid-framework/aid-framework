@@ -401,8 +401,8 @@ describe('the checkpoint protection the spec declares', () => {
     // A second copy of the number here is a copy that can drift from the runtime's default,
     // so an undeclared lifetime emits the constant not at all and omits the argument.
     const undeclared = SIGNED.replace('\n      checkpointTtlMinutes: 30', '');
-    const source = agentsSource(buildForSpecText(specText({ ...signed, agentState: undeclared })))
-      ?? '';
+    const source =
+      agentsSource(buildForSpecText(specText({ ...signed, agentState: undeclared }))) ?? '';
 
     expect(source).not.toContain('CHECKPOINT_TTL_SECONDS');
     expect(source).toContain('signer_from_env(CHECKPOINT_SIGNING_KEY_ENV),');
@@ -415,7 +415,9 @@ describe('the checkpoint protection the spec declares', () => {
       urlEnv: DATABASE_URL`;
     const source =
       agentsSource(
-        buildForSpecText(specText({ specVersion: '0.32', humanInTheLoop: true, agentState: unsigned })),
+        buildForSpecText(
+          specText({ specVersion: '0.32', humanInTheLoop: true, agentState: unsigned }),
+        ),
       ) ?? '';
 
     expect(source).toContain('CHECKPOINT_SIGNING_KEY_ENV: str | None = None');

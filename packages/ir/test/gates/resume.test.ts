@@ -140,7 +140,9 @@ function only(outcome: Outcome, code: IrDiagnosticCode) {
   const matches = outcome.diagnostics.filter((entry) => entry.code === code);
   const head = matches[0];
   if (head === undefined || matches.length !== 1) {
-    throw new Error(`expected exactly one ${code}, found ${matches.length} in:\n${outcome.codes.join(', ')}`);
+    throw new Error(
+      `expected exactly one ${code}, found ${matches.length} in:\n${outcome.codes.join(', ')}`,
+    );
   }
   return head;
 }
@@ -172,8 +174,12 @@ describe('the resume gate', () => {
   it('warns rather than errors about an unsigned resume under standard', () => {
     const outcome = resume({ state: { kind: 'postgres', urlEnv: 'DATABASE_URL' } });
     expect(outcome.codes).toEqual([IR_DIAGNOSTIC_CODES.resumeUnsigned]);
-    expect(severityOf({ state: { kind: 'postgres', urlEnv: 'DATABASE_URL' } }, IR_DIAGNOSTIC_CODES.resumeUnsigned))
-      .toBe('warning');
+    expect(
+      severityOf(
+        { state: { kind: 'postgres', urlEnv: 'DATABASE_URL' } },
+        IR_DIAGNOSTIC_CODES.resumeUnsigned,
+      ),
+    ).toBe('warning');
   });
 
   it('warns instead of errors when the document is too old to name a signing key', () => {
@@ -191,15 +197,20 @@ describe('the resume gate', () => {
   it('refuses an enterprise document that cannot refuse a replay', () => {
     const outcome = resume({ profile: 'enterprise' });
     expect(outcome.codes).toContain(IR_DIAGNOSTIC_CODES.resumeReplayWeak);
-    expect(severityOf({ profile: 'enterprise' }, IR_DIAGNOSTIC_CODES.resumeReplayWeak)).toBe('error');
+    expect(severityOf({ profile: 'enterprise' }, IR_DIAGNOSTIC_CODES.resumeReplayWeak)).toBe(
+      'error',
+    );
   });
 
   it('warns that a standard document refutes a replay only within one process', () => {
     const outcome = resume();
     expect(outcome.codes).toContain(IR_DIAGNOSTIC_CODES.resumeReplayWeak);
     expect(severityOf({}, IR_DIAGNOSTIC_CODES.resumeReplayWeak)).toBe('warning');
-    expect(first(outcome.diagnostics.filter((entry) => entry.code === IR_DIAGNOSTIC_CODES.resumeReplayWeak)).message)
-      .toContain('another replica');
+    expect(
+      first(
+        outcome.diagnostics.filter((entry) => entry.code === IR_DIAGNOSTIC_CODES.resumeReplayWeak),
+      ).message,
+    ).toContain('another replica');
   });
 
   it('leaves the missing store to the delivery gate when the agent writes', () => {
@@ -240,7 +251,10 @@ describe('the resume gate', () => {
   });
 
   it('accepts one document-level lifetime shared by both pausable agents', () => {
-    const outcome = resume({ profile: 'enterprise', state: { ...SIGNED, checkpointTtlMinutes: 30 } });
+    const outcome = resume({
+      profile: 'enterprise',
+      state: { ...SIGNED, checkpointTtlMinutes: 30 },
+    });
     expect(outcome.codes).not.toContain(IR_DIAGNOSTIC_CODES.resumeKeyConflict);
   });
 
@@ -248,7 +262,9 @@ describe('the resume gate', () => {
     const outcome = resume({
       profile: 'enterprise',
       state: SIGNED,
-      second: { state: { kind: 'sqlite', urlEnv: 'RUN_DB_PATH', signingKeyEnv: 'AID_CHECKPOINT_KEY' } },
+      second: {
+        state: { kind: 'sqlite', urlEnv: 'RUN_DB_PATH', signingKeyEnv: 'AID_CHECKPOINT_KEY' },
+      },
     });
     expect(outcome.codes).toContain(IR_DIAGNOSTIC_CODES.resumeKeyConflict);
   });
