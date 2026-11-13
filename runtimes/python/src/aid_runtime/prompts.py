@@ -15,6 +15,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field
 
 from aid_runtime.errors import PromptNotFoundError, PromptRenderError
+from aid_runtime.redaction import Redaction
 
 __all__ = ["Example", "PromptRegistry", "PromptTemplate", "RenderedPrompt"]
 
@@ -89,6 +90,7 @@ class PromptTemplate(BaseModel):
             version=self.version,
             text=body,
             examples=self.examples,
+            bindings=tuple(sorted(values.items())),
         )
 
 
@@ -106,6 +108,14 @@ class RenderedPrompt(BaseModel):
     version: str
     text: str
     examples: tuple[Example, ...] = ()
+    #: Every ``(name, value)`` pair the caller supplied, so a redact set naming a
+    #: field can be turned into the exact substring to strip from a recorded copy.
+    bindings: tuple[Redaction, ...] = ()
+
+    def redactions(self, names: Iterable[str]) -> tuple[Redaction, ...]:
+        """The bound pairs whose variable name appears in ``names``."""
+        wanted = set(names)
+        return tuple((name, value) for name, value in self.bindings if name in wanted)
 
     def as_messages(self, *, system: str | None = None) -> tuple[tuple[str, str], ...]:
         """Flatten to ``(role, content)`` pairs, examples inlined as few-shot turns."""

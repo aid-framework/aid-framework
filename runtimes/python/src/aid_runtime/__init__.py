@@ -201,6 +201,7 @@ from aid_runtime.providers import (
     default_bedrock_base_url,
     default_vertex_base_url,
 )
+from aid_runtime.redaction import REDACTED_FORMAT, redact_values
 from aid_runtime.retrieval import (
     DEFAULT_CANDIDATE_FACTOR,
     DEFAULT_SYNC_TIMEOUT_SECONDS,
@@ -349,7 +350,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.160"
+__version__ = "0.1.161"
 
 __all__ = [
     "AGENT_LABEL",
@@ -380,6 +381,7 @@ __all__ = [
     "METRIC_NAMES",
     "OTLP_EXTRA",
     "PRINCIPAL_KEY",
+    "REDACTED_FORMAT",
     "REDUCED_KEY",
     "RESERVED_KEYS",
     "STEPS_KEY",
@@ -635,6 +637,7 @@ __all__ = [
     "record_exception",
     "record_hitl",
     "record_usage",
+    "redact_values",
     "reduce_step",
     "repair_prompt",
     "require_reviewed",

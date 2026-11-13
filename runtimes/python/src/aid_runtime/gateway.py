@@ -32,6 +32,7 @@ from aid_runtime.errors import (
     UnknownModelAliasError,
 )
 from aid_runtime.providers.base import Provider
+from aid_runtime.redaction import redact_values
 from aid_runtime.tracing import (
     ATTRIBUTES,
     get_tracer,
@@ -67,8 +68,11 @@ def _prompt_text(request: CompletionRequest) -> str:
 
     Role-prefixed rather than concatenated, so a captured prompt still shows which
     turn a line came from once it is a row of JSONL rather than a live message list.
+    Redacted with the request's own bindings: what the provider received is
+    unchanged, and what a trace keeps no longer carries a value the spec forbids.
     """
-    return "\n\n".join(f"{message.role}: {message.content}" for message in request.messages)
+    text = "\n\n".join(f"{message.role}: {message.content}" for message in request.messages)
+    return redact_values(text, request.redactions)
 
 
 def _sse(payload: dict[str, Any]) -> bytes:
@@ -286,7 +290,11 @@ class ModelGateway:
                 cost = spec.cost.cost_usd(usage)
                 record_usage(span, usage)
                 record_cost(span, cost, alias=pinned.alias)
-                record_content(span, input_text=_prompt_text(request), output_text=text)
+                record_content(
+                    span,
+                    input_text=_prompt_text(request),
+                    output_text=redact_values(text, request.redactions),
+                )
 
                 entry = LedgerEntry(
                     alias=pinned.alias,
@@ -358,7 +366,11 @@ class ModelGateway:
                 cost = spec.cost.cost_usd(response.usage)
                 record_usage(span, response.usage)
                 record_cost(span, cost, alias=pinned.alias)
-                record_content(span, input_text=_prompt_text(request), output_text=response.text)
+                record_content(
+                    span,
+                    input_text=_prompt_text(request),
+                    output_text=redact_values(response.text, request.redactions),
+                )
                 if len(attempted) > 1:
                     span.set_attribute(ATTRIBUTES["attempts"], list(attempted))
 

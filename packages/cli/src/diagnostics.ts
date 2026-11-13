@@ -125,7 +125,6 @@ export const CLI_DIAGNOSTIC_CODES = {
   traceExportFilterNoMatch: 'cli/trace-export-filter-no-match',
   traceExportNoCases: 'cli/trace-export-no-cases',
   traceExportPartial: 'cli/trace-export-partial',
-  traceExportRedactionUnapplied: 'cli/trace-export-redaction-unapplied',
   traceExportSpecInvalid: 'cli/trace-export-spec-invalid',
   traceExportSpecRequired: 'cli/trace-export-spec-required',
   traceExportWouldOverwrite: 'cli/trace-export-would-overwrite',

@@ -578,3 +578,46 @@ whose export could not have been honoured honestly.
 
 The full per-version description, including what each version means for a construct that existed
 earlier, is in the [`specVersion` row of the spec reference](./reference/spec.md#top-level-keys).
+
+## 0.1.161: redaction stops being a declaration {#redaction-release}
+
+This is a **release**, not a spec version. `specVersion` stays `0.31`: no key, enum value or
+constraint changed. What changed is that a guarantee the spec has been able to declare since `0.27`
+is now one the generated app keeps, in the place it was always meant to be kept.
+
+### What changed
+
+| Before | Now |
+| --- | --- |
+| `observability.redact` was refused everywhere. Any document that declared it failed the build with `unsupported-redact`, because no target applied the set, and the docs said so. | A pipeline honours it: the generated app replaces the value of each named field in the text it records with `[redacted:<name>]`, while the model still receives the original. The refusal survives only for a document that runs an **agent**, which has no render to bind a value to. |
+| `aid trace export` refused a document whose withheld set was non-empty (`cli/trace-export-redaction-unapplied`), and refused any export under `profile: enterprise`. | It exports a document that withholds a field, because recording already removed those values before the trace was written. Under `profile: enterprise` it still refuses while the set is empty, because such a document has said nothing about what may leave. |
+
+The redaction happens where the prompt is rendered, so it covers a value that was rendered into a
+prompt and nothing else. A value the application records by another route -- its own log line, a
+tool body it writes -- is outside the guarantee, and the spec reference says so rather than leaving
+it to be discovered.
+
+### What you have to do
+
+Nothing. Every document that built before builds byte for byte the same, because a document that
+declares no redaction emits no redaction table at all. If you removed `observability.redact` to get
+past the old blanket refusal, you can put it back.
+
+Two smaller consequences for scripts:
+
+| Change | What to do |
+| --- | --- |
+| `cli/trace-export-redaction-unapplied` no longer exists. An export that withholds a field succeeds instead of failing. | Match on `cli/trace-export-enterprise-capture` if you were using the old code to detect "nothing may leave". It now fires only for an enterprise document that withholds nothing. |
+| `aid trace export` reports the withheld set as `withheld` in its JSON output. | Read `withheld` rather than parsing the human-readable `policy:` line. |
+
+A document that runs an agent stops here. The refusal names the fields it withholds and says the
+work can be served through a pipeline, whose recorded prompt is redacted; there is no flag that
+turns the guarantee on for an agent run, because the runner re-sends a transcript it assembled and
+no emitted code could strip a value out of it.
+
+### Why there is no `specVersion` bump
+
+Same reason as `0.1.150` and `0.1.160`: a bump is owed to a **spec language change**. The edits here
+are descriptions in the JSON schema plus behaviour in the generator, the CLI and the runtime. Every
+change in direction is a refusal being **lifted**: documents refused before now build, and no
+document that built before stops building.

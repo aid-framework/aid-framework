@@ -25,16 +25,19 @@
  *
  * An export writes prompts and completions verbatim, so it is the one command that can
  * move text out of a deployment and into a git-tracked file. It therefore reads the spec
- * (`--spec`, defaulting to the project's `app/app.spec.yaml`) and refuses in two cases
- * rather than exporting content the document does not allow:
+ * (`--spec`, defaulting to the project's `app/app.spec.yaml`) before writing anything.
  *
- * - the spec says a trace must never carry some field, and this command cannot strip a
- *   *named* field out of prose -- so it writes nothing rather than something forbidden;
- * - the profile is `enterprise`, where captured content may not leave the deployment at
- *   all until a redaction hook exists to remove what must not travel.
+ * What happens to a withheld field is the runtime's job, not this command's: the generated
+ * app replaces the value of every field `observability.redact` names as it records the
+ * prompt, so the captured copy a dataset is built from never held the value. Redaction
+ * decides what is recorded, never what is asked -- the model still receives the original
+ * text. A field name cannot be stripped out of prose after the fact, which is exactly why
+ * the stripping happens at capture.
  *
- * Both refusals disappear when runtime redaction ships; that is the point of asking here,
- * where a wrong answer is recoverable, rather than at review time, where it is not.
+ * The remaining refusal is the one this command has to make on its own judgment: under
+ * `profile: enterprise` a document whose withheld set is empty has said nothing about what
+ * may leave the deployment, so exporting its content would be an assumption rather than a
+ * policy. The set is the proof, and it is required.
  *
  * Exit codes:
  *
@@ -220,9 +223,11 @@ function datasetJson(name: string, version: string, cases: readonly ExportedCase
 /**
  * What the spec says about exporting recorded text.
  *
- * `withheld` is the trace redaction set, which the security gate has already refused if
- * it is looser than the fields the IR marks sensitive. An empty set means the document
- * forbids nothing, and an export may write the payloads it captured.
+ * `withheld` is every field the document forbids in a written record: the trace redaction
+ * set, which the security gate has already refused if it is looser than the fields the IR
+ * marks sensitive, plus the feedback intake's own PII set, which governs the same payloads
+ * when they are stored rather than traced. The runtime applies both when it records, so an
+ * empty set means the document withholds nothing and an export may write what it captured.
  */
 interface ExportPolicy {
   readonly specPath: string;
@@ -279,33 +284,26 @@ function exportPolicy(context: CliContext, specPath: string): PolicyRead {
   const policy: ExportPolicy = {
     specPath,
     profile: lowered.ir.profile,
-    withheld: lowered.ir.observability.redact,
+    withheld: [
+      ...new Set([
+        ...lowered.ir.observability.redact,
+        ...(lowered.ir.observability.feedback?.redact ?? []),
+      ]),
+    ].sort(),
   };
 
-  // `enterprise` promises that what leaves a deployment can be accounted for. Captured
-  // prompts and completions leave verbatim, and no runtime hook removes anything from
-  // them yet, so there is no honest enterprise export of content to offer.
-  if (policy.profile === 'enterprise') {
+  // `enterprise` promises that what leaves a deployment can be accounted for. The runtime
+  // redacts at capture, but only for the fields the document names: an enterprise document
+  // that names none is declaring that nothing it records is sensitive, and this command
+  // will not take that declaration at face value. A set is the proof, so it is required.
+  if (policy.profile === 'enterprise' && policy.withheld.length === 0) {
     return {
       ok: false,
       outcome: refusal(
         CLI_DIAGNOSTIC_CODES.traceExportEnterpriseCapture,
         `"${specPath}" is an enterprise document, and capturing prompts and completions into a dataset is content leaving the deployment.`,
-        'Nothing in the runtime removes a withheld field from recorded text yet, so no enterprise export of content can be made. Record the runs without AID_TRACE_CONTENT=1 to export structure only, or wait for trace redaction to ship.',
-        'aid: an enterprise profile does not export captured content.\n',
-        EXIT_USAGE,
-      ),
-    };
-  }
-
-  if (policy.withheld.length > 0) {
-    return {
-      ok: false,
-      outcome: refusal(
-        CLI_DIAGNOSTIC_CODES.traceExportRedactionUnapplied,
-        `"${specPath}" declares ${group(policy.withheld.length)} field(s) a trace must never carry (${policy.withheld.join(', ')}), and an export writes the recorded text verbatim.`,
-        'This command cannot strip a named field out of prose, so it exports nothing rather than text the document forbids. Remove the declaration if the field may appear in a trace; the runtime hook that applies it is what will lift this refusal.',
-        `aid: "${specPath}" forbids ${policy.withheld.join(', ')} in a trace; nothing was exported.\n`,
+        'Nothing is withheld from the recorded text, so every captured value would travel. Declare observability.redact (which defaults to the fields the IR marks sensitive, and is empty here) or record the runs without AID_TRACE_CONTENT=1 to export structure only.',
+        'aid: an enterprise profile does not export unredacted content.\n',
         EXIT_USAGE,
       ),
     };
@@ -509,6 +507,7 @@ export function traceExport(context: CliContext, options: TraceExportOptions): C
       leftOut: withoutInput + withoutExpected,
       spec: specPath,
       profile: policy.policy.profile,
+      withheld: policy.policy.withheld,
     },
     diagnostics,
     text: [
@@ -517,7 +516,11 @@ export function traceExport(context: CliContext, options: TraceExportOptions): C
       ...(withoutInput + withoutExpected === 0
         ? []
         : [`left out: ${group(withoutInput + withoutExpected)} run(s) with no exportable payload`]),
-      `policy: ${policy.policy.profile}, ${specPath} withholds no field from a trace`,
+      `policy: ${policy.policy.profile}, ${
+        policy.policy.withheld.length === 0
+          ? `${specPath} withholds no field from a trace`
+          : `withholding ${policy.policy.withheld.join(', ')} from every recorded prompt`
+      }`,
       `next: set evals[].dataset.uri to "${targetShown}" and curate the cases (every one is tagged "unreviewed").`,
     ].join('\n'),
   });

@@ -198,9 +198,11 @@ describe('aid trace export: the spec decides what may leave', () => {
     expect(made.exists('datasets/demo.json')).toBe(false);
   });
 
-  it('refuses to export text the spec says a trace must never carry', () => {
-    // The set names a field, and an export writes prose: there is no way to remove the
-    // field from a recorded prompt, so nothing is written.
+  it('exports when the document withholds a field, because recording already removed it', () => {
+    // Redaction is applied as the prompt is recorded, so the captured copy this command
+    // writes never held `email`. Exporting is the point: a curated dataset is the input
+    // to the improvement loop, and refusing here would mean the safer document is the one
+    // that cannot improve.
     const made = withTraces([span()]);
     made.setSpec(
       'specVersion: "0.31"\nproject:\n  name: minimal\nobservability:\n  redact: [email]\n',
@@ -208,17 +210,17 @@ describe('aid trace export: the spec decides what may leave', () => {
 
     const run = jsonRun(made, exportOf(made));
 
-    expect(run.code).toBe(2);
-    expect(diagnosticsOf(run).map((item) => item.code)).toEqual([
-      'cli/trace-export-redaction-unapplied',
-    ]);
-    expect(run.stdout).toContain('email');
-    expect(made.exists('datasets/demo.json')).toBe(false);
+    expect(run.code).toBe(0);
+    expect(made.exists('datasets/demo.json')).toBe(true);
+    // The set the document withholds, reported so CI can see what was removed rather
+    // than trusting that something was.
+    expect((JSON.parse(run.stdout) as { withheld: string[] }).withheld).toEqual(['email']);
   });
 
-  it('refuses an enterprise document, because nothing removes what must not travel', () => {
-    // `enterprise` promises that what leaves the deployment can be accounted for. With no
-    // runtime redaction hook there is no such export to offer, so the answer is no.
+  it('refuses an enterprise document that withholds nothing', () => {
+    // `enterprise` promises that what leaves the deployment can be accounted for. With an
+    // empty withheld set the document has said nothing about what may travel, so the
+    // export would be an assumption rather than a policy.
     const made = withTraces([span()]);
     made.setSpec(ENTERPRISE_SPEC);
 
@@ -229,6 +231,21 @@ describe('aid trace export: the spec decides what may leave', () => {
       'cli/trace-export-enterprise-capture',
     ]);
     expect(made.exists('datasets/demo.json')).toBe(false);
+  });
+
+  it('exports an enterprise document that names what it withholds', () => {
+    // The set is the accountability: with it declared, the recorded text was redacted as
+    // it was captured and the export carries nothing the document forbade.
+    const made = withTraces([span()]);
+    made.setSpec(
+      ENTERPRISE_SPEC.replace('observability:\n', 'observability:\n  redact: [email]\n'),
+    );
+
+    const run = jsonRun(made, exportOf(made, ['--spec', 'app/app.spec.yaml']));
+
+    expect(run.code).toBe(0);
+    expect(made.exists('datasets/demo.json')).toBe(true);
+    expect((JSON.parse(run.stdout) as { withheld: string[] }).withheld).toEqual(['email']);
   });
 });
 

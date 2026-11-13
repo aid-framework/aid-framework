@@ -193,23 +193,40 @@ export function checkCollections(
 }
 
 /**
- * The trace-redaction declaration, refused rather than documented.
+ * Whether this document runs an agent, and so cannot honour a redaction.
  *
- * `redact` names the fields a trace must not carry. The runtime creates spans for
- * every model, tool and step but has no redaction hook, so the declaration cannot be
- * honored: generating anyway would emit an app that exports exactly the values the
- * spec forbids. That is a privacy guarantee, and this file fails closed on it.
+ * A pipeline redacts where it renders: `PromptTemplate.render` knows which text came from
+ * which declared field, so the runtime can replace exactly those values in the copy it
+ * records. An agent run has no such boundary. The runner builds its own transcript -- the
+ * system prompt, the conversation so far, every tool result -- and re-sends it whole, so
+ * no render exists to bind a field name to a value. A trace of that run would therefore
+ * carry the value verbatim, and exporting it would break the guarantee the document
+ * declared. Generating anyway would be the approximation this file refuses; the document
+ * is told to serve the same work through a pipeline, which does redact.
+ */
+function runsAgent(ir: IR): boolean {
+  return ir.agents.length > 0;
+}
+
+/**
+ * The trace-redaction declaration, honoured where it can be and refused where it cannot.
+ *
+ * `redact` names the fields a trace must not carry. A pipeline's recorded prompt is
+ * redacted by the runtime, so the declaration is emitted as part of the request; an agent
+ * run has no render to strip values out of, so a document that runs an agent and withholds
+ * a field is refused rather than emitted with a guarantee nothing keeps.
  */
 export function checkObservability(ir: IR): PlanProblem[] {
   const redact = ir.observability?.redact ?? [];
-  if (redact.length === 0) return [];
+  if (redact.length === 0 || !runsAgent(ir)) return [];
   return [
     problem(
       'unsupported-redact',
       'observability.redact',
-      `the runtime's tracing has no redaction hook, so traces would carry ` +
-        `${[...redact].sort(compareIds).join(', ')}; remove the declaration, or use a target ` +
-        'whose runtime can redact',
+      `the document runs an agent and withholds ${[...redact].sort(compareIds).join(', ')} ` +
+        'from its traces, but an agent run records the transcript it was handed rather than a ' +
+        'rendered prompt, so no emitted code can strip those values; remove the declaration, ' +
+        'or serve the same work through a pipeline, whose recorded prompt is redacted',
     ),
   ];
 }
@@ -233,16 +250,6 @@ export function checkTypes(ir: IR): PlanProblem[] {
             'unresolved-type',
             fieldPath,
             `field type '${field.type.name}' is not a declared struct`,
-          ),
-        );
-      }
-      if (field.sensitive === true) {
-        problems.push(
-          problem(
-            'unsupported-redact',
-            fieldPath,
-            'the field is marked sensitive, which requires trace redaction to cover it; the ' +
-              "runtime's tracing has no redaction hook, so emitting would trace it verbatim",
           ),
         );
       }
@@ -515,16 +522,6 @@ export function checkPrompts(ir: IR): PlanProblem[] {
             `${path}.variables`,
             `variable '${variable.name}' never appears in the template, and the runtime rejects ` +
               'a render that supplies an unused value',
-          ),
-        );
-      }
-      if (variable.sensitive === true) {
-        problems.push(
-          problem(
-            'unsupported-redact',
-            `${path}.variables.${variable.name}`,
-            'the variable is marked sensitive, which requires trace redaction to cover it; the ' +
-              "runtime's tracing has no redaction hook, so emitting would trace it verbatim",
           ),
         );
       }
@@ -1884,13 +1881,15 @@ export function checkPipelines(ir: IR): PlanProblem[] {
       );
     }
     const redact = pipeline.observability?.redact ?? [];
-    if (redact.length > 0) {
+    if (redact.length > 0 && runsAgent(ir)) {
       problems.push(
         problem(
           'unsupported-redact',
           `${base}.observability.redact`,
-          `the runtime's tracing has no redaction hook, so traces would carry ` +
-            `${[...redact].sort(compareIds).join(', ')}`,
+          `the document runs an agent and withholds ${[...redact].sort(compareIds).join(', ')} ` +
+            'from this pipeline, but an agent run records the transcript it was handed rather ' +
+            'than a rendered prompt, so no emitted code can strip those values; remove the ' +
+            'declaration, or remove the agents the document declares',
         ),
       );
     }

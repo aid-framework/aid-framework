@@ -173,6 +173,18 @@ export function pythonTuple(values: readonly string[]): string {
   return values.length === 1 ? `(${items},)` : `(${items})`;
 }
 
+/**
+ * A module-level `tuple[str, ...]` constant: one line when it fits, one element per line
+ * when it does not. A trailing comma is what makes the exploded form ruff's own shape.
+ */
+export function pythonTupleConstant(name: string, values: readonly string[]): string {
+  const oneLine = `${name}: tuple[str, ...] = ${pythonTuple(values)}`;
+  if (oneLine.length <= MAX_LINE) return oneLine;
+  return [`${name}: tuple[str, ...] = (`, ...values.map((value) => `    ${value},`), ')'].join(
+    '\n',
+  );
+}
+
 /** Every run of whitespace collapsed to a single space. */
 export function collapseWhitespace(text: string): string {
   let result = '';
