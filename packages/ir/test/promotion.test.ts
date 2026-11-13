@@ -179,6 +179,18 @@ describe('ir/promotion-cost', () => {
   it('accepts a cost ceiling when the eval records a cost', () => {
     expect(promotionCodes(mutateIR(SPEC))).toEqual([]);
   });
+
+  it('refuses a cost allowance no target in the build can measure', () => {
+    // ts-vercel's manifest declares no `metrics`, so its runtime meters no spend and
+    // `aid eval --compare` would have nothing to judge the allowance against.
+    const ir = mutateIR(SPEC);
+    ir.project.targets = ['ts-vercel'];
+
+    const diagnostic = only(runGates(ir).byGate['evals/promotion'].diagnostics);
+    expect(diagnostic.code).toBe(IR_DIAGNOSTIC_CODES.promotionCost);
+    expect(diagnostic.message).toContain('no target in this build records metric spend');
+    expect(diagnostic.hint).toContain('ts-vercel');
+  });
 });
 
 describe('ir/promotion-approval', () => {

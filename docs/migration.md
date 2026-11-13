@@ -413,9 +413,16 @@ Both keys are additive, so a 0.27 document is still a 0.27 document.
 > **What 0.28 declares but does not do.** `evals[].gate.promotion` states the policy a candidate
 > must satisfy. Nothing promotes itself and nothing auto-deploys: `aid eval --compare` prints a
 > verdict, and the merge that carries the bumped prompt version is the promotion. AID generates no
-> feedback endpoint and stores no signal, and no runtime measures cost, so a declared
-> `allowedCostIncrease` is reported as unjudged on every comparison rather than checked against
-> nothing.
+> feedback endpoint and stores no signal.
+>
+> **Corrected in 0.1.162.** This note used to add that no runtime measures cost, so a declared
+> `allowedCostIncrease` was reported as unjudged on every comparison. That is no longer true: a
+> recorded baseline now carries the spend and latency of the run that produced it, and
+> `aid eval --compare` judges the allowance against those two numbers. A baseline that records no
+> spend -- one recorded before this release, or by a runner that meters nothing -- is now a
+> **refusal** rather than a warning, because a gate that cannot tell has not passed anything. If
+> your CI compares baselines committed before 0.1.162, re-record them with `aid eval --baseline`.
+> The [0.1.162 release note](#cost-allowance-release) lists every script-visible change.
 
 ### What 0.28 adds
 
@@ -437,7 +444,7 @@ describes the process that serves the app, not one route through it.
 | `ir/prompt-version-stale` | `gate.promotion.baseline` names the version already in force, so nothing was bumped. | Bump `prompts.<id>.version` above the baseline, or move the baseline up once the new version is accepted. |
 | `ir/prompt-version-stale` | The declared prompt version is behind the baseline: a rollback wearing the name of a promotion. | Roll back deliberately; a promotion is forward. |
 | `ir/promotion-regression` | `allowedQualityDrop` on an eval whose metrics are all `cost` or `latency`, so no quality metric can spend it. | Record a quality metric, or drop the allowance. |
-| `ir/promotion-cost` | `allowedCostIncrease` on an eval that records no `cost` metric, so there is no baseline cost to increase. | Add a `cost` metric with a `max` ceiling, or drop the ceiling. |
+| `ir/promotion-cost` | `allowedCostIncrease` on an eval that records no `cost` metric, so there is no baseline cost to increase; or on a build whose every target lacks the `metrics` capability, so nothing generated measures the spend. | Add a `cost` metric with a `max` ceiling, or drop the ceiling; or target a runtime that exports metrics. |
 | `ir/promotion-approval` | An `enterprise` promotion with no recorded approval. | Declare `approval: { by: [...], record: <path> }` and commit the record. |
 | `ir/feedback-pii` | A persistent feedback store with no `retentionDays`, which keeps everything forever. | Set `retentionDays`, or `persistent: false`. |
 | `ir/feedback-pii` | A `correction` signal, persistent, with a `pii.redact` list that misses a field the spec marks sensitive. | Add the field to `pii.redact`, or stop storing the text. |
@@ -621,3 +628,49 @@ Same reason as `0.1.150` and `0.1.160`: a bump is owed to a **spec language chan
 are descriptions in the JSON schema plus behaviour in the generator, the CLI and the runtime. Every
 change in direction is a refusal being **lifted**: documents refused before now build, and no
 document that built before stops building.
+
+## 0.1.162: the cost allowance is judged {#cost-allowance-release}
+
+This is a **release**, not a spec version. `specVersion` stays `0.31`: no key, enum value or
+constraint changed. What changed is that `evals[].gate.promotion.allowedCostIncrease`, declarable
+since `0.28`, is now applied instead of deferred.
+
+### What changed
+
+| Before | Now |
+| --- | --- |
+| A recorded baseline held a mean pass rate per metric and nothing else, so no dollar figure existed to compare. | `aid eval --baseline` also records the run's model spend and wall-clock time, as a mean and a sample standard deviation over the runs it took. |
+| `aid eval --compare` could not compute the increase, so it printed a warning and left the allowance unjudged. | It computes the relative increase in spend between the accepted and candidate baselines, prints both figures and the move between them, and refuses a candidate above the allowance with `cli/eval-compare-cost-regressed`. |
+| An unjudged allowance was a **warning**: the comparison passed. | It is a **failure**. A gate that could not measure has not passed anything, so `cli/eval-compare-cost-unjudged` fails the command and says to re-record. |
+| `ir/promotion-cost` refused any document that declared `allowedCostIncrease`, on the grounds that nothing could judge it. | It refuses only what is still unjudgeable: an allowance with no `cost` ceiling on the eval, or an allowance where every target in the build lacks the `metrics` capability, so no generated app would ever write the number. A build with one measuring target passes. |
+
+The distinction the runtime keeps is between **not metered** and **spent nothing**. The spend block
+is written only when a run actually metered its calls; absent means "no measurement", and zero
+means "a free run". Neither is inferred from the other, because reading a missing measurement as a
+zero would let a candidate that was never priced through the gate.
+
+### What you have to do
+
+Re-record any baseline you intend to compare. A baseline committed before 0.1.162 carries no spend,
+so `aid eval --compare` refuses it as unjudged rather than guessing:
+
+```bash
+aid eval --baseline evals/support-triage.baseline.json
+```
+
+Nothing else changes. A baseline you never compare can stay as it is -- the extra fields are
+optional in the file format. When the spec declares no `allowedCostIncrease`, the comparison prints
+exactly what it printed before, because the allowance is the only thing that adds a spend row.
+
+### What this release still does not do
+
+The allowance governs **spend**, not latency. A baseline records latency, and the comparison
+reports it, but no `gate.promotion` key bounds it, so a slower candidate is not refused. The
+per-case bound that does apply to spend is the separate `cost` metric's `max` ceiling, which is
+compared like any other metric and is unrelated to the promotion allowance.
+
+### Why there is no `specVersion` bump
+
+Same reason as `0.1.150`, `0.1.160` and `0.1.161`: a bump is owed to a **spec language change**. The
+edits here are descriptions in the JSON schema, behaviour in the runtime and the CLI, and one gate
+rule narrowed. No document gains or loses a key.

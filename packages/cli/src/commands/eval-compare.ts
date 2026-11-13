@@ -17,10 +17,10 @@
  * one in the YAML.
  *
  * **What it refuses to pretend.** A recorded baseline stores a mean pass rate per metric,
- * never a dollar total, so a `cost` row is a pass rate against its ceiling rather than
- * spend. A policy that declares `allowedCostIncrease` therefore gets a warning naming that
- * deferral rather than a silent pass, because a promotion gate that reports a cost ceiling
- * it never checked is worse than one that says it could not check it.
+ * and now also a mean spend and latency per run when the run that produced it metered them.
+ * `allowedCostIncrease` is judged whenever both files carry that spend block, and refused
+ * with the reason when either does not: a baseline that records no spend is not evidence
+ * that spend did not rise.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -29,7 +29,7 @@ import type { IR } from '@aid-framework/ir';
 
 import type { CliContext } from '../context.js';
 import type { CliDiagnostic } from '../diagnostics.js';
-import { CLI_DIAGNOSTIC_CODES, cliError, cliWarning } from '../diagnostics.js';
+import { CLI_DIAGNOSTIC_CODES, cliError } from '../diagnostics.js';
 import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE } from '../exit.js';
 import type { CommandOutcome } from '../output.js';
 import { outcome } from '../output.js';
@@ -49,6 +49,32 @@ interface RecordedBaseline {
   readonly datasetVersion: string;
   readonly model: string | null;
   readonly metrics: readonly RecordedMetric[];
+  /**
+   * Mean spend and latency per run, in dollars and milliseconds.
+   *
+   * `null` means the run that recorded this baseline metered neither, which is a different
+   * statement from a run that spent nothing. Both runtimes write the block only when they
+   * measured it, so an older file simply does not have the key.
+   */
+  readonly cost: RecordedAggregate | null;
+  readonly latency: RecordedAggregate | null;
+}
+
+/** A recorded mean and spread over runs, in the unit of the field that holds it. */
+interface RecordedAggregate {
+  readonly runs: number;
+  readonly mean: number;
+  readonly stdev: number;
+}
+
+/** The cost allowance, judged: what each side spent per run and how far it moved. */
+interface CostRow {
+  readonly baselineMeanUsd: number;
+  readonly candidateMeanUsd: number;
+  /** `null` when the accepted run spent nothing, so no fraction of it exists. */
+  readonly increase: number | null;
+  readonly allowedIncrease: number;
+  readonly within: boolean;
 }
 
 /** One row of the report: what the accepted run scored, what the candidate scored. */
@@ -212,7 +238,7 @@ function readBaseline(
       diagnostics: [
         cliError({
           code: CLI_DIAGNOSTIC_CODES.compareUnreadable,
-          message: `The ${role} baseline at ${path} is not a recorded baseline: it needs dataset, dataset_version and metrics[].{metric,mean}.`,
+          message: `The ${role} baseline at ${path} is not a recorded baseline: it needs dataset, dataset_version and metrics[].{metric,mean}, and any cost or latency block it carries must be {runs,mean,stdev}.`,
           path: [path],
           hint: 'Record it with `aid eval --baseline`: the shape is the runtime’s, and the runtime is what reads it back.',
         }),
@@ -249,12 +275,37 @@ function parseBaseline(payload: unknown): RecordedBaseline | undefined {
     });
   }
 
+  const parsedAggregates = {
+    cost: parseAggregate(record.cost),
+    latency: parseAggregate(record.latency),
+  };
+  if (parsedAggregates.cost === false || parsedAggregates.latency === false) return undefined;
+
   return {
     dataset,
     datasetVersion,
     model: typeof model === 'string' ? model : null,
     metrics: parsed,
+    cost: parsedAggregates.cost,
+    latency: parsedAggregates.latency,
   };
+}
+
+/**
+ * An optional spend or latency block.
+ *
+ * Three answers, because the third one matters: `null` for a baseline that does not carry
+ * the block at all, the record when it does, and `false` when the block is present but
+ * unreadable -- which is a corrupt file, not a baseline that recorded nothing.
+ */
+function parseAggregate(value: unknown): RecordedAggregate | null | false {
+  if (value === undefined) return null;
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record.runs !== 'number') return false;
+  if (typeof record.mean !== 'number') return false;
+  if (typeof record.stdev !== 'number') return false;
+  return { runs: record.runs, mean: record.mean, stdev: record.stdev };
 }
 
 /**
@@ -304,9 +355,98 @@ function percent(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
 }
 
+function usd(value: number): string {
+  return `$${value.toFixed(4)}`;
+}
+
+/**
+ * Applies `gate.promotion.allowedCostIncrease` to two recorded spend measurements.
+ *
+ * The allowance is a fraction of what the accepted run spent, so it needs both numbers.
+ * When either file records no spend the allowance is refused instead of satisfied: the
+ * candidate may well cost more, and a gate that cannot tell has not passed anything. That
+ * is the one behavioural change from when every comparison deferred -- refusing is the
+ * difference between a gate and a decoration, and the fix is a re-record, not a spec edit.
+ */
+function judgeCostAllowance(
+  evalId: string,
+  policy: NonNullable<Policy>,
+  baseline: RecordedBaseline,
+  candidate: RecordedBaseline,
+): { readonly row: CostRow | null; readonly diagnostics: readonly CliDiagnostic[] } {
+  const allowance = policy.allowedCostIncrease;
+  if (allowance === undefined) return { row: null, diagnostics: [] };
+
+  const path = ['evals', evalId, 'gate', 'promotion', 'allowedCostIncrease'];
+  const unmeasured = [
+    ...(baseline.cost === null ? ['accepted'] : []),
+    ...(candidate.cost === null ? ['candidate'] : []),
+  ];
+  if (baseline.cost === null || candidate.cost === null) {
+    const which =
+      unmeasured.length === 2
+        ? 'the accepted and candidate baselines record'
+        : `the ${unmeasured[0]} baseline records`;
+    const rerecord = unmeasured.length === 2 ? 'both baselines' : `the ${unmeasured[0]} baseline`;
+    return {
+      row: null,
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.compareCostUnjudged,
+          message: `The promotion was refused: allowedCostIncrease (${percent(allowance)}) could not be judged because ${which} no spend.`,
+          path,
+          hint: `Re-record ${rerecord} with \`aid eval --baseline\` on a run whose spend is metered, and commit it. A baseline that records no spend is not evidence that spend did not rise.`,
+        }),
+      ],
+    };
+  }
+
+  const accepted = baseline.cost.mean;
+  const candidateMean = candidate.cost.mean;
+  // A fraction of zero does not exist. Any spend at all then exceeds the allowance, which is
+  // the honest reading rather than treating the increase as infinite and printing it.
+  const increase = accepted === 0 ? null : (candidateMean - accepted) / accepted;
+  const within = increase === null ? candidateMean === 0 : increase <= allowance;
+  const row: CostRow = {
+    baselineMeanUsd: accepted,
+    candidateMeanUsd: candidateMean,
+    increase,
+    allowedIncrease: allowance,
+    within,
+  };
+  if (within) return { row, diagnostics: [] };
+
+  const movement =
+    increase === null
+      ? `the accepted run recorded no spend, so the candidate's ${usd(candidateMean)} per run is an unbounded increase`
+      : `spend per run rose ${percent(increase)} (${usd(accepted)} accepted, ${usd(candidateMean)} candidate), and gate.promotion.allowedCostIncrease on "${evalId}" is ${percent(allowance)}`;
+  return {
+    row,
+    diagnostics: [
+      cliError({
+        code: CLI_DIAGNOSTIC_CODES.compareCostRegressed,
+        message: `The promotion was refused: ${movement}.`,
+        path,
+        hint: 'Improve the candidate’s cost, or raise allowedCostIncrease in the spec and say why in the commit that raises it.',
+      }),
+    ],
+  };
+}
+
 function signed(value: number): string {
   const rendered = percent(Math.abs(value));
   return value > 0 ? `-${rendered}` : `+${rendered}`;
+}
+
+/**
+ * A change in the measured quantity itself, rather than in a score.
+ *
+ * `signed` above renders *badness*: the `change` column of a quality row is a drop, so a
+ * fall in the score prints negative and reads correctly. A cost row prints the change in
+ * spend, where a rise in dollars must not appear as a minus.
+ */
+function signedChange(value: number): string {
+  return `${value < 0 ? '-' : '+'}${percent(Math.abs(value))}`;
 }
 
 /**
@@ -381,6 +521,8 @@ export function compareBaselines(
 
   const compared = rows(baseline, candidate, chosen.policy.allowedQualityDrop);
   const regressions = compared.filter((row) => !row.within);
+  const judgedCost = judgeCostAllowance(chosen.evalId, chosen.policy, baseline, candidate);
+  diagnostics.push(...judgedCost.diagnostics);
 
   const report: Record<string, unknown> = {
     eval: chosen.evalId,
@@ -389,6 +531,7 @@ export function compareBaselines(
     candidate: options.candidatePath,
     dataset: `${baseline.dataset}@${baseline.datasetVersion}`,
     metrics: compared,
+    cost: judgedCost.row,
     verdict: regressions.length === 0 ? 'promotable' : 'refused',
   };
 
@@ -399,20 +542,6 @@ export function compareBaselines(
         message: `The promotion was refused: metric "${row.metric}" dropped ${percent(row.drop)} (${percent(row.baselineMean)} accepted, ${percent(row.candidateMean)} candidate), and gate.promotion.allowedQualityDrop on "${chosen.evalId}" is ${percent(row.allowedDrop)}.`,
         path: ['evals', chosen.evalId, 'gate', 'promotion', 'allowedQualityDrop'],
         hint: 'Improve the candidate, or raise allowedQualityDrop in the spec and say why in the commit that raises it.',
-      }),
-    );
-  }
-
-  // The cost ceiling is a declared intent this layer cannot check, because a baseline
-  // records a pass rate per metric rather than a dollar total. Saying so is the difference
-  // between a gate and a decoration.
-  if (chosen.policy.allowedCostIncrease !== undefined) {
-    diagnostics.push(
-      cliWarning({
-        code: CLI_DIAGNOSTIC_CODES.compareCostUnjudged,
-        message: `allowedCostIncrease (${percent(chosen.policy.allowedCostIncrease)}) was not judged: a recorded baseline stores a pass rate per metric, not a dollar total, so a percentage increase in spend cannot be computed from it.`,
-        path: ['evals', chosen.evalId, 'gate', 'promotion', 'allowedCostIncrease'],
-        hint: 'Spend is bounded per case by the `cost` metric ceiling the spec declares, which is compared like any other metric. Comparing dollars between baseline and candidate is listed as not built in docs/features.md.',
       }),
     );
   }
@@ -446,6 +575,11 @@ export function compareBaselines(
       (row) =>
         `  ${row.within ? 'ok  ' : 'FAIL'} ${row.metric.padEnd(16)} accepted ${percent(row.baselineMean).padStart(7)}  candidate ${percent(row.candidateMean).padStart(7)}  change ${signed(row.drop).padStart(8)}  allowance ${percent(row.allowedDrop)}`,
     ),
+    ...(judgedCost.row === null
+      ? []
+      : [
+          `  ${judgedCost.row.within ? 'ok  ' : 'FAIL'} ${'cost'.padEnd(16)} accepted ${usd(judgedCost.row.baselineMeanUsd).padStart(7)}  candidate ${usd(judgedCost.row.candidateMeanUsd).padStart(7)}  change ${(judgedCost.row.increase === null ? 'unbounded' : signedChange(judgedCost.row.increase)).padStart(8)}  allowance ${percent(judgedCost.row.allowedIncrease)}`,
+        ]),
     '',
     `  verdict: ${String(report.verdict)}`,
   ];
@@ -453,7 +587,13 @@ export function compareBaselines(
   return outcome({
     command,
     exitCode: refused ? EXIT_FAILURE : EXIT_OK,
-    fields: { ...fields, suite: chosen.evalId, verdict: report.verdict, metrics: compared },
+    fields: {
+      ...fields,
+      suite: chosen.evalId,
+      verdict: report.verdict,
+      metrics: compared,
+      cost: judgedCost.row,
+    },
     diagnostics,
     text: lines.join('\n'),
   });

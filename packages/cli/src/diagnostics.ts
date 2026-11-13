@@ -36,6 +36,7 @@ export const CLI_DIAGNOSTIC_CODES = {
   compareUnreadable: 'cli/eval-compare-unreadable',
   compareMismatch: 'cli/eval-compare-mismatch',
   compareRegressed: 'cli/eval-compare-regressed',
+  compareCostRegressed: 'cli/eval-compare-cost-regressed',
   compareApprovalMissing: 'cli/eval-compare-approval-missing',
   compareCostUnjudged: 'cli/eval-compare-cost-unjudged',
   retrieverRequired: 'cli/retriever-required',

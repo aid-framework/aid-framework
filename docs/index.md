@@ -123,7 +123,7 @@ behind these counts.
 | **[Model routing and cost](./reference/spec.md#model)** | `models[]` | Every call is pinned and priced, so a budget is a number the build can enforce rather than a hope. | 5 |
 | **[Retrieval and memory](./reference/spec.md#retriever)** | `retrievers[], stores[]` | Answers cite the file and offset they came from, whether the source is a managed knowledge base, an object prefix or a local store. | 8 |
 | **[Guardrails and decisions](./reference/spec.md#guardrail)** | `guardrails[], decisions[]` | An unprotected route is refused before it exists, and a judgement can be a checked decision instead of prose. | 6 |
-| **[Quality gates](./reference/spec.md#eval)** | `evals[]` | A quality regression fails the build, and every route that reaches users has an eval claiming it. | 9 |
+| **[Quality gates](./reference/spec.md#eval)** | `evals[]` | A quality regression fails the build, and every route that reaches users has an eval claiming it. | 10 |
 | **[Agents and tools](./reference/spec.md#agent)** | `agents[], tools[]` | The plumbing is generated and the tool bodies stay yours; a loop that could run unbounded or unpriced is refused. | 4 |
 | **[Deployment and infrastructure](./reference/targets.md#capability-matrix)** | `deployments[], aid infra` | The Dockerfile, OpenTofu or CDK and CI your cloud needs, plus the profile, region, audit sink and approvals an enterprise review asks for. | 9 |
 | **[Observability and cost](./reference/cli.md#trace)** | `traces[], observability, aid cost, aid report` | Traces and costs leave only for the collector your policy names, alarms are generated infrastructure, and one report compares every customer. | 7 |

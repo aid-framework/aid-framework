@@ -239,8 +239,25 @@ Each file is the baseline `aid eval --baseline` writes:
     { "metric": "exact", "runs": 40, "mean": 0.95, "stdev": 0.01 },
     { "metric": "cost", "runs": 40, "mean": 0.3, "stdev": 0.0 }
   ],
-  "note": "recorded by aid eval --baseline"
+  "note": "recorded by aid eval --baseline",
+  "cost": { "runs": 40, "mean": 0.03, "stdev": 0.004 },
+  "latency": { "runs": 40, "mean": 812.5, "stdev": 40.2 }
 }
+```
+
+The `metrics` entries score the metrics the eval declares; `cost` and `latency` are spend and
+wall-clock per run, recorded separately because they are dollars and milliseconds rather than a
+pass rate. They are written only when the run measured them, so a baseline recorded before this
+existed -- or by a runner that meters nothing, such as the scripted model in CI -- simply has no
+`cost` key. That absence is load-bearing: it is how `--compare` tells "spent nothing" from "did not
+measure", and it refuses rather than assumes.
+
+The `enterprise` profile also wants an approval on file before any of this reports a candidate as
+promotable, so commit one first:
+
+```console
+mkdir -p app/approvals
+printf '# Approved\n\nplatform-lead, 2026-02-14.\n' > app/approvals/triage.md
 ```
 
 A candidate that lost half a point, against an allowance of one:
@@ -250,14 +267,9 @@ $ aid eval claims-desk.spec.yaml --compare accepted.baseline.json --candidate ca
 promotion of eval "triage_regression" over dataset evals/triage.jsonl@3
 
   ok   exact            accepted  95.00%  candidate  94.50%  change   -0.50%  allowance 1.00%
+  ok   cost             accepted $0.0300  candidate $0.0300  change  +0.00%  allowance 10.00%
 
-  verdict: refused
-<spec>: error: The promotion was refused: "triage_regression" requires a recorded approval at app/approvals/triage.md, and that file is missing or empty. [cli/eval-compare-approval-missing]
-    at evals.triage_regression.gate.promotion.approval.record
-    hint: Commit the approval record at app/approvals/triage.md, signed off by one of: platform-lead.
-<spec>: warning: allowedCostIncrease (10.00%) was not judged: a recorded baseline stores a pass rate per metric, not a dollar total, so a percentage increase in spend cannot be computed from it. [cli/eval-compare-cost-unjudged]
-    at evals.triage_regression.gate.promotion.allowedCostIncrease
-    hint: Cost ceilings are enforced per request by the gateway budget the spec declares; the promotion cost check is listed as not built in docs/features.md.
+  verdict: promotable
 ```
 
 Three things to read in that output.
@@ -268,12 +280,40 @@ against, so a reviewer does not have to trust the verdict word alone.
 **The approval is a file.** Under `enterprise`, `gate.promotion.approval` names a path, and the run
 refuses until that path exists and is not empty. There is no reviewer service and no webhook: the
 record is a committed document, which is what makes it survive a branch, a rebase and a repo
-transfer.
+transfer. Remove it and the same candidate stops being promotable, even though every number passes:
 
-**The cost ceiling was not judged, and the run says so.** A recorded baseline carries quality metrics
-only, because no runtime measures cost yet. Exiting zero while a declared ceiling went unchecked
-would be the exact failure this project refuses, so the warning is printed on every comparison that
-declares one.
+```console
+$ rm app/approvals/triage.md
+$ aid eval claims-desk.spec.yaml --compare accepted.baseline.json --candidate candidate.baseline.json
+promotion of eval "triage_regression" over dataset evals/triage.jsonl@3
+
+  ok   exact            accepted  95.00%  candidate  94.50%  change   -0.50%  allowance 1.00%
+  ok   cost             accepted $0.0300  candidate $0.0300  change  +0.00%  allowance 10.00%
+
+  verdict: refused
+<spec>: error: The promotion was refused: "triage_regression" requires a recorded approval at app/approvals/triage.md, and that file is missing or empty. [cli/eval-compare-approval-missing]
+    at evals.triage_regression.gate.promotion.approval.record
+    hint: Commit the approval record at app/approvals/triage.md, signed off by one of: platform-lead.
+```
+
+Put it back before continuing; every block below assumes it is committed.
+
+**The cost ceiling was judged, not deferred.** The `cost` row prints dollars on both sides and the
+percentage move between them, and the allowance applies to that move. When either baseline records
+no spend the allowance is refused instead -- printed as an error, never as a warning that exits
+zero:
+
+```console
+$ aid eval claims-desk.spec.yaml --compare accepted.baseline.json --candidate unstamped.baseline.json
+promotion of eval "triage_regression" over dataset evals/triage.jsonl@3
+
+  ok   exact            accepted  95.00%  candidate  94.50%  change   -0.50%  allowance 1.00%
+
+  verdict: refused
+<spec>: error: The promotion was refused: allowedCostIncrease (10.00%) could not be judged because the candidate baseline records no spend. [cli/eval-compare-cost-unjudged]
+    at evals.triage_regression.gate.promotion.allowedCostIncrease
+    hint: Re-record the candidate baseline with `aid eval --baseline` on a run whose spend is metered, and commit it. A baseline that records no spend is not evidence that spend did not rise.
+```
 
 A candidate that lost five points is refused on the number:
 
@@ -282,31 +322,33 @@ $ aid eval claims-desk.spec.yaml --compare accepted.baseline.json --candidate lo
 promotion of eval "triage_regression" over dataset evals/triage.jsonl@3
 
   FAIL exact            accepted  95.00%  candidate  90.00%  change   -5.00%  allowance 1.00%
+  ok   cost             accepted $0.0300  candidate $0.0300  change  +0.00%  allowance 10.00%
 
   verdict: refused
-<spec>: warning: allowedCostIncrease (10.00%) was not judged: a recorded baseline stores a pass rate per metric, not a dollar total, so a percentage increase in spend cannot be computed from it. [cli/eval-compare-cost-unjudged]
-    at evals.triage_regression.gate.promotion.allowedCostIncrease
-    hint: Cost ceilings are enforced per request by the gateway budget the spec declares; the promotion cost check is listed as not built in docs/features.md.
 <spec>: error: The promotion was refused: metric "exact" dropped 5.00% (95.00% accepted, 90.00% candidate), and gate.promotion.allowedQualityDrop on "triage_regression" is 1.00%. [cli/eval-compare-regressed]
     at evals.triage_regression.gate.promotion.allowedQualityDrop
     hint: Improve the candidate, or raise allowedQualityDrop in the spec and say why in the commit that raises it.
 ```
 
-Record the approval and the same candidate is promotable:
+A candidate that holds its quality and spends more than the allowance is refused on the other
+number, which is the case the cost row exists for:
 
 ```console
-$ mkdir -p app/approvals
-$ printf '# Approved\n\nplatform-lead, 2026-02-14.\n' > app/approvals/triage.md
-$ aid eval claims-desk.spec.yaml --compare accepted.baseline.json --candidate candidate.baseline.json
+$ aid eval claims-desk.spec.yaml --compare accepted.baseline.json --candidate pricier.baseline.json
 promotion of eval "triage_regression" over dataset evals/triage.jsonl@3
 
-  ok   exact            accepted  95.00%  candidate  94.50%  change   -0.50%  allowance 1.00%
+  ok   exact            accepted  95.00%  candidate  95.00%  change   +0.00%  allowance 1.00%
+  FAIL cost             accepted $0.0300  candidate $0.0340  change  +13.33%  allowance 10.00%
 
-  verdict: promotable
-<spec>: warning: allowedCostIncrease (10.00%) was not judged: a recorded baseline stores a pass rate per metric, not a dollar total, so a percentage increase in spend cannot be computed from it. [cli/eval-compare-cost-unjudged]
+  verdict: refused
+<spec>: error: The promotion was refused: spend per run rose 13.33% ($0.0300 accepted, $0.0340 candidate), and gate.promotion.allowedCostIncrease on "triage_regression" is 10.00%. [cli/eval-compare-cost-regressed]
     at evals.triage_regression.gate.promotion.allowedCostIncrease
-    hint: Cost ceilings are enforced per request by the gateway budget the spec declares; the promotion cost check is listed as not built in docs/features.md.
+    hint: Improve the candidate’s cost, or raise allowedCostIncrease in the spec and say why in the commit that raises it.
 ```
+
+The `cost` row is the one that changes a decision: quality held, and the candidate is still refused,
+because the allowance applies to the move between two measured numbers rather than to a metric
+score.
 
 Exit `0` is a **verdict**, not a deployment. Merging the branch that carries the bumped prompt
 version, the raised baseline and the approval record is the promotion. AID never runs that step for
@@ -318,8 +360,9 @@ Being precise about the boundary is the point of the phase:
 
 - **Nothing promotes itself.** `--compare` reports; the merge promotes. There is no auto-deploy path
   and no gate that could be satisfied by a bot.
-- **No cost comparison.** `allowedCostIncrease` is declared, gated for coherence, and reported as
-  unjudged on every run, because a recorded baseline stores pass rates rather than dollars.
+- **No cost comparison beyond the recorded pair.** `allowedCostIncrease` is judged against the
+  spend two recorded baselines carry. A baseline that records none is refused, not passed. Nothing
+  estimates cost from a model card, and `--compare` does not re-run either side.
 - **No feedback route or storage is generated.** `observability.feedback` is a declaration the
   `feedback` gate checks. AID does not emit an endpoint that accepts a thumbs vote, does not write
   the table, and does not enforce `retentionDays` at runtime.

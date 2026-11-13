@@ -252,6 +252,35 @@ export class MetricBaseline {
   }
 }
 
+/**
+ * A recorded mean and spread over runs, in the unit of whatever holds it.
+ *
+ * `mean` is bounded below only. A metric's baseline is a pass rate and fits in `[0, 1]`,
+ * but a spend average is a currency figure and a duration is milliseconds, so the unit
+ * lives in the field name that refers to this record (`EvalBaseline.cost`,
+ * `EvalBaseline.latency`) and not in the bound.
+ */
+export class AggregateBaseline {
+  readonly runs: number;
+  readonly mean: number;
+  readonly stdev: number;
+
+  constructor(init: { readonly runs: number; readonly mean: number; readonly stdev: number }) {
+    if (!Number.isInteger(init.runs) || init.runs <= 0) {
+      throw new RangeError('runs must be a positive integer');
+    }
+    if (!(init.mean >= 0.0)) throw new RangeError('mean must be non-negative');
+    if (!(init.stdev >= 0.0)) throw new RangeError('stdev must be non-negative');
+    this.runs = init.runs;
+    this.mean = init.mean;
+    this.stdev = init.stdev;
+  }
+
+  toJSON(): Record<string, unknown> {
+    return { runs: this.runs, mean: quantise(this.mean), stdev: quantise(this.stdev) };
+  }
+}
+
 function readNumber(record: Readonly<Record<string, unknown>>, ...keys: string[]): number {
   for (const key of keys) {
     const value = record[key];
@@ -272,6 +301,20 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function readAggregate(
+  record: Readonly<Record<string, unknown>>,
+  key: 'cost' | 'latency',
+): AggregateBaseline | null {
+  const value = record[key];
+  if (value === undefined || value === null) return null;
+  if (!isObject(value)) throw new EvalError(`a baseline's ${key} must be an object`);
+  return new AggregateBaseline({
+    runs: readNumber(value, 'runs'),
+    mean: readNumber(value, 'mean'),
+    stdev: readNumber(value, 'stdev'),
+  });
+}
+
 /** A committed baseline: the accepted distribution for a dataset and model. */
 export class EvalBaseline {
   readonly dataset: string;
@@ -279,6 +322,17 @@ export class EvalBaseline {
   readonly model: string;
   readonly metrics: readonly MetricBaseline[];
   readonly note: string;
+  /**
+   * Recorded model spend per run, when the run that produced this baseline metered it.
+   *
+   * `null` on a baseline recorded before spend was measured, and on one recorded from a
+   * runner that meters nothing -- a scripted model in CI, for instance. `aid eval
+   * --compare` refuses to judge `allowedCostIncrease` against either, rather than read
+   * "not measured" as "no increase".
+   */
+  readonly cost: AggregateBaseline | null;
+  /** Recorded wall-clock time per run, in milliseconds, on the same terms as `cost`. */
+  readonly latency: AggregateBaseline | null;
 
   constructor(init: {
     readonly dataset: string;
@@ -286,6 +340,8 @@ export class EvalBaseline {
     readonly model: string;
     readonly metrics: readonly MetricBaseline[];
     readonly note?: string;
+    readonly cost?: AggregateBaseline | null;
+    readonly latency?: AggregateBaseline | null;
   }) {
     if (init.metrics.length === 0) throw new RangeError('a baseline needs at least one metric');
     this.dataset = init.dataset;
@@ -293,6 +349,8 @@ export class EvalBaseline {
     this.model = init.model;
     this.metrics = init.metrics;
     this.note = init.note ?? '';
+    this.cost = init.cost ?? null;
+    this.latency = init.latency ?? null;
   }
 
   static fromRun(
@@ -344,6 +402,8 @@ export class EvalBaseline {
         });
       }),
       note: typeof parsed.note === 'string' ? parsed.note : '',
+      cost: readAggregate(parsed, 'cost'),
+      latency: readAggregate(parsed, 'latency'),
     });
   }
 
@@ -352,13 +412,17 @@ export class EvalBaseline {
   }
 
   toJson(): string {
-    const payload = {
+    const payload: Record<string, unknown> = {
       dataset: this.dataset,
       dataset_version: this.datasetVersion,
       model: this.model,
       metrics: this.metrics.map((entry) => entry.toJSON()),
       note: this.note,
     };
+    // Written only when recorded, so a baseline with no spend measurement stays
+    // byte-identical to one written before spend was recorded at all.
+    if (this.cost !== null) payload.cost = this.cost.toJSON();
+    if (this.latency !== null) payload.latency = this.latency.toJSON();
     return `${JSON.stringify(payload, null, 2)}\n`;
   }
 }

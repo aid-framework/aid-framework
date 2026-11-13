@@ -15,9 +15,11 @@
  *   - a promotion needs a quality metric to have a quality allowance. `allowedQualityDrop`
  *     governs the mean of *quality* metrics, so an eval that measures only `cost` or
  *     `latency` has an allowance that governs nothing.
- *   - a cost ceiling needs a cost measurement. `allowedCostIncrease` is a fraction of a
- *     baseline cost, so an eval with no `cost` metric has no baseline cost to increase and
- *     the ceiling would be enforced against nothing.
+ *   - a cost ceiling needs a cost measurement, twice over. `allowedCostIncrease` is a
+ *     fraction of a baseline cost, so the eval must declare a `cost` metric for any run to
+ *     measure spend at all, and the build must target a runtime that records it. Both
+ *     failures look like a complete policy and both leave `aid eval --compare` with
+ *     nothing to judge.
  *   - under `profile: enterprise` the promotion needs a recorded approval. A promotion is
  *     a change to what an accepted release does, which is what the profile's change control
  *     exists to name.
@@ -29,6 +31,7 @@
  */
 
 import { specVersionAtLeast } from '@aid-framework/spec';
+import { resolveRequiredCapability } from '../capabilities.js';
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
 import type { EvalShape, IR, MetricShape, PromptShape } from '../shapes.js';
 import { type GateOptions, type GateResult, NO_SUPPRESSIONS, reporter } from './contract.js';
@@ -65,7 +68,7 @@ export function promotionGate(ir: IR, options: GateOptions): GateResult {
       // release that cannot be named, so the reader gets one diagnostic and a fix.
       continue;
     }
-    diagnostics.push(...policyDiagnostics(ir, evalShape, report, path));
+    diagnostics.push(...policyDiagnostics(ir, evalShape, options, report, path));
   }
 
   return { diagnostics, suppressed: NO_SUPPRESSIONS };
@@ -113,6 +116,7 @@ function staleVersionDiagnostic(
 function policyDiagnostics(
   ir: IR,
   evalShape: EvalShape,
+  options: GateOptions,
   report: ReturnType<typeof reporter>,
   path: string[],
 ): IrDiagnostic[] {
@@ -135,11 +139,28 @@ function policyDiagnostics(
     diagnostics.push(
       report.error({
         code: IR_DIAGNOSTIC_CODES.promotionCost,
-        message: `the promotion gate rejected "${evalShape.id}": allowedCostIncrease is ${promotion.allowedCostIncrease} but the eval declares no cost ceiling, so neither baseline records a spend comparison the allowance could govern`,
+        message: `the promotion gate rejected "${evalShape.id}": allowedCostIncrease is ${promotion.allowedCostIncrease} but the eval declares no cost ceiling, so no run of it measures what the allowance would bound`,
         path: [...path, 'allowedCostIncrease'],
-        hint: 'add a `cost` metric with a `max` ceiling so both baselines score that ceiling, or drop allowedCostIncrease',
+        hint: 'add a `cost` metric with a `max` ceiling so every run scores its own spend, or drop allowedCostIncrease',
       }),
     );
+  } else if (promotion.allowedCostIncrease !== undefined) {
+    const silent = ir.project.targets.filter(
+      (target) =>
+        !(options.targetCapabilities[target] ?? []).some(
+          (entry) => resolveRequiredCapability(entry) === 'metrics',
+        ),
+    );
+    if (silent.length === ir.project.targets.length) {
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.promotionCost,
+          message: `the promotion gate rejected "${evalShape.id}": allowedCostIncrease is ${promotion.allowedCostIncrease} but no target in this build records metric spend, so \`aid eval --compare\` would have no cost measurement to judge the allowance against`,
+          path: [...path, 'allowedCostIncrease'],
+          hint: `generate for py-fastapi, whose runtime meters spend through the gateway ledger and records it in a baseline. A target whose manifest lacks the \`metrics\` capability records none (${silent.join(', ')})`,
+        }),
+      );
+    }
   }
 
   if (ir.profile === 'enterprise' && promotion.approval === undefined) {

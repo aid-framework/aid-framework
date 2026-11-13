@@ -73,6 +73,7 @@ interface BaselinePayload {
   readonly dataset_version?: string;
   readonly model?: string;
   readonly metrics?: readonly { metric: string; runs: number; mean: number; stdev: number }[];
+  readonly cost?: { runs: number; mean: number; stdev: number };
 }
 
 /** The shape both runtimes write, with the one thing a caller varies: the quality score. */
@@ -116,6 +117,49 @@ function compareText(made: Project) {
 /** The same run under `--json`, which is how a diagnostic code is asserted. */
 function compare(made: Project) {
   return aid(made, ['eval', '--compare', ACCEPTED, '--candidate', CANDIDATE, '--json']);
+}
+
+/**
+ * The promotion policy plus a cost allowance, on a spec that declares a `cost` metric.
+ *
+ * Declaring the metric is not decoration: the build gate refuses an allowance on an eval
+ * that records no cost, so this is the only shape in which the comparison is reachable.
+ */
+function costAllowanceSpec(): string {
+  return promotableSpec()
+    .replace(
+      '        allowedQualityDrop: 0.01',
+      '        allowedQualityDrop: 0.01\n        allowedCostIncrease: 0.1',
+    )
+    .replace(
+      '      - kind: json-schema\n        schema: Answer',
+      '      - kind: json-schema\n        schema: Answer\n      - kind: cost\n        max: 0.4',
+    );
+}
+
+/**
+ * A project with a cost allowance and both baselines on disk.
+ *
+ * `null` omits the `cost` block entirely, which is how a baseline recorded before spend was
+ * measured -- or by a runner that meters nothing -- reaches this layer.
+ */
+function comparedForCost(options: { accepted?: number | null; candidate?: number | null } = {}) {
+  const made = project(costAllowanceSpec());
+  created.push(made);
+  const spend = (value: number | null | undefined) =>
+    value === null || value === undefined ? {} : { cost: { runs: 5, mean: value, stdev: 0.001 } };
+
+  writeFileSync(
+    join(made.root, ACCEPTED),
+    baseline(0.95, spend(options.accepted === undefined ? 0.03 : options.accepted)),
+    'utf8',
+  );
+  writeFileSync(
+    join(made.root, CANDIDATE),
+    baseline(0.95, spend(options.candidate === undefined ? 0.03 : options.candidate)),
+    'utf8',
+  );
+  return made;
 }
 
 describe('aid eval --compare', () => {
@@ -208,32 +252,63 @@ describe('aid eval --compare', () => {
     );
   });
 
-  it('says the cost ceiling was not judged, instead of passing it silently', () => {
-    // No runtime measures a cost metric, so a baseline carries quality scores only. The
-    // warning is the honest form of the check the policy asked for.
-    const made = compared();
-    const specPath = join(made.root, 'app', 'app.spec.yaml');
-    // A cost ceiling is only coherent on an eval that records a cost metric, which the
-    // promotion gate enforces; declaring the metric is what a real document would do.
-    writeFileSync(
-      specPath,
-      promotableSpec()
-        .replace(
-          '        allowedQualityDrop: 0.01',
-          '        allowedQualityDrop: 0.01\n        allowedCostIncrease: 0.1',
-        )
-        .replace(
-          '      - kind: json-schema\n        schema: Answer',
-          '      - kind: json-schema\n        schema: Answer\n      - kind: cost\n        max: 0.4',
-        ),
-      'utf8',
-    );
-
+  it('refuses to judge the cost allowance against baselines that record no spend', () => {
+    // A baseline recorded before spend was measured has no `cost` block. Reading that as
+    // "spent nothing" would pass the allowance against no evidence at all.
+    const made = comparedForCost({ accepted: null, candidate: null });
     const run = compare(made);
-    expect(run.code).toBe(0);
+
+    expect(run.code).toBe(1);
     expect(diagnosticsOf(run).map((diagnostic) => diagnostic.code)).toContain(
       'cli/eval-compare-cost-unjudged',
     );
+    expect(compareText(made).stderr).toContain('Re-record both baselines');
+  });
+
+  it('judges the cost allowance when both baselines record spend', () => {
+    const made = comparedForCost({ accepted: 0.03, candidate: 0.03 });
+    const run = compareText(made);
+
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain('cost');
+    expect(run.stdout).toContain('$0.0300');
+    expect(run.stdout).toContain('verdict: promotable');
+  });
+
+  it('refuses a candidate whose spend rose past the allowance', () => {
+    // 0.034 against 0.03 is a 13.33% increase, and the policy allows 10%.
+    const made = comparedForCost({ accepted: 0.03, candidate: 0.034 });
+    const run = compare(made);
+
+    expect(run.code).toBe(1);
+    expect(diagnosticsOf(run).map((diagnostic) => diagnostic.code)).toContain(
+      'cli/eval-compare-cost-regressed',
+    );
+    expect(compareText(made).stderr).toContain('13.33%');
+    // A rise in dollars must read as a rise: the quality column prints a drop, so
+    // reusing that sign here would report a cost increase as a saving.
+    expect(compareText(made).stdout).toContain('change  +13.33%');
+  });
+
+  it('refuses unbounded growth when the accepted run spent nothing', () => {
+    // The allowance is a fraction of the accepted spend, and no fraction of zero exists.
+    // Any spend at all then exceeds it, which is the answer rather than a division.
+    const made = comparedForCost({ accepted: 0, candidate: 0.01 });
+    const run = compare(made);
+
+    expect(run.code).toBe(1);
+    expect(diagnosticsOf(run).map((diagnostic) => diagnostic.code)).toContain(
+      'cli/eval-compare-cost-regressed',
+    );
+    expect(compareText(made).stderr).toContain('unbounded');
+  });
+
+  it('refuses when only one side of the pair records spend', () => {
+    const made = comparedForCost({ accepted: 0.03, candidate: null });
+    const run = compare(made);
+
+    expect(run.code).toBe(1);
+    expect(compareText(made).stderr).toContain('candidate');
   });
 
   it('refuses a promotion whose required approval is not in the tree', () => {

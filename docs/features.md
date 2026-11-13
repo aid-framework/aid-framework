@@ -416,6 +416,14 @@ Spec 0.28 states what a candidate is allowed to cost in quality and in spend: `e
 - **Reference:** [spec](./reference/spec.md#eval)
 - **Since:** `0.1.146`
 
+### A spend allowance judged against recorded runs
+
+A recorded baseline carries the model spend and wall-clock time of the run that produced it, next to its metric means. `aid eval --compare` computes the relative increase in spend between the accepted and candidate baselines and refuses a candidate above `gate.promotion.allowedCostIncrease`, printing both dollar figures and the move between them. The block is written only when the run metered it, so "spent nothing" and "did not measure" stay distinguishable: a baseline without spend is refused as unjudged rather than read as a zero.
+
+- **Turned on by:** `aid eval --compare, evals[].gate.promotion.allowedCostIncrease`
+- **Reference:** [cli](./reference/cli.md#eval)
+- **Since:** `0.1.162`
+
 ### A stated list of what a customer may change
 
 Spec 0.29 adds `overridable`: the base spec names every path an overlay may set and the bound each may move within -- a closed set of values (`from`) or a ceiling (`max`). A path that is not listed is not overridable, so "what may differ per customer" is a reviewable line in the base repo rather than a convention nobody wrote down. Listing a path does not open its children, and `allowWeaken` is a separate permission the base author grants per path.
@@ -623,6 +631,12 @@ Promoting a prompt whose declared version is not greater than the baseline is re
 ### A cost ceiling on an eval that records no cost
 
 `allowedCostIncrease` compares two cost measurements. An eval with no `cost` metric records none, so the ceiling would be checked against nothing; the gate refuses it and points at the `cost` metric that would make it real.
+
+- **Enforced by:** `ir/promotion-cost`
+
+### A spend allowance no target in the build can measure
+
+The allowance is judged against spend a runtime records. When every declared target lacks the `metrics` capability, no generated app will ever write that number, so the policy is refused rather than shipped as a promise nothing can keep. A mixed build still passes: one target that measures is enough.
 
 - **Enforced by:** `ir/promotion-cost`
 
