@@ -71,6 +71,6 @@ def test_the_trace_keeps_the_redacted_copy_and_the_model_keeps_the_original() ->
 def test_redactions_do_not_change_the_fingerprint() -> None:
     """A redact set describes the recording, not the call, so a cache key survives it."""
     plain = CompletionRequest.prompt("hello")
-    redacted = CompletionRequest.prompt("hello", redactions=[("email", EMAIL)])
+    redacted = CompletionRequest.prompt("hello", redactions=(("email", EMAIL),))
 
     assert plain.fingerprint() == redacted.fingerprint()
