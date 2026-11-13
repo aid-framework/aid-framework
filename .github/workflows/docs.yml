@@ -123,3 +123,27 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v5
+
+  verify-live:
+    name: verify-live
+    needs: deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # The check reads the version from the shipped manifests and then fetches the page, so
+      # it needs a checkout and a Node runtime and nothing else -- no dependency install.
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      # Confirms the page a reader actually gets reports the release this commit declares.
+      # Deliberately not a required check: it runs after `deploy` on main, so it reports on a
+      # publication that already happened rather than blocking a merge. It retries for ~10
+      # minutes because GitHub Pages sits behind a CDN with `max-age=600`.
+      - name: Assert the published site reports the declared version
+        run: node site/scripts/check-live-version.mjs

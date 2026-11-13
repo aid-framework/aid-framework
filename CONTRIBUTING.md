@@ -91,6 +91,11 @@ Then, from the repository root:
 | `pnpm format` | Apply Biome formatting |
 
 `pnpm check` is the gate CI runs, so run it before opening a pull request — but it is not the whole of CI.
+`pnpm docs:live` fetches the published site and asserts it reports the release this tree declares. It reads
+the live page, so it only means anything after a deploy: the `verify-live` job runs it after `deploy` on
+`main`, it retries for about ten minutes because GitHub Pages is CDN-cached, and it is not part of `check`
+and not a required check.
+
 The Python side has its own gates, and `pnpm e2e` needs the runtime and the example importable, so install
 both once:
 
