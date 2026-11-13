@@ -77,7 +77,7 @@ shown so the blocks below are not quietly shorter than a real run.
 | A declared `identity` | [`ir/profile-identity`](#refusal-1-the-three-missing-controls) | Every deployment |
 | `network.private: true` | [`ir/profile-network`](#refusal-2-declared-but-wrong) | Every deployment |
 | An `approvals` policy that can be satisfied | [`ir/profile-approvals`](#refusal-2-declared-but-wrong) | Every deployment |
-| A `state` store for an agent that can call a writing tool | [`ir/agents-state-store`](#refusal-3-an-agent-that-writes-with-nowhere-to-wait) | Every such agent |
+| A `state` store for an agent that can call a writing tool | [`ir/agents-state-store`](#refusal-3-an-agent-that-writes-with-no-record-of-a-spent-pause) | Every such agent |
 | No `requiresApproval` on a tool with no side effects | [`ir/approval-step-tool`](#refusal-4-asking-a-human-to-approve-a-read) | Every profile |
 
 The first three extend the `profile` gate that 0.25 shipped. The last two are new gates — `state` and
