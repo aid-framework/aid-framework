@@ -192,6 +192,7 @@ export default defineConfig({
             { text: 'The generated tree', link: '/guide/generated-tree' },
             { text: 'Serving an app', link: '/guide/serving' },
             { text: 'Delivering to many customers', link: '/guide/delivery' },
+            { text: 'What AID enforces, and what stays yours', link: '/guide/boundary' },
             { text: 'Improving an agent over time', link: '/guide/improvement-loop' },
             { text: 'Concepts', link: '/guide/concepts' },
           ],

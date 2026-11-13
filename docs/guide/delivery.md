@@ -316,7 +316,9 @@ time rather than discovered as a silent no-op.
 ## The enterprise checklist
 
 Per customer you are claiming these controls. This is what each one costs and where it stands
-today.
+today. [What AID enforces, and what stays yours](./boundary.md) carries the same rows in the
+shape a reviewer asks for — the diagnostic that refuses it, what is generated, what you provide,
+and the risk that remains — beside the checklist to run before the review.
 
 | Control | What the spec declares | Refused when missing | What exists today |
 | --- | --- | --- | --- |
