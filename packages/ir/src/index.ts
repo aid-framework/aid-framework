@@ -79,7 +79,7 @@ export {
   gatewayEnvName,
   knowledgeBaseEnvName,
 } from './deploy-plan.js';
-export type { IrDiagnostic, IrDiagnosticCode } from './diagnostics.js';
+export type { DiagnosticMetadata, IrDiagnostic, IrDiagnosticCode } from './diagnostics.js';
 export {
   IR_DIAGNOSTIC_CODES,
   irError,

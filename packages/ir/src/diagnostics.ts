@@ -117,6 +117,113 @@ export const IR_DIAGNOSTIC_CODES = {
 
 export type IrDiagnosticCode = (typeof IR_DIAGNOSTIC_CODES)[keyof typeof IR_DIAGNOSTIC_CODES];
 
+/**
+ * What the published pages need to know about a code beyond its name.
+ *
+ * Only codes a page publishes carry an entry: the map is partial so that adding a code does
+ * not oblige anyone to invent a condition for a case no page describes. Coverage is enforced
+ * where it matters -- every code the boundary table cites must have one.
+ */
+export interface DiagnosticMetadata {
+  /** The case this code refuses in, as a reader deciding whether their document passes. */
+  readonly condition: string;
+  /** What decides the severity, set only where the emit sites disagree. */
+  readonly escalation?: string;
+}
+
+/**
+ * The one-line condition each published refusal covers.
+ *
+ * A code has one condition even when it has several emit sites, because a reader deciding
+ * whether a document will pass needs the case, not the message. `escalation` is only set
+ * where the emit sites disagree about severity, and says what decides it -- the reference
+ * generator refuses to publish a code that emits both severities without one.
+ */
+export const IR_DIAGNOSTIC_METADATA = {
+  'ir/agents-state-store': {
+    condition: 'a writing agent with no durable state, or a `state` block AID cannot use',
+  },
+  'ir/alerts-unexported': {
+    condition: 'alerts declared with no signal exported for a collector to read',
+  },
+  'ir/alerts-unproduced': { condition: 'an alert whose metric nothing in the build records' },
+  'ir/audit-target': { condition: 'an audit sink the cloud a deployment names cannot serve' },
+  'ir/cloud-conflict': { condition: 'deployments naming different clouds for one module set' },
+  'ir/cloud-unsupported': { condition: 'a cloud AID does not provision' },
+  'ir/cost-budget-exceeded': { condition: 'an eval estimated above its declared budget' },
+  'ir/cost-profile-unknown': {
+    condition: 'an eval pricing a model or knowledge base that has no cost profile',
+    escalation: 'a declared budget makes it a refusal; without one it warns',
+  },
+  'ir/deploy-target-unknown': { condition: 'a deployment target that is not one of the clouds' },
+  'ir/eval-metric-vacuous': {
+    condition:
+      'a metric that can only pass: a ceiling the agent already enforces, or an approval on an agent that never pauses',
+  },
+  'ir/eval-trajectory': { condition: 'an agent eval whose target cannot run one' },
+  'ir/eval-uncovered': {
+    condition: 'an HTTP pipeline that no gate.ci eval claims',
+    escalation:
+      '`enterprise` at spec {const:EVAL_COVERAGE_ENFORCED_MIN_VERSION} or later refuses it; everything else warns',
+  },
+  'ir/feedback-pii': {
+    condition:
+      'a feedback signal with no retention, or a persistent one whose `pii.redact` misses a sensitive field',
+  },
+  'ir/hitl-side-effect': { condition: 'a side-effecting tool with no approval policy' },
+  'ir/identity-verified-by': { condition: 'enterprise with an identity and no named verifier' },
+  'ir/observability-export': {
+    condition: 'activity exported with `trace` off, or enterprise with no export',
+  },
+  'ir/policy-syntax': { condition: 'a policy expression that does not parse' },
+  'ir/profile-approvals': {
+    condition: 'enterprise production with no approval policy, or one that cannot gate',
+  },
+  'ir/profile-audit': { condition: 'enterprise with no audit sink pinned' },
+  'ir/profile-guardrail': { condition: 'enterprise with no guardrail inspecting model output' },
+  'ir/profile-identity': {
+    condition: 'enterprise with no identity, or an identity kind AID does not define',
+  },
+  'ir/profile-network': { condition: 'enterprise with no `network.private` flag' },
+  'ir/profile-region': { condition: 'enterprise with no region pinned' },
+  'ir/profile-unknown': { condition: 'a profile AID does not define' },
+  'ir/promotion-approval': { condition: 'an enterprise promotion with no recorded approval' },
+  'ir/promotion-cost': {
+    condition:
+      'a cost allowance on an eval with no cost ceiling, or a build where no target records spend',
+  },
+  'ir/promotion-regression': {
+    condition: 'a quality allowance on an eval measuring no quality metric',
+  },
+  'ir/region-target': { condition: 'a region the cloud a deployment names does not offer' },
+  'ir/resume-key-alias': {
+    condition: 'a signing key variable that already holds another credential',
+  },
+  'ir/resume-key-conflict': {
+    condition: 'pausable agents naming different keys, stores or lifetimes behind one resume route',
+  },
+  'ir/resume-replay-weak': {
+    condition: 'a pausable agent with no store to claim a nonce in',
+    escalation: 'enterprise refuses it; `standard` warns',
+  },
+  'ir/resume-unsigned': {
+    condition: 'a pausable agent with no checkpoint signing key',
+    escalation:
+      '`enterprise` at spec {const:RESUME_SIGNING_ENFORCED_MIN_VERSION} or later refuses it; `standard`, and `enterprise` before {const:RESUME_SIGNING_ENFORCED_MIN_VERSION}, warn',
+  },
+  'ir/security-input-guardrail': {
+    condition: 'caller text reaching a prompt with no input guardrail',
+  },
+  'ir/security-missing-auth': { condition: 'a side-effecting tool with no auth in its policy' },
+  'ir/security-redaction-incomplete': {
+    condition: 'a trace config that is on but does not redact a sensitive field',
+  },
+  'ir/security-store-secret': { condition: 'a store whose `uri` is a literal connection string' },
+  'ir/security-unauthenticated-path': {
+    condition: 'a route that reaches a writing tool with no authentication',
+  },
+} as const satisfies Readonly<Partial<Record<IrDiagnosticCode, DiagnosticMetadata>>>;
+
 /** The diagnostic carrier this layer emits: the shared shape, the IR's own codes. */
 export type IrDiagnostic = Diagnostic<IrDiagnosticCode>;
 
