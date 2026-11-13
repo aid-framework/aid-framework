@@ -12,7 +12,7 @@
  * than a failed build.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -239,11 +239,15 @@ export function parseDiagnosticCodes(source) {
 }
 
 /** Registered generator package directories, sorted, so both target parsers walk one list. */
-function generatorDirectories() {
+export function generatorDirectories() {
   const root = 'packages/generators';
   try {
+    // Membership is decided by the manifest, not by being a directory: tooling drops
+    // `node_modules` and cache directories here (vitest writes `.vite`), and reading one
+    // as a target fails the page instead of being skipped.
     return readdirSync(join(repoRoot, root), { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
+      .filter((entry) => existsSync(join(repoRoot, root, entry.name, 'src', 'manifest.ts')))
       .map((entry) => entry.name)
       .sort();
   } catch (cause) {

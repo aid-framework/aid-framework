@@ -80,7 +80,7 @@ describe('the durable run store', () => {
     );
     expect(diagnostic.path).toEqual(['agents', 'claims_adjudicator', 'state']);
     expect(diagnostic.message).toContain('it can call "issue_refund" (write)');
-    expect(diagnostic.message).toContain('cannot outlive the process');
+    expect(diagnostic.message).toContain('replayed answer reaches a second replica');
     expect(diagnostic.hint).toContain('state: { kind: postgres');
   });
 
@@ -169,7 +169,7 @@ describe('step approval', () => {
       IR_DIAGNOSTIC_CODES.approvalStepTool,
     );
     expect(diagnostic.path).toEqual(['state']);
-    expect(diagnostic.message).toContain('has nowhere to wait');
+    expect(diagnostic.message).toContain('has no declared place to live');
     expect(diagnostic.hint).toContain('top-level `state:');
   });
 

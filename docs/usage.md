@@ -490,10 +490,16 @@ what an enterprise review asks for:
 
 - **Step-level human approval**: a tool marked `requiresConfirmation` pauses the run where it
   stands, and the approval resumes from that step rather than replaying the ones before it.
+  The checkpoint is signed with the key `resume.signingKeyEnv` names and expires after
+  `resume.checkpointTtlMinutes`, and the resume handler refuses a tampered or stale one.
   Under the enterprise profile a side-effecting tool without one is refused.
-- **Durable run state**: the checkpoint goes to the store the spec names, so a paused run
-  outlives the process that started it. An agent that can call a tool with side effects is
-  refused when it declares no store, because the approval would otherwise wait nowhere.
+- **Durable run state**: the spec names a store and the `state` gate refuses an agent that
+  can write with none, because a pause with nowhere to wait is not a pause. The store is
+  used for one thing -- the checkpoint nonce, claimed there so a replay across replicas is
+  refused -- while the run itself returns to the caller, so a paused run outlives the
+  request and not the process and resuming after a restart is the application's to arrange.
+  The [features page](features.md#declared-and-gated-not-generated) lists this beside the
+  other constructs that are declared and gated without a fully generated artefact.
 
 A gateway federates tools that already exist behind one managed MCP endpoint: the platform
 hosts the endpoint, each target keeps owning its own tool list, and the app reaches a single
@@ -692,7 +698,9 @@ Covers:
 - **Generated project CI**
 - **A Dockerfile and an image**
 - **Delivery profiles with a pinned placement and audit sink**
-- **Durable run state, deployment identity, private network and change approval**
+- **Durable run state, deployment identity, private network and change approval** *(declared
+  and gated; the run store and the token check stay yours — see
+  [the features page](features.md#declared-and-gated-not-generated))*
 - **Eject**
 
 ## Observability and cost

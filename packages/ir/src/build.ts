@@ -1549,7 +1549,8 @@ function buildState(
  * The identity provider a deployment trusts.
  *
  * Projected as declared: whether the provider is one the customer can actually reach is
- * their provider's question, and the generated code only checks the claims it is told to.
+ * their provider's question. AID emits no token check, so `verifiedBy` is carried through
+ * as the name of the component that does verify one, and the profile gate requires it.
  */
 function buildDeploymentIdentity(
   raw: unknown,
@@ -1579,6 +1580,8 @@ function buildDeploymentIdentity(
   if (rolesClaim !== undefined) shape.rolesClaim = rolesClaim;
   const scopesClaim = asString(identity.scopesClaim);
   if (scopesClaim !== undefined) shape.scopesClaim = scopesClaim;
+  const verifiedBy = asString(identity.verifiedBy);
+  if (verifiedBy !== undefined) shape.verifiedBy = verifiedBy;
   return shape;
 }
 

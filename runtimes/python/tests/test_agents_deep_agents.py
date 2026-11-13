@@ -61,6 +61,7 @@ from aid_runtime.agents.engine import (
     DEEPAGENTS_PIN,
     installed_deepagents_version,
 )
+from aid_runtime.agents.policy import Principal
 from aid_runtime.agents.state import RunStatus
 
 pytestmark = pytest.mark.skipif(
@@ -70,6 +71,11 @@ pytestmark = pytest.mark.skipif(
 
 PROMPT = "Answer in one sentence."
 QUESTION = "How long does delivery take?"
+
+#: The caller the approval tests simulate: signed in, so a ``deploy`` tool whose policy is
+#: ``isAuthenticated()`` is permitted once a person approves it. The runtime's own default
+#: is anonymous, and an anonymous caller is refused at the tool boundary instead.
+_SIGNED_IN = Principal(authenticated=True)
 PIN = DEEPAGENTS_PIN
 
 
@@ -609,7 +615,7 @@ async def test_hitl_pauses_before_the_tool_and_approval_executes_it() -> None:
         script=[ScriptedTurn.tool("deploy", {"query": "prod"})],
     )
 
-    paused = await harness.runtime.run("solo", QUESTION)
+    paused = await harness.runtime.run("solo", QUESTION, principal=_SIGNED_IN)
 
     assert paused.status is RunStatus.PAUSED
     assert paused.checkpoint is not None
@@ -617,7 +623,7 @@ async def test_hitl_pauses_before_the_tool_and_approval_executes_it() -> None:
     # The tool has not run: a pause is a question, not a decision.
     assert recorder.calls == 0
 
-    resumed = await harness.runtime.resume(paused.checkpoint, "approve")
+    resumed = await harness.runtime.resume(paused.checkpoint, "approve", principal=_SIGNED_IN)
 
     assert resumed.completed
     assert recorder.queries == ["prod"]

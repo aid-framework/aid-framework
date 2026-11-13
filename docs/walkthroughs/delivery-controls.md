@@ -77,7 +77,7 @@ shown so the blocks below are not quietly shorter than a real run.
 | A declared `identity` | [`ir/profile-identity`](#refusal-1-the-three-missing-controls) | Every deployment |
 | `network.private: true` | [`ir/profile-network`](#refusal-2-declared-but-wrong) | Every deployment |
 | An `approvals` policy that can be satisfied | [`ir/profile-approvals`](#refusal-2-declared-but-wrong) | Every deployment |
-| A `state` store for an agent that can call a writing tool | [`ir/agents-state-store`](#refusal-3-an-agent-that-writes-with-nowhere-to-wait) | Every such agent |
+| A `state` store for an agent that can call a writing tool | [`ir/agents-state-store`](#refusal-3-an-agent-that-writes-with-no-record-of-a-spent-pause) | Every such agent |
 | No `requiresApproval` on a tool with no side effects | [`ir/approval-step-tool`](#refusal-4-asking-a-human-to-approve-a-read) | Every profile |
 
 The first three extend the `profile` gate that 0.25 shipped. The last two are new gates — `state` and
@@ -152,18 +152,20 @@ A policy that names two reviewers and requires three of them is not stricter, it
 would wait forever. Emitting it as a workflow binding would look like governance and behave like an
 outage, so it is refused at generate time with both numbers quoted back.
 
-## Refusal 3: an agent that writes with nowhere to wait
+## Refusal 3: an agent that writes with no record of a spent pause
 
-A live refund run can be paused mid-write. If nothing durable holds the run, the pause dies with the
-process and leaves a write nobody can account for. Remove both `state` blocks:
+A live refund run can be paused mid-write. The checkpoint for that pause goes back to the caller, so
+the run itself survives the request -- but the record that refuses a *second* resume of the same
+checkpoint lives only in the process that issued it, so a replayed answer against another replica is
+accepted and approves the held write a second time. Remove both `state` blocks:
 
 ```console
 $ aid validate stateless.spec.yaml
 stateless.spec.yaml: 2 error(s), 1 warning(s)
-stateless.spec.yaml: error: the state gate rejected "claims_adjudicator": it can call "issue_refund" (write), which has side effects, and it declares no durable state, so a paused run cannot outlive the process [ir/agents-state-store]
-    hint: add `state: { kind: postgres, urlEnv: DATABASE_URL }` to the agent or to the document, so a paused run has somewhere to wait
-stateless.spec.yaml: error: the approval gate rejected "refund": step 0 waits for approval, and the document declares no durable state store, so the paused run has nowhere to wait [ir/approval-step-tool]
-    hint: add a top-level `state: { kind: postgres, urlEnv: DATABASE_URL }` so a paused run outlives the request that started it
+stateless.spec.yaml: error: the state gate rejected "claims_adjudicator": it can call "issue_refund" (write), which has side effects, and it declares no durable state, so the first resume of a paused write is remembered only by the process that issued it -- a replayed answer reaches a second replica, or a restarted one, and is accepted [ir/agents-state-store]
+    hint: add `state: { kind: postgres, urlEnv: DATABASE_URL }` to the agent or to the document, so the checkpoint nonce is claimed where the store already points and the app has a declared place to persist a paused run (AID generates the claim, not the persistence)
+stateless.spec.yaml: error: the approval gate rejected "refund": step 0 waits for approval and the document declares no durable state store, so the pending decision has no declared place to live and the checkpoint nonce is remembered only in the process that issued it [ir/approval-step-tool]
+    hint: add a top-level `state: { kind: postgres, urlEnv: DATABASE_URL }` so the checkpoint nonce is claimed durably and the app has a declared place to persist the paused run (AID generates the claim, not the persistence)
 ```
 
 Two gates noticed the same missing store, because two things depend on it. The first names the agent

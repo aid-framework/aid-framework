@@ -256,15 +256,6 @@ export const SHIPPED_FEATURES = [
     since: '0.1.27',
   },
   {
-    id: 'durable-state',
-    title: 'Durable run state',
-    detail:
-      'A paused or long-running run outlives the process that started it: the checkpoint goes to the store the spec names, and an agent that can call a side-effecting tool is refused without one.',
-    declaredBy: 'state, agents[].state',
-    href: './reference/spec.md#agentstate',
-    since: '0.1.143',
-  },
-  {
     id: 'memory',
     title: 'Memory tiers',
     detail: 'What is remembered, for how long, within what token budget, and where it lives.',
@@ -415,17 +406,6 @@ export const SHIPPED_FEATURES = [
     declaredBy: 'profile, deployments[].cloud, deployments[].region, deployments[].audit',
     href: './reference/spec.md#top-level-keys',
     since: '0.1.142',
-  },
-  {
-    id: 'delivery-controls',
-    title: 'Durable run state, deployment identity, private network and change approval',
-    detail:
-      'Spec 0.26 declares the controls an enterprise delivery is held to: a `state` store that outlives the process, an `identity` reference (issuer, audience and claim names) that becomes the runtime `Principal`, a `network` block whose `private` pin is required, an `approvals` policy for production change, and `requiresApproval` on a pipeline tool step. The `state` and `approvals` gates refuse a document that declares a control it cannot honour -- an enterprise agent that can write with no store, an approval on a read, or a pause with nowhere to wait.',
-    declaredBy: 'state, deployments[].identity, deployments[].network, deployments[].approvals',
-    href: './reference/spec.md#top-level-keys',
-    // Declared and gated at 0.26; the generators that emit the store, the identity check
-    // and the pause land in their own release, so this row does not claim they exist yet.
-    since: '0.1.143',
   },
   {
     id: 'observability-export',
@@ -589,6 +569,45 @@ export const SHIPPED_FEATURES = [
     declaredBy: 'profile: enterprise',
     href: './reference/spec.md#top-level-keys',
     since: '0.1.159',
+  },
+];
+
+/**
+ * Constructs the spec declares and a gate enforces, that no generator emits.
+ *
+ * These are the row that makes the inventory honest: a `state` store, a token check and a
+ * pause counter are things a document asks for and the build refuses to fake, so they are
+ * listed with the declaration that carries them, the gate that enforces it, and what is
+ * still the application's to write. They are **not** counted on the homepage band and not
+ * rendered under "Out of the box", because neither surface may claim a generated artefact
+ * that does not exist. Promote one of these to `SHIPPED_FEATURES` in the release that starts
+ * emitting it, and delete its row here.
+ *
+ * @type {{
+ *   id: string, title: string, declares: string, enforces: string,
+ *   missing: string, href: string, since: string,
+ * }[]}
+ */
+export const DECLARED_FEATURES = [
+  {
+    id: 'durable-state',
+    title: 'Durable run state',
+    declares: 'state, agents[].state',
+    enforces: 'ir/agents-state-store',
+    missing:
+      "The declared store is used for one thing: the checkpoint nonce, claimed in the database the `state` block names so a replay across replicas is refused. The run itself is not persisted -- the generated resume route hands the checkpoint back to the caller -- so a paused run outlives the request, not the process, and resuming after a restart is the application's to arrange. The `state` gate refuses an agent that can write with no store at all.",
+    href: './reference/spec.md#agentstate',
+    since: '0.1.143',
+  },
+  {
+    id: 'delivery-controls',
+    title: 'Durable run state, deployment identity, private network and change approval',
+    declares: 'state, deployments[].identity, deployments[].network, deployments[].approvals',
+    enforces: 'ir/profile-identity, ir/identity-verified-by',
+    missing:
+      'What *is* generated: the region pin, the audit sink and the private-network setting reach the OpenTofu, the profile gate refuses an `enterprise` deployment missing any of them, `requiresApproval` reaches the generated tool step, the checkpoint is signed with the key `resume.signingKeyEnv` names, and a declared `state` store holds the checkpoint nonce. What is not: no generator verifies a token (`identity.verifiedBy` names who does), and no generated code persists the paused run itself, so the checkpoint still returns to the caller.',
+    href: './reference/spec.md#top-level-keys',
+    since: '0.1.143',
   },
 ];
 

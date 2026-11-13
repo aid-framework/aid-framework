@@ -14,7 +14,7 @@ import pytest
 
 from agent_support import ADMIN_ONLY, SEARCH_SCHEMA, build, solo, tool_def
 from aid_runtime import ScriptedTurn, Tool, ToolPermissionError
-from aid_runtime.agents import RunStatus
+from aid_runtime.agents import Principal, RunStatus
 
 WRITER = "writer"
 READER = "reader"
@@ -56,13 +56,22 @@ async def _run(
     *,
     extra: Sequence[Tool] = (),
     target: str = WRITER,
+    principal: Principal | None = None,
 ) -> Any:
+    """Run one call against ``document`` as ``principal``.
+
+    The default is signed in but unprivileged: every mutating fixture tool carries
+    ``isAuthenticated()``, so the anonymous principal the runtime seeds would refuse
+    before the grant under test was ever consulted. Roles stay empty so an
+    ``ADMIN_ONLY`` policy still denies, which is what the negative cases assert.
+    """
     harness = build(
         document,
         script=[ScriptedTurn.tool(target, {"query": "hello"}), ScriptedTurn.answer("done")],
         tools=[tool, *extra],
     )
-    return await harness.runtime.run("solo", "do the thing")
+    caller = principal if principal is not None else Principal(authenticated=True)
+    return await harness.runtime.run("solo", "do the thing", principal=caller)
 
 
 # --- the grant is the agent's declared tool list ---------------------------------
@@ -151,6 +160,36 @@ async def test_an_auth_policy_that_denies_this_principal_never_runs_the_body() -
 
     assert calls == []
     assert "denies this principal" in raised.value.reason
+
+
+async def test_an_unauthenticated_caller_cannot_reach_a_write_tool() -> None:
+    """``isAuthenticated()`` is the weakest mutating policy, so anonymous must not hold it.
+
+    This is the route-level defect in miniature: a handler that forgets to pass the
+    principal it verified runs as whoever the runtime defaults to. The assertion is on the
+    default, not just on an explicit anonymous principal, because that is the one a
+    forgotten argument produces.
+    """
+    tool, calls = counting_tool(WRITER)
+    document = solo(tool_specs=[tool_def(WRITER, WRITER, side_effects="write")], tools=[WRITER])
+    harness = build(
+        document,
+        script=[ScriptedTurn.tool(WRITER, {"query": "hello"}), ScriptedTurn.answer("done")],
+        tools=[tool],
+    )
+
+    with pytest.raises(ToolPermissionError) as raised:
+        await harness.runtime.run("solo", "do the thing")
+
+    assert calls == []
+    assert "denies this principal" in raised.value.reason
+
+
+async def test_the_runtime_defaults_to_the_anonymous_principal() -> None:
+    """A default that is authenticated is a silent authorization bug, so it is not one."""
+    assert Principal().authenticated is False
+    assert Principal().roles == frozenset()
+    assert Principal().scopes == frozenset()
 
 
 async def test_an_undecidable_auth_policy_is_a_denial() -> None:

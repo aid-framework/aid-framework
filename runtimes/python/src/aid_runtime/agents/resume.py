@@ -24,10 +24,14 @@ missing secret must not degrade into "unsigned".
 
 Replay durability is limited by the nonce store, and that limit is real rather than
 theoretical: :class:`InProcessNonceStore` forgets on restart and does not span replicas.
-:class:`SqliteNonceStore` is durable and is what a ``state.kind: sqlite`` declaration
-gets. A ``state.kind: postgres`` declaration is served in-process for now, which the
-``ir/resume-replay-weak`` gate states on the document rather than leaving to be
-discovered.
+:class:`SqliteNonceStore` and :class:`PostgresNonceStore` are durable and are what a
+``state.kind: sqlite`` or ``state.kind: postgres`` declaration gets; only a document that
+declares no store at all falls back to the in-process one, which ``ir/resume-replay-weak``
+states on the document rather than leaving to be discovered.
+
+This module stores the *nonce*, not the run. The checkpoint for a paused run still returns
+to the caller, so resuming after a restart is the application's to arrange -- see
+:mod:`aid_runtime.agents.state`.
 """
 
 from __future__ import annotations

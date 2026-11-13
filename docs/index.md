@@ -22,7 +22,7 @@ features:
   - title: Know what a run costs before you ship it
     details: A model alias resolves to one pinned id, never a floating vendor default, and a cost profile prices every call so the budget gate compares the declared ceiling with the recorded total.
   - title: Prompt injection is a build error
-    details: The security gate refuses a POST route that passes caller text to a prompt with no input guardrail, so the check happens at generation time instead of during an incident review. An agent that can pause also gets a signed, expiring checkpoint. Your own authentication in front of the app is still yours to wire, and the delivery playbook says so.
+    details: The security gate refuses a POST route that passes caller text to a prompt with no input guardrail, so the check happens at generation time instead of during an incident review. An agent that can pause gets a signed, expiring checkpoint, and a policy that needs a signed-in caller refuses the anonymous default rather than trusting it. Your own authentication in front of the app is still yours to wire, `identity.verifiedBy` names who does it, and the delivery playbook says so.
   - title: Evals gate like tests
     details: A quality or spend regression fails the build, not a dashboard. An eval declares a regression budget over a dataset, and `aid eval --compare` exits non-zero when either allowance is exceeded.
   - title: Infrastructure from the same spec
@@ -37,18 +37,36 @@ You write the part that is actually yours: one spec, the prompt text and the too
 Everything between the spec and a deployable service is generated, gated and reproducible.
 
 ```yaml
-specVersion: "0.2"
+specVersion: "0.33"
+
+project:
+  name: support-copilot
+  targets: [py-fastapi]
+
+types:
+  Reply: { kind: struct, fields: { text: { type: string, required: true } } }
 
 models:
   fast:
     provider: openai
     modelId: gpt-4o-mini
     apiKeyEnv: OPENAI_API_KEY
+    capabilities: [json-schema]
 
 prompts:
   greet:
+    version: 1
     model: fast
-    template: Reply in one sentence to: {{ message }}
+    template: "Reply in one sentence to: {{ message }}"
+    variables: { message: { type: string, required: true } }
+    output: { kind: structured, schema: Reply }
+
+guardrails:
+  message_injection:
+    stages: [input]
+    policies: [prompt-injection]
+    action: block
+    onFail: { message: That looked like an attempt to override the instructions., log: true }
 
 pipelines:
   hello:
@@ -57,55 +75,89 @@ pipelines:
     steps:
       - generate: { prompt: greet, input: { message: "{{ event.message }}" }, as: reply }
       - emit: { event: Reply }
+
+evals:
+  reply_quality:
+    target: pipeline:hello
+    dataset: { source: file, uri: evals/hello.jsonl }
+    metrics: [{ kind: json-schema, schema: Reply }]
+    gate: { ci: true }
 ```
 
-`aid gen` turns that into a typed request and response contract, the route, a prompt
-registry entry, a gateway with the model pinned and priced, the pipeline module and the
-guardrail engine — then refuses to overwrite a generated file you edited by hand.
+That spec passes `aid validate` as written, and the guardrail and the CI eval are not
+ceremony: delete either one and the security gate (caller text into a prompt, unguarded) or
+the eval-coverage gate (a route reaching users with nothing checking it) refuses the spec
+instead of generating the route.
+
+`aid gen` turns it into a typed request and response contract, the route, a prompt registry
+entry, a gateway with the model pinned and priced, the guardrail engine, the pipeline module
+and the eval harness — then refuses to overwrite a generated file you edited by hand.
 
 ## One spec, many customers
 
-The base names what a customer is allowed to decide. An overlay may move nothing else.
+The base names what a customer is allowed to decide, and the range they may decide it
+within. An overlay may move nothing else.
 
 ```yaml
-# app/app.spec.yaml — abridged; the rest of the base is the example above
+# app/app.spec.yaml — the example above, continued
+agents:
+  triage_agent:
+    instructions: greet
+    model: fast
+    maxSteps: 4
+    maxCostBudget: 2.5
+
+deployments:
+  api:
+    target: container
+    cloud: aws
+    region: eu-central-1
+    secrets: [OPENAI_API_KEY]
+
 overridable:
-  deployments.prod.region:
+  deployments.api.region:
     from: [eu-central-1, us-east-1, ap-southeast-2]
-  models.triage.modelId:
+  models.fast.modelId:
     from: [gpt-4o-mini, gpt-4.1-mini]
   agents.triage_agent.maxCostBudget:
     max: 2.5
-  deployments.prod.audit.retentionDays:
-    max: 730
 ```
 
 ```yaml
-# customers/acme.yaml — one customer's differences
+# customers/acme-eu.yaml — one customer's differences, and nothing else
 base: ../app/app.spec.yaml
 customer: acme-eu
-profile: enterprise
 overrides:
-  deployments.prod.region: ap-southeast-2
-  models.triage.modelId: gpt-4.1-mini
+  deployments.api.region: ap-southeast-2
+  models.fast.modelId: gpt-4.1-mini
   agents.triage_agent.maxCostBudget: 1.5
 ```
 
 ```console
-$ aid resolve customers/acme.yaml --out customers/acme.spec.yaml
-wrote customers/acme.spec.yaml (3 overrides applied)
-$ aid resolve customers/bad.yaml --check
-error: the overlay gate rejected "acme-bad": 4000 exceeds the 730 the base allows at "deployments.prod.audit.retentionDays" [overlay/value-out-of-bounds]
+$ aid resolve customers/acme-eu.yaml --out customers/acme-eu.spec.yaml
+wrote customers/acme-eu.spec.yaml (3 overrides applied)
+$ aid resolve customers/acme-bad.yaml --check
+error: the overlay gate rejected "acme-bad": "mars-north-1" is not one of "eu-central-1",
+"us-east-1", "ap-southeast-2" at "deployments.api.region" [overlay/value-out-of-bounds]
+  at deployments.api.region
+  hint: use one of "eu-central-1", "us-east-1", "ap-southeast-2", or widen 'from' in the base
 $ aid fleet
-  customer  profile     models        region          ceiling  status
-  acme-eu   enterprise  gpt-4.1-mini  ap-southeast-2  $1.50    ok
+1 customer under .
+
+  customer  profile   models        region          ceiling  status
+  acme-eu   standard  gpt-4.1-mini  ap-southeast-2  $1.50    ok
 ```
+
+The resolved spec is committed, so a customer's differences are a diff against a reviewed
+base rather than a fork of it.
 
 ## Built for
 
 - **Mid-size teams.** `profile: standard`, managed services, default budgets, and the
   [`support-copilot` golden path](reference/cli.md#init) that passes every gate as it lands.
-- **Enterprise.** Declared identity, a private network, an audit sink, change approvals, and
+- **Enterprise.** `profile: enterprise` turns the controls into requirements: an identity
+  block whose `verifiedBy` names the entry point that verifies the token, a private network,
+  an audit sink, a pinned region, a checkpoint signing key, change approvals, and
   [one overlay per customer](walkthroughs/overlays-and-fleet.md) so one reviewed base stays
   the only source of truth.
 
@@ -124,8 +176,8 @@ behind these counts.
 | **[Retrieval and memory](./reference/spec.md#retriever)** | `retrievers[], stores[]` | Answers cite the file and offset they came from, whether the source is a managed knowledge base, an object prefix or a local store. | 8 |
 | **[Guardrails and decisions](./reference/spec.md#guardrail)** | `guardrails[], decisions[]` | An unprotected route is refused before it exists, and a judgement can be a checked decision instead of prose. | 6 |
 | **[Quality gates](./reference/spec.md#eval)** | `evals[]` | A quality regression fails the build, and every route that reaches users has an eval claiming it. | 10 |
-| **[Agents and tools](./reference/spec.md#agent)** | `agents[], tools[]` | The plumbing is generated and the tool bodies stay yours; a loop that could run unbounded or unpriced is refused. | 4 |
-| **[Deployment and infrastructure](./reference/targets.md#capability-matrix)** | `deployments[], aid infra` | The Dockerfile, OpenTofu or CDK and CI your cloud needs, plus the profile, region, audit sink and approvals an enterprise review asks for. | 9 |
+| **[Agents and tools](./reference/spec.md#agent)** | `agents[], tools[]` | The plumbing is generated and the tool bodies stay yours; a loop that could run unbounded or unpriced is refused. | 3 |
+| **[Deployment and infrastructure](./reference/targets.md#capability-matrix)** | `deployments[], aid infra` | The Dockerfile, OpenTofu or CDK and CI your cloud needs, plus the profile, region, audit sink and approvals an enterprise review asks for. | 8 |
 | **[Observability and cost](./reference/cli.md#trace)** | `traces[], observability, aid cost, aid report` | Traces and costs leave only for the collector your policy names, alarms are generated infrastructure, and one report compares every customer. | 7 |
 | **[Fleet repeatability](./reference/cli.md#fleet)** | `overridable, aid resolve, aid fleet` | One reviewed base spec, one small overlay per customer: only paths the base opened can move, and the fleet is one command over git. | 4 |
 
@@ -197,6 +249,17 @@ enforces, so a pair it does not list is refused at plan time with a named diagno
 
 - **Not a runtime platform.** There is no proxy and no hosted control plane. The emitted app
   is plain FastAPI or Next.js beside a small runtime library.
+- **Not your identity provider.** No token verification is generated. An agent route resolves
+  the caller through one `current_principal` dependency whose default principal is anonymous
+  and unauthenticated, so a policy that requires a signed-in caller refuses rather than
+  trusts; `identity.verifiedBy` names the entry point that replaces the dependency, and until
+  it does, the enterprise profile's identity requirement is a declared responsibility rather
+  than a generated check.
+- **Not a durable run store.** A paused agent hands its signed, expiring checkpoint back to
+  the caller, so keeping it — and deciding where — is the application's job. Under
+  `enterprise` the gate refuses a pausable agent with no signing key and no replay guard;
+  under `standard` the replay limit is stated in the [delivery playbook](guide/delivery.md)
+  rather than implied away.
 - **Not every target on every cloud.** Unsupported pairs are refused rather than
   approximated, and the generated matrix says which pairs exist today.
 - **Not a no-code builder.** Prompts, tool bodies and business rules are yours. The
@@ -217,6 +280,9 @@ you. The app keeps booting because it never depended on a control plane.
 
 - New here? [Getting started](guide/getting-started.md) scaffolds, validates, generates and
   serves an app, and shows the two gates that will stop you on the way.
+- Taking it to a customer? [The delivery playbook](guide/delivery.md) is the end-to-end
+  checklist: which profile to start from, what a customer may change, the enterprise
+  controls, and the limits that are stated rather than implied.
 - Delivering it to a second customer? [Overlays and the fleet table](walkthroughs/overlays-and-fleet.md)
   turns one base spec into one file per customer, and prints the table.
 - Want to know how each capability is used? [Usage](usage.md) is one worked example per

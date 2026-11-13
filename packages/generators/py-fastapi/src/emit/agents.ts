@@ -426,12 +426,34 @@ const TO_RESPONSE = [
 
 const ROUTER = 'agent_router = APIRouter()';
 
+const PRINCIPAL_DOC = pythonDoc(
+  'Who the caller is, for the `auth` policies this app declares. No token verification is ' +
+    'generated: this returns an anonymous, *unauthenticated* principal, so a tool whose policy ' +
+    'is `isAuthenticated()` refuses the call instead of admitting every caller. The application ' +
+    'that mounts this router replaces it -- `app.dependency_overrides[current_principal] = ' +
+    'your_verifier` -- and names that verifier in `deployments.<id>.identity.verifiedBy`, which ' +
+    '`enterprise` requires from spec 0.33.',
+  INDENT,
+);
+
+const PRINCIPAL = [
+  '#: The caller a generated route seeds: anonymous and unauthenticated on purpose, because',
+  '#: nothing a generated app emits verifies a token.',
+  'ANONYMOUS_PRINCIPAL = Principal.unauthenticated()',
+  '',
+  '',
+  'def current_principal() -> Principal:',
+  PRINCIPAL_DOC,
+  `${INDENT}return ANONYMOUS_PRINCIPAL`,
+].join('\n');
+
 const RUN_ROUTE = [
   '@agent_router.post("/agents/{agent_id}/run", response_model=AgentRunResponse)',
   'async def run_agent(',
   `${INDENT}agent_id: str,`,
   `${INDENT}event: AgentRunRequest,`,
   `${INDENT}deps: Annotated[Deps, Depends(get_deps)],`,
+  `${INDENT}principal: Annotated[Principal, Depends(current_principal)],`,
   ') -> AgentRunResponse:',
   pythonDoc(
     'Run one agent to a stop condition on one user message. The 404 is this app answering ' +
@@ -441,7 +463,9 @@ const RUN_ROUTE = [
   `${INDENT}if agent_id not in AGENT_IDS:`,
   `${INDENT}${INDENT}raise HTTPException(status_code=404, detail=f"unknown agent {agent_id!r}")`,
   `${INDENT}runtime = build_runtime(gateway=deps.gateway, tools=deps.agent_tools)`,
-  `${INDENT}result = await runtime.run(agent_id, event.text, memory_key=event.memory_key)`,
+  `${INDENT}result = await runtime.run(`,
+  `${INDENT}${INDENT}agent_id, event.text, principal=principal, memory_key=event.memory_key`,
+  `${INDENT})`,
   `${INDENT}return _response(result)`,
 ].join('\n');
 
@@ -450,6 +474,7 @@ const RESUME_ROUTE = [
   'async def resume_agent(',
   `${INDENT}event: AgentResumeRequest,`,
   `${INDENT}deps: Annotated[Deps, Depends(get_deps)],`,
+  `${INDENT}principal: Annotated[Principal, Depends(current_principal)],`,
   ') -> AgentRunResponse:',
   pythonDoc(
     'Continue a paused run. Two different refusals, kept apart on purpose: a body this app ' +
@@ -464,7 +489,7 @@ const RESUME_ROUTE = [
   `${INDENT}${INDENT}raise HTTPException(status_code=422, detail=str(error)) from error`,
   `${INDENT}runtime = build_runtime(gateway=deps.gateway, tools=deps.agent_tools)`,
   `${INDENT}try:`,
-  `${INDENT}${INDENT}result = await runtime.resume(checkpoint, event.decision)`,
+  `${INDENT}${INDENT}result = await runtime.resume(checkpoint, event.decision, principal=principal)`,
   `${INDENT}except CheckpointRefusalError as refusal:`,
   `${INDENT}${INDENT}raise HTTPException(`,
   `${INDENT}${INDENT}${INDENT}status_code=403,`,
@@ -479,6 +504,7 @@ function exports(ir: IR): string {
     'DOCUMENT',
     'agent_router',
     'build_runtime',
+    'current_principal',
     ...(hasResumeRoute(ir) ? ['resume_agent'] : []),
     'run_agent',
   ].map(pythonString);
@@ -510,6 +536,7 @@ export function emitAgents(ir: IR): EmittedFile {
             ...(resume ? ['HumanDecision'] : []),
             'ModelGateway',
             ...(resume ? ['NonceStore', 'nonce_store_from_env', 'signer_from_env'] : []),
+            'Principal',
             'RunResult',
             'Tool',
           ]),
@@ -535,6 +562,7 @@ export function emitAgents(ir: IR): EmittedFile {
       buildRuntime(resume),
       TO_RESPONSE,
       ROUTER,
+      PRINCIPAL,
       RUN_ROUTE,
       ...(resume ? [RESUME_ROUTE] : []),
       exports(ir),

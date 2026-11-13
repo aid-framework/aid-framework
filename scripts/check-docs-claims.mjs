@@ -1216,6 +1216,53 @@ for (const file of documents) {
   checkRelativeLinks(file);
 }
 
+const HOMEPAGE = 'docs/index.md';
+
+/**
+ * The homepage prints a spec, and a spec names the language version it is written against.
+ *
+ * A visitor copies what the homepage shows, so a version the compiler has retired makes the
+ * example fail `aid validate` on the first command they run. The page is edited by hand and
+ * the version moves with every release, which is why this is a rule rather than a habit: the
+ * version shown has to be the newest one the schema admits.
+ */
+function checkHomepageSpecVersion() {
+  const text = read(HOMEPAGE);
+  if (text === undefined || schemaSource === undefined) return;
+
+  let latest;
+  try {
+    const versions = JSON.parse(schemaSource)?.properties?.specVersion?.enum;
+    if (!Array.isArray(versions) || versions.length === 0) {
+      fail(HOMEPAGE, 1, `cannot read \`properties.specVersion.enum\` from ${SCHEMA_PATH}`);
+      return;
+    }
+    latest = String(versions[versions.length - 1]);
+  } catch (cause) {
+    fail(HOMEPAGE, 1, `cannot read ${SCHEMA_PATH}: ${String(cause)}`);
+    return;
+  }
+
+  let shown = 0;
+  text.split('\n').forEach((line, index) => {
+    const match = /^\s*specVersion:\s*["']?([0-9]+(?:\.[0-9]+)*)["']?\s*$/.exec(line);
+    if (match === null) return;
+    shown += 1;
+    claimsChecked += 1;
+    if (match[1] !== latest) {
+      fail(
+        HOMEPAGE,
+        index + 1,
+        `shows \`specVersion: "${match[1]}"\`, but the newest version the compiler admits is "${latest}"`,
+      );
+    }
+  });
+
+  if (shown === 0) fail(HOMEPAGE, 1, 'shows no `specVersion`, which no legal spec may omit');
+}
+
+checkHomepageSpecVersion();
+
 if (failures.length > 0) {
   for (const failure of failures.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)) {
     process.stderr.write(`${failure.file}:${failure.line}: ${failure.message}\n`);

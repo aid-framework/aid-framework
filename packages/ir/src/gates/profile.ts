@@ -29,10 +29,14 @@
  * What this gate deliberately does not do: it does not verify that the declared identity
  * provider exists, that the private network has been peered, or that the named reviewers
  * are real people. Those are properties of the customer's platform, not of the document,
- * and a build that guessed at them would be claiming a check it cannot run.
+ * and a build that guessed at them would be claiming a check it cannot run. It is for the
+ * same reason that, from 0.33, the enterprise profile refuses an `identity` block with no
+ * `verifiedBy`: AID generates no token verification, so the document has to name the thing
+ * that does it, and the gate can check that the name is there without pretending to check
+ * that the name works.
  */
 
-import { specVersionAtLeast } from '@aid-framework/spec';
+import { IDENTITY_VERIFIED_BY_MIN_VERSION, specVersionAtLeast } from '@aid-framework/spec';
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
 import { CLOUD_AUDIT_SINKS, CLOUD_REGIONS, type IR, type SpecCloud } from '../shapes.js';
 import { type GateOptions, type GateResult, NO_SUPPRESSIONS, reporter } from './contract.js';
@@ -171,6 +175,23 @@ export function profileGate(ir: IR, options: GateOptions): GateResult {
           message: `the profile gate rejected "${id}": the enterprise profile requires a declared identity integration, so the deployment knows whose token it is checking`,
           path: ['deployments', id],
           hint: 'add `identity: { kind: oidc, issuer: https://<your-idp> }` so callers arrive with a verifiable principal',
+        }),
+      );
+    } else if (
+      deployment.identity.verifiedBy === undefined &&
+      specVersionAtLeast(ir.specVersion, IDENTITY_VERIFIED_BY_MIN_VERSION)
+    ) {
+      // AID emits no token verification, so `identity` names the issuer and nothing more.
+      // The enterprise profile's claim that callers arrive with a verifiable principal is
+      // only true if somebody named is doing the verifying, so the document has to say who.
+      // Below 0.33 the key does not exist, which is why the check is version-gated rather
+      // than an unsatisfiable demand on a document that cannot answer it.
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.identityVerifiedBy,
+          message: `the profile gate rejected "${id}": the enterprise profile requires \`identity.verifiedBy\`, because AID generates no token verification and the issuer alone does not say who checks it`,
+          path: ['deployments', id, 'identity', 'verifiedBy'],
+          hint: `name the component that verifies tokens before they reach a route, such as \`verifiedBy: api-gateway\` or \`verifiedBy: app/business/principal.py\` -- AID emits the check point, not the check`,
         }),
       );
     }

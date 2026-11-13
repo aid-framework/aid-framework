@@ -92,6 +92,17 @@ const BUSINESS_SEEDS = [
  * override.
  */
 const AGENT_REQUEST = { text: 'Acme was charged twice this month; please refund it.' };
+/**
+ * The subject the example's hand-written verifier accepts.
+ *
+ * The refund agent's tool carries `auth: isAuthenticated()`, and the generated route resolves
+ * the caller through a dependency that returns an *unauthenticated* principal, so a request
+ * with no subject cannot reach a writing tool. The app installs its own verifier
+ * (`app/principal_demo.py`) over that dependency in `app/main.py`; this header is what the
+ * demo verifier reads. Sending it is therefore the difference between "a caller the app
+ * identified" and "an anonymous caller", and the assertion below is only meaningful with it.
+ */
+const DEMO_SUBJECT_HEADER = { 'x-demo-subject': 'agent@support.example' };
 const AGENT_TOOLS_ARGS = {
   subject: 'Acme: I was charged twice this month',
   body: 'Please refund the duplicate charge.',
@@ -317,9 +328,10 @@ async function bootApp(directory, mode) {
  * @param {{ child: import('node:child_process').ChildProcess, port: number, output: () => string }} server
  * @param {string} path
  * @param {unknown} body
+ * @param {Record<string, string>} [headers]
  * @returns {Promise<Response>}
  */
-async function postWhenReady(server, path, body) {
+async function postWhenReady(server, path, body, headers = {}) {
   const url = `http://127.0.0.1:${server.port}${path}`;
   const deadline = Date.now() + 60_000;
   for (;;) {
@@ -334,7 +346,7 @@ async function postWhenReady(server, path, body) {
     try {
       return await fetch(url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...headers },
         body: JSON.stringify(body),
       });
     } catch {
@@ -416,7 +428,12 @@ async function assertRegeneratedAgentPausesAndResumes(directory) {
   log('==> booting the regenerated app and running an agent through a pause');
   const server = await bootApp(directory, 'agent');
   try {
-    const started = await postWhenReady(server, '/agents/refund_agent/run', AGENT_REQUEST);
+    const started = await postWhenReady(
+      server,
+      '/agents/refund_agent/run',
+      AGENT_REQUEST,
+      DEMO_SUBJECT_HEADER,
+    );
     const startedBody = await started.text();
     require(started.status === 200, `the run answered ${started.status}: ${startedBody}`);
     const paused = JSON.parse(startedBody);
@@ -424,10 +441,15 @@ async function assertRegeneratedAgentPausesAndResumes(directory) {
     require(paused.checkpoint !== null, `the pause carried no checkpoint: ${startedBody}`);
     log(`    POST /agents/refund_agent/run -> 200 paused, checkpoint handed back`);
 
-    const resumed = await postWhenReady(server, '/agents/resume', {
-      checkpoint: paused.checkpoint,
-      decision: 'approve',
-    });
+    const resumed = await postWhenReady(
+      server,
+      '/agents/resume',
+      {
+        checkpoint: paused.checkpoint,
+        decision: 'approve',
+      },
+      DEMO_SUBJECT_HEADER,
+    );
     const resumedBody = await resumed.text();
     require(resumed.status === 200, `the resume answered ${resumed.status}: ${resumedBody}`);
     const finished = JSON.parse(resumedBody);

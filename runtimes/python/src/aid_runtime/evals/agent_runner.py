@@ -20,6 +20,13 @@ that pauses without supplying one is refused. The one exception is deliberate an
 ``ApprovalPolicy.APPROVE``/``REJECT`` exist for datasets that are testing something other
 than the approval, and they are named so a reader of the eval sees the scripted answer.
 
+**It runs as a stated principal.** An agent's tools and approvals are policies over a
+:class:`Principal`, so an eval that does not name the caller is evaluating an anonymous
+one. That default is the closed answer and is kept deliberately: a mutating tool whose
+policy is ``isAuthenticated()`` is refused for it, and a case written for a signed-in
+caller has to say so. An eval that quietly ran as an authenticated caller would report a
+tool path that production, behind an app which never verified a token, could not take.
+
 What this measures is worth stating plainly, since the module is named after the eval and
 not the model. When the provider is a recorded transcript or a scripted fake, the model's
 choices are fixed input: the run verifies that the machinery around the model obeys the
@@ -37,6 +44,7 @@ from enum import StrEnum
 
 from aid_runtime.agents.loop import AgentRuntime
 from aid_runtime.agents.memory import InProcessMemoryStore
+from aid_runtime.agents.policy import Principal
 from aid_runtime.agents.state import HumanDecision, RunResult, RunStatus
 from aid_runtime.errors import ConfigurationError, EvalError
 from aid_runtime.evals.dataset import EvalCase
@@ -88,6 +96,7 @@ class AgentEvalRunner:
         tools: Iterable[Tool] = (),
         approval_policy: ApprovalPolicy | str = ApprovalPolicy.FROM_CASE,
         max_resumes: int = _DEFAULT_MAX_RESUMES,
+        principal: Principal | None = None,
     ) -> None:
         if not providers:
             raise ConfigurationError(
@@ -107,6 +116,9 @@ class AgentEvalRunner:
         self._tools = tuple(tools)
         self._policy = ApprovalPolicy(approval_policy)
         self._max_resumes = max_resumes
+        #: The caller this eval simulates. Anonymous unless the caller names one, so a
+        #: mutating tool is refused rather than silently permitted.
+        self._principal = principal if principal is not None else Principal.unauthenticated()
         #: Cumulative model spend, which is what ``evaluate_once`` differences to charge
         #: each case. Read from the ledger of the most recent run.
         self._cost_usd = 0.0
@@ -139,7 +151,7 @@ class AgentEvalRunner:
         runtime = self._runtime()
         before = runtime.gateway.ledger.cost_usd
         try:
-            result = await runtime.run(self._agent_id, case.input)
+            result = await runtime.run(self._agent_id, case.input, principal=self._principal)
             result, approvals = await self._settle(runtime, case, result)
         finally:
             # Charged even when the run raised: a case stopped by a guardrail was billed,
@@ -205,7 +217,7 @@ class AgentEvalRunner:
                     _Rejection(boundary=rejection.boundary, names=rejection.names - names)
                     for rejection in rejections
                 ]
-            result = await runtime.resume(checkpoint, decision)
+            result = await runtime.resume(checkpoint, decision, principal=self._principal)
         return result, _Approvals(
             pauses=pauses,
             decisions=tuple(applied),
