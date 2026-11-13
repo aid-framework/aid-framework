@@ -626,6 +626,33 @@ describe('deployments', () => {
     expect(codes).not.toContain(IR_DIAGNOSTIC_CODES.cloudUnsupported);
   });
 
+  it('matches a deferred cloud case-insensitively, because a capital is not a decision', () => {
+    for (const cloud of ['Azure', 'AZURE', 'Kubernetes', 'K8S']) {
+      const { diagnostics } = buildIR(spec({ target: 'container', secrets: [], cloud }));
+      const refusal = diagnostics.find(
+        (diagnostic) => diagnostic.code === IR_DIAGNOSTIC_CODES.cloudUnsupported,
+      );
+      // The message quotes what the document said, so a reader can find the line, and the
+      // hint still sends them where the deferral is recorded.
+      expect(refusal?.message).toContain(`"${cloud}"`);
+      expect(refusal?.hint).toContain('docs/reference/support.md');
+    }
+  });
+
+  it('gives a served cloud spelled with a capital its own spelling back', () => {
+    for (const [cloud, fix] of [
+      ['AWS', 'aws'],
+      ['Gcp', 'gcp'],
+    ] as const) {
+      const { diagnostics } = buildIR(spec({ target: 'container', secrets: [], cloud }));
+      const refusal = diagnostics.find(
+        (diagnostic) => diagnostic.code === IR_DIAGNOSTIC_CODES.deployTargetUnknown,
+      );
+      // Not the capability matrix: this cloud is provisioned, the spelling is the mistake.
+      expect(refusal?.hint).toBe(`cloud names are lower-case; did you mean \`${fix}\`?`);
+    }
+  });
+
   it('reports an autoscale block it would otherwise fill in itself', () => {
     const { diagnostics } = buildIR(
       spec({ target: 'container', secrets: [], autoscale: { min: 1 } }),

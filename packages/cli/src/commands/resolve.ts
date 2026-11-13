@@ -27,7 +27,7 @@ import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE } from '../exit.js';
 import type { CommandOutcome } from '../output.js';
 import { outcome } from '../output.js';
 import { resolvedPathOf, resolveOverlay } from '../overlays.js';
-import { absolutePath } from '../paths.js';
+import { absolutePath, repoPath } from '../paths.js';
 
 export interface ResolveOptions {
   readonly overlay: string | undefined;
@@ -52,7 +52,7 @@ export function resolve(context: CliContext, options: ResolveOptions): CommandOu
     });
   }
 
-  const overlayPath = options.overlay;
+  const overlayPath = repoPath(options.overlay);
   const target = options.out ?? (options.check ? resolvedPathOf(overlayPath) : undefined);
 
   const resolved = resolveOverlay(context, overlayPath);

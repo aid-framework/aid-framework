@@ -981,6 +981,18 @@ because the fix there is a spelling. `k8s` and `kubernetes` both reach `ir/cloud
 reader who named the platform they deploy on is told about the deferral rather than about the
 spelling of a name AID has no modules for.
 
+**A later revision widened the pattern.** `^[a-z][a-z0-9-]{1,30}$` became
+`^[A-Za-z][A-Za-z0-9-]{1,30}$`, because a reader who capitalised was met with the same useless
+sentence one case along -- `does not match ^[a-z][a-z0-9-]{1,30}$` -- instead of with the deferral
+above. Both comparisons are now case-insensitive: `Azure` and `AZURE` reach `ir/cloud-unsupported`,
+and `AWS` and `Gcp` reach `ir/deploy-target-unknown` with
+
+```text
+hint: cloud names are lower-case; did you mean `aws`?
+```
+
+The set of documents that build is identical, so the two sections below still hold word for word.
+
 ### What you have to do
 
 Nothing. A document that declared an unsupported cloud was refused in `0.1.167` and is refused in
