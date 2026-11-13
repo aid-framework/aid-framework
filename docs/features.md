@@ -46,9 +46,7 @@ The **Catalog** count is not coverage of the provider. `models[]` requires only 
 ### `bedrock`
 
 - **Adapter:** `BedrockProvider`
-- **Advertises:** tools, structured output, embeddings
-- **Refuses:** streaming (`BedrockProvider` does not advertise `STREAMING`).
-- **Why:** Bedrock does stream: `ConverseStream` returns a stream for every model that supports messages, and the AWS module grants `bedrock:InvokeModelWithResponseStream` for it. `BedrockProvider` returns the whole reply because the response is AWS binary event-stream framing, which the adapter does not decode. A deployment that asks a Bedrock-pinned model to stream is refused at build time with `unsupported-streaming`, naming the model and the adapter, rather than raising on the first request.
+- **Advertises:** tools, structured output, streaming, embeddings
 - **Catalog:** 3 models, 3 priced
 
 ### `gemini`
@@ -88,7 +86,7 @@ The generated infrastructure does not only run the service; it grants the servic
 ### Bedrock from the AWS module
 
 - **Declared by:** `models[].provider: bedrock`
-- **Emitted:** `bedrock:InvokeModel`, plus `bedrock:InvokeModelWithResponseStream` when a service declares `streaming`, scoped to the foundation-model and inference-profile ARNs. The stream grant follows the service flag, so it is written for a Bedrock app too; no Bedrock-pinned route can use it yet, because `BedrockProvider` returns the whole reply — see the `bedrock` provider section
+- **Emitted:** `bedrock:InvokeModel`, plus `bedrock:InvokeModelWithResponseStream` when a service declares `streaming`, scoped to the foundation-model and inference-profile ARNs. The stream grant follows the service flag, so it is written for a Bedrock app too, and a streaming route now spends it — `BedrockProvider` decodes `ConverseStream` — see the `bedrock` provider section
 - **Runtime credential:** the IAM role the module creates for the service
 - **Since:** `0.1.81`
 
@@ -543,9 +541,9 @@ A deployment whose transport cannot stream is refused instead of buffering the r
 
 ### A stream from a model whose adapter returns the whole reply
 
-Streaming is refused two ways. `ir/deploy-streaming` catches a transport that cannot stream at all. The model is the other half: the emitted route calls the gateway stream on the one model the pipeline generates with, and the gateway raises rather than falling back to a buffered reply, so a model whose adapter returns the whole reply is refused when the app is generated instead of failing on the first request. The diagnostic names the model, its adapter and the fix; `py-fastapi` reports it as `unsupported-streaming` and `ts-vercel` as `streaming-unsupported`.
+Streaming is refused three ways. `ir/deploy-streaming` catches a transport that cannot stream at all. On `ts-vercel`, whose provider seam answers every request with one buffered body, the emitted route calls the gateway stream on the one model the pipeline generates with, so a model whose adapter cannot frame a reply is refused with `streaming-unsupported` when the app is generated instead of raising on the first request. `py-fastapi` no longer has that case: all six of its adapters decode a frame stream -- Bedrock included, from `ConverseStream` -- so a deployment that streams generates there and the plan-time refusals that remain under `unsupported-streaming` are the transport, the output guardrail and the pipeline shape.
 
-- **Enforced by:** `unsupported-streaming`
+- **Enforced by:** `streaming-unsupported`
 
 ### An image registry the release workflow cannot log in to
 

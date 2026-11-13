@@ -2835,7 +2835,6 @@ function toolArgumentNames(tool: ToolShape, types: Map<string, TypeShape>): stri
  */
 function checkDeployments(ir: IR): PlanProblem[] {
   const pipelines = new Map(ir.pipelines.map((pipeline) => [pipeline.id, pipeline]));
-  const models = new Map(ir.models.map((model) => [model.id, model]));
   const problems: PlanProblem[] = [];
   for (const deployment of ir.deployments) {
     const path = `deployments.${deployment.id}`;
@@ -2929,30 +2928,6 @@ function checkDeployments(ir: IR): PlanProblem[] {
         );
         continue;
       }
-      // The shape rule above asks whether a stream *could* carry this pipeline. This asks
-      // whether the model it generates with can produce one at all: `ModelGateway.stream`
-      // calls `require(alias, (Capability.STREAMING,))` and raises rather than buffering, so
-      // a model pinned to an adapter that does not advertise the member builds clean and
-      // fails on the first request. That is the one failure the shape rule cannot see --
-      // `deployments[].streaming` names no model, and the pinned models are emitted from
-      // this table, so the shortfall only exists in the generated `models.py`.
-      const step = pipeline.steps.find((candidate) => candidate.kind === 'generate');
-      const model = step === undefined ? undefined : models.get(step.model);
-      const adapter = model === undefined ? undefined : providerAdapter(model.provider);
-      if (model === undefined || adapter === undefined) continue;
-      if (ADAPTER_CAPABILITIES[adapter].includes('Capability.STREAMING')) continue;
-      problems.push(
-        problem(
-          'unsupported-streaming',
-          `pipelines.${pipeline.id}.steps`,
-          `'${deployment.id}' streams, but pipeline '${pipeline.id}' generates with model ` +
-            `'${model.id}' (${model.modelId}), which provider '${model.provider}' serves through ` +
-            `${adapter}. That adapter does not advertise 'Capability.STREAMING' -- it returns ` +
-            "the whole reply at once -- so the emitted route's call to deps.gateway.stream() " +
-            'would raise CapabilityMismatchError on the first request. Pin a model whose ' +
-            'adapter streams, or drop `streaming` from the deployment',
-        ),
-      );
     }
   }
   return problems;

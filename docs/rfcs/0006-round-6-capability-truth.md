@@ -219,3 +219,45 @@ Deferred, in order:
 - **Honesty.** The claim that was false (`the capability gate refuses a spec that asks for
   it`) is now true and is tested; the claim that implied Bedrock could not stream is now
   attributed to the adapter, on the page, with the grant's reachability stated.
+
+---
+
+## 6. Addendum: the adapter was the limitation, so the limitation was removed
+
+This round shipped the honest half of a claim -- *Bedrock streams; our adapter does not* -- and
+left the capability unserved. A later change removed the cause instead of the sentence, so two
+rows above no longer describe what the repository does.
+
+- **Row 1** said a deployment that streams from a model whose adapter returns the whole reply is
+  refused when the app is generated, and named a code for each target. `ts-vercel` still does
+  that: its provider seam answers every request with one buffered body, so a model whose adapter
+  cannot frame a reply is refused as `streaming-unsupported`. `py-fastapi` no longer has the case
+  at all. Its sixth adapter, `BedrockProvider`, now decodes the AWS `ConverseStream` binary
+  event-stream framing -- verifying the prelude and message CRC32 of every frame, taking text from
+  `contentBlockDelta`, the stop reason from `messageStop` and usage from `metadata` -- and
+  advertises `Capability.STREAMING`. All six adapters decode a frame stream, so the model half of
+  the plan-time gate became unreachable and was deleted rather than left as a refusal that could
+  never fire. The `unsupported-streaming` code it reported is still live for the three cases that
+  can still be refused on that target: a transport that cannot stream, a pipeline route the
+  output guardrail cannot honour while streaming, and a pipeline shape the emitted route cannot
+  build.
+- **Row 2 and the `**Why:**` line it describes** are gone. `ADAPTER_NOTES` in
+  `site/scripts/gen-reference.mjs` was keyed `Adapter.MEMBER` so a note would disappear the
+  moment the adapter advertised the capability; the note is deleted and the registry is empty,
+  because every capability the current adapters omit is one the provider does not serve.
+  `docs/features.md` now lists streaming under `bedrock`'s **Advertises** and carries no
+  **Refuses** line for it, and the AWS module bullet no longer says no Bedrock-pinned route can
+  use the grant it writes.
+- **The features registry entry** named `streaming-on-a-model-that-cannot` now points at
+  `streaming-unsupported`, the code that can still fire, and its prose says which target refuses
+  and why. It previously pointed at `unsupported-streaming`, which would have told a reader that
+  `py-fastapi` refuses a document it now generates.
+- **Runtime coverage.** `runtimes/python/tests/test_bedrock_provider.py` gained a frame builder and
+  six tests over a real `ConverseStream` body: text deltas across frames, a stop reason, usage,
+  a split frame reassembled across reads, a corrupted checksum refused, and an exception frame
+  surfaced as a `ProviderResponseError`. The adapter's capability test now asserts `STREAMING` is
+  advertised instead of asserting it is not.
+- **No spec-language change**, so no `specVersion` bump and no registry count change. The
+  generated artifacts of a streaming Bedrock deployment do change -- the observability report no
+  longer records a shortfall for the model -- and the byte-asserted fixtures were restamped with
+  the release that carried the change.

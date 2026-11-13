@@ -15,16 +15,14 @@ dialects. Three translations are structural rather than cosmetic:
 - tool results are ``toolResult`` blocks in a ``user`` turn, and adjacent results
   are merged into one turn so the conversation keeps alternating roles.
 
-There is no ``stream``: ``/converse-stream`` frames events in AWS's binary
-event-stream format (length-prefixed records with CRC32) rather than SSE, which
-is out of scope for this adapter. ``STREAMING`` is therefore not advertised, and
-both generators refuse a deployment that asks a Bedrock-pinned model to stream --
-``unsupported-streaming`` in ``py-fastapi``, ``streaming-unsupported`` in
-``ts-vercel`` -- naming the model and this adapter. The refusal is at plan time
-because ``ModelGateway.stream`` requires ``STREAMING`` and has no fallback chain,
-so the alternative is raising on the first request. Bedrock itself does stream:
-``ConverseStream`` serves every model that supports messages. The limit is this
-adapter's, not the provider's.
+``stream`` uses ``ConverseStream`` on the same host and identity, so it reuses
+this adapter's region, credential chain and signature. Bedrock does not speak
+SSE: ``/converse-stream`` frames events in AWS's binary event-stream format --
+length-prefixed records with a CRC32 over the prelude and one over the whole
+message -- so the adapter decodes and checksums frames and turns
+``contentBlockDelta.text``, ``messageStop`` and ``metadata.usage`` into
+:class:`StreamChunk`. Tool calls are not reported, because :class:`StreamChunk`
+has no field for them; a caller that needs tool calls uses :meth:`complete`.
 
 ``EMBEDDINGS`` *is* advertised: Titan models answer on ``InvokeModel``, which is
 the uninterpreted sibling of ``complete`` sharing this adapter's region,
@@ -39,7 +37,8 @@ import hashlib
 import hmac
 import json
 import os
-from collections.abc import AsyncIterator, Callable, Sequence
+import zlib
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -191,6 +190,163 @@ def _is_object(value: Any) -> bool:
     return isinstance(value, dict)
 
 
+# AWS frames an event as total_length | headers_length | prelude CRC32 | headers |
+# payload | message CRC32, every integer big-endian and each CRC32 computed over the
+# bytes before it. Frames are neither length-delimited by a separator nor aligned, so
+# the decoder buffers until a whole frame is present.
+_PRELUDE_BYTES = 12
+_MESSAGE_CRC_BYTES = 4
+
+
+def _crc32(value: bytes) -> int:
+    return zlib.crc32(value) & 0xFFFFFFFF
+
+
+class EventStreamDecoder:
+    """Decode AWS's binary event-stream bytes into ``{headers, payload}`` messages.
+
+    Both checksums are verified. A frame that is corrupt, truncated mid-prelude or a
+    length that no frame could have raises rather than being parsed into an event that
+    looks plausible and silently corrupts the answer.
+    """
+
+    def __init__(self, name: str = "bedrock") -> None:
+        self._name = name
+        self._buffer = bytearray()
+
+    def feed(self, data: bytes) -> Iterator[dict[str, Any]]:
+        """Append bytes and yield every complete message now available."""
+        self._buffer.extend(data)
+        while True:
+            message = self._take()
+            if message is None:
+                return
+            yield message
+
+    def _take(self) -> dict[str, Any] | None:
+        if len(self._buffer) < _PRELUDE_BYTES:
+            return None
+        total = int.from_bytes(self._buffer[0:4], "big")
+        headers_length = int.from_bytes(self._buffer[4:8], "big")
+        if _crc32(bytes(self._buffer[0:8])) != int.from_bytes(self._buffer[8:12], "big"):
+            raise ProviderResponseError(
+                f"{self._name} streamed a frame whose prelude checksum does not match",
+                self._buffer[:12].hex(),
+            )
+        if total < _PRELUDE_BYTES + _MESSAGE_CRC_BYTES or (
+            headers_length > total - _PRELUDE_BYTES - _MESSAGE_CRC_BYTES
+        ):
+            raise ProviderResponseError(
+                f"{self._name} streamed a frame with impossible lengths",
+                f"total_length={total} headers_length={headers_length}",
+            )
+        if len(self._buffer) < total:
+            return None
+        frame = bytes(self._buffer[:total])
+        del self._buffer[:total]
+        body = frame[:-_MESSAGE_CRC_BYTES]
+        trailer = int.from_bytes(frame[-_MESSAGE_CRC_BYTES:], "big")
+        if _crc32(body) != trailer:
+            raise ProviderResponseError(
+                f"{self._name} streamed a frame whose message checksum does not match",
+                frame.hex()[:500],
+            )
+        payload = frame[_PRELUDE_BYTES + headers_length : -_MESSAGE_CRC_BYTES]
+        return {
+            "headers": _event_headers(self._name, frame, headers_length),
+            "payload": _event_payload(self._name, payload),
+        }
+
+
+def _event_payload(name: str, payload: bytes) -> dict[str, Any]:
+    if not payload:
+        return {}
+    try:
+        body = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ProviderResponseError(
+            f"{name} streamed an event whose payload is not JSON",
+            payload[:500].decode(errors="replace"),
+        ) from exc
+    if not isinstance(body, dict):
+        raise ProviderResponseError(
+            f"{name} streamed an event whose payload is not a JSON object",
+            payload[:500].decode(errors="replace"),
+        )
+    return body
+
+
+def _event_headers(name: str, frame: bytes, headers_length: int) -> dict[str, Any]:
+    """Read the frame's headers: name length, name, value type, then the typed value."""
+    headers: dict[str, Any] = {}
+    offset = _PRELUDE_BYTES
+    end = _PRELUDE_BYTES + headers_length
+    while offset < end:
+        name_length = frame[offset]
+        offset += 1
+        header = frame[offset : offset + name_length].decode(errors="replace")
+        offset += name_length
+        value_type = frame[offset]
+        offset += 1
+        if value_type == 0:
+            headers[header] = True
+        elif value_type == 1:
+            headers[header] = False
+        elif value_type in {2, 6, 7}:
+            length = int.from_bytes(frame[offset : offset + 2], "big")
+            offset += 2
+            raw = frame[offset : offset + length]
+            offset += length
+            headers[header] = raw if value_type == 6 else raw.decode(errors="replace")
+        elif value_type in {3, 4, 5, 8}:
+            width = {3: 2, 4: 4, 5: 8, 8: 8}[value_type]
+            headers[header] = int.from_bytes(frame[offset : offset + width], "big", signed=True)
+            offset += width
+        elif value_type == 9:
+            headers[header] = frame[offset : offset + 16].hex()
+            offset += 16
+        else:
+            raise ProviderResponseError(
+                f"{name} streamed a header with an unknown value type {value_type}", header
+            )
+    if offset > end:
+        raise ProviderResponseError(
+            f"{name} streamed a frame whose headers run past their own length",
+            f"headers_length={headers_length} read={offset - _PRELUDE_BYTES}",
+        )
+    return headers
+
+
+def _converse_stream_chunk(name: str, message: dict[str, Any]) -> StreamChunk | None:
+    """One decoded frame as the portable chunk type, or ``None`` for frames to skip."""
+    headers = message.get("headers") or {}
+    payload = message.get("payload") or {}
+    if headers.get(":message-type") in {"exception", "error"}:
+        kind = headers.get(":exception-type") or headers.get(":error-code") or "error"
+        raise ProviderResponseError(
+            f"{name} streamed an error event ({kind}): {payload.get('message')}",
+            json.dumps(payload, separators=(",", ":"))[:500],
+        )
+    event = headers.get(":event-type")
+    if event == "contentBlockDelta":
+        delta = payload.get("delta")
+        text = delta.get("text") if isinstance(delta, dict) else None
+        return StreamChunk(delta=text) if isinstance(text, str) else None
+    if event == "messageStop":
+        return StreamChunk(finish_reason=_finish_reason(payload.get("stopReason"), False))
+    if event == "metadata":
+        raw = payload.get("usage")
+        if not isinstance(raw, dict):
+            return None
+        return StreamChunk(
+            usage=TokenUsage(
+                input_tokens=int(raw.get("inputTokens") or 0),
+                output_tokens=int(raw.get("outputTokens") or 0),
+            )
+        )
+    return None
+
+
 class BedrockProvider:
     """Calls ``POST /model/{id}/converse`` on the regional Bedrock runtime."""
 
@@ -241,8 +397,15 @@ class BedrockProvider:
     def capabilities(self) -> frozenset[Capability]:
         # Embeddings are served by InvokeModel on this same host and identity, so the
         # method that backs them is on this adapter rather than a separate client.
+        # Streaming is ConverseStream: the same call over AWS's binary event-stream
+        # framing instead of a whole body.
         return frozenset(
-            {Capability.TOOL_CALLING, Capability.STRUCTURED_OUTPUT, Capability.EMBEDDINGS}
+            {
+                Capability.TOOL_CALLING,
+                Capability.STRUCTURED_OUTPUT,
+                Capability.EMBEDDINGS,
+                Capability.STREAMING,
+            }
         )
 
     async def complete(self, request: CompletionRequest, *, model: ModelSpec) -> CompletionResponse:
@@ -257,18 +420,33 @@ class BedrockProvider:
     async def stream(
         self, request: CompletionRequest, *, model: ModelSpec
     ) -> AsyncIterator[StreamChunk]:
-        """Refuse: ``/converse-stream`` is not SSE.
+        """Stream one call from ``/converse-stream``.
 
-        Streaming here would mean decoding AWS's binary event-stream framing and
-        computing per-frame CRC32 checksums. Until that exists, refusing is better
-        than silently buffering a "stream" the caller believes is incremental.
+        One attempt, like the sibling adapters: a stream that has already emitted text
+        cannot be replayed, so a failure is raised once rather than retried mid-stream.
+        Tool calls are not reported here because :class:`StreamChunk` has no field for
+        them; the gateway that needs tool calls uses :meth:`complete`.
         """
-        del request, model
-        raise ProviderError(
-            f"{self._name} does not stream: Bedrock frames events in AWS's binary "
-            "event-stream format, which this adapter does not decode; use complete()"
-        )
-        yield  # type: ignore[unreachable]  # pragma: no cover - keeps this an async generator
+        body = json.dumps(self._build_payload(request, model), separators=(",", ":"))
+        region = self._resolve_region()
+        credentials = await self._credentials()
+        url = self._endpoint(model, region, "converse-stream")
+        headers = self._headers(url, body, region, credentials, self._now())
+        decoder = EventStreamDecoder(self._name)
+        try:
+            async with self._client.stream("POST", url, content=body, headers=headers) as response:
+                if response.status_code >= 400:
+                    await response.aread()
+                    raise ProviderError(
+                        f"{self._name} returned {response.status_code}: {response.text[:500]}"
+                    )
+                async for raw in response.aiter_bytes():
+                    for message in decoder.feed(raw):
+                        chunk = _converse_stream_chunk(self._name, message)
+                        if chunk is not None:
+                            yield chunk
+        except httpx.TransportError as exc:
+            raise ProviderError(f"{self._name} stream failed: {exc}") from exc
 
     async def aclose(self) -> None:
         if self._closed:
@@ -288,9 +466,9 @@ class BedrockProvider:
             )
         return region
 
-    def _endpoint(self, model: ModelSpec, region: str) -> str:
+    def _endpoint(self, model: ModelSpec, region: str, operation: str = "converse") -> str:
         base = self._base_url or default_bedrock_base_url(region)
-        return f"{base}/model/{rfc3986(model.name)}/converse"
+        return f"{base}/model/{rfc3986(model.name)}/{operation}"
 
     async def _credentials(self) -> dict[str, Any]:
         """Static credentials, else the environment, else the container endpoint.

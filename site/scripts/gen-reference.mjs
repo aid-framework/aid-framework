@@ -188,16 +188,13 @@ const MAX_NESTING = 3;
  * claim about the provider, which is the one thing it is not. Keyed `Adapter.MEMBER`, so a
  * note disappears the moment the adapter starts advertising the capability -- an
  * explanation that outlived its cause would be a second, quieter untruth.
+ *
+ * Every capability the current adapters omit is one the provider does not serve -- Anthropic
+ * publishes no embeddings endpoint -- so no note is needed today. Re-add one beside the
+ * capability it explains rather than letting a `Refuses` line about the adapter stand in for a
+ * fact about the provider.
  */
-const ADAPTER_NOTES = {
-  'BedrockProvider.STREAMING':
-    'Bedrock does stream: `ConverseStream` returns a stream for every model that supports ' +
-    'messages, and the AWS module grants `bedrock:InvokeModelWithResponseStream` for it. ' +
-    '`BedrockProvider` returns the whole reply because the response is AWS binary ' +
-    'event-stream framing, which the adapter does not decode. A deployment that asks a ' +
-    'Bedrock-pinned model to stream is refused at build time with `unsupported-streaming`, ' +
-    'naming the model and the adapter, rather than raising on the first request.',
-};
+const ADAPTER_NOTES = {};
 
 /**
  * Emit a subsection for every field of `owner` that is an object with named fields.

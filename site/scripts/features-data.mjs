@@ -87,7 +87,7 @@ export const AI_INFRA = [
     title: 'Bedrock from the AWS module',
     declares: 'models[].provider: bedrock',
     emits:
-      '`bedrock:InvokeModel`, plus `bedrock:InvokeModelWithResponseStream` when a service declares `streaming`, scoped to the foundation-model and inference-profile ARNs. The stream grant follows the service flag, so it is written for a Bedrock app too; no Bedrock-pinned route can use it yet, because `BedrockProvider` returns the whole reply — see the `bedrock` provider section',
+      '`bedrock:InvokeModel`, plus `bedrock:InvokeModelWithResponseStream` when a service declares `streaming`, scoped to the foundation-model and inference-profile ARNs. The stream grant follows the service flag, so it is written for a Bedrock app too, and a streaming route now spends it — `BedrockProvider` decodes `ConverseStream` — see the `bedrock` provider section',
     credential: 'the IAM role the module creates for the service',
     since: '0.1.81',
   },
@@ -656,8 +656,8 @@ export const REFUSALS = [
     id: 'streaming-on-a-model-that-cannot',
     title: 'A stream from a model whose adapter returns the whole reply',
     reason:
-      'Streaming is refused two ways. `ir/deploy-streaming` catches a transport that cannot stream at all. The model is the other half: the emitted route calls the gateway stream on the one model the pipeline generates with, and the gateway raises rather than falling back to a buffered reply, so a model whose adapter returns the whole reply is refused when the app is generated instead of failing on the first request. The diagnostic names the model, its adapter and the fix; `py-fastapi` reports it as `unsupported-streaming` and `ts-vercel` as `streaming-unsupported`.',
-    code: 'unsupported-streaming',
+      'Streaming is refused three ways. `ir/deploy-streaming` catches a transport that cannot stream at all. On `ts-vercel`, whose provider seam answers every request with one buffered body, the emitted route calls the gateway stream on the one model the pipeline generates with, so a model whose adapter cannot frame a reply is refused with `streaming-unsupported` when the app is generated instead of raising on the first request. `py-fastapi` no longer has that case: all six of its adapters decode a frame stream -- Bedrock included, from `ConverseStream` -- so a deployment that streams generates there and the plan-time refusals that remain under `unsupported-streaming` are the transport, the output guardrail and the pipeline shape.',
+    code: 'streaming-unsupported',
   },
   {
     id: 'unknown-image-registry',
