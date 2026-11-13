@@ -247,6 +247,9 @@ stale page fails.
    reported, not built: the prerequisite is a declared list of env vars the runtime and generated
    app read, emitted as data, before any doc check can compare against it.
 
+As shipped (§10), items 1 and 3 were already covered by Phase A and item 2's "found no unknowns"
+was itself wrong — the real check found four.
+
 ### Phase D — the signed-resume review brief
 
 `docs/rfcs/0007-appendix-resume-review.md`: the checklist from the brief, each item marked
@@ -431,3 +434,69 @@ close, found by generating the table rather than by reading it.
 gate without selecting a module. `docs/guide/delivery.md`'s private network row still claims "Gated
 and generated" — the follow-up recorded in §8, unchanged by this PR because a generated table is not
 a licence to edit an unrelated page.
+
+## 10. Phase C: what shipped
+
+Phase C was scoped to four categories and shipped two of them, because the inventory changed what
+was left to do. Each row below was verified by reading the check, not by memory.
+
+| Category | State before Phase C | Evidence |
+| --- | --- | --- |
+| CLI commands | Covered | `check-docs-claims.mjs:572` compares `commandsNamed` claims against `COMMANDS` |
+| CLI flags | Covered | `check-docs-claims.mjs:592` compares `aidFlags` claims against `FLAGS` |
+| Target names | Covered | `check-docs-claims.mjs:860` compares `targetTokens` against the schema enum |
+| **Operating-profile names** | **Not covered** | New at `check-docs-claims.mjs:759` |
+| **Spec field paths** | **Not covered** | New at `check-docs-claims.mjs:767` |
+| Environment variables | Not covered, **no registry to cover** | Reported below, not built |
+
+**Profile names.** `profile` is an ordinary top-level schema property, so its enum lives at
+`properties.profile.enum` and not under `$defs` — the first version of the check looked in the wrong
+place and failed the whole tree with 11 phoney claims. Eleven real citations now resolve.
+
+**Spec field paths.** 162 backticked dotted tokens resolve against the schema, following `$ref`,
+`oneOf` and `additionalProperties`. The resolver lives in `scripts/spec-paths.mjs` so it can be
+tested without IO; `scripts/spec-paths.test.mjs` pins it with 14 tests.
+
+Writing the resolver found five bugs in the resolver before it found any in the docs, each worth
+recording because each would have produced a false accusation:
+
+1. `[]` was only stripped from the head, so `evals[].gate` matched a map *instance* called `gate`.
+   A marker segment now descends one level through `items` or `additionalProperties`.
+2. Once a segment was marked as a placeholder its base name was skipped entirely, so `agents[]` no
+   longer checked that `agents` is a real field. The named-property branch now wins regardless.
+3. A schema node carrying both `properties` and `oneOf` — the pipeline `trigger` — lost its own
+   properties because the union expansion returned only the branches.
+4. Map members (`deployments.api`) had to resolve without the schema enumerating customer names.
+5. `\`X\` profile` is ambiguous: "the `azure-gpt-4o-mini` profile" is a *cost* profile. The claim
+   detector only accepts the fenced-block assignment and `profile \`x\``, so it stays quiet rather
+   than wrong.
+
+**Four real documentation errors, all fixed here.** The plan predicted none; the check found four,
+which is the argument for the check:
+
+| File:line | Cited | Reality |
+| --- | --- | --- |
+| `docs/guide/delivery.md:190` | `observability.feedback.redact` | `feedback` holds `signals`, `pii`, `retentionDays`, `persistent`; `redact` is under `pii` |
+| `docs/guide/delivery.md:210` | same | same |
+| `docs/migration.md:798` | same | same |
+| `docs/migration.md:141` | `pipelines[].steps[].requiresApproval` | the field is on the tool step's body: `pipelines[].steps[].tool.requiresApproval` |
+
+The recurring shape is a dropped intermediate level, which is exactly what a human reader fills in
+for free and a schema does not.
+
+**Environment variables stay unchecked, and that is reported rather than hidden.** `AID_*` names are
+read from literals scattered across `packages/cli/src` and `runtimes/`; there is no list to compare
+against. Inventing one inside a doc-check would make the check its own source of truth, which is the
+defect this round exists to remove. The prerequisite is an emitted list of the env vars the CLI and
+generated app actually read.
+
+**RFCs are excluded from both new checks**, matching `isProposalPage` and how Phase A treated
+diagnostic codes: a proposal is allowed to name a path or a profile that the current spec does not
+admit, because that is what proposing means.
+
+**Acceptance, both directions.** `node scripts/check-docs-claims.mjs` exits 0 having compared 1556
+claims, 528 diagnostic citations, 162 field paths, 11 profile names and 254 relative links.
+Reintroducing `observability.feedback.redact` into `docs/guide/delivery.md:190` exits 1 with
+`cites \`observability.feedback.redact\`, which the spec schema does not admit: \`redact\` is not a
+field of \`observability.feedback\`, whose fields are \`persistent\`, \`pii\`, \`retentionDays\`,
+\`signals\``. The file was restored and the check returned to 0.

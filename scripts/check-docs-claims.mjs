@@ -30,6 +30,7 @@ import {
   proposalStatus,
   targetTokens,
 } from './docs-claims.mjs';
+import { profileClaims, resolveSpecPath, specPathClaims } from './spec-paths.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
@@ -707,6 +708,86 @@ if (REGISTRIES.size > 0) {
         }
       }
     });
+  }
+}
+
+/**
+ * Every operating profile a document names is one the schema admits, and every
+ * dotted path in backticks is a field the schema declares.
+ *
+ * These are the two claims a reader acts on without checking: `profile:` decides
+ * which gates apply, and a backticked path is read as "this field exists". Both
+ * were written from memory until now -- `observability.feedback.redact` is one
+ * level short of the real `observability.feedback.pii.redact`, and a reader who
+ * follows it edits a spec the gate then refuses differently than promised.
+ *
+ * The path rule is deliberately narrow: only backticked tokens whose first segment
+ * is a top-level property are claims about the spec, so `app/business/x.py`,
+ * `pnpm check` and `resume.token` are never compared against the schema. Map
+ * members resolve through `additionalProperties`, so `deployments.api` is valid
+ * without the schema naming every customer's deployment.
+ */
+const schemaObject = (() => {
+  if (schemaSource === undefined) return undefined;
+  try {
+    return JSON.parse(schemaSource);
+  } catch (cause) {
+    fail(SCHEMA_PATH, 1, `is not JSON: ${String(cause)}`);
+    return undefined;
+  }
+})();
+
+/** @type {Set<string>} */
+let PROFILES = new Set();
+let TOP_LEVEL = new Set();
+if (schemaObject !== undefined) {
+  const profileValues = schemaObject?.properties?.profile?.enum;
+  if (Array.isArray(profileValues)) PROFILES = new Set(profileValues);
+  else fail(SCHEMA_PATH, 1, 'has no `properties.profile.enum` to compare against');
+  TOP_LEVEL = new Set(Object.keys(schemaObject.properties ?? {}));
+}
+
+let profileClaimsChecked = 0;
+let specPathClaimsChecked = 0;
+for (const file of documents) {
+  // An RFC records what was proposed at a moment in time; it is not a claim about
+  // the current spec, so a path it invented is not a documentation defect.
+  if (isProposalPage(file)) continue;
+  const text = read(file);
+  if (text === undefined) continue;
+
+  for (const claim of profileClaims(text)) {
+    profileClaimsChecked += 1;
+    if (!PROFILES.has(claim.token)) {
+      const admitted = [...PROFILES]
+        .sort()
+        .map((name) => `\`${name}\``)
+        .join(' or ');
+      fail(
+        file,
+        claim.line,
+        `names \`${claim.token}\` as an operating profile; the schema admits ${admitted}`,
+      );
+    }
+  }
+
+  for (const claim of specPathClaims(text, (name) => TOP_LEVEL.has(name))) {
+    specPathClaimsChecked += 1;
+    if (schemaObject === undefined) continue;
+    const verdict = resolveSpecPath(schemaObject, claim.token);
+    if (verdict.ok) continue;
+    const owner = verdict.at.split('.').slice(0, -1).join('.');
+    const field = verdict.at.split('.').at(-1) ?? verdict.at;
+    const where = owner === '' ? 'the document root' : `\`${owner}\``;
+    const available =
+      verdict.available.length === 0
+        ? 'which declares no fields'
+        : `whose fields are ${verdict.available.map((key) => `\`${key}\``).join(', ')}`;
+    fail(
+      file,
+      claim.line,
+      `cites \`${claim.token}\`, which the spec schema does not admit: \`${field}\` is not a field of ${where}, ${available}`,
+    );
   }
 }
 
@@ -1534,4 +1615,7 @@ const targetCount = `, ${claimsChecked} claim comparisons, ${linksChecked} relat
 process.stdout.write(`Docs claims agree with the code${targetCount}.\n`);
 process.stdout.write(
   `${diagnosticCitations} diagnostic-code citations resolve to a registered code.\n`,
+);
+process.stdout.write(
+  `${specPathClaimsChecked} spec field-path citations resolve against the schema, and ${profileClaimsChecked} operating-profile names match its enum.\n`,
 );
