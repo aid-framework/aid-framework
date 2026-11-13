@@ -263,8 +263,8 @@ same complaint.
 | --- | --- | --- | --- |
 | **A** | Post-deploy live assertion with backoff, plus a test that keeps the homepage example compiling | ~0.5 day | [#207](https://github.com/aid-framework/aid-framework/pull/207) |
 | **B** | One `pnpm check` that runs CI's checks in CI's order over the whole tree; truthful `lefthook.yml`; opt-in pre-push; the agent rule about `node_modules` | ~1 day | [#208](https://github.com/aid-framework/aid-framework/pull/208) |
-| **C** | Case-insensitive cloud refusal + the Windows `parentPath` fix | ~0.5 day | this PR |
-| **D** | `docs/guide/boundary.md`, linked from nav, Delivery playbook and homepage | ~1 day | |
+| **C** | Case-insensitive cloud refusal + the Windows `parentPath` fix | ~0.5 day | [#209](https://github.com/aid-framework/aid-framework/pull/209) |
+| **D** | `docs/guide/boundary.md`, linked from nav, Delivery playbook and homepage | ~1 day | this PR |
 
 ### Phase A — the site is checked, not assumed
 
@@ -365,6 +365,65 @@ covered by the existing claim verification with no script change — the claims 
 diagnostics and commands must be ones the CLI actually implements, which is the point.
 
 Linked from the Guide nav, `docs/guide/delivery.md` and the homepage's "Where to go next".
+
+### Phase D outcome — seventeen rows, not ten
+
+Shipped as planned, at nearly twice the planned width. The section above says "one row per
+concern" and names eleven; the shipped table has **seventeen data rows over five columns** —
+concern, what the build refuses, what is generated, what you provide, residual risk. Five columns
+because the four-column version silently dropped the *concern name*, which is the one thing a
+reviewer scans for; a row whose first cell is a diagnostic code cannot be found by someone
+looking for "region pinning".
+
+Six of the table's rows cover concerns §8 did not name, and each of them is a refusal a reader
+can trip in a real document — so none is filler:
+
+| Row added | Why it survived the cut |
+| --- | --- |
+| Profile selection | The choice that decides which of the other rows apply at all |
+| Region pin | Residency is a customer question with its own diagnostic, `ir/profile-region` |
+| Input and output guardrails | The one control the brief named as mandatory under `enterprise` |
+| Change approval | `ir/hitl-side-effect` is the refusal behind every side-effecting tool |
+| Trajectory evals | The row that states, in the table itself, that a scripted trajectory verifies policy and not model behaviour |
+| Promotion and self-improvement | The loop exists end to end, and "nothing auto-promotes" belongs in writing |
+
+Two planned items were deliberately *not* separate rows. **Resume checkpoints** folded into
+`Durable state` and `Secrets`, because signing and replay are properties of those two constructs
+rather than a concern of their own — and it still gets one of the four expanded sections, which
+is where the "signed, expiring, and still a capability" limit is stated. **Redaction and trace
+data** became `Redaction of recorded text` plus `Observability export`, since the second column
+differs: one refuses an unbindable field, the other refuses a missing export.
+
+Four rows get expanded because they decide the shape of a plan rather than a checkbox: identity
+and token verification, authorization, resume checkpoints, and durable state. Each expansion
+states the limit of what is generated — this is where the "declared and gated, not generated"
+status in the registry has to be legible without reading the registry.
+
+No new claims, as §8 required, but the first draft of the table was not yet honest in five rows.
+Every diagnostic in the second column was checked against its emit site afterwards, and five
+were wrong in ways that matter:
+
+| Row | Draft | What the code actually does |
+| --- | --- | --- |
+| Eval coverage | `ir/eval-coverage` | No such code. The gate is `eval-coverage.ts`; the diagnostic is `ir/eval-uncovered`, a warning that becomes an error under `enterprise` from `0.31` |
+| Model pinning and cost | listed `ir/cost-budget-exceeded` as a refusal | It is `report.warn` — a flag, so the row now says so |
+| Authorization, Observability | `ir/policy-*`, `ir/alerts-*` | Wildcards are not codes. Now `ir/policy-syntax` plus "nine siblings", `ir/alerts-unexported` and `ir/alerts-unproduced` |
+| Secrets, Durable state | "a pausable agent with no signing key", "`standard`, pausable, no store" | `ir/resume-unsigned` and `ir/resume-replay-weak` are errors under `enterprise` and warnings under `standard`; the row had the severity inverted |
+| Eval coverage, Redaction | "a metric the eval does not measure", "a PII rule unstated" | `ir/eval-metric-vacuous` is a step ceiling at or above the agent's own `maxSteps`, or an approval metric on an agent that never pauses; `ir/feedback-pii` is a persistent text signal whose `pii.redact` misses a sensitive field |
+
+The closing "every diagnostic above is emitted by `aid validate`" sentence was wrong for the one
+`cli/*` code, and now says why `aid infra` is the one command that can see that disagreement.
+
+This is a gap worth closing next round, not a one-off: `check-docs-claims` verifies claim counts
+and relative links but not diagnostic codes, so a page can cite a code that does not exist and
+pass every check. Making the checker extract `ir/…` and `cli/…` codes from fenced text and assert
+each one appears in `diagnostics.ts` would have caught all five. Until then, the second column was
+verified here by script, and 38 distinct codes resolve against `packages/ir/src/diagnostics.ts`.
+
+`check-docs-claims` verified 998 claim comparisons and 243 relative links over the result, with
+`docs:links` resolving 860 internal links and 743 fragments across 30 pages. The page closes with
+a seven-step reviewer checklist and an explicit "what this page is not" — it documents what the
+generator emits, not a running deployment.
 
 ## 9. Smallest first increment
 
