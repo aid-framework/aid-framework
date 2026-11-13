@@ -197,7 +197,7 @@ aid kb sync [spec] [--target <name>] [--retriever <id> | --all] [--wait]
 run the eval gate, record the baseline it measures against, or apply a promotion policy
 
 ```sh
-aid eval [spec] [--target <name>] [--suite <id>] [--baseline] [--compare <baseline.json> --candidate <candidate.json>]
+aid eval [spec] [--target <name>] [--suite <id>] [--baseline] [--record <transcript.json>] [--compare <baseline.json> --candidate <candidate.json>]
 ```
 
 | Option | Description |
@@ -205,6 +205,7 @@ aid eval [spec] [--target <name>] [--suite <id>] [--baseline] [--compare <baseli
 | `--suite <id>` | run one eval instead of all of them |
 | `--target <name>` | generator target; one of py-fastapi, ts-vercel |
 | `--baseline` | record a fresh baseline instead of gating |
+| `--record <path>` | run one agent eval live and write its model calls to a transcript `AID_EVAL_TRANSCRIPT` can replay. Refuses to overwrite an existing transcript, to capture a scripted provider, or to capture while replaying |
 | `--compare <path>` | apply gate.promotion to an accepted baseline and a candidate one. The quality allowance is judged; a declared cost ceiling is reported as unjudged because no runtime records cost |
 | `--candidate <path>` | the candidate baseline --compare reads |
 | `--json` | print one JSON document on stdout |

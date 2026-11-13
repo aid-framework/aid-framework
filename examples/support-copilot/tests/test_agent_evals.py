@@ -25,6 +25,15 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from aid_runtime import (
+    Capability,
+    CompletionRequest,
+    EvalError,
+    ModelSpec,
+    RecordingProvider,
+    RecordingProviders,
+    ReplayDivergenceError,
+)
 from aid_runtime.evals import (
     EvalCase,
     Metric,
@@ -33,6 +42,8 @@ from aid_runtime.evals import (
     Trajectory,
 )
 from aid_runtime.providers import RecordedProvider, Transcript
+from aid_runtime.providers.fake import FakeProvider, ScriptedTurn
+from aid_runtime.types import CostProfile
 
 from app.generated.evals import refund_trajectory
 
@@ -209,3 +220,154 @@ def test_a_named_transcript_is_loaded_or_the_run_refuses(
 
     with pytest.raises(FileNotFoundError, match="no recorded transcript"):
         refund_trajectory.providers()
+
+
+_ASK = CompletionRequest.prompt("Refund order 4471")
+_MODEL = ModelSpec(
+    name="gpt-4o-mini-2024-07-18",
+    provider="openai",
+    cost=CostProfile(input_per_1k_usd=0.00015, output_per_1k_usd=0.0006),
+    context_window=128_000,
+    max_output_tokens=16_384,
+    capabilities=frozenset({Capability.TOOL_CALLING}),
+)
+
+
+def _answer_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the app's providers a fake that answers, so a capture has something to record.
+
+    `refund_agent` is declared on a real vendor, which is what makes recording legal for
+    this eval at all -- so the fake is installed at the module's own reference to
+    `default_providers`, the seam the generated code calls, rather than by rewriting the
+    spec. The capture then records a real call, over a stand-in transport.
+    """
+
+    monkeypatch.setattr(
+        refund_trajectory,
+        "default_providers",
+        lambda: dict.fromkeys(
+            refund_trajectory.PROVIDER_KEYS,
+            FakeProvider(script=[ScriptedTurn.answer("refunded")]),
+        ),
+    )
+
+
+def test_a_capture_writes_the_transcript_a_replay_reads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Capture and replay are two halves of one file, and this is the seam between them.
+
+    The capture half did not exist for a long time: `AID_EVAL_TRANSCRIPT` made a run
+    offline, but nothing but a test ever wrote a transcript, so a trajectory could only be
+    recorded by hand. What this asserts is that the file a live run writes is the file the
+    next run replays -- through the module's own entry points, not through the runtime's
+    constructors, because it is the generated wiring that has to agree.
+    """
+
+    path = tmp_path / "refund.json"
+    _answer_once(monkeypatch)
+    monkeypatch.delenv(refund_trajectory.TRANSCRIPT_ENV, raising=False)
+    monkeypatch.setenv(refund_trajectory.RECORD_ENV, str(path))
+    monkeypatch.setattr(refund_trajectory, "_RECORDER", None)
+
+    capturing = refund_trajectory.providers()
+    provider = capturing["openai"]
+    assert isinstance(provider, RecordingProvider)
+    answered = asyncio.run(provider.complete(_ASK, model=_MODEL))
+    refund_trajectory.save_recording()
+
+    # The file describes the document that produced it, so a later bump can ask whether the
+    # recording still matches what the eval would run.
+    recorded = Transcript.from_path(path)
+    assert recorded.spec_version == refund_trajectory.SPEC_VERSION
+    assert len(recorded) == 1
+    assert recorded.entries[0].response.text == answered.text
+
+    monkeypatch.delenv(refund_trajectory.RECORD_ENV)
+    monkeypatch.setenv(refund_trajectory.TRANSCRIPT_ENV, str(path))
+
+    replayed = refund_trajectory.providers()["openai"]
+    assert isinstance(replayed, RecordedProvider)
+    assert replayed.remaining == 1
+    assert asyncio.run(replayed.complete(_ASK, model=_MODEL)).text == answered.text
+    # Served exactly once: a recording with a call left over means the run took fewer steps
+    # than the one it replays, and a silent fall-through would hide that.
+    assert replayed.remaining == 0
+
+    with pytest.raises(ReplayDivergenceError):
+        asyncio.run(replayed.complete(_ASK, model=_MODEL))
+
+
+def test_a_capture_refuses_a_run_that_could_not_be_replayed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Three ways a capture would be worthless, refused rather than written.
+
+    Both modes at once would describe this document while holding another run's turns; a
+    scripted agent has no model call to record; and a run that never reached the model has
+    no trajectory to replay. Each is refused by the module, because each is a property of
+    the run rather than of the flag.
+    """
+
+    path = tmp_path / "refund.json"
+    _answer_once(monkeypatch)
+    monkeypatch.setattr(refund_trajectory, "_RECORDER", None)
+    monkeypatch.delenv(refund_trajectory.TRANSCRIPT_ENV, raising=False)
+
+    Transcript(provider="fake", model="fake-deterministic-1").save(path)
+    monkeypatch.setenv(refund_trajectory.RECORD_ENV, str(path))
+    with pytest.raises(EvalError, match="never overwrites"):
+        refund_trajectory.providers()
+
+    monkeypatch.setenv(refund_trajectory.TRANSCRIPT_ENV, str(path))
+    with pytest.raises(EvalError, match="replays a recording or captures one"):
+        refund_trajectory.providers()
+
+    # A scripted agent would record its script, which is not what a transcript is for.
+    monkeypatch.delenv(refund_trajectory.TRANSCRIPT_ENV)
+    monkeypatch.setenv(refund_trajectory.RECORD_ENV, str(tmp_path / "fresh.json"))
+    monkeypatch.setattr(refund_trajectory, "SCRIPTED", True)
+    with pytest.raises(EvalError, match="runs on the scripted provider"):
+        refund_trajectory.providers()
+
+    # And a run that made no call is refused at the point it would be saved, rather than
+    # writing an empty transcript that replays a shorter run than this one took.
+    monkeypatch.setattr(refund_trajectory, "SCRIPTED", False)
+    monkeypatch.setattr(
+        refund_trajectory, "_RECORDER", RecordingProviders({"openai": FakeProvider()})
+    )
+    monkeypatch.setenv(refund_trajectory.RECORD_ENV, str(tmp_path / "fresh.json"))
+    with pytest.raises(EvalError, match="made no model call"):
+        refund_trajectory.save_recording()
+
+
+def test_provenance_names_where_the_model_turns_came_from(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A green gate means something different in each mode, so the mode is printed.
+
+    `scripted` and `recorded` verify policy and plumbing -- the step ceiling, the tool
+    allow-list, the approval pause, spend attribution -- and say nothing about whether a
+    model would have made those calls. Only a live run does, and a reader cannot tell the
+    three apart from a summary alone.
+    """
+
+    monkeypatch.delenv(refund_trajectory.TRANSCRIPT_ENV, raising=False)
+    monkeypatch.delenv(refund_trajectory.RECORD_ENV, raising=False)
+    monkeypatch.setattr(refund_trajectory, "SCRIPTED", False)
+    assert refund_trajectory.provenance() == "live"
+
+    transcript = tmp_path / "t.json"
+    Transcript(provider="fake", model="fake-deterministic-1").save(transcript)
+    monkeypatch.setenv(refund_trajectory.TRANSCRIPT_ENV, str(transcript))
+    assert refund_trajectory.provenance() == "recorded"
+
+    monkeypatch.delenv(refund_trajectory.TRANSCRIPT_ENV)
+    capture = tmp_path / "capture.json"
+    monkeypatch.setenv(refund_trajectory.RECORD_ENV, str(capture))
+    assert refund_trajectory.provenance() == f"live, capturing to {capture}"
+
+    # The scripted provider wins over both, because it is the stronger statement: a scripted
+    # run consulted no model at all, whatever the environment was trying to arrange.
+    monkeypatch.setattr(refund_trajectory, "SCRIPTED", True)
+    assert refund_trajectory.provenance() == "scripted"

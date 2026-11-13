@@ -11,6 +11,8 @@
  * report coverage it did not have.
  */
 
+import { join } from 'node:path';
+
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {
@@ -266,5 +268,93 @@ describe('aid eval on a Node target', () => {
     expect(script).toContain('recordBaseline');
     expect(script).toContain('BASELINE_PATH');
     expect(script).toContain('pathToFileURL');
+  });
+});
+
+describe('aid eval --record', () => {
+  it('tells the module where to capture, rather than capturing itself', () => {
+    // The capture is generated code: only the module knows its document, its providers and
+    // its dataset. So `--record` is a request passed to the child, not a second
+    // implementation of recording in the CLI -- which is why the assertion is on the
+    // child's environment rather than on anything this process did.
+    const made = scratch();
+    aid(made, ['gen']);
+    const spawn = recordingSpawn();
+
+    expect(
+      aid(made, ['eval', '--suite', 'refund_trajectory', '--record', 'capture.json'], spawn).code,
+    ).toBe(0);
+
+    const call = spawn.calls.find((entry) => entry.args.includes('-m'));
+    // Absolute, because the child runs from the project root only by convention: a relative
+    // path handed to a module that resolved it from somewhere else would write the capture
+    // outside the tree the user was looking at.
+    expect(call?.env?.AID_EVAL_RECORD).toBe(join(made.root, 'capture.json'));
+    // Nothing else is set: a run that replayed and captured at once is refused by the
+    // module, and the CLI must not manufacture that state.
+    expect(call?.env?.AID_EVAL_TRANSCRIPT).toBeUndefined();
+  });
+
+  it('records only when asked', () => {
+    const made = scratch();
+    aid(made, ['gen']);
+    const spawn = recordingSpawn();
+
+    expect(aid(made, ['eval', '--suite', 'refund_trajectory'], spawn).code).toBe(0);
+
+    const call = spawn.calls.find((entry) => entry.args.includes('-m'));
+    expect(call?.env?.AID_EVAL_RECORD).toBeUndefined();
+  });
+
+  it('refuses to capture a run it would not be able to divide', () => {
+    // One transcript is one run. Several suites into one path would interleave two runs'
+    // calls in arrival order, and no replay can split them again.
+    const made = scratch();
+    aid(made, ['gen']);
+    const run = aid(made, ['eval', '--record', 'capture.json', '--json'], recordingSpawn());
+
+    expect(run.code).toBe(2);
+    const [diagnostic] = diagnosticsOf(run);
+    expect(diagnostic?.code).toBe('cli/eval-record-unsupported');
+    expect(diagnostic?.hint).toContain('--suite');
+  });
+
+  it('refuses to capture an eval that measures no trajectory', () => {
+    // A prompt eval calls the gateway for an answer, not for a run, and its module carries
+    // no capture code: the flag would exit 0 and write nothing, which reads as success.
+    const made = scratch();
+    aid(made, ['gen']);
+    const run = aid(
+      made,
+      ['eval', '--suite', 'classify_quality', '--record', 'capture.json', '--json'],
+      recordingSpawn(),
+    );
+
+    expect(run.code).toBe(2);
+    const [diagnostic] = diagnosticsOf(run);
+    expect(diagnostic?.code).toBe('cli/eval-record-unsupported');
+    expect(diagnostic?.message).toContain('pipeline');
+  });
+
+  it('refuses to capture during a comparison, which runs nothing', () => {
+    const made = scratch();
+    aid(made, ['gen']);
+    const run = aid(
+      made,
+      [
+        'eval',
+        '--compare',
+        'a.json',
+        '--candidate',
+        'b.json',
+        '--record',
+        'capture.json',
+        '--json',
+      ],
+      recordingSpawn(),
+    );
+
+    expect(run.code).toBe(2);
+    expect(diagnosticsOf(run)[0]?.message).toContain('--record');
   });
 });

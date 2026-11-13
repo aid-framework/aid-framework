@@ -81,6 +81,14 @@ export interface EvalOptions {
   /** The accepted baseline for `--compare`; `candidate` is the other side of it. */
   readonly compare: string | undefined;
   readonly candidate: string | undefined;
+  /**
+   * Where `--record` writes the model calls the run made.
+   *
+   * Only meaningful for an agent eval, and only for a live one: the module refuses to
+   * both replay and capture, and refuses to capture a scripted run, because a transcript
+   * of a script is not evidence about a model.
+   */
+  readonly record: string | undefined;
 }
 
 /** Eval ids the spec declares, or the diagnostics that stopped it from declaring any. */
@@ -169,6 +177,31 @@ function nodeBaselineScript(files: readonly string[]): string {
   ].join('\n');
 }
 
+/**
+ * The environment variable a generated agent eval reads to learn where a capture goes.
+ *
+ * Spelled out here rather than imported from the generator: the CLI and the emitted module
+ * share this name as a contract, the same way both sides already share
+ * `AID_EVAL_TRANSCRIPT`. Importing it would make the CLI depend on a generator package to
+ * hold a string, which is the layer edge the CLI otherwise keeps.
+ */
+const AGENT_RECORD_ENV = 'AID_EVAL_RECORD';
+
+/**
+ * The capture decision is the module's, made from its environment.
+ *
+ * The generated module refuses an impossible capture (both modes set, a scripted provider,
+ * a path that already holds a recording) with a message that names the fix, so the CLI does
+ * not repeat those checks: it says where the file goes and lets the module judge the rest.
+ */
+function recordingContext(context: CliContext, record: string | undefined): CliContext {
+  if (record === undefined) return context;
+  return {
+    ...context,
+    env: { ...context.env, [AGENT_RECORD_ENV]: absolutePath(context.cwd, record) },
+  };
+}
+
 export function evaluate(context: CliContext, options: EvalOptions): CommandOutcome {
   const command = 'eval';
   const target = resolveTarget(options.target);
@@ -228,6 +261,23 @@ export function evaluate(context: CliContext, options: EvalOptions): CommandOutc
         ],
       });
     }
+    if (options.record !== undefined) {
+      // A capture is the evidence a comparison is made from, not part of making one:
+      // `--compare` reads two committed baselines and runs nothing, so there would be no
+      // run to capture and the flag would silently do nothing.
+      return outcome({
+        command,
+        exitCode: EXIT_USAGE,
+        fields,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.comparePairRequired,
+            message: '--compare runs nothing, so there is no run for --record to capture.',
+            hint: 'Capture with `aid eval --suite <id> --record <path>`, commit the transcript, then compare the baselines.',
+          }),
+        ],
+      });
+    }
     return compareBaselines(context, declared.ir, {
       specPath,
       suite: options.suite,
@@ -259,6 +309,43 @@ export function evaluate(context: CliContext, options: EvalOptions): CommandOutc
   }
 
   const suites = options.suite === undefined ? declared.ids : [options.suite];
+
+  if (options.record !== undefined) {
+    // One transcript is one run. Capturing several suites into one path would write a file
+    // holding two runs' calls in arrival order, which no replay can divide back up.
+    if (suites.length !== 1) {
+      return outcome({
+        command,
+        exitCode: EXIT_USAGE,
+        fields: { ...fields, suites },
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.evalRecordUnsupported,
+            message: `--record captures one run, and this one would run ${suites.length} evals.`,
+            hint: 'Name the eval to capture with `--suite <id>`, and record each one to its own path.',
+          }),
+        ],
+      });
+    }
+    // A prompt eval calls the gateway for an answer, not for a trajectory, and its module
+    // has no capture code at all: `--record` there would exit 0 and write nothing.
+    const subject = declared.ir.evals.find((entry) => entry.id === suites[0]);
+    if (subject !== undefined && subject.target.kind !== 'agent') {
+      return outcome({
+        command,
+        exitCode: EXIT_USAGE,
+        fields: { ...fields, suites, suiteKind: subject.target.kind },
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.evalRecordUnsupported,
+            message: `"${subject.id}" measures a ${subject.target.kind}, not an agent, so it has no trajectory to record.`,
+            hint: 'Only an agent eval calls a model inside a loop; declare the eval with `target: agent:<id>`.',
+          }),
+        ],
+      });
+    }
+  }
+
   const missing = suites.filter(
     (id) => !existsSync(absolutePath(context.cwd, target.evalModuleFile(id))),
   );
@@ -291,10 +378,14 @@ export function evaluate(context: CliContext, options: EvalOptions): CommandOutc
   let runModule: (module: string) => SpawnResult | undefined;
   let recordBaseline: () => SpawnResult | undefined;
 
+  // Both verbs run in the derived context, so a baseline captured from a live run can keep
+  // the transcript that produced it instead of describing a session nobody can replay.
+  const spawned = recordingContext(context, options.record);
+
   if (target.runner === 'node') {
     driver = NODE;
-    runModule = (module) => invokeNodeFile(context, module, { import: TS_LOADER });
-    recordBaseline = () => invokeNode(context, nodeBaselineScript(modules), { import: TS_LOADER });
+    runModule = (module) => invokeNodeFile(spawned, module, { import: TS_LOADER });
+    recordBaseline = () => invokeNode(spawned, nodeBaselineScript(modules), { import: TS_LOADER });
   } else {
     const interpreter = discoverInterpreter(context);
     if (interpreter === undefined) {
@@ -315,8 +406,8 @@ export function evaluate(context: CliContext, options: EvalOptions): CommandOutc
     }
     driver = interpreter;
     const base = interpreterCommand(interpreter);
-    runModule = (module) => invoke(context, [...base, '-m', module]);
-    recordBaseline = () => invoke(context, [...base, '-'], baselineScript(modules));
+    runModule = (module) => invoke(spawned, [...base, '-m', module]);
+    recordBaseline = () => invoke(spawned, [...base, '-'], baselineScript(modules));
   }
 
   const common = { ...fields, suites, driver };

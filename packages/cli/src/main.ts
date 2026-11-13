@@ -234,11 +234,16 @@ export const COMMANDS: readonly Command[] = [
     summary:
       'run the eval gate, record the baseline it measures against, or apply a promotion policy',
     usage:
-      'eval [spec] [--target <name>] [--suite <id>] [--baseline] [--compare <baseline.json> --candidate <candidate.json>]',
+      'eval [spec] [--target <name>] [--suite <id>] [--baseline] [--record <transcript.json>] [--compare <baseline.json> --candidate <candidate.json>]',
     flags: [
       valueFlag('suite', 'id', 'run one eval instead of all of them'),
       TARGET_FLAG,
       booleanFlag('baseline', 'record a fresh baseline instead of gating'),
+      valueFlag(
+        'record',
+        'path',
+        'run one agent eval live and write its model calls to a transcript `AID_EVAL_TRANSCRIPT` can replay. Refuses to overwrite an existing transcript, to capture a scripted provider, or to capture while replaying',
+      ),
       valueFlag(
         'compare',
         'path',
@@ -255,6 +260,7 @@ export const COMMANDS: readonly Command[] = [
         baseline: args.booleans.has('baseline'),
         compare: args.values.get('compare'),
         candidate: args.values.get('candidate'),
+        record: args.values.get('record'),
       }),
   },
   {

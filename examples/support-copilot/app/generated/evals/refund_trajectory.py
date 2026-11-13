@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from aid_runtime.errors import EvalError
 from aid_runtime.evals import (
     AgentEvalRunner,
     BaselineGate,
@@ -30,7 +31,7 @@ from aid_runtime.evals import (
     require_reviewed,
     run_evaluation,
 )
-from aid_runtime.providers import Provider, RecordedProvider
+from aid_runtime.providers import Provider, RecordedProvider, RecordingProviders
 
 from ..agents import DOCUMENT
 from ..gateway.models import default_providers
@@ -43,6 +44,10 @@ EVAL_ID = "refund_trajectory"
 AGENT = "refund_agent"
 MODEL = AGENT
 TRANSCRIPT_ENV = "AID_EVAL_TRANSCRIPT"
+RECORD_ENV = "AID_EVAL_RECORD"
+SPEC_VERSION = "0.32"
+SCRIPTED = False
+_RECORDER: RecordingProviders | None = None
 SAMPLES = 3
 MAX_REGRESSION = 0.1
 EXPECT_TOOLS = ("lookup_customer", "issue_refund")
@@ -73,18 +78,83 @@ def load_baseline() -> EvalBaseline:
 
 
 def providers() -> dict[str, Provider]:
-    """The model providers the run calls. With `AID_EVAL_TRANSCRIPT` set the run is offline: one
-    recording replays every model call, so the eval takes the same path on a laptop as in CI and
-    spends nothing. Without it the app is provider-wired as usual and the run is a live one. The
-    recording serves every provider key because it is the sequence of calls the run makes, not a
-    per-vendor cache -- which provider answered is part of what it replays.
+    """The model providers the run calls. Three modes, and none of them implicit. With
+    `AID_EVAL_TRANSCRIPT` set the run is offline: one recording replays every model call, so the
+    eval takes the same path on a laptop as in CI and spends nothing. With `AID_EVAL_RECORD` set the
+    run is live and keeps every call, so the same run can be written out as the recording the next
+    one replays -- that is how a real-model trajectory becomes a committed fixture. With neither,
+    the run is live and nothing is kept. Replaying and capturing together is refused. A run that
+    captured what it replayed would write a transcript of the recording it read: a copy that
+    describes itself as a recording of this document while containing another one's turns.
     """
 
+    global _RECORDER
     recording = os.environ.get(TRANSCRIPT_ENV)
+    capturing = os.environ.get(RECORD_ENV)
+    if recording is not None and capturing is not None:
+        raise EvalError(
+            f"{TRANSCRIPT_ENV} and {RECORD_ENV} are both set: a run replays a recording "
+            "or captures one, never both. Unset one of them."
+        )
+    if capturing is not None:
+        if SCRIPTED:
+            raise EvalError(
+                f"{RECORD_ENV} is set but this agent runs on the scripted provider: "
+                "a capture of it would record the script, not a model's calls. Point the agent "
+                "at a pinned provider to record a trajectory, or unset AID_EVAL_RECORD."
+            )
+        target = Path(capturing)
+        if target.exists():
+            raise EvalError(
+                f"{target} already holds a recording and a capture never overwrites one: "
+                "delete it to record again, or point AID_EVAL_RECORD at a new path."
+            )
+        _RECORDER = RecordingProviders(default_providers(), spec_version=SPEC_VERSION)
+        return _RECORDER.providers
     if recording is None:
         return default_providers()
     replayed: Provider = RecordedProvider.from_path(Path(recording))
     return dict.fromkeys(PROVIDER_KEYS, replayed)
+
+
+def save_recording() -> None:
+    """Write the capture this run was asked for, if it was asked for one. Called after the run and
+    before the gate. A run that failed its gate is exactly the run worth keeping -- the trajectory
+    that found the regression is a better fixture than the one that passed -- and the verdict does
+    not depend on the file, so writing first then judging keeps the two independent. A run that
+    captured nothing is refused rather than saved empty: a transcript with no call in it replays a
+    run that never reached the model, which would gate the next run on a shorter trajectory than
+    this one took.
+    """
+
+    if _RECORDER is None:
+        return
+    target = Path(os.environ[RECORD_ENV])
+    capture = _RECORDER.transcript()
+    if not capture:
+        raise EvalError(
+            f"this run was asked to record to {target} but made no model call, so there is nothing "
+            "to replay. Run it against a provider it can reach, or unset AID_EVAL_RECORD."
+        )
+    capture.save(target)
+
+
+def provenance() -> str:
+    """Where this run's model turns came from. `scripted` when the agent is declared on the scripted
+    provider, `recorded` when the run replayed a transcript, and `live` when a model was actually
+    called -- with the capture path appended when one was written. Printed beside every summary
+    because a green gate means something different in each mode: only a live run says anything about
+    how the model behaves, and only a recorded one is the same measurement twice.
+    """
+
+    if SCRIPTED:
+        return "scripted"
+    capturing = os.environ.get(RECORD_ENV)
+    if capturing is not None:
+        return f"live, capturing to {capturing}"
+    if os.environ.get(TRANSCRIPT_ENV) is not None:
+        return "recorded"
+    return "live"
 
 
 def thresholds() -> tuple[Threshold, ...]:
@@ -140,16 +210,26 @@ def gate(measured: EvalRun, baseline: EvalBaseline) -> GateResult:
 
 
 async def evaluate() -> GateResult:
-    """Measure the agent and compare the result against the stored baseline."""
+    """Measure the agent and compare the result against the stored baseline. A capture, when one was
+    asked for, is written between the two: the gate is about to decide whether this run is good, and
+    a trajectory worth keeping is worth keeping either way.
+    """
 
-    return gate(await run(), load_baseline())
+    result = await run()
+    save_recording()
+    return gate(result, load_baseline())
 
 
 def main() -> int:
-    """Run the gate, print its summary, and exit non-zero on a regression."""
+    """Run the gate, print its summary and where the run came from, and exit non-zero on a
+    regression. The provenance line is printed, not gated on: it reports what the run was, and a
+    verdict that changed with the mode of the run would make the same suite mean different things on
+    a laptop and in CI.
+    """
 
     result = asyncio.run(evaluate())
     print(result.summary())
+    print(f"provenance: {provenance()}")
     return 1 if result.failures() else 0
 
 
