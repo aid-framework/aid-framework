@@ -952,7 +952,7 @@ accepted, and this release changes two sentences and one refusal message.
 `deployments[].cloud` was a schema `enum` of `aws` and `gcp`, so a document that named any other
 cloud was refused before the IR ever saw it:
 
-```
+```text
 deployments.api.cloud: must be one of "aws", "gcp" [spec/schema-violation]
 ```
 
@@ -968,7 +968,7 @@ The schema now accepts any cloud-shaped name (`^[a-z][a-z0-9-]{1,30}$`), and the
 refusal applies. A cloud AID knows of and does not provision is refused by a diagnostic that names
 the supported set and points at the capability matrix:
 
-```
+```text
 deployment "api" declares cloud "azure", which AID does not provision;
 the supported clouds are aws, gcp [ir/cloud-unsupported]
 hint: name a supported cloud, or drop `cloud` and pass `--cloud` to `aid infra`; the capability
