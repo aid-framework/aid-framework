@@ -356,7 +356,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.163"
+__version__ = "0.1.164"
 
 __all__ = [
     "AGENT_LABEL",
