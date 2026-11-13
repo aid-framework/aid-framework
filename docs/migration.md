@@ -463,7 +463,7 @@ approve it lives. They answer different questions -- a run may be resumable for 
 approval it is waiting on expires in fifteen minutes -- so collapsing them would let a long
 retention silently extend every approval.
 
-
+## 0.27 to 0.28: promoting a candidate, and the feedback that starts a loop
 
 What a document is allowed to do with a candidate, and which feedback it takes back from its users.
 Both keys are additive, so a 0.27 document is still a 0.27 document.

@@ -17,8 +17,9 @@ from typing import Any
 
 import pytest
 
-from agent_support import ADMIN_ONLY, build, recording_tool, solo, tool_def
+from agent_support import ADMIN_ONLY, Harness, Recorder, build, recording_tool, solo, tool_def
 from aid_runtime.agents import (
+    AgentCheckpoint,
     CheckpointRefusalError,
     CheckpointSigner,
     HumanDecision,
@@ -48,7 +49,9 @@ def _signer() -> CheckpointSigner:
     return CheckpointSigner(secret=SECRET, ttl_seconds=TTL)
 
 
-async def _paused(*, signer: CheckpointSigner | None = None, nonces: Any = None):
+async def _paused(
+    *, signer: CheckpointSigner | None = None, nonces: Any = None
+) -> tuple[Harness, Recorder, AgentCheckpoint]:
     """Run a supervised agent until it pauses, with the recording tool wired in."""
     from aid_runtime import ScriptedTurn
 

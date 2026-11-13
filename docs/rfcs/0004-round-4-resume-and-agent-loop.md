@@ -74,7 +74,7 @@ A script driving `runtimes/python`'s own harness (`tests/agent_support.py`, `sol
 `hitl={"when": ADMIN_ONLY, "channel": "ops"}`) pauses a run, tampers with the pending call's
 arguments, and resumes it. Output:
 
-```
+```text
 1. status after run              : paused
 2. arguments shown to approver   : {'query': 'order'}
 3. tampered arguments            : {'query': "a different customer's order"}
@@ -103,7 +103,7 @@ class Principal:
 `/agents/resume` handlers never pass a principal, so every agent run evaluates tool `auth:`
 policies against `authenticated=True`. Evaluated directly:
 
-```
+```text
 Principal() -> Principal(roles=frozenset(), scopes=frozenset(), authenticated=True)
 isAuthenticated() -> True
 hasScope('pa:write') -> False
@@ -139,7 +139,7 @@ the same test fixture as the checkpoint work.
 
 `site/scripts/features-data.mjs:258`:
 
-```
+```text
 id: 'durable-state', title: "Durable run state",
 detail: "… the checkpoint goes to the store the spec names, and an agent that can call a
          side-effecting tool is refused without one",
@@ -148,7 +148,7 @@ since: '0.1.143'
 
 `features-data.mjs:420`:
 
-```
+```text
 id: 'delivery-controls',
 title: "Durable run state, deployment identity, private network and change approval",
 since: '0.1.143'
@@ -219,7 +219,7 @@ covers.
 `packages/generators/py-fastapi/src/validate.ts:196–233` refuses `observability.redact` on any
 document that runs an agent:
 
-```
+```text
 the document runs an agent and withholds email from its traces, but an agent run records the
 transcript it was handed rather than a rendered prompt, so no emitted code can strip those
 values; remove the declaration, or serve the same work through a pipeline
@@ -311,7 +311,7 @@ All four confirmed in `docs/index.md`, plus two more.
 | b | Spec version shown as `0.2` | `docs/index.md:39` → `specVersion: "0.2"` |
 | c | No Delivery playbook link in "Where to go next" | Lines 216–226 list getting-started, overlays-and-fleet, usage, support-copilot. No `guide/delivery.md`. |
 | d | "What AID is not" silent on auth and durable state | Lines 196–203: runtime platform, targets/clouds, no-code builder. Nothing about identity or pause durability. |
-| **e** | **The homepage's own YAML fails `aid validate`** | Extracting lines 39–60 verbatim and running `aid validate`: `app.spec.yaml:12:15: error: Nested mappings are not allowed in compact mappings [spec/yaml-syntax]`. Cause: `template: Reply in one sentence to: {{ message }}` — the second `: ` makes it a nested mapping. The first code block a visitor copies does not compile. |
+| **e** | **The homepage's own YAML fails `aid validate`** | Extracting lines 39–60 verbatim and running `aid validate`: `app.spec.yaml:12:15: error: Nested mappings are not allowed in compact mappings [spec/yaml-syntax]`. Cause: `template: Reply in one sentence to: {{ message }}` — the second colon makes it a nested mapping. The first code block a visitor copies does not compile. |
 | **f** | Hero tagline claims what item 2 disproves | Line 7: "build-time gates refuse an unsafe or impossible spec before any code exists" is true; but the page pairs it with the card at line 24 whose mechanism (§1) does not hold. |
 
 Defect (e) is the highest-value homepage fix and was not in the brief: it is the block the
@@ -332,7 +332,7 @@ export const SPEC_CLOUDS = ['aws', 'gcp'] as const;
 Declaring anything else is refused by the schema, not by a gate. Changing `cloud: aws` to
 `cloud: azure` in the enterprise template produces:
 
-```
+```text
 app.spec.yaml:205:5: error: must be one of "aws", "gcp" [spec/schema-violation]
     at deployments.prod.cloud
 ```
