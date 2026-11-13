@@ -256,8 +256,8 @@ The `enterprise` profile also wants an approval on file before any of this repor
 promotable, so commit one first:
 
 ```console
-$ mkdir -p app/approvals
-$ printf '# Approved\n\nplatform-lead, 2026-02-14.\n' > app/approvals/triage.md
+mkdir -p app/approvals
+printf '# Approved\n\nplatform-lead, 2026-02-14.\n' > app/approvals/triage.md
 ```
 
 A candidate that lost half a point, against an allowance of one:
