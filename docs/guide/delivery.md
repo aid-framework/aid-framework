@@ -181,8 +181,25 @@ you ask, because text at rest is your decision:
 AID_TRACE_DIR=traces AID_TRACE_CONTENT=1 python -m app.main
 ```
 
-Nothing redacts for you. If the prompts can contain a customer identifier, redact before the sink
-or leave payload capture off.
+The document's `observability.redact` set is applied where the prompt is rendered: the model
+still receives the real value and the text recorded says `[redacted:<name>]` in its place. A
+customer identifier listed there reaches the model and never reaches the sink. It falls back to
+the fields the IR already marks sensitive, so naming one more is an addition rather than a
+rewrite. `aid trace export` applies the same set, plus anything in
+`observability.feedback.redact`, to what it writes. Under `profile: enterprise` it refuses to
+export captured content when that set is empty (`cli/trace-export-enterprise-capture`): a
+document that names nothing is declaring that nothing it records is sensitive, and the command
+does not take that declaration at face value.
+
+This covers pipelines. A document that runs an **agent** cannot declare a redact set at all — the
+build refuses it, because the runner re-sends a transcript it assembled and no emitted code can
+strip a value back out of it. If the capability you are delivering is an agent and its prompts can
+carry a customer identifier, redact before the value reaches the prompt, or leave payload capture
+off.
+
+What the set does not cover either way is a value you record by another route — your own log line,
+or text a tool body writes somewhere. Redaction is a property of the prompt the gateway renders and
+the export it performs, not of the whole process.
 
 **Turn runs into a dataset.**
 
@@ -194,11 +211,15 @@ One run is one case: the prompt it was first given, the answer it last produced,
 cost, wall time, model and tools beside it. The file is written in the same canonical form the
 Python `Dataset` writes, so a regenerated dataset diffs cleanly.
 
-Every case is tagged `unreviewed`, and that tag is the honest part: `expected` is what the run
-happened to output, so an `exact-match` eval over it measures *stability*, not quality. The next
-step is a person editing the file — deleting the cases whose answer was bad, and fixing the ones
-that are nearly right. `aid trace export` refuses to invent a curated dataset for you, which is
-also why there is no flag that feeds traces straight into an eval.
+Every case is tagged `unreviewed`, and that tag is operative rather than decorative: `expected`
+is what the run happened to output, so an `exact-match` eval over it measures *stability*, not
+quality. A `gate.ci: true` eval refuses a dataset that still carries the tag, naming the cases, so
+a trace export cannot reach a release without a person having looked at it. The next step is that
+person editing the file — deleting the cases whose answer was bad, fixing the ones that are
+nearly right, and dropping the tag. `aid trace export` refuses to invent a curated dataset for
+you, which is also why there is no flag that feeds traces straight into an eval. An eval with
+`gate.ci: false` may use an unreviewed dataset as it is, which is how you get a number to look at
+before you have curated anything.
 
 **Record the candidate and compare it.**
 
@@ -243,14 +264,28 @@ evals:
 policy describes. Both directions are refused: a version equal to the one declared, because
 nothing was bumped, and a lower one, because that is a rollback wearing the name of a promotion.
 
-`--compare` reads that policy, judges the quality allowance, and exits non-zero on a regression.
-Exit `2` means nothing was judged, which is not the same as a pass. Under `profile: enterprise`
-the policy must name a committed approval record that exists and has content.
+`--compare` reads that policy, judges the allowances, and exits non-zero on a regression. Both are
+judged when both are stated: quality against `allowedQualityDrop`, and spend against
+`allowedCostIncrease`, from the `cost` block the two baselines record. With no
+`allowedCostIncrease` the comparison prints no cost row at all — exactly what it printed before
+the allowance existed. Exit `2` means nothing was judged, which is not the same as a pass. Under
+`profile: enterprise` the policy must name a committed approval record that exists and has
+content.
+
+**Know what a trajectory eval is measuring.** When the target is an agent, the eval can assert on
+the steps the run took rather than only on its final answer — the step count it stayed within,
+the tools it did and did not call, whether it actually stopped for approval. Those assertions read
+the trace, so a scripted or recorded model reproduces them exactly. That makes such an eval a
+check on *policy and plumbing*: the step ceiling is enforced, a forbidden tool is refused, an
+approval really pauses the run. It does not measure model behaviour. A trajectory eval passing
+tells you the guardrail wiring holds; it does not tell you the agent answers well, and it must not
+be read as a quality number. Keep a separate quality metric, over real runs, for that.
 
 **Promote by merging.** Nothing in this loop deploys. Promotion is the gate pass plus the merge
 that carries the bumped prompt version; the record in the tree is what an auditor reads later.
-A quality allowance on an eval with no quality metric, or a cost ceiling on an eval that records
-no cost, are both refused at validate time rather than discovered as a silent no-op.
+A quality allowance on an eval with no quality metric, a cost allowance on an eval with no `cost`
+metric, or a cost allowance on a build whose runtime records no spend, are all refused at validate
+time rather than discovered as a silent no-op.
 
 ## The enterprise checklist
 
@@ -262,9 +297,11 @@ today.
 | Profile | `profile: enterprise` | `ir/profile-unknown` | Gated, and it is what makes the rows below non-optional |
 | Region pin | `deployments.<d>.region` | `ir/profile-region` | Gated and generated into the infra module |
 | Audit sink | `deployments.<d>.audit` | `ir/profile-audit` | Gated and generated; the archive is declared only when the document pins one |
+| Redaction of recorded text | `observability.redact` | `ir/security-redaction-incomplete` | Enforced by the pipeline and honoured by `aid trace export`. **Not available for an agent run**, which the build refuses |
 | Output guardrail | any guardrail inspecting model output | `ir/profile-guardrail` | Gated and generated |
 | Private network | `deployments.<d>.network.private: true` | `ir/profile-network` | Gated and generated; a two-AZ VPC with private task subnets and one NAT gateway |
 | Change approval | `deployments.<d>.approvals` for production | `ir/profile-approvals` | Gated and generated as a pause |
+| Eval coverage | a `gate.ci` eval claiming each HTTP pipeline | `ir/eval-coverage` | A warning below spec `0.31`, a refusal for `enterprise` from `0.31` |
 | Identity | `deployments.<d>.identity` — issuer, audience, claims | `ir/profile-identity` | Gated only. **No token verification is generated** |
 | Durable state | `state`, for an agent that can call a writing tool | `ir/agents-state-store` | Gated only. The pause hands the checkpoint to the caller |
 

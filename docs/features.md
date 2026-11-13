@@ -580,15 +580,15 @@ The profile promises an audit trail, and a trail that stays inside the process d
 
 - **Enforced by:** `ir/observability-export`
 
-### An eval that targets an agent
+### An eval that targets an agent, on a generator that cannot run one
 
-An agent run has no single response to score: the eval runner calls one prediction per case and hands the metric a string. An `agent:` target is therefore expressible and refused, with the missing runner named -- not reported as an undeclared agent, which would send the author looking for a typo in a name spelled correctly.
+A target is judged by what it declares. `py-fastapi` declares `agent-evals` and emits an offline evaluator that runs the agent against a case and records the calls it made, so an `agent:` target builds there. `ts-vercel` does not declare it, so the gate refuses an `agent:` eval that targets it and names the generator, rather than shipping an eval nothing runs. `agents` alone is not the promise: a target can emit the agent loop without emitting anything that runs one offline.
 
 - **Enforced by:** `ir/eval-trajectory`
 
-### A `tool-trace` metric
+### A `tool-trace` metric on a target that returns a response
 
-Comparing the tool calls a run made needs a runner that reports them. `aid-runtime-python` can — a runner may return a `RunOutput` carrying a `Trajectory`, and the `tool-trace` metric scores it — but no generated eval does, because an `agent:` target is still refused. So the metric is refused at generation rather than reported as unmeasured. `cost` and `latency` ceilings are measured, and each also sets a budget the cost gate and the deploy plan check.
+Comparing the tool calls a run made needs a run. A prompt or pipeline target returns one response, which has no trajectory to score, so the metric is refused there and the hint points at `target: agent:&lt;id&gt;`. The three `0.31` trajectory metrics — `step-count`, `forbidden-tool`, `approval-respected` — read the same run, so they are refused on the same targets and the message names the quantity each one asks about. On an agent target `tool-trace` is measured, not refused; `cost` and `latency` ceilings are measured everywhere and each also sets a budget the cost gate and the deploy plan check.
 
 - **Enforced by:** `ir/eval-trajectory`
 
