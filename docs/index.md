@@ -159,7 +159,9 @@ base rather than a fork of it.
   block whose `verifiedBy` names the entry point that verifies the token, a private network,
   an audit sink, a pinned region, a checkpoint signing key, change approvals, and
   [one overlay per customer](walkthroughs/overlays-and-fleet.md) so one reviewed base stays
-  the only source of truth.
+  the only source of truth. All of those are gated, and all but two are generated: a private
+  network is a requirement you declare that [selects no module](guide/boundary.md), and token
+  verification is yours to wire.
 
 ## What the compiler writes for you
 
