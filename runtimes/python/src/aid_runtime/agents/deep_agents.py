@@ -115,7 +115,7 @@ class DeepAgentsEngine:
         if not frame.input_checked:
             frame.input_checked = True
             paused = await self._runtime._guardrail_text(
-                _GUARDRAIL_INPUT, frame, memory_key, span=span, rewrite=True
+                _GUARDRAIL_INPUT, frame, memory_key, span=span, rewrite=True, principal=principal
             )
             if paused is not None:
                 return paused
@@ -142,10 +142,12 @@ class DeepAgentsEngine:
             return self._runtime._outcome(RunStatus.MAX_STEPS, frame)
 
         self._record_steps(frame, models)
-        paused = self._pause(frame, result, memory_key=memory_key, span=span)
+        paused = self._pause(frame, result, memory_key=memory_key, span=span, principal=principal)
         if paused is not None:
             return paused
-        return await self._complete(frame, result, memory_key=memory_key, span=span)
+        return await self._complete(
+            frame, result, memory_key=memory_key, span=span, principal=principal
+        )
 
     # -- graph -------------------------------------------------------------------
 
@@ -410,7 +412,9 @@ class DeepAgentsEngine:
                 )
         return calls
 
-    def _pause(self, frame: _Frame, result: Any, *, memory_key: str, span: Span) -> _Outcome | None:
+    def _pause(
+        self, frame: _Frame, result: Any, *, memory_key: str, span: Span, principal: Principal
+    ) -> _Outcome | None:
         """Turn a held interrupt into our checkpoint, or ``None`` when nothing is held."""
         pending = result.get("__interrupt__")
         if not pending:
@@ -421,7 +425,7 @@ class DeepAgentsEngine:
                 f"agent {frame.agent.id!r} paused on an interrupt that named no tool call; "
                 "the harness's interrupt payload has changed shape"
             )
-        checkpoint = self._runtime._checkpoint(frame, calls, memory_key)
+        checkpoint = self._runtime._checkpoint(frame, calls, memory_key, principal=principal)
         record_hitl(span, phase="pause", channel=checkpoint.channel, step=frame.step)
         self._runtime._record_status(span, "paused", frame)
         return _Outcome(
@@ -434,11 +438,17 @@ class DeepAgentsEngine:
         )
 
     async def _complete(
-        self, frame: _Frame, result: Any, *, memory_key: str, span: Span
+        self,
+        frame: _Frame,
+        result: Any,
+        *,
+        memory_key: str,
+        span: Span,
+        principal: Principal,
     ) -> _Outcome:
         """Apply the output guardrail, record memory, and report the answer."""
         released = await self._runtime._guardrail_answer(
-            frame, self._answer(result), memory_key, span=span
+            frame, self._answer(result), memory_key, span=span, principal=principal
         )
         if isinstance(released, _Outcome):
             return released
@@ -544,7 +554,11 @@ class _Guardrails(AgentMiddleware):
             return await self._delegate_in_span(request, handler, call)
         runtime._authorize(self._frame.agent, call, self._principal)
         guarded, halted = await runtime._guardrail_tool_calls(
-            self._frame, [call], self._memory_key, span=self._record_span
+            self._frame,
+            [call],
+            self._memory_key,
+            span=self._record_span,
+            principal=self._principal,
         )
         if halted is not None:
             raise _HaltError(halted)

@@ -329,33 +329,35 @@ class AgentRuntime:
         principal: Principal | None = None,
     ) -> RunResult:
         """Continue a paused run from its checkpoint, with a human's answer."""
-        checkpoint = await self._accept(checkpoint)
+        who = principal if principal is not None else Principal.unauthenticated()
+        # The principal is what the owner binding is checked against, so it is resolved
+        # before the checkpoint is read rather than threaded in afterwards.
+        checkpoint = await self._accept(checkpoint, who)
         resolved = HumanDecision(decision)
         self._restore_ledger(checkpoint)
         start_cost = self._gateway.ledger.cost_usd
         start_tokens = self._gateway.ledger.total_tokens
         try:
-            outcome = await self._resume(
-                checkpoint,
-                resolved,
-                principal if principal is not None else Principal.unauthenticated(),
-            )
+            outcome = await self._resume(checkpoint, resolved, who)
         except BaseException:
             # Same rule as `run`: a resumed run that fails has been billed too.
             self._publish_spend(checkpoint.agent_id, start_cost, start_tokens)
             raise
         return self._wrap(outcome, start_cost, start_tokens)
 
-    async def _accept(self, checkpoint: AgentCheckpoint) -> AgentCheckpoint:
+    async def _accept(self, checkpoint: AgentCheckpoint, principal: Principal) -> AgentCheckpoint:
         """Refuse a checkpoint this app did not issue, has expired, or already spent.
 
         Called before anything the checkpoint carries is read, so a tampered pending call
         is never authorized, priced or observed. A runtime built without a signer keeps the
         pre-signing behaviour, which is what a direct library embedder already had.
+
+        ``principal`` is what the checkpoint's owner binding is checked against: a run
+        paused by a principal with a subject can only be resumed by that same subject.
         """
         if self._signer is None:
             return checkpoint
-        await self._signer.accept(checkpoint, self._nonces)
+        await self._signer.accept(checkpoint, self._nonces, subject=principal.subject)
         return checkpoint
 
     async def _resume(
@@ -510,7 +512,12 @@ class AgentRuntime:
             if not frame.input_checked:
                 frame.input_checked = True
                 paused = await self._guardrail_text(
-                    _GUARDRAIL_INPUT, frame, memory_key, span=span, rewrite=True
+                    _GUARDRAIL_INPUT,
+                    frame,
+                    memory_key,
+                    principal=principal,
+                    span=span,
+                    rewrite=True,
                 )
                 if paused is not None:
                     return paused
@@ -533,7 +540,9 @@ class AgentRuntime:
             response = generation.response
 
             if not response.tool_calls:
-                answer = await self._guardrail_answer(frame, response.text, memory_key, span=span)
+                answer = await self._guardrail_answer(
+                    frame, response.text, memory_key, principal=principal, span=span
+                )
                 if isinstance(answer, _Outcome):
                     return answer
                 frame.messages.append(Message.assistant(answer))
@@ -560,13 +569,13 @@ class AgentRuntime:
             record.kind = StepKind.TOOLS
             record.tool_names = tuple(call.name for call in response.tool_calls)
             guarded, paused = await self._guardrail_tool_calls(
-                frame, response.tool_calls, memory_key, span=span
+                frame, response.tool_calls, memory_key, principal=principal, span=span
             )
             if paused is not None:
                 return paused
             frame.messages.append(Message.assistant_tool_calls(response.text, guarded))
             if self._needs_approval(agent, guarded, principal):
-                checkpoint = self._checkpoint(frame, guarded, memory_key)
+                checkpoint = self._checkpoint(frame, guarded, memory_key, principal=principal)
                 record_hitl(
                     span,
                     phase="pause",
@@ -592,6 +601,7 @@ class AgentRuntime:
         frame: _Frame,
         memory_key: str,
         *,
+        principal: Principal,
         span: Span,
         rewrite: bool,
     ) -> _Outcome | None:
@@ -611,7 +621,9 @@ class AgentRuntime:
         if verdict.action == ACTION_BLOCK and deciding is not None:
             raise GuardrailBlockedError(deciding.guardrail, stage, deciding.message)
         if verdict.action == ACTION_ESCALATE:
-            return self._guardrail_pause(frame, verdict, memory_key, (), span=span)
+            return self._guardrail_pause(
+                frame, verdict, memory_key, (), principal=principal, span=span
+            )
         if rewrite and verdict.action == ACTION_REDACT and index is not None:
             frame.messages[index] = Message.user(verdict.text)
         return None
@@ -622,6 +634,7 @@ class AgentRuntime:
         text: str,
         memory_key: str,
         *,
+        principal: Principal,
         span: Span,
     ) -> str | _Outcome:
         """Run the ``output`` stage over an answer, returning the text to ship.
@@ -638,7 +651,9 @@ class AgentRuntime:
         if verdict.action == ACTION_BLOCK and deciding is not None:
             raise GuardrailBlockedError(deciding.guardrail, _GUARDRAIL_OUTPUT, deciding.message)
         if verdict.action == ACTION_ESCALATE:
-            return self._guardrail_pause(frame, verdict, memory_key, (), span=span, text=text)
+            return self._guardrail_pause(
+                frame, verdict, memory_key, (), principal=principal, span=span, text=text
+            )
         return verdict.text if verdict.action == ACTION_REDACT else text
 
     async def _guardrail_tool_calls(
@@ -647,6 +662,7 @@ class AgentRuntime:
         calls: Sequence[ToolCall],
         memory_key: str,
         *,
+        principal: Principal,
         span: Span,
     ) -> tuple[list[ToolCall], _Outcome | None]:
         """Run the ``tool-call`` stage over every call in one step.
@@ -675,7 +691,9 @@ class AgentRuntime:
                 call = call.model_copy(update={"arguments": dict(verdict.arguments)})
             guarded.append(call)
         if escalation is not None:
-            return guarded, self._guardrail_pause(frame, escalation, memory_key, guarded, span=span)
+            return guarded, self._guardrail_pause(
+                frame, escalation, memory_key, guarded, principal=principal, span=span
+            )
         return guarded, None
 
     def _record_guardrails(self, frame: _Frame, verdict: GuardrailVerdict, span: Span) -> None:
@@ -691,6 +709,7 @@ class AgentRuntime:
         memory_key: str,
         calls: Sequence[ToolCall],
         *,
+        principal: Principal,
         span: Span,
         text: str = "",
     ) -> _Outcome:
@@ -708,7 +727,9 @@ class AgentRuntime:
             channel=approval.channel if approval is not None else _GUARDRAIL_CHANNEL,
             text=text,
         )
-        checkpoint = self._checkpoint(frame, calls, memory_key, escalation=escalation)
+        checkpoint = self._checkpoint(
+            frame, calls, memory_key, principal=principal, escalation=escalation
+        )
         record_hitl(
             span,
             phase="pause",
@@ -835,9 +856,9 @@ class AgentRuntime:
             inner.steps = [*frame.steps, *inner.steps]
             inner.guardrails = (*frame.guardrails, *inner.guardrails)
             if inner.checkpoint is not None:
-                caller = self._checkpoint(frame, (call,), memory_key).model_copy(
-                    update={"resume_kind": "delegate", "channel": ""}
-                )
+                caller = self._checkpoint(
+                    frame, (call,), memory_key, principal=principal
+                ).model_copy(update={"resume_kind": "delegate", "channel": ""})
                 inner.checkpoint = inner.checkpoint.model_copy(update={"caller": caller})
             return inner
         if inner.status is not RunStatus.COMPLETED:
@@ -1114,6 +1135,7 @@ class AgentRuntime:
         calls: Sequence[ToolCall],
         memory_key: str,
         *,
+        principal: Principal,
         escalation: GuardrailEscalation | None = None,
     ) -> AgentCheckpoint:
         approval = frame.agent.approval
@@ -1145,7 +1167,12 @@ class AgentRuntime:
         # Signed here rather than at the route, so every pause path -- approval, tool
         # confirmation, guardrail escalation, and the nested caller of a delegate -- is
         # issued by the same key. A second signing site is a second thing to forget.
-        return checkpoint if self._signer is None else self._signer.sign(checkpoint)
+        # The principal travels with it for the same reason: the subject that paused the
+        # run is only available here, and a pause that skipped the binding would hand out
+        # a checkpoint anyone holding it could resume.
+        if self._signer is None:
+            return checkpoint
+        return self._signer.sign(checkpoint, subject=principal.subject)
 
     def _restore_ledger(self, checkpoint: AgentCheckpoint) -> None:
         """Carry a pause's spend into this process's ledger before resuming.

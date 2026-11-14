@@ -7,9 +7,10 @@
  * the body was the capability, and a holder could approve their own held call, swap the
  * pending arguments, or replay a spent checkpoint.
  *
- * Four refusals stand in for that. Two depend on the profile that promised the control;
+ * Five refusals stand in for that. Two depend on the profile that promised the control;
  * two are errors under every profile, because they describe a document the route cannot
- * honour at all rather than a control the author declined to pay for:
+ * honour at all rather than a control the author declined to pay for; and one names the
+ * declaration that makes the binding possible:
  *
  * - `ir/resume-unsigned` — `profile: enterprise` with a pausable agent and no
  *   `state.signingKeyEnv`. Version-gated, following `eval-coverage`: below 0.32 the
@@ -26,13 +27,20 @@
  *   another credential (the run-store connection string, a provider key, the OTLP
  *   endpoint, or a deployment secret), so one secret would both sign every checkpoint
  *   and reach that system, and neither could be rotated alone.
+ * - `ir/resume-owner-unbound` — a pausable agent and no deployment naming
+ *   `identity.verifiedBy`, so no caller arrives with a subject and the generated route
+ *   cannot bind a checkpoint to the principal that paused it. Error under `enterprise`
+ *   from 0.34, warning under `standard`, which requires no identity: there a signed
+ *   checkpoint stays a bearer capability and the limit is stated. The rule reads two
+ *   declarations that already exist at 0.33, so the version is what keeps yesterday's
+ *   documents building rather than what makes the fix expressible.
  *
  * The state declaration is resolved per agent (`agent.state ?? document state`) exactly
  * as `buildAgents` resolves it, so these gates and the generator cannot disagree about
  * which store an agent has.
  */
 
-import { specVersionAtLeast } from '@aid-framework/spec';
+import { RESUME_OWNER_BINDING_MIN_VERSION, specVersionAtLeast } from '@aid-framework/spec';
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
 import type { AgentShape, AgentStateShape, IR } from '../shapes.js';
 import { type GateOptions, type GateResult, NO_SUPPRESSIONS, reporter } from './contract.js';
@@ -130,8 +138,63 @@ export function resumeGate(ir: IR, options: GateOptions): GateResult {
   checkReplay(ir, pausing, diagnostics, report, enterprise);
   checkAgreement(pausing, diagnostics, report);
   checkKeyPlacement(ir, diagnostics, report);
+  checkOwnerBinding(ir, pausing, diagnostics, report, enterprise);
 
   return { diagnostics, suppressed: NO_SUPPRESSIONS };
+}
+
+/**
+ * A signed checkpoint stops a stranger editing it. It does not stop a stranger who holds
+ * one from spending it: the signature says the app issued it, not who may resume it.
+ *
+ * The generated route binds a checkpoint to the resuming caller when the caller arrives
+ * with a subject -- `Principal.subject`, which the app populates from whatever verified the
+ * token. That is only possible if somebody verifies tokens, and AID emits no verification
+ * of its own (`identity.verifiedBy` says so). So this refusal names the missing
+ * declaration, and `standard` -- which requires no identity at all -- warns, because there
+ * the checkpoint stays a bearer capability and holding it is still authority to approve the
+ * held call.
+ *
+ * Under `enterprise` the profile gate already refuses a delivery deployment that names no
+ * `verifiedBy`, and it reports the same absence. This check stays quiet where that one
+ * speaks rather than telling an author to make one change and calling it two problems; it
+ * speaks where the profile gate cannot, which is a document with no delivery deployment at
+ * all. Below {@link RESUME_OWNER_BINDING_MIN_VERSION} it says nothing at all: a 0.33
+ * document was written before this rule existed and this build cannot tell it apart from a
+ * new one.
+ */
+function checkOwnerBinding(
+  ir: IR,
+  pausing: AgentShape[],
+  diagnostics: IrDiagnostic[],
+  report: Reporter,
+  enterprise: boolean,
+): void {
+  const enforceable = specVersionAtLeast(ir.specVersion, RESUME_OWNER_BINDING_MIN_VERSION);
+  if (!enforceable) return;
+  const [first] = pausing;
+  if (first === undefined) return;
+  if (ir.deployments.some((deployment) => deployment.identity?.verifiedBy !== undefined)) return;
+  // From 0.26 the profile gate requires every deployment to declare an identity, and from
+  // 0.33 to say who verifies; an `enterprise` document that reaches here without one of
+  // those has already been told so there.
+  if (
+    enterprise &&
+    ir.deployments.some((deployment) => deployment.identity?.verifiedBy === undefined)
+  ) {
+    return;
+  }
+
+  const ids = pausing.map((agent) => `"${agent.id}"`).join(', ');
+  const init = {
+    code: IR_DIAGNOSTIC_CODES.resumeOwnerUnbound,
+    message: enterprise
+      ? `the resume gate rejected ${ids}: ${pausing.length === 1 ? 'this agent can pause' : 'these agents can pause'}, no deployment names \`identity.verifiedBy\`, and the generated resume route binds a checkpoint to the caller only when that caller arrives with a subject -- so the signature proves the app issued the checkpoint, not who may spend it`
+      : `the resume gate flagged ${ids}: ${pausing.length === 1 ? 'this agent can pause' : 'these agents can pause'} and no deployment names \`identity.verifiedBy\`, so no caller arrives with a subject and a signed checkpoint stays a bearer capability -- anyone holding one can resume the run and approve the held call until it expires`,
+    path: ['agents', first.id],
+    hint: 'name who verifies tokens before they reach the route, for example `deployments: { prod: { identity: { kind: oidc, issuer: https://<your-idp>, verifiedBy: api-gateway } } }`, so the app can bind a checkpoint to the principal that paused it',
+  };
+  diagnostics.push(enterprise ? report.error(init) : report.warn(init));
 }
 
 /**

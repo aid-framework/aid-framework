@@ -79,7 +79,7 @@ export const BOUNDARY_TABLE_METADATA = Object.freeze({
     risk: 'A value that arrives only in prose has no field to match and is recorded as written',
   },
   'Change approval': {
-    codes: ['ir/profile-approvals', 'ir/hitl-side-effect'],
+    codes: ['ir/profile-approvals', 'ir/hitl-side-effect', 'ir/resume-owner-unbound'],
     generated: 'The pause, the signed checkpoint and the resume route',
     provide: 'Someone to approve, and authentication in front of `/agents/resume`',
     risk: 'A checkpoint proves the app issued it, not that the holder should have it',

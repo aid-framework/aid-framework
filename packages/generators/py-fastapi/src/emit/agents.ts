@@ -435,6 +435,24 @@ const TO_RESPONSE = [
 
 const ROUTER = 'agent_router = APIRouter()';
 
+/**
+ * The one sentence a refused resume carries back to the caller, whatever went wrong.
+ *
+ * A single message for every reason is the point: "expired" and "tampered" and "not yours"
+ * are three different facts to an operator reading the log and one fact to an
+ * unauthenticated caller, namely that their body did not work. Returning the distinction
+ * would let someone holding a guessed or borrowed checkpoint probe the verifier -- extend a
+ * deadline until the message changes, then try the next field.
+ */
+const RESUME_REFUSED = `RESUME_REFUSED = ${pythonString(
+  'this checkpoint was refused; the operator log records why',
+)}`;
+
+const LOGGER = [
+  '#: Refusals are logged here rather than returned: see `RESUME_REFUSED`.',
+  'logger = logging.getLogger(__name__)',
+].join('\n');
+
 const PRINCIPAL_DOC = pythonDoc(
   'Who the caller is, for the `auth` policies this app declares. No token verification is ' +
     'generated: this returns an anonymous, *unauthenticated* principal, so a tool whose policy ' +
@@ -486,10 +504,14 @@ const RESUME_ROUTE = [
   `${INDENT}principal: Annotated[Principal, Depends(current_principal)],`,
   ') -> AgentRunResponse:',
   pythonDoc(
-    'Continue a paused run. Two different refusals, kept apart on purpose: a body this app ' +
-      'did not issue as a checkpoint at all is a 422, and a checkpoint it issued but will not ' +
-      'honour -- edited, expired, unsigned, or already spent -- is a 403 carrying ' +
-      '`detail.reason`, so a caller can tell which without parsing prose.',
+    'Continue a paused run. Two different refusals, kept apart on purpose: a body that is ' +
+      'not a checkpoint shape at all is a 422 naming the field, and a checkpoint this app ' +
+      'issued but will not honour -- edited, expired, unsigned, already spent, or issued to ' +
+      'another principal -- is one opaque 403. The reason is logged against the agent id and ' +
+      'the checkpoint nonce and is deliberately absent from the response: the caller holds ' +
+      'the checkpoint, so telling them which check failed would let them tune the next ' +
+      'attempt. The principal is the resume owner, so a run paused with an identity can ' +
+      `only be resumed by that identity.`,
     INDENT,
   ),
   `${INDENT}try:`,
@@ -500,10 +522,13 @@ const RESUME_ROUTE = [
   `${INDENT}try:`,
   `${INDENT}${INDENT}result = await runtime.resume(checkpoint, event.decision, principal=principal)`,
   `${INDENT}except CheckpointRefusalError as refusal:`,
-  `${INDENT}${INDENT}raise HTTPException(`,
-  `${INDENT}${INDENT}${INDENT}status_code=403,`,
-  `${INDENT}${INDENT}${INDENT}detail={"reason": refusal.reason, "message": str(refusal)},`,
-  `${INDENT}${INDENT}) from refusal`,
+  `${INDENT}${INDENT}logger.warning(`,
+  `${INDENT}${INDENT}${INDENT}"refused a resume for agent %s (nonce %s): %s",`,
+  `${INDENT}${INDENT}${INDENT}checkpoint.agent_id,`,
+  `${INDENT}${INDENT}${INDENT}checkpoint.integrity.nonce if checkpoint.integrity else None,`,
+  `${INDENT}${INDENT}${INDENT}refusal.reason,`,
+  `${INDENT}${INDENT})`,
+  `${INDENT}${INDENT}raise HTTPException(status_code=403, detail=RESUME_REFUSED) from refusal`,
   `${INDENT}return _response(result)`,
 ].join('\n');
 
@@ -537,7 +562,11 @@ export function emitAgents(ir: IR): EmittedFile {
           'reads, the factory that builds it over this app, and the routes that reach it.',
       ),
       importBlock([
-        ['from collections.abc import Iterable', 'from typing import Annotated, Any'],
+        [
+          ...(resume ? ['import logging'] : []),
+          'from collections.abc import Iterable',
+          'from typing import Annotated, Any',
+        ],
         [
           importFrom('aid_runtime', [
             ...(resume ? ['AgentCheckpoint', 'CheckpointRefusalError', 'CheckpointSigner'] : []),
@@ -571,6 +600,8 @@ export function emitAgents(ir: IR): EmittedFile {
       buildRuntime(resume),
       TO_RESPONSE,
       ROUTER,
+      ...(resume ? [LOGGER] : []),
+      ...(resume ? [RESUME_REFUSED] : []),
       PRINCIPAL,
       RUN_ROUTE,
       ...(resume ? [RESUME_ROUTE] : []),

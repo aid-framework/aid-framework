@@ -19,6 +19,7 @@ import pytest
 
 from agent_support import ADMIN_ONLY, Harness, Recorder, build, recording_tool, solo, tool_def
 from aid_runtime.agents import (
+    DEFAULT_CLOCK_LEEWAY_SECONDS,
     AgentCheckpoint,
     CheckpointRefusalError,
     CheckpointSigner,
@@ -141,9 +142,14 @@ async def test_a_genuine_expiry_is_refused() -> None:
     integrity = paused.checkpoint.integrity
     assert integrity is not None
     now = int(time.time())
-    # Accept at a moment past the recorded expiry, without touching the signed bytes.
+    # Accept at a moment past the recorded expiry *and* past the clock-skew leeway, without
+    # touching the signed bytes.
     with pytest.raises(CheckpointRefusalError) as caught:
-        await _signer().accept(paused.checkpoint, harness.runtime._nonces, now=integrity.expires_at)
+        await _signer().accept(
+            paused.checkpoint,
+            harness.runtime._nonces,
+            now=integrity.expires_at + DEFAULT_CLOCK_LEEWAY_SECONDS,
+        )
 
     assert caught.value.reason == "expired"
     assert now >= integrity.issued_at

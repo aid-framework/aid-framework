@@ -47,6 +47,12 @@ class Principal:
     roles: frozenset[str] = frozenset()
     scopes: frozenset[str] = frozenset()
     authenticated: bool = False
+    # A stable identifier for the caller as their token issuer named them -- a `sub`
+    # claim, a service-account id. It is *not* derived from ``authenticated``: a
+    # principal can be authenticated without a subject, and a checkpoint paused by one
+    # is therefore not owner-bound. Only this field binds a checkpoint to a person, so
+    # an app that verifies tokens should set it from the verified claim.
+    subject: str | None = None
 
     @classmethod
     def unauthenticated(cls) -> Principal:

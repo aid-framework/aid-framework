@@ -1397,7 +1397,12 @@ function versionConstants() {
   /** @type {Map<string, string>} */
   const versions = new Map();
   for (const file of typescriptSources()) {
-    for (const entry of file.text.matchAll(/export const ([A-Z0-9_]*_VERSION) = '([^']+)'/g)) {
+    // The optional annotation matters: a constant typed `: SpecVersion` is the same fact
+    // written more carefully, and the page should resolve it rather than demand the
+    // unannotated spelling.
+    for (const entry of file.text.matchAll(
+      /export const ([A-Z0-9_]*_VERSION)[^='\n]* = '([^']+)'/g,
+    )) {
       versions.set(entry[1], entry[2]);
     }
   }

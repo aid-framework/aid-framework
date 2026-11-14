@@ -7,20 +7,37 @@ holding one could edit an approval decision or swap the pending tool-call argume
 the loop would execute the edited call. A signature is what turns "a body shaped like a
 checkpoint" into "a checkpoint this app issued".
 
-Three properties are enforced here, and each has its own refusal reason:
+Four properties are enforced here, and each has its own refusal reason:
 
 * ``"tampered"`` -- the HMAC does not match the payload the signer covered. The signature
   covers the *whole* checkpoint minus the signature itself, so a flipped approval
   decision, a swapped argument and an extended expiry all fail the same check rather than
   needing a field-by-field audit.
 * ``"expired"`` -- ``expires_at`` (inside the signed payload, so it cannot be extended
-  without breaking the signature) is in the past.
+  without breaking the signature) is in the past, allowing ``leeway_seconds`` of clock
+  skew between the host that paused and the host that resumes.
+* ``"unbound"`` -- the checkpoint was issued to a named principal and this caller is not
+  that principal, or the caller presents no subject at all. The owner is a keyed hash of
+  the principal's ``subject`` inside the signed payload, so it cannot be stripped or
+  rewritten, only presented correctly.
 * ``"replayed"`` -- the nonce was already claimed. Claiming is a store operation rather
   than an in-memory check because a replay across two processes is the interesting case.
 
+Signing and owner binding are domain-separated: the same secret derives the checkpoint
+MAC and the owner hash through different prefixes, so a value from one use can never be
+presented as the other. The prefix is versioned (``aid.checkpoint.v2``) because changing
+it is how a payload-format change invalidates in-flight checkpoints instead of silently
+reinterpreting them.
+
 The secret is a *value read from the environment*, never a value in the spec: the
 generated app names the variable and this module fails loudly when it is unset, because a
-missing secret must not degrade into "unsigned".
+missing secret must not degrade into "unsigned". A secret shorter than
+:data:`MIN_SECRET_BYTES` is refused for the same reason a missing one is -- it looks set
+and is not.
+
+Refusal reasons are for the log, not the wire. The generated route answers every refusal
+with one opaque 403, because the difference between "expired" and "tampered" is useful to
+an operator and an oracle to an unauthenticated caller holding a guessed checkpoint.
 
 Replay durability is limited by the nonce store, and that limit is real rather than
 theoretical: :class:`InProcessNonceStore` forgets on restart and does not span replicas.
@@ -53,6 +70,8 @@ from aid_runtime.errors import AidRuntimeError, ConfigurationError
 
 __all__ = [
     "DEFAULT_CHECKPOINT_TTL_MINUTES",
+    "DEFAULT_CLOCK_LEEWAY_SECONDS",
+    "MIN_SECRET_BYTES",
     "CheckpointRefusalError",
     "CheckpointSigner",
     "InProcessNonceStore",
@@ -68,14 +87,45 @@ __all__ = [
 #: a person in the same change window, not a durable queue.
 DEFAULT_CHECKPOINT_TTL_MINUTES = 15
 
+#: Tolerance for a clock difference between the host that paused and the host that
+#: resumes. A pause is verified on whichever replica serves the resume request, so the two
+#: clocks are not guaranteed equal; without this, a checkpoint could be refused as expired
+#: by a replica that is seconds ahead. It widens the expiry by this much and no more.
+DEFAULT_CLOCK_LEEWAY_SECONDS = 30
+
+#: The shortest secret this module will sign with, in UTF-8 bytes. A 32-byte key is the
+#: output size of SHA-256, so a shorter one caps the strength of the MAC below its own
+#: hash. A secret that is set but weak is worse than one that is missing, because a
+#: missing one is loud and a weak one looks configured.
+MIN_SECRET_BYTES = 32
+
+#: Domain separators. Prepended to the bytes each use signs, so the checkpoint MAC and the
+#: owner hash can never be confused for one another even under one shared secret. The
+#: ``v2`` suffix is the payload format version: bumping it is how a format change
+#: invalidates in-flight checkpoints rather than reinterpreting them under new rules.
+_CHECKPOINT_DOMAIN = b"aid.checkpoint.v2\x00"
+_OWNER_DOMAIN = b"aid.checkpoint.owner.v2\x00"
+
+
+def _same(expected: str, presented: str) -> bool:
+    """Constant-time comparison of a computed hex digest against an untrusted string.
+
+    Both sides are encoded before comparison. ``hmac.compare_digest`` refuses two ``str``
+    arguments that contain non-ASCII characters, so comparing the decoded strings would
+    turn a malicious checkpoint carrying a non-ASCII ``signature`` into a ``TypeError`` --
+    a 500 for what is simply a bad signature. Comparing bytes makes any presented value
+    comparable and therefore simply unequal.
+    """
+    return hmac.compare_digest(expected.encode("ascii"), presented.encode("utf-8"))
+
 
 class CheckpointRefusalError(AidRuntimeError):
     """A resume body this app will not honour, with a stable machine-readable reason.
 
-    ``reason`` is one of ``tampered``, ``expired``, ``replayed``, ``unsigned``. The
-    generated route maps it to a 403 and returns it as ``detail.reason``, so a caller can
-    tell "your checkpoint expired" from "your checkpoint was edited" without parsing
-    prose.
+    ``reason`` is one of ``tampered``, ``expired``, ``unbound``, ``replayed`` or
+    ``unsigned``. It is for the log: the generated route answers every one of them with
+    the same opaque 403, so a caller cannot use the distinction as an oracle. Library
+    embedders that want the distinction can read it here.
     """
 
     def __init__(self, reason: str, message: str) -> None:
@@ -215,21 +265,41 @@ def checkpoint_payload(checkpoint: AgentCheckpoint) -> bytes:
     """The canonical bytes a signature covers.
 
     Everything except the signature itself. That includes the integrity block's own
-    ``issued_at``, ``expires_at`` and ``nonce``: leaving those out would let a holder
-    move their deadline forward, and would let them swap the nonce of an already-spent
-    checkpoint to walk past replay protection. The pending calls, the approval channel
-    and the nested ``caller`` frames are inside too, so one signature binds all of them.
-    Sorted keys and no separator padding make the encoding reproducible in a second
-    process, which a signature requires.
+    ``issued_at``, ``expires_at``, ``owner`` and ``nonce``: leaving those out would let a
+    holder move their deadline forward or rebind the checkpoint to themselves, and would
+    let them swap the nonce of an already-spent checkpoint to walk past replay protection.
+    The pending calls, the approval channel and the nested ``caller`` frames are inside
+    too, so one signature binds all of them. Sorted keys and no separator padding make the
+    encoding reproducible in a second process, which a signature requires.
+
+    There is deliberately no ``default=`` fallback for a value JSON cannot represent. A
+    fallback stringifies it, and two different values that stringify alike would produce
+    the same payload for different checkpoints -- a collision in the thing being signed.
+    A checkpoint that cannot be encoded is refused instead, and the model's own strictness
+    is what should have stopped it reaching here.
+
+    The dump runs in JSON mode before this function, so a value pydantic can *normalise*
+    is normalised rather than refused: a ``NaN`` in ``when`` reaches the encoder as
+    ``null``. That is not the same as the fallback above, because the loop never
+    interprets such a value -- the two forms are the same checkpoint to every reader,
+    rather than two checkpoints the signature cannot tell apart.
     """
-    document = checkpoint.model_dump(mode="json", exclude={"integrity": {"signature"}})
-    return json.dumps(
-        document,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        default=str,
-    ).encode("utf-8")
+    try:
+        document = checkpoint.model_dump(mode="json", exclude={"integrity": {"signature"}})
+        encoded = json.dumps(
+            document,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as error:
+        raise ConfigurationError(
+            f"a checkpoint for agent {checkpoint.agent_id!r} cannot be signed because its "
+            f"payload is not canonical JSON ({error}); a value the encoder has to guess at "
+            "is a value a signature cannot bind"
+        ) from error
+    return encoded.encode("utf-8")
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,40 +309,86 @@ class CheckpointSigner:
     ``secret`` is read from the environment by the caller; it is never a spec value. The
     dataclass is frozen and holds no mutable state, so one instance can be shared across
     requests and a test can construct its own without touching the process environment.
+
+    ``previous`` is the secret being rotated out. It is accepted for verification only, so
+    a checkpoint issued before a rotation still resumes; it never signs. Rotation is
+    bounded by the checkpoint TTL rather than by this field: a checkpoint lives for
+    ``ttl_seconds``, so a retired secret is worth keeping for exactly that long and no
+    longer, and dropping it after that is what makes the rotation a rotation rather than a
+    permanent second key.
     """
 
     secret: str = field(repr=False)
     ttl_seconds: int = DEFAULT_CHECKPOINT_TTL_MINUTES * 60
+    previous: str | None = field(default=None, repr=False)
+    leeway_seconds: int = DEFAULT_CLOCK_LEEWAY_SECONDS
 
     def __post_init__(self) -> None:
-        if not self.secret:
+        for name, value in (("secret", self.secret), ("previous", self.previous)):
+            if value is None:
+                continue
+            if not value:
+                raise ValueError(
+                    f"CheckpointSigner needs a non-empty {name}; an empty key would sign "
+                    "every checkpoint identically"
+                )
+            size = len(value.encode("utf-8"))
+            if size < MIN_SECRET_BYTES:
+                raise ValueError(
+                    f"CheckpointSigner needs a {name} of at least {MIN_SECRET_BYTES} "
+                    f"bytes; this one is {size}. A key shorter than the hash it feeds "
+                    "lowers the strength of every signature it makes"
+                )
+        if self.previous is not None and self.previous == self.secret:
             raise ValueError(
-                "CheckpointSigner needs a non-empty secret; an empty key would sign "
-                "every checkpoint identically"
+                "CheckpointSigner was given the same value for secret and previous; a "
+                "rotation has to name two different keys, or it has rotated nothing"
             )
         if self.ttl_seconds <= 0:
             raise ValueError("CheckpointSigner needs a positive ttl_seconds")
+        if self.leeway_seconds < 0:
+            raise ValueError("CheckpointSigner needs a non-negative leeway_seconds")
 
-    def _mac(self, payload: bytes) -> str:
-        return hmac.new(self.secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    @staticmethod
+    def _mac(key: bytes, domain: bytes, payload: bytes) -> str:
+        return hmac.new(key, domain + payload, hashlib.sha256).hexdigest()
 
-    def _digest(self, checkpoint: AgentCheckpoint) -> str:
+    def _digest(self, checkpoint: AgentCheckpoint, key: bytes | None = None) -> str:
         """The MAC of ``checkpoint`` excluding only the signature field.
 
         Signing and verifying both go through here, so the two sides cannot drift into
         covering different bytes: a signature that verifies against a payload it was not
         computed over would accept an edited checkpoint.
         """
-        return self._mac(checkpoint_payload(checkpoint))
+        material = self.secret.encode("utf-8") if key is None else key
+        return self._mac(material, _CHECKPOINT_DOMAIN, checkpoint_payload(checkpoint))
+
+    @staticmethod
+    def owner_of(subject: str | None, *, key: bytes) -> str:
+        """The keyed hash a checkpoint carries for ``subject``, or ``""`` for none.
+
+        A keyed hash rather than the subject itself: the checkpoint body travels through
+        the caller, so writing a user id into it would hand every holder an identifier
+        they did not already have. The key is what makes the hash unguessable, and the
+        domain is what keeps it from ever equalling a signature.
+        """
+        if not subject:
+            return ""
+        return CheckpointSigner._mac(key, _OWNER_DOMAIN, subject.encode("utf-8"))
 
     def sign(
         self,
         checkpoint: AgentCheckpoint,
         *,
+        subject: str | None = None,
         now: int | None = None,
         nonce: str | None = None,
     ) -> AgentCheckpoint:
         """Return a copy of ``checkpoint`` carrying a fresh integrity block.
+
+        ``subject`` is the verified identity of the principal pausing the run. When it is
+        absent the checkpoint is signed but unbound, which is the honest result for a
+        principal that carries no subject: there is nothing to bind to.
 
         ``now`` and ``nonce`` exist for tests; production passes neither. The return is a
         new frozen model, so a caller that kept the unsigned value still has it.
@@ -282,6 +398,7 @@ class CheckpointSigner:
             issued_at=issued_at,
             expires_at=issued_at + self.ttl_seconds,
             nonce=secrets.token_urlsafe(24) if nonce is None else nonce,
+            owner=self.owner_of(subject, key=self.secret.encode("utf-8")),
             signature="",
         )
         unsigned = checkpoint.model_copy(update={"integrity": integrity})
@@ -290,8 +407,14 @@ class CheckpointSigner:
             update={"integrity": integrity.model_copy(update={"signature": signature})}
         )
 
-    def verify(self, checkpoint: AgentCheckpoint, *, now: int | None = None) -> CheckpointIntegrity:
-        """Check signature and expiry. Returns the integrity block, or raises.
+    def verify(
+        self,
+        checkpoint: AgentCheckpoint,
+        *,
+        subject: str | None = None,
+        now: int | None = None,
+    ) -> CheckpointIntegrity:
+        """Check signature, expiry and owner binding. Returns the block, or raises.
 
         Replay is *not* checked here: it needs the store, and therefore an ``await``.
         :meth:`accept` is the full check a request handler wants.
@@ -303,32 +426,65 @@ class CheckpointSigner:
                 "this checkpoint carries no signature, so it was not issued by an app "
                 "built with checkpoint signing",
             )
-        expected = self._digest(checkpoint)
-        if not hmac.compare_digest(expected, integrity.signature):
-            raise CheckpointRefusalError(
-                "tampered",
-                "this checkpoint's signature does not match its contents; it was edited "
-                "after it was issued",
-            )
+        key = self._verifying_key(checkpoint, integrity)
         moment = int(time.time()) if now is None else int(now)
-        if integrity.expires_at <= moment:
+        if integrity.expires_at + self.leeway_seconds <= moment:
             raise CheckpointRefusalError(
                 "expired",
                 f"this checkpoint expired at {integrity.expires_at}; a pause is valid for "
                 f"{self.ttl_seconds} seconds, so resume it sooner or start the run again",
             )
+        if integrity.owner:
+            # The owner hash was derived from whichever key signed this checkpoint, so it
+            # is recomputed with that same key: after a rotation the current secret would
+            # produce a hash that never matches a checkpoint the previous one issued.
+            if not subject:
+                raise CheckpointRefusalError(
+                    "unbound",
+                    "this checkpoint was issued to a named principal, and the caller "
+                    "presented no subject, so there is no identity to check it against",
+                )
+            expected_owner = self.owner_of(subject, key=key)
+            if not _same(expected_owner, integrity.owner):
+                raise CheckpointRefusalError(
+                    "unbound",
+                    "this checkpoint was issued to a different principal; a resume is "
+                    "accepted only from the caller who paused the run",
+                )
         return integrity
+
+    def _verifying_key(self, checkpoint: AgentCheckpoint, integrity: CheckpointIntegrity) -> bytes:
+        """The key this checkpoint's signature verifies under, or a refusal.
+
+        The current secret is tried first and the retired one second, so a rotation takes
+        effect immediately for new checkpoints and stays compatible for the TTL of the old
+        ones. Both attempts go through the same comparison, so which key matched is not
+        something a caller can observe.
+        """
+        current = self.secret.encode("utf-8")
+        if _same(self._digest(checkpoint, current), integrity.signature):
+            return current
+        if self.previous is not None:
+            retired = self.previous.encode("utf-8")
+            if _same(self._digest(checkpoint, retired), integrity.signature):
+                return retired
+        raise CheckpointRefusalError(
+            "tampered",
+            "this checkpoint's signature does not match its contents; it was edited "
+            "after it was issued",
+        )
 
     async def accept(
         self,
         checkpoint: AgentCheckpoint,
         nonces: NonceStore,
         *,
+        subject: str | None = None,
         now: int | None = None,
     ) -> CheckpointIntegrity:
-        """Signature, then expiry, then a one-time claim. Raises on any failure."""
+        """Signature, then expiry, then owner, then a one-time claim. Raises on failure."""
         moment = int(time.time()) if now is None else int(now)
-        integrity = self.verify(checkpoint, now=moment)
+        integrity = self.verify(checkpoint, subject=subject, now=moment)
         claimed = await nonces.claim(
             nonce=integrity.nonce, expires_at=integrity.expires_at, now=moment
         )
@@ -344,14 +500,24 @@ class CheckpointSigner:
 def signer_from_env(
     variable: str, *, ttl_seconds: int = DEFAULT_CHECKPOINT_TTL_MINUTES * 60
 ) -> CheckpointSigner:
-    """Build a signer from ``os.environ[variable]``, naming the variable when it is unset."""
+    """Build a signer from ``os.environ[variable]``, naming the variable when it is unset.
+
+    ``{variable}_PREVIOUS`` is read as the secret being rotated out, when it is set. A
+    rotation is therefore a deployment in two steps -- set ``_PREVIOUS`` to the old value
+    and the variable to the new one, then unset ``_PREVIOUS`` once the checkpoint TTL has
+    passed -- and neither step requires downtime.
+    """
     secret = os.environ.get(variable, "")
     if not secret:
         raise ConfigurationError(
             f"{variable} is not set, but this app signs its checkpoints; set it to a "
             "high-entropy secret before serving the resume route"
         )
-    return CheckpointSigner(secret=secret, ttl_seconds=ttl_seconds)
+    previous = os.environ.get(f"{variable}_PREVIOUS", "") or None
+    try:
+        return CheckpointSigner(secret=secret, ttl_seconds=ttl_seconds, previous=previous)
+    except ValueError as error:
+        raise ConfigurationError(f"{variable}: {error}") from error
 
 
 def nonce_store_for(kind: str | None, location: str | None) -> NonceStore:

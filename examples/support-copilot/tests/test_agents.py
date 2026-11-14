@@ -38,6 +38,9 @@ REQUEST: dict[str, str] = {
 ANSWER = "Acme Corp is on the enterprise plan; the duplicate charge was refunded."
 """What the model says once it has looked the account up."""
 
+REFUSED_MESSAGE = "this checkpoint was refused; the operator log records why"
+"""The one body every refused resume returns, whatever the internal reason was."""
+
 SCRIPT: tuple[ScriptedTurn, ...] = (
     ScriptedTurn.tool("lookup_customer", REQUEST),
     ScriptedTurn.answer(ANSWER),
@@ -108,8 +111,10 @@ def test_a_tampered_checkpoint_is_refused(client: TestClient) -> None:
     """Editing the JSON a client holds is not enough to change the call it approves.
 
     `spent_usd` is the edit with a motive: reset it and the resumed run starts with a
-    fresh budget. It is inside the signed payload, so the route refuses with 403 and
-    names the reason instead of resuming a run the app did not issue.
+    fresh budget. It is inside the signed payload, so the route refuses with 403
+    instead of resuming a run the app did not issue. The body says only that the
+    checkpoint was refused -- `tampered` versus `replayed` versus `expired` is written
+    to the operator log, where the holder of a forged checkpoint cannot read it.
     """
 
     paused = client.post("/agents/refund_agent/run", json={"text": REQUEST["subject"]}).json()
@@ -122,14 +127,15 @@ def test_a_tampered_checkpoint_is_refused(client: TestClient) -> None:
     )
 
     assert refused.status_code == 403, refused.text
-    assert refused.json()["detail"]["reason"] == "tampered"
+    assert refused.json()["detail"] == REFUSED_MESSAGE
 
 
 def test_a_spent_checkpoint_is_refused_on_the_second_resume(client: TestClient) -> None:
     """The checkpoint is a single-use capability, not a standing right to approve.
 
     The first resume spends the nonce; the store remembers it, so the same checkpoint
-    presented again is refused even though its signature still verifies.
+    presented again is refused even though its signature still verifies. Reuse and
+    tampering are indistinguishable to the caller by design.
     """
 
     paused = client.post("/agents/refund_agent/run", json={"text": REQUEST["subject"]}).json()
@@ -141,7 +147,7 @@ def test_a_spent_checkpoint_is_refused_on_the_second_resume(client: TestClient) 
     second = client.post("/agents/resume", json=body)
 
     assert second.status_code == 403, second.text
-    assert second.json()["detail"]["reason"] == "replayed"
+    assert second.json()["detail"] == REFUSED_MESSAGE
 
 
 def test_the_run_route_refuses_an_agent_the_app_does_not_declare(client: TestClient) -> None:

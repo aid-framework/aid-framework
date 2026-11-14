@@ -1,2 +1,12 @@
 # Default owner for everything. Single-maintainer project.
 * @nithin554
+
+# The resume surface is a security boundary: a defect here is an authentication
+# bypass rather than a wrong answer. Named separately so the requirement survives
+# a second maintainer, and so a reviewer is told where to look.
+/runtimes/python/src/aid_runtime/agents/resume.py @nithin554
+/runtimes/python/src/aid_runtime/agents/state.py @nithin554
+/runtimes/python/src/aid_runtime/agents/policy.py @nithin554
+/runtimes/python/src/aid_runtime/agents/deep_agents.py @nithin554
+/packages/ir/src/gates/resume.ts @nithin554
+/packages/generators/py-fastapi/src/emit/agents.ts @nithin554

@@ -37,7 +37,7 @@ You write the part that is actually yours: one spec, the prompt text and the too
 Everything between the spec and a deployable service is generated, gated and reproducible.
 
 ```yaml
-specVersion: "0.33"
+specVersion: "0.34"
 
 project:
   name: support-copilot

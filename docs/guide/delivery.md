@@ -344,7 +344,8 @@ than a caveat:
 The checkpoint no longer travels unprotected. From spec `0.32` an agent that can pause is obliged
 to name a signing key (`state.signingKeyEnv`), and the generated route refuses a checkpoint it did
 not sign, one past its deadline, and -- where the document declares a durable `state` -- one the
-store has already spent, each as a `403` whose `detail.reason` says which. Read the rest of this
+store has already spent, each as one opaque `403` that names no reason. Which check failed is
+logged against the agent id and the checkpoint nonce instead. Read the rest of this
 row the same way as the identity one:
 
 - **A checkpoint is still a capability, and still a secret.** Signing proves the app issued it; it

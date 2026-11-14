@@ -62,6 +62,8 @@ from aid_runtime.agents.memory import (
 from aid_runtime.agents.policy import Principal, evaluate_policy, policy_source
 from aid_runtime.agents.resume import (
     DEFAULT_CHECKPOINT_TTL_MINUTES,
+    DEFAULT_CLOCK_LEEWAY_SECONDS,
+    MIN_SECRET_BYTES,
     CheckpointRefusalError,
     CheckpointSigner,
     InProcessNonceStore,
@@ -85,11 +87,13 @@ from aid_runtime.agents.state import (
 
 __all__ = [
     "DEFAULT_CHECKPOINT_TTL_MINUTES",
+    "DEFAULT_CLOCK_LEEWAY_SECONDS",
     "DETECTORS",
     "GUARDRAIL_ACTIONS",
     "GUARDRAIL_STAGES",
     "IMPLEMENTED_MEMORY_KINDS",
     "MEMORY_SCOPES",
+    "MIN_SECRET_BYTES",
     "MODEL_ARMOR_TEMPLATE_ENV",
     "AgentCheckpoint",
     "AgentDefinition",
