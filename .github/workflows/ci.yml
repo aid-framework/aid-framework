@@ -148,10 +148,12 @@ jobs:
       - name: Typecheck
         run: mypy
 
-  # Advisory, on purpose: `evals` is not a required context in the `main` ruleset.
-  # It is the only job that covers `examples/support-copilot` -- the `python` job is
-  # scoped to `runtimes/python` -- so the example's eval gate, lint and type check
-  # live here rather than being implied by a green `python`.
+  # Required: `evals` is one of the contexts the `main` ruleset requires, so a failure
+  # here blocks the merge. It is the only job that covers `examples/support-copilot` --
+  # the `python` job is scoped to `runtimes/python` -- so the example's eval gate, lint
+  # and type check live here rather than being implied by a green `python`. The matching
+  # steps in `scripts/check-all.mjs` are `evals:test`, `evals:ruff`, `evals:ruff-format`
+  # and `evals:mypy`; keep them in step or a green `pnpm check` stops predicting this job.
   evals:
     name: evals
     runs-on: ubuntu-latest
@@ -215,6 +217,10 @@ jobs:
   # It follows `e2e`'s pattern -- regenerate, prove byte-identity, then run -- because the
   # committed tree is generated code: without the regeneration step a hand edit would
   # compile and pass while no longer being what the emitter produces.
+  #
+  # Like `evals`, this is a required context, and its lint and type check are mirrored by
+  # `guarded-reply:test`, `guarded-reply:ruff`, `guarded-reply:ruff-format` and
+  # `guarded-reply:mypy` in `scripts/check-all.mjs`.
   guarded-reply:
     name: guarded-reply
     runs-on: ubuntu-latest
