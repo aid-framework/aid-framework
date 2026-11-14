@@ -30,6 +30,7 @@ import {
   fileCodeAnnotation,
   headingSlugs,
   isProposalPage,
+  MARKDOWN_ROOTS,
   proposalStatus,
   sourceCodeAnnotation,
   targetTokens,
@@ -1259,9 +1260,10 @@ function markdownFiles() {
     }
   }
 
-  // `packages/*/README.md` documents install commands and per-target behaviour,
-  // so a stale flag there is the same false promise as one in `docs/`.
-  for (const directory of ['docs', 'packages', 'runtimes', 'examples']) {
+  // `packages/*/README.md` documents install commands and per-target behaviour, and
+  // `.github` holds the agent skill: a stale code in either is the same false promise
+  // as one in `docs/`. The list lives in `docs-claims.mjs` so the test cannot drift.
+  for (const directory of MARKDOWN_ROOTS) {
     walk(directory);
   }
   return files;

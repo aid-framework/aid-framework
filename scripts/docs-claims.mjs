@@ -181,6 +181,22 @@ const FILE_ANNOTATION_WINDOW = 15;
 export const DIAGNOSTIC_NAMESPACES = Object.freeze(['ir', 'spec', 'overlay', 'cli', 'generator']);
 
 /**
+ * The Markdown trees whose citations are checked against the registries.
+ *
+ * Exported rather than written twice: `check-docs-claims.mjs` enforces this list and
+ * `docs-claims.test.mjs` mirrors it, so a copy of the list is a copy that can drift
+ * from the real one. `.github` is here because it holds the agent skill, which states
+ * product behaviour as flatly as any page under `docs/`.
+ */
+export const MARKDOWN_ROOTS = Object.freeze([
+  'docs',
+  'packages',
+  'runtimes',
+  'examples',
+  '.github',
+]);
+
+/**
  * A diagnostic code, or a family of them written with a trailing `*`.
  *
  * The surrounding guards are what keep this from matching a file path: a token may
