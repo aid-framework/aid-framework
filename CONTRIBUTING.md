@@ -262,16 +262,23 @@ git add -A && git commit -s -m "Release 0.1.69"
 `__version__` a PyPI package exposes — the runtime's own tests pin that literal to `[project].version`.
 `verify` reports every manifest that disagrees and exits non-zero if any does.
 
-All four commands the script supports are usable locally; none of them needs network access:
+All five commands the script supports are usable locally; none of them needs network access:
 
 | Command | What it does |
 | --- | --- |
 | `latest` | The highest release tag in the tags file, or empty when there is none |
+| `declared` | The tag the manifests in this checkout declare, in tag form, refusing a tree whose manifests disagree |
 | `decide` | The release decision for a change set: `release`, `tag`, `version`, and `reason` |
 | `stamp` | Write a version into every configured manifest |
 | `verify` | Check that every configured manifest already declares a version |
 
 Bumping `.github/`-only, `docs/`-only, or root-markdown-only changes is pointless — they do not release.
+
+`release-plan` in `ci.yml` reads `declared` out of the base branch rather than reading the tag list.
+`release.yml` mints the tag only after CI on `main` passes, so for a minute or two after a releasable merge
+the newest tag is a patch behind the manifests, and `decide` — which derives a version from tags alone —
+would plan the patch that had already been released and fail a correctly stamped pull request. A manifest
+cannot lag, because the stamp is committed with the change that needed it.
 
 ### Dependabot bumps stamp themselves
 

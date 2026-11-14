@@ -107,6 +107,7 @@ const USAGE = [
   '                                     (--changed-files-file <file> | --changed-files a,b)',
   '                                     [--force] [--github-output <file>]',
   '       node scripts/version.mjs latest  --config <file> (--tags-file <file> | --tags a,b)',
+  '       node scripts/version.mjs declared [--config <file>]',
   '       node scripts/version.mjs stamp   --version x.y.z [--config <file>]',
   '       node scripts/version.mjs verify  --version x.y.z [--config <file>]',
 ].join('\n');
@@ -381,6 +382,51 @@ export function projectVersion(text) {
  */
 export function stampDrift({ config, root, version }) {
   return readManifestVersions({ config, root }).filter((entry) => entry.declared !== version);
+}
+
+/**
+ * The version every manifest `release.config.json` lists declares, or a throw naming the
+ * ones that disagree.
+ *
+ * `release-plan` reads this out of the base branch rather than out of the tag list, because
+ * the tag list lags. `release.yml` mints the tag only once CI on `main` has passed, so for
+ * the first minute or two after a releasable merge the newest tag is still one patch behind
+ * the manifests. `decide` derives its version from tags alone, so during that window it
+ * planned the patch the base branch had already released and failed a correctly stamped
+ * pull request. A manifest cannot lag: the stamp is committed with the change that needed
+ * it.
+ *
+ * @param {{ config: ReleaseConfig, root: string }} options
+ * @returns {string}
+ */
+export function declaredVersion({ config, root }) {
+  const versions = readManifestVersions({ config, root });
+  const first = versions[0];
+  if (first === undefined) {
+    throw new Error('release.config.json lists no packages, so no version is declared');
+  }
+
+  const declared = first.declared;
+  const drift = versions.filter((entry) => entry.declared !== declared);
+  if (declared === null || !STAMP_VERSION.test(declared) || drift.length > 0) {
+    const lines = versions.map((entry) =>
+      entry.declared === null
+        ? `  ${entry.path} (${entry.name}): no version found`
+        : `  ${entry.path} (${entry.name}): declares ${entry.declared}`,
+    );
+    throw new Error(
+      [
+        `[declared] the manifests do not agree on one x.y.z version`,
+        ...lines,
+        '',
+        'Stamp them back into step before relying on this checkout:',
+        '',
+        '  node scripts/version.mjs stamp --version <x.y.z>',
+      ].join('\n'),
+    );
+  }
+
+  return declared;
 }
 
 /** @param {string} value */
@@ -880,11 +926,36 @@ function verifyCommand(args) {
   );
 }
 
+/**
+ * `declared [--config <file>]`.
+ *
+ * Prints the release tag the manifests in this checkout declare, in tag form so the
+ * result can be fed straight back to `decide --tags`. Run against a checkout of the base
+ * branch it answers "which version does the branch this pull request targets declare now",
+ * which is the version its next release has to exceed. Deliberately the base branch's tip
+ * and not the merge base: if the base released a version after this branch was cut, the
+ * author has to rebase and stamp again anyway, and answering from the merge base would let
+ * the pull request merge declaring a version that has already been released.
+ *
+ * @param {Record<string, string | undefined>} args
+ */
+function declaredCommand(args) {
+  const configPath = resolve(args['config'] ?? join(REPO_ROOT, 'release.config.json'));
+  const config = parseConfig(JSON.parse(readFileSync(configPath, 'utf8')));
+  const version = declaredVersion({ config, root: dirname(configPath) });
+  process.stdout.write(`${config.tagPrefix}${version}\n`);
+}
+
 function main() {
   const argv = process.argv.slice(2);
   const hasCommand = argv[0] !== undefined && !argv[0].startsWith('--');
   const command = hasCommand ? argv[0] : 'decide';
   const args = parseArgs(hasCommand ? argv.slice(1) : argv);
+
+  if (command === 'declared') {
+    declaredCommand(args);
+    return;
+  }
 
   if (command === 'stamp') {
     stampCommand(args);

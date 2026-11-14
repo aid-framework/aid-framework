@@ -94,7 +94,6 @@ class Metric(Protocol):
     @property
     def name(self) -> str:
         """Stable identifier used in baselines and thresholds."""
-        ...
 
     @property
     def deterministic(self) -> bool:
@@ -104,7 +103,6 @@ class Metric(Protocol):
         threshold on one: a CI signal that itself varies run to run cannot
         distinguish a regression from its own noise.
         """
-        ...
 
     async def score(
         self, case: EvalCase, prediction: str, *, context: RunContext | None = None

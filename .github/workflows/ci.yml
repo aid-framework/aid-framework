@@ -518,9 +518,34 @@ jobs:
           # The default checkout refspec does not guarantee a remote-tracking ref for
           # the base branch, and the diff range needs one.
           git fetch --quiet origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
-          git tag --list > tags.txt
-          git diff --name-only --no-renames \
-            "$(git merge-base "origin/$BASE_REF" HEAD)" HEAD > changed-files.txt
+          base=$(git merge-base "origin/$BASE_REF" HEAD)
+          git diff --name-only --no-renames "$base" HEAD > changed-files.txt
+
+          # The version this pull request must bump from is the one the base branch's
+          # manifests declare, not the newest tag. release.yml mints the tag only after CI
+          # on main passes, so between a releasable merge and that tag the tag list is a
+          # patch behind the manifests; `decide` derives its version from tags alone, so
+          # during that window it planned the patch that had already been released and
+          # failed a correctly stamped pull request. A manifest cannot lag, because the
+          # stamp is committed with the change that needed it. This also holds for a branch
+          # that has not been rebased: the floor is whatever the base branch says today,
+          # which is the number its author read.
+          # Extracted with `git archive` rather than a worktree so nothing about the
+          # checkout CI is testing gets rewritten.
+          mkdir -p "$RUNNER_TEMP/base"
+          git archive "origin/$BASE_REF" | tar -x -C "$RUNNER_TEMP/base"
+          # The current script against the base tree's manifests, so a branch cut before
+          # `declared` existed still gets a real answer.
+          if base_tag=$(cd "$RUNNER_TEMP/base" && node "$GITHUB_WORKSPACE/scripts/version.mjs" \
+            declared --config release.config.json); then
+            printf '%s\n' "$base_tag" > tags.txt
+            echo "$BASE_REF declares $base_tag; this change set must release its next patch"
+          else
+            # Only reachable on a checkout that predates the first stamp. Falling back
+            # keeps the bootstrap release working; every later run takes the branch above.
+            echo "::warning::no single version on $BASE_REF; falling back to the tag list"
+            git tag --list > tags.txt
+          fi
 
           node scripts/version.mjs decide \
             --config release.config.json \
@@ -529,8 +554,10 @@ jobs:
             --github-output plan.out > release-plan.json
           cat release-plan.json
 
-          # Same output contract release.yml consumes, so the two cannot disagree
-          # about which version a change set produces.
+          # Same output contract release.yml consumes. The inputs differ by design -- this
+          # run reads no tags at all, because a PR's expectation is a function of what the
+          # base branch declares, while release.yml must diff against the last tag -- but
+          # once release.yml has caught up they name the same version.
           release=$(sed -n 's/^release=//p' plan.out)
           # The output carries the tag form (v0.1.52); verify takes the bare semver.
           version=$(sed -n 's/^version=//p' plan.out)

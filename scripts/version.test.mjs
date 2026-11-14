@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import {
   compareVersions,
   decide,
+  declaredVersion,
   formatVersion,
   isReleasable,
   latestReleaseTag,
@@ -793,5 +794,122 @@ describe('the verify subcommand', () => {
       expect(drift.map((entry) => entry.path)).toEqual(['packages/spec/package.json']);
       expect(drift[0]?.declared).toBe('0.1.48');
     });
+  });
+});
+
+/**
+ * `release-plan` derives the version a pull request must stamp from the manifests on the
+ * base branch instead of from the tag list. The tag list lags: `release.yml` mints the tag
+ * only after CI on `main` passes, so for a minute or two after a releasable merge the
+ * newest tag is a patch behind, and `decide` -- which derives a version from tags alone --
+ * planned the patch that had already been released. A correctly stamped pull request then
+ * failed `verify` with a mismatch that was not real.
+ */
+describe('the declared subcommand', () => {
+  const script = fileURLToPath(new URL('version.mjs', import.meta.url));
+
+  /**
+   * @param {{ npm?: string | null, pypi?: string | null }} [versions]
+   * @returns {string} the fixture root
+   */
+  function fixture({ npm = '0.1.51', pypi = '0.1.51' } = {}) {
+    const dir = mkdtempSync(join(tmpdir(), 'aid-declared-'));
+    mkdirSync(join(dir, 'packages/spec'), { recursive: true });
+    mkdirSync(join(dir, 'runtimes/python'), { recursive: true });
+    if (npm !== null) {
+      writeFileSync(
+        join(dir, 'packages/spec/package.json'),
+        `${JSON.stringify({ name: '@aid-framework/spec', version: npm }, null, 2)}\n`,
+      );
+    }
+    if (pypi !== null) {
+      writeFileSync(
+        join(dir, 'runtimes/python/pyproject.toml'),
+        `[project]\nname = "aid-runtime-python"\nversion = "${pypi}"\n`,
+      );
+    }
+    writeFileSync(
+      join(dir, 'release.config.json'),
+      JSON.stringify({
+        ...baseConfig(),
+        packages: [
+          { name: '@aid-framework/spec', path: 'packages/spec', registry: 'npm' },
+          { name: 'aid-runtime-python', path: 'runtimes/python', registry: 'pypi' },
+        ],
+      }),
+    );
+    return dir;
+  }
+
+  /**
+   * @param {string} dir
+   * @returns {{ status: number | null, stdout: string, stderr: string }}
+   */
+  function runDeclared(dir) {
+    const result = spawnSync(
+      process.execPath,
+      [script, 'declared', '--config', join(dir, 'release.config.json')],
+      { encoding: 'utf8' },
+    );
+    return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+  }
+
+  it('prints the tag the manifests declare, ready for decide --tags', () => {
+    const result = runDeclared(fixture());
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('v0.1.51');
+  });
+
+  it('plans the next patch from that tag, which is what the base branch expects', () => {
+    const tag = runDeclared(fixture({ npm: '0.1.51', pypi: '0.1.51' })).stdout.trim();
+    const decision = decideFor(['packages/ir/src/index.ts'], { tags: [tag] });
+
+    expect(decision.release).toBe(true);
+    expect(decision.tag).toBe('v0.1.52');
+  });
+
+  it('refuses a checkout whose manifests disagree, naming both', () => {
+    const result = runDeclared(fixture({ npm: '0.1.48', pypi: '0.1.51' }));
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('do not agree on one x.y.z version');
+    expect(result.stderr).toContain('packages/spec/package.json');
+    expect(result.stderr).toContain('runtimes/python/pyproject.toml');
+    expect(result.stdout.trim()).toBe('');
+  });
+
+  it('refuses a manifest with no version rather than reporting the other one', () => {
+    const result = runDeclared(fixture({ npm: null }));
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('packages/spec/package.json (@aid-framework/spec): no version');
+    expect(result.stdout.trim()).toBe('');
+  });
+
+  it('refuses a version that is not x.y.z, which decide would silently bootstrap from', () => {
+    const result = runDeclared(fixture({ npm: '0.1', pypi: '0.1' }));
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('do not agree on one x.y.z version');
+  });
+
+  it('matches the committed tree, so the next pull request branches from a real number', () => {
+    const declared = spawnSync(process.execPath, [script, 'declared'], { encoding: 'utf8' });
+    // The workspace root package.json is private and declares 0.0.0; the released version
+    // lives on the packages release.config.json lists.
+    const manifest = JSON.parse(
+      readFileSync(fileURLToPath(new URL('packages/spec/package.json', root)), 'utf8'),
+    );
+
+    expect(declared.status).toBe(0);
+    expect(declared.stdout.trim()).toBe(`v${manifest.version}`);
+  });
+
+  it('returns the shared version as data, not only as text', () => {
+    const dir = fixture({ npm: '0.1.53', pypi: '0.1.53' });
+    const parsed = parseConfig(JSON.parse(readFileSync(join(dir, 'release.config.json'), 'utf8')));
+
+    expect(declaredVersion({ config: parsed, root: dir })).toBe('0.1.53');
   });
 });
