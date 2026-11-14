@@ -11,10 +11,12 @@
  * `pnpm build`. When an input cannot be read or parsed, it reports that as a
  * failure instead of skipping the claim: a guard that quietly checks nothing is
  * worse than no guard.
+ *
+ * docs-claims-file: family; it names the bad codes it refuses as worked examples
  */
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
@@ -25,10 +27,13 @@ import {
   DIAGNOSTIC_NAMESPACES,
   diagnosticCodes,
   exactPins,
+  fileCodeAnnotation,
   headingSlugs,
   isProposalPage,
   proposalStatus,
+  sourceCodeAnnotation,
   targetTokens,
+  withoutSourceAnnotations,
 } from './docs-claims.mjs';
 import { profileClaims, resolveSpecPath, specPathClaims } from './spec-paths.mjs';
 
@@ -213,6 +218,33 @@ const EXAMPLES_README = 'examples/README.md';
 // Build output and vendored trees hold copies of READMEs and generated files,
 // not claims about this repository, so they are not part of any surface.
 const PRUNED = new Set(['node_modules', 'dist', 'build', '.venv', '__pycache__', '.pytest_cache']);
+
+// The same idea for the source walk, plus the tool caches a build leaves behind.
+const SOURCE_PRUNED = new Set([
+  ...PRUNED,
+  '.next',
+  '.turbo',
+  '.mypy_cache',
+  '.ruff_cache',
+  'coverage',
+]);
+
+/**
+ * The trees whose comments and string literals cite diagnostics. `examples` and
+ * `site` are included because both emit prose-shaped strings that ship.
+ */
+const SOURCE_ROOTS = ['packages', 'runtimes', 'scripts', 'site', 'examples'];
+
+/** Source, not data: a JSON file has no comments to drift. */
+const SOURCE_EXTENSIONS = new Set(['.ts', '.mts', '.js', '.mjs', '.py']);
+
+/**
+ * Tests and fixtures name codes they have not registered on purpose — that is what
+ * makes them tests of this check. Reading them would make every bad-fixture test a
+ * build failure, so they are the one surface exempt by path rather than by marker.
+ */
+const SOURCE_FIXTURE =
+  /(?:^|\/)(?:__tests__|__fixtures__|fixtures|test|tests)\/|\.(?:test|spec)\.[cm]?[jt]s$|(?:^|\/)conftest\.py$/;
 
 /**
  * The command names in the CLI's `COMMANDS` table, or `undefined` when the table
@@ -1231,6 +1263,44 @@ function markdownFiles() {
 }
 
 /**
+ * Every source file whose comments and strings can cite a diagnostic.
+ *
+ * @returns {string[]}
+ */
+function sourceFiles() {
+  /** @type {string[]} */
+  const files = [];
+
+  /** @param {string} directory */
+  function walk(directory) {
+    let entries;
+    try {
+      entries = readdirSync(join(root, directory), { withFileTypes: true }).sort((a, b) =>
+        a.name < b.name ? -1 : 1,
+      );
+    } catch (cause) {
+      fail(directory, 1, `cannot list source directory: ${String(cause)}`);
+      return;
+    }
+    for (const entry of entries) {
+      const next = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (!SOURCE_PRUNED.has(entry.name)) walk(next);
+      } else if (
+        entry.isFile() &&
+        SOURCE_EXTENSIONS.has(extname(entry.name)) &&
+        !SOURCE_FIXTURE.test(next)
+      ) {
+        files.push(next);
+      }
+    }
+  }
+
+  for (const directory of SOURCE_ROOTS) walk(directory);
+  return files;
+}
+
+/**
  * @param {string} file
  */
 function checkRelativeLinks(file) {
@@ -1484,6 +1554,91 @@ function annotatedFor(file, line, annotation, required) {
 }
 
 /**
+ * Every code-shaped token resolves to a registered code, or is marked as something else.
+ *
+ * One implementation serves both surfaces, because a published page and a source comment
+ * make the same claim — "this gate exists" — and drifted in the same way. Only the
+ * marker's comment syntax and the tallies differ, so those are parameters.
+ *
+ * @param {object} options
+ * @param {string} options.file
+ * @param {{ line: number, token: string, wildcard: boolean }[]} options.citations
+ * @param {Map<string, string>} options.registered
+ * @param {(line: number) => { kind: string, reason: string } | undefined} options.annotationAt
+ * @param {{ family: string, retired: string }} options.markers
+ *   how the marker is written on this surface, quoted in the failure message
+ * @param {boolean} [options.exempt] a design proposal may name codes it proposes
+ * @param {(code: string) => void} [options.onRegistered]
+ * @returns {{ claims: number, citations: number }} `claims` counts every citation that
+ *   was resolved or excused, `citations` only those named a registered code outright
+ */
+function resolveDiagnosticCitations({
+  file,
+  citations,
+  registered,
+  annotationAt,
+  markers,
+  exempt = false,
+  onRegistered,
+}) {
+  let claims = 0;
+  let confirmed = 0;
+
+  for (const citation of citations) {
+    const { token, wildcard } = citation;
+    const line = citation.line;
+    const annotation = annotationAt(line);
+
+    if (wildcard) {
+      const prefix = token.slice(0, -1);
+      const family = [...registered.keys()].filter((code) => code.startsWith(prefix));
+      if (family.length === 0) {
+        fail(
+          file,
+          line,
+          `cites the family \`${token}\`, which covers no registered code; nearest registered: ${nearestCodes(
+            `${prefix}x`,
+            registered.keys(),
+          )}`,
+        );
+        continue;
+      }
+      claims += 1;
+      if (exempt || annotatedFor(file, line, annotation, 'family')) continue;
+      fail(
+        file,
+        line,
+        `cites the wildcard \`${token}\`, which names no registered code on its own (${family.length} codes match, for example \`${family[0]}\`); name the codes or mark the line \`${markers.family}\``,
+      );
+      continue;
+    }
+
+    if (registered.has(token)) {
+      onRegistered?.(token);
+      claims += 1;
+      confirmed += 1;
+      continue;
+    }
+
+    if (exempt) continue;
+    if (annotatedFor(file, line, annotation, 'retired')) {
+      claims += 1;
+      continue;
+    }
+    fail(
+      file,
+      line,
+      `cites \`${token}\`, which no diagnostic registry declares; nearest registered: ${nearestCodes(
+        token,
+        registered.keys(),
+      )}. If the code was retired, mark the line \`${markers.retired}\``,
+    );
+  }
+
+  return { claims, citations: confirmed };
+}
+
+/**
  * Every diagnostic code a document cites is a code the build actually registers.
  *
  * This is the class of error the rest of this file could not see. A page naming
@@ -1505,65 +1660,85 @@ function checkDiagnosticCodes(registered) {
     const text = read(file);
     if (text === undefined) continue;
     const lines = text.split('\n');
-    const proposal = isProposalPage(file);
 
-    for (const citation of diagnosticCodes(text)) {
-      const { token, wildcard } = citation;
-      const line = citation.line;
-      const annotation = codeAnnotation(lines[line - 1] ?? '');
-
-      if (wildcard) {
-        const prefix = token.slice(0, -1);
-        const family = [...registered.keys()].filter((code) => code.startsWith(prefix));
-        if (family.length === 0) {
-          fail(
-            file,
-            line,
-            `cites the family \`${token}\`, which covers no registered code; nearest registered: ${nearestCodes(
-              `${prefix}x`,
-              registered.keys(),
-            )}`,
-          );
-          continue;
-        }
-        claimsChecked += 1;
-        if (proposal || annotatedFor(file, line, annotation, 'family')) continue;
-        fail(
-          file,
-          line,
-          `cites the wildcard \`${token}\`, which names no registered code on its own (${family.length} codes match, for example \`${family[0]}\`); name the codes or mark the line \`<!-- docs-claims: family; why -->\``,
-        );
-        continue;
-      }
-
-      if (registered.has(token)) {
-        cited.add(token);
-        claimsChecked += 1;
-        diagnosticCitations += 1;
-        continue;
-      }
-
-      if (proposal) continue;
-      if (annotatedFor(file, line, annotation, 'retired')) {
-        claimsChecked += 1;
-        continue;
-      }
-      fail(
-        file,
-        line,
-        `cites \`${token}\`, which no diagnostic registry declares; nearest registered: ${nearestCodes(
-          token,
-          registered.keys(),
-        )}. If the code was retired, mark the line \`<!-- docs-claims: retired; why -->\``,
-      );
-    }
+    const tally = resolveDiagnosticCitations({
+      file,
+      citations: diagnosticCodes(text),
+      registered,
+      annotationAt: (line) => codeAnnotation(lines[line - 1] ?? ''),
+      markers: {
+        family: '<!-- docs-claims: family; why -->',
+        retired: '<!-- docs-claims: retired; why -->',
+      },
+      exempt: isProposalPage(file),
+      onRegistered: (code) => cited.add(code),
+    });
+    claimsChecked += tally.claims;
+    diagnosticCitations += tally.citations;
   }
 
   return cited;
 }
 
+/**
+ * Every diagnostic code a source comment or string literal cites is one the build
+ * actually registers.
+ *
+ * The same failure as the page check, one surface further in, and not a hypothetical
+ * one: `packages/ir/src/gates/resume.ts` documented a gate under a name no registry
+ * declares, and the page check could not see it because the claim was a docstring. The
+ * code that emits a diagnostic and the comment describing it are two halves a reader
+ * trusts equally, and only one of them was ever checked.
+ *
+ * Tests and fixtures are exempt by path, because naming an unregistered code is exactly
+ * what they exist to do.
+ *
+ * @param {Map<string, string>} registered
+ * @returns {{ citations: number, exemptions: string[] }}
+ */
+function checkSourceDiagnosticCodes(registered) {
+  let citations = 0;
+  /** @type {string[]} */
+  const exemptions = [];
+
+  for (const file of sourceFiles()) {
+    const text = read(file);
+    if (text === undefined) continue;
+
+    const fileAnnotation = fileCodeAnnotation(text);
+    if (fileAnnotation !== undefined) {
+      if (fileAnnotation.reason === '') {
+        fail(
+          file,
+          fileAnnotation.line,
+          `carries a \`docs-claims-file\` marker of kind \`${fileAnnotation.kind}\` with no reason; write one, because it is the only thing a reviewer reads`,
+        );
+        continue;
+      }
+      exemptions.push(`${file} (${fileAnnotation.kind}: ${fileAnnotation.reason})`);
+      continue;
+    }
+
+    const lines = text.split('\n');
+    const tally = resolveDiagnosticCitations({
+      file,
+      citations: diagnosticCodes(lines.map(withoutSourceAnnotations).join('\n')),
+      registered,
+      annotationAt: (line) => sourceCodeAnnotation(lines[line - 1] ?? ''),
+      markers: {
+        family: '// docs-claims: family; why',
+        retired: '// docs-claims: retired; why',
+      },
+    });
+    citations += tally.citations;
+  }
+
+  return { citations, exemptions };
+}
+
 const registeredDiagnostics = registeredDiagnosticCodes();
 const citedDiagnostics = checkDiagnosticCodes(registeredDiagnostics);
+const sourceDiagnostics = checkSourceDiagnosticCodes(registeredDiagnostics);
 
 /**
  * Registered codes no document mentions.
@@ -1619,3 +1794,14 @@ process.stdout.write(
 process.stdout.write(
   `${specPathClaimsChecked} spec field-path citations resolve against the schema, and ${profileClaimsChecked} operating-profile names match its enum.\n`,
 );
+process.stdout.write(
+  `${sourceDiagnostics.citations} diagnostic-code citations in source comments and strings resolve to a registered code.\n`,
+);
+if (sourceDiagnostics.exemptions.length > 0) {
+  process.stdout.write(
+    `${sourceDiagnostics.exemptions.length} source file(s) opt out of that check, each with a stated reason:\n`,
+  );
+  for (const exemption of sourceDiagnostics.exemptions) {
+    process.stdout.write(`  ${exemption}\n`);
+  }
+}

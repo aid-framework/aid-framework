@@ -419,6 +419,47 @@ Whether AID should *build* private placement. Recorded, not implemented:
 
 This is the honest position the docs must state, and §3 makes them state it.
 
+## 3.5 Phase B — the citation check reaches source comments
+
+§1.14 found exactly one drifting code in product source, which means the round-4/6 checker was
+doing its job on prose and nothing else: a docstring could cite a gate that does not exist and
+nothing failed, because the walk only opened Markdown. Phase B closes that, using the round-6
+annotation vocabulary rather than a second one.
+
+1. `scripts/check-docs-claims.mjs` — the markdown pass and the new source pass share one
+   resolver. Scope is `packages/`, `runtimes/`, `scripts/`, `site/` and `examples/`, extensions
+   `.ts .mts .js .mjs .py`, with `test/`, `tests/`, `fixtures/`, `__fixtures__/`, `__tests__/`,
+   `*.test.*`, `*.spec.*` and `conftest.py` exempt: a fixture that names a bad code is asserting
+   the checker's behaviour, not citing a gate.
+2. `scripts/docs-claims.mjs` — `sourceCodeAnnotation` accepts the marker in `//`, `#` and bare
+   block-comment form, because the packages are TypeScript and the runtime is Python and a
+   check that understood one would cover half the tree. `fileCodeAnnotation` reads one
+   `docs-claims-file:` marker from the first fifteen lines for a file that names bad codes
+   throughout.
+3. Exemptions are printed, never silent: `node scripts/check-docs-claims.mjs` lists each
+   file-level exemption with its reason, so a reviewer sees what was excused.
+4. Acceptance: appending `// a reintroduced claim: ir/resume-secret-inline` to
+   `packages/ir/src/gates/resume.ts` fails with
+
+   ```text
+   packages/ir/src/gates/resume.ts:279: cites `ir/resume-secret-inline`, which no diagnostic
+   registry declares; nearest registered: `ir/resume-key-alias`, `ir/resume-key-conflict`,
+   `ir/resume-replay-weak`
+   ```
+
+   Removing it passes.
+
+The one defect was not the only one in that docstring. Fixing D-1 meant reading the whole block,
+which claimed "Three refusals" over four bullets, and claimed "each is an *error* only where the
+profile promised the control" — true of `ir/resume-unsigned` and `ir/resume-replay-weak`, false
+of `ir/resume-key-conflict` and `ir/resume-key-alias`, which are unconditional errors at
+`resume.ts:108`, `:241`, `:253` and `:267`. The severity is decided at the `report` call site, not
+stored per code in the registry, which is why the sentence could drift without a gate seeing it.
+Both are corrected.
+
+What this does not catch: prose in a source comment that asserts behaviour without naming a code.
+That stays a review obligation.
+
 ---
 
 ## 4. Phase C — resume hardening
