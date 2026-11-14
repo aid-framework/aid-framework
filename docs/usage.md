@@ -166,7 +166,7 @@ Covers:
 <!-- capability-family: guardrails -->
 
 A guardrail names the stages it runs at and what happens when it fails. Naming the stage is
-the enforcement: the security gate is document-global, so a POST route that reaches a prompt
+the enforcement: the security gate is document-global, so an HTTP route that reaches a prompt
 is inspected whether or not the route mentions a guardrail.
 
 ```yaml
@@ -207,7 +207,7 @@ What comes out:
 
 What is refused:
 
-- A POST route that hands caller text to a prompt with no input-stage guardrail. This is the
+- An HTTP route that hands caller text to a prompt with no input-stage guardrail. This is the
   gate that runs on the first `aid validate`, not on the first incident.
 - `onFail: escalate` on an input-stage guardrail, because escalation needs a pause the
   request path cannot offer.

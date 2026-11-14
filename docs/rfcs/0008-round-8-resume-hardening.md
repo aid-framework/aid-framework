@@ -306,6 +306,10 @@ Two real copy defects remain, and both are Phase D's:
 | `docs/index.md:24` | Headline "**Prompt injection is a build error**". The body (`:25`) is accurate: the gate refuses a route that passes caller text to a prompt with no input guardrail. The *missing guardrail* is the build error; injection itself is not detected. |
 | `docs/index.md:158-160` | "Enterprise … turns the controls into requirements: an identity block whose `verifiedBy` names the entry point …, a private network, …" — accurate as a list of *requirements*, but it does not distinguish what is generated from what is declared, which is what makes the §1.10 sentences read as true. |
 
+Phase A closed the second row: `docs/index.md:160-163` now says "All of those are gated, and all but
+two are generated", naming the private network and token verification as the two exceptions. Only
+the headline remains for Phase D, so Phase D is one line of copy plus this record.
+
 ### 1.13 `release-plan` CI race — PASS
 
 `.github/workflows/ci.yml:493-543`. The job runs only on `pull_request`, does

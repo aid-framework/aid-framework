@@ -195,7 +195,7 @@ Policies are evaluated at declared stages, and a failing policy has a declared a
 
 ### Unprotected routes are refused
 
-A POST route that passes caller text to a prompt with no input guardrail fails the build before it can be exposed.
+An HTTP route that passes caller text to a prompt with no input guardrail fails the build before it can be exposed.
 
 - **Turned on by:** `guardrails[].stages`
 - **Reference:** [spec](./reference/spec.md#guardrail)
