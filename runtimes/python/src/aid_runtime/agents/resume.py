@@ -100,7 +100,6 @@ class NonceStore(Protocol):
         the signer took an injected one would prune a row before the replay check and
         accept the replay.
         """
-        ...
 
 
 class InProcessNonceStore:

@@ -462,6 +462,57 @@ That stays a review obligation.
 
 ---
 
+## 3.6 Phase E — the `release-plan` race, fixed by removing the race
+
+§1.13 found that `release-plan` compares the manifests against the newest **tag** while
+`release.yml` mints that tag only after `main`'s CI passes. In the window between a releasable
+merge and its tag, the tag list is a patch behind the manifests, `decide` derives its version
+from tags alone, and a correctly stamped pull request fails `verify` with a mismatch that is not
+real. §5.3 proposed waiting for the tag with bounded backoff. That would have made the window
+survivable rather than impossible, and it leaves a second failure: a pull request branched
+before the tag exists still plans the wrong number after the wait.
+
+The version a pull request must stamp is a function of what the **base branch's manifests
+declare**, and a manifest cannot lag — the stamp is committed with the change that needed it.
+So the fix is to feed `decide` that number instead of the tag list:
+
+1. `scripts/version.mjs` gains `declared`, which prints the tag every configured manifest in
+   this checkout declares, and refuses a tree where they disagree, where one declares nothing,
+   or where the value is not `x.y.z` — the last because `decide` would silently fall back to
+   `bootstrapVersion` and plan a version nobody could mean.
+2. `ci.yml`'s `release-plan` extracts the base branch with `git archive` into `$RUNNER_TEMP`,
+   runs the *current* `declared` against that tree's manifests, and writes the single tag it
+   prints to `tags.txt`. `decide` then plans `base + 1`, which is what the author read off
+   `main` and stamped. The changed-file range still comes from `git merge-base`, so the release
+   decision stays about this pull request's paths.
+3. `git archive` rather than `git worktree` because a worktree rewrites `.git` state in the
+   checkout CI is testing, and nothing else in the job should be able to observe that.
+4. A base branch with no single version — only a checkout predating the first stamp — falls
+   back to the tag list with a `::warning::`, so the bootstrap release still works.
+
+Consequence worth stating: `release-plan` no longer reads tags at all, so its `tags.txt` and
+`release.yml`'s are no longer the same input. They name the same version once `release.yml` has
+caught up, and the comment in the workflow says so rather than claiming the two "cannot
+disagree".
+
+Six tests cover `declared`: the tag form, that its output makes `decide` plan the next patch,
+disagreeing manifests, a missing version, a non-`x.y.z` version, and the committed tree itself —
+the last because a PR that branches from a tree whose manifests are out of step would inherit
+the confusion.
+
+### The three code-scanning alerts
+
+§1.15 proposed dismissing #116, #117 and #119 (`py/ineffectual-statement` on `...`) and §5.3
+asked first whether the rule also fires on a docstring-only body. It does not: every module in
+this repository opens with a bare string expression statement, and none is flagged, so the
+query exempts a scope's docstring. That makes the `...` the redundant half of the pair: in
+`Metric.name`, `Metric.deterministic` and `NonceStore.claim` the docstring *is* the body, so
+removing `...` leaves a valid protocol stub that the rule has nothing to say about. Three lines
+deleted, no behaviour change, `ruff` and `mypy` still clean. A dismissal would have been a
+written exception for a fixable code smell.
+
+---
+
 ## 4. Phase C — resume hardening
 
 **This section is a design proposal and needs approval before any code is written.**
@@ -637,7 +688,7 @@ assertions still hold). Added:
 | A | `network.private` honesty, 4 edits (§3) | — | small | normal review |
 | B | Extend the citation gate to source; fix D-1 | — | small | normal review |
 | D | Homepage copy: `index.md:24` headline, `:158-162` split | — | small | normal review |
-| E | `release-plan` race: wait with backoff for the expected base tag | — | small | normal review |
+| E | `release-plan`: plan from the base branch's manifests, not the tag list (§3.6) | — | small | normal review |
 | C | Resume hardening (§4) | **human approval of §4.1 and §4.2** | large | **no admin bypass; CODEOWNERS; human reviewer** |
 
 A, B, D and E are independent and touch disjoint files, so they can run in parallel. C is
@@ -658,13 +709,19 @@ last because it changes emitted behaviour and needs the review.
 
 ### 5.3 Phase E and the code-scanning alerts
 
-The `release-plan` fix is the only CI change: poll for the tag covering the merge base with
-bounded backoff, then fail with a message that names the missing tag rather than reporting a
-version mismatch that is not real.
+The `release-plan` fix shipped differently from this section's first draft, which proposed
+polling for the tag covering the merge base with bounded backoff. Backoff shortens the window;
+it does not remove it, and a branch cut before the tag exists still plans the wrong number after
+waiting. The base branch's manifests are the version, and they cannot lag, so `plan` now derives
+the expected tag from them via the new `declared` command (§3.6). `release.yml` still diffs the
+real tag list, because there the tags are the question rather than an input to someone else's
+answer.
 
-Alerts #116, #117 and #119 are dismissed with a written reason (§1.15). Before dismissing,
-confirm whether `py/ineffectual-statement` also fires on a lone docstring body; if it does not,
-substituting a docstring is a cleaner resolution than a dismissal. One CodeQL run answers it.
+Alerts #116, #117 and #119: §1.15 proposed dismissal, and this section asked whether
+`py/ineffectual-statement` also fires on a lone docstring body. It does not — every module in
+this repository opens with a bare string expression statement and none is flagged. So the
+docstring is the body and the `...` is the redundant statement: three deletions resolve all
+three alerts with no behaviour change and no written exception (§3.6).
 
 ---
 
