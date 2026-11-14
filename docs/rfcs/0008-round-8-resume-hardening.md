@@ -515,6 +515,55 @@ removing `...` leaves a valid protocol stub that the rule has nothing to say abo
 deleted, no behaviour change, `ruff` and `mypy` still clean. A dismissal would have been a
 written exception for a fixable code smell.
 
+## 3.7 Phase C — five things implementation changed about this plan
+
+Recording these here rather than in the pull request, because four of them are corrections to
+what §4 said and one is a defect this round found in code that was already shipped.
+
+**1. The rollout is 0.34, not 0.33.** §4.2 argued for 0.34 and an earlier draft of the
+implementation used the existing `IDENTITY_VERIFIED_BY_MIN_VERSION` (`0.33`) to avoid adding a
+version. That was wrong for the reason §4.2 already gives: a spec version is the only thing a
+document carries that says which rules its author was writing against. Escalating under 0.33
+would refuse, in this build, documents that built yesterday — and nothing distinguishes them
+from documents written today. So `'0.34'` is in `SUPPORTED_SPEC_VERSIONS`, in the schema enum,
+and `RESUME_OWNER_BINDING_MIN_VERSION` names it; `docs/migration.md` and the spec changelog say
+that 0.34 adds no grammar and exists to date a rule. A test asserts 0.33 is silent.
+
+**2. Clock leeway changes an existing test's premise.** §4.6 added 30 seconds of leeway, which
+makes a checkpoint signed with an expiry slightly in the past acceptable where it previously
+refused. The runtime test that proved "expired is refused" now pins the clock far enough past
+the expiry to be outside the leeway, and a second test proves the boundary: inside the leeway,
+accepted; outside, refused. The old test would have passed either way and silently stopped
+testing anything.
+
+**3. A generator bug made the opaque 403 non-functional, and no gate caught it.**
+`pythonString()` returns a literal, not an assignment. Used alone as a block, `RESUME_REFUSED`
+was emitted as a bare module-level expression — valid Python, so `ruff`, `mypy` and the type
+checker all accepted it — while the route's `detail=RESUME_REFUSED` referenced a name that did
+not exist. Every refusal would have been a `NameError` and therefore a 500. The fix is to emit
+the assignment; the test asserts that spelling, so a future constant cannot repeat it. Worth
+naming plainly: this is the class of defect the round's own citation gate cannot reach, because
+the emitted file is correct Python and only wrong at runtime.
+
+**4. `deep_agents.py` was never given the principal.** Threading `Principal.subject` through the
+native loop left the deepagents engine calling `_guardrail_text`, `_pause`, `_complete` and
+`_guardrail_tool_calls` without it — a real gap, caught by `mypy` and by the seventeen
+deepagents tests, not by review. It is the argument for `_pause` and `_complete` taking
+`principal` explicitly rather than reading instance state: a missed call site is a type error
+instead of a checkpoint that silently carries `owner=""`.
+
+**5. The reference generator's constant lookup now accepts a type annotation.**
+`{const:RESUME_OWNER_BINDING_MIN_VERSION}` could not resolve because the constant is declared
+`: SpecVersion`, and the extractor only matched the bare spelling. Widening the pattern was the
+right fix: the annotation is the same fact written more carefully, not a different one. The
+alternative — dropping the annotation to satisfy a doc generator — would have let a
+documentation tool constrain the source.
+
+Two supporting changes: `.github/CODEOWNERS` now names the resume surface explicitly, so the
+review requirement in §5.2 survives a second maintainer; and the example's two resume tests
+assert the opaque body rather than `detail["reason"]`, which is what §4.7 asked for and what the
+old tests could not have caught.
+
 ---
 
 ## 4. Phase C — resume hardening

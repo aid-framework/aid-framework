@@ -72,6 +72,7 @@ export const IR_DIAGNOSTIC_CODES = {
   resumeReplayWeak: 'ir/resume-replay-weak',
   resumeKeyConflict: 'ir/resume-key-conflict',
   resumeKeyAlias: 'ir/resume-key-alias',
+  resumeOwnerUnbound: 'ir/resume-owner-unbound',
   approvalStepTool: 'ir/approval-step-tool',
   cloudUnsupported: 'ir/cloud-unsupported',
   regionTarget: 'ir/region-target',
@@ -205,6 +206,11 @@ export const IR_DIAGNOSTIC_METADATA = {
   'ir/resume-replay-weak': {
     condition: 'a pausable agent with no store to claim a nonce in',
     escalation: 'enterprise refuses it; `standard` warns',
+  },
+  'ir/resume-owner-unbound': {
+    condition: 'a pausable agent whose deployment names no `identity.verifiedBy`',
+    escalation:
+      '`enterprise` from spec {const:RESUME_OWNER_BINDING_MIN_VERSION} refuses it; `standard` warns',
   },
   'ir/resume-unsigned': {
     condition: 'a pausable agent with no checkpoint signing key',

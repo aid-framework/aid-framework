@@ -95,6 +95,12 @@ class CheckpointIntegrity(BaseModel):
     without breaking the signature and ``nonce`` cannot be swapped to replay a spent
     checkpoint under a fresh identity. The signature itself does not cover itself.
 
+    ``owner`` binds the checkpoint to the principal that paused it: a keyed hash of the
+    caller's ``subject``, computed by the signer rather than sent by the caller. Empty
+    means the pause was made by a principal with no subject, which is the honest state
+    of an app that has not integrated token verification -- such a checkpoint stays a
+    bearer capability, and ``ir/resume-owner-unbound`` is what says so at build time.
+
     Absent on a runtime built without a signer (a library embedding the loop directly);
     the generated app always passes one, so an HTTP checkpoint is never unsigned.
     """
@@ -104,6 +110,7 @@ class CheckpointIntegrity(BaseModel):
     issued_at: int = Field(ge=0)
     expires_at: int = Field(ge=0)
     nonce: str = Field(min_length=1)
+    owner: str = ""
     signature: str = ""
 
 

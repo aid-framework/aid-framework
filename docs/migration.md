@@ -429,8 +429,8 @@ that say where the key and the replay record come from.
 
 Both are accepted on the document's `state` and on an agent's own `state`, and an agent that
 declares neither inherits the document's. The generated resume route now refuses a checkpoint it
-did not sign, one past its deadline, and one the store has already spent, each as a `403` whose
-`detail.reason` names which of the three it was.
+did not sign, one past its deadline, and one the store has already spent, each as a `403`. (From
+0.34 that body is one opaque refusal rather than a reason -- see "0.33 to 0.34" below.)
 
 ### Nothing to do for a 0.31 document
 
@@ -513,6 +513,59 @@ runtime with no principal at all and the runtime filled in `Principal()` -- whic
 authenticated -- so the seamed-out dependency was not merely unused, it was bypassed. A `write` tool
 guarded by `isAuthenticated()` was reachable by anyone who could reach the route, which is the exact
 failure such a policy exists to prevent. Every caller that wants to claim a caller now says so.
+
+## 0.33 to 0.34: a checkpoint belongs to whoever paused it
+
+0.34 adds no key. It dates a rule over two declarations that already exist, and it is where the
+generated resume route stops being a bearer capability by default.
+
+A signed checkpoint proves the app issued it. It does not prove the caller should hold one, so
+until 0.34 the route was still a capability: whoever held the checkpoint could resume the run and
+approve the call it was waiting on. The fix binds the checkpoint to the principal that paused it --
+a keyed hash of `Principal.subject` inside the signed payload -- and that is only possible if the
+caller *arrives* with a subject, which means somebody verified a token. `identity.verifiedBy` is
+where the document says who, so the rule is that a pausable agent under `enterprise` must have one.
+
+> **Why the rule is dated 0.34 and not 0.33.** The key it reads arrived in 0.33, so the refusal
+> could have been enforced there. A version is the only thing a document already carries that says
+> which rules its author was writing against, and escalating under 0.33 would refuse -- this build --
+> documents that built yesterday and cannot be told apart from new ones. `standard` still only warns:
+> there the checkpoint stays a capability and holding it is still authority to approve the held call.
+
+### What a 0.34 `enterprise` document must now declare
+
+| Refusal | What is missing | The fix |
+| --- | --- | --- |
+| `ir/resume-owner-unbound` | Under `profile: enterprise`, an agent that can pause and no deployment naming `identity.verifiedBy`. | Name what verifies tokens, and have the app populate `Principal.subject` from it. |
+
+Under `standard` the same pair is a warning, not a refusal, because the profile requires no identity
+at all and a requirement the profile cannot satisfy is never added to it.
+
+### What changed in the runtime, at every version
+
+None of this is gated on `specVersion`: a checkpoint verified by this runtime is a different object
+from one verified by the previous one.
+
+- **The payload is signed under a purpose prefix.** `aid.checkpoint.v2\0` separates a checkpoint MAC
+  from every other MAC the same secret could produce, so the owner hash can never be presented as a
+  signature. A checkpoint in flight across the upgrade fails verification and is refused.
+- **The key must be at least 32 bytes.** A shorter one is refused when the signer is built, with a
+  message naming the variable and the minimum, rather than accepted as a weaker guarantee.
+- **A rotation does not strand a live approval.** `{variable}_PREVIOUS` is accepted for verification
+  while new checkpoints are signed with the current key. Leave it set for longer than the checkpoint
+  TTL.
+- **Expiry tolerates 30 seconds of clock skew.** A checkpoint is live while `now < expires_at + 30`.
+- **A refusal says nothing.** A checkpoint the app will not honour is one opaque `403`, and the
+  reason -- edited, expired, unbound, replayed, unsigned -- is logged against the agent id and the
+  nonce. It used to be `detail.reason`; a caller holding a checkpoint could otherwise tune the next
+  attempt against the verifier. A body that is not a checkpoint shape at all is still a `422` naming
+  the field, because that is a client bug rather than a probed secret.
+
+### Nothing to do for a 0.33 document
+
+It still parses and still builds. `aid validate` reports nothing new from `ir/resume-owner-unbound`;
+the runtime changes above apply as soon as the app is regenerated and redeployed. A client that read
+`detail.reason` must stop: it no longer exists at any version.
 
 ## 0.27 to 0.28: promoting a candidate, and the feedback that starts a loop
 

@@ -27,6 +27,7 @@ interface Options {
   second?: Record<string, unknown>;
   tools?: Record<string, unknown>;
   agents?: Record<string, unknown>;
+  deployments?: Record<string, unknown>;
 }
 
 const TYPES = {
@@ -108,6 +109,7 @@ function document(options: Options = {}): unknown {
     };
   }
   if (options.state !== undefined) doc.state = options.state;
+  if (options.deployments !== undefined) doc.deployments = options.deployments;
   return doc;
 }
 
@@ -316,5 +318,67 @@ describe('the resume gate', () => {
     });
     expect(outcome.ir.state?.checkpointTtlMinutes).toBe(45);
     expect(outcome.ir.state?.signingKeyEnv).toBe('AID_CHECKPOINT_KEY');
+  });
+});
+
+/**
+ * A signature proves the app issued a checkpoint. It does not say who may spend it, and
+ * the generated route closes that gap only when the caller arrives with a subject -- which
+ * needs somebody to verify a token first. `identity.verifiedBy` is that somebody, so a
+ * document that names none leaves the checkpoint a bearer capability, and the gate has to
+ * say so rather than let the signature imply an authorization it does not provide.
+ */
+describe('the resume gate on owner binding', () => {
+  const IDENTITY = { kind: 'oidc', issuer: 'https://idp.example.com' };
+
+  it('warns that a standard document leaves a signed checkpoint a bearer capability', () => {
+    const outcome = resume({ specVersion: '0.34', state: SIGNED });
+    expect(outcome.codes).toEqual([IR_DIAGNOSTIC_CODES.resumeOwnerUnbound]);
+    const unbound = only(outcome, IR_DIAGNOSTIC_CODES.resumeOwnerUnbound);
+    expect(unbound.severity).toBe('warning');
+    expect(unbound.message).toContain('bearer capability');
+  });
+
+  it('refuses an enterprise document that names nobody who verifies a token', () => {
+    const outcome = resume({ specVersion: '0.34', profile: 'enterprise', state: SIGNED });
+    expect(only(outcome, IR_DIAGNOSTIC_CODES.resumeOwnerUnbound).severity).toBe('error');
+  });
+
+  it('says nothing once a deployment names who verifies tokens', () => {
+    const outcome = resume({
+      specVersion: '0.34',
+      profile: 'enterprise',
+      state: SIGNED,
+      deployments: {
+        prod: { target: 'container', identity: { ...IDENTITY, verifiedBy: 'api-gateway' } },
+      },
+    });
+    expect(outcome.codes).toEqual([]);
+  });
+
+  it('stays quiet before the version that enforces it', () => {
+    // The rule reads a key that exists from 0.33, but a 0.33 document was written before the
+    // rule, and this build cannot tell it apart from a new one -- so escalating there would
+    // refuse a document that built yesterday. 0.34 is where the rule starts.
+    const outcome = resume({ specVersion: '0.33', profile: 'enterprise', state: SIGNED });
+    expect(outcome.codes).toEqual([]);
+  });
+
+  it('leaves the missing declaration to the profile gate under enterprise', () => {
+    // The profile gate already refuses `identity.verifiedBy` under `enterprise`, naming the
+    // deployment. Reporting the same absence here would tell the author to make one change
+    // and call it two problems.
+    const outcome = resume({
+      specVersion: '0.34',
+      profile: 'enterprise',
+      state: SIGNED,
+      deployments: { prod: { target: 'container', identity: IDENTITY } },
+    });
+    expect(outcome.codes).toEqual([]);
+  });
+
+  it('says nothing about a document whose agents cannot pause', () => {
+    const outcome = resume({ specVersion: '0.34', guardrailAction: 'block' });
+    expect(outcome.codes).toEqual([]);
   });
 });

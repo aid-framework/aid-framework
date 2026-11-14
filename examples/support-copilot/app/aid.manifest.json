@@ -54,7 +54,7 @@
       "generatorVersion": "0.1.0",
       "owner": "generated",
       "path": "app/generated/agents.py",
-      "sha256": "4296ff0617557eda9ff0f30863410caef92227857dd538c5247f563c0302b257"
+      "sha256": "2a087606697a4ec9e82ca98d2fec8236b6e456baa0f468709467b8bfdc522622"
     },
     {
       "generator": "@aid-framework/generator-py-fastapi",

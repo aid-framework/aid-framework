@@ -87,6 +87,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.31',
   '0.32',
   '0.33',
+  '0.34',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -253,6 +254,19 @@ export const RESUME_SIGNING_MIN_VERSION: SpecVersion = '0.32';
  * undeclared when the author had in fact declared it.
  */
 export const IDENTITY_VERIFIED_BY_MIN_VERSION: SpecVersion = '0.33';
+
+/**
+ * The first spec version under which `enterprise` refuses a pausable agent whose deployment
+ * declares no `identity.verifiedBy`.
+ *
+ * The rule is about a *pair* of existing declarations -- an agent that pauses and a
+ * deployment that names no verifier -- so it adds no grammar and could be enforced at 0.33.
+ * It is dated to 0.34 because a version is the only thing a document already carries that
+ * says which rules its author was writing against: escalating under 0.33 would refuse, this
+ * build, documents that built yesterday and cannot be told apart from new ones. See
+ * `docs/migration.md` section "0.33 to 0.34".
+ */
+export const RESUME_OWNER_BINDING_MIN_VERSION: SpecVersion = '0.34';
 
 /** The metric kinds that version introduced. */
 const TRAJECTORY_METRIC_KINDS = new Set<string>([

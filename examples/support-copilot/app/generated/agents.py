@@ -7,6 +7,7 @@ that builds it over this app, and the routes that reach it.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import Annotated, Any
 
@@ -253,6 +254,11 @@ def _response(result: RunResult) -> AgentRunResponse:
 
 agent_router = APIRouter()
 
+#: Refusals are logged here rather than returned: see `RESUME_REFUSED`.
+logger = logging.getLogger(__name__)
+
+RESUME_REFUSED = "this checkpoint was refused; the operator log records why"
+
 #: The caller a generated route seeds: anonymous and unauthenticated on purpose, because
 #: nothing a generated app emits verifies a token.
 ANONYMOUS_PRINCIPAL = Principal.unauthenticated()
@@ -296,10 +302,13 @@ async def resume_agent(
     deps: Annotated[Deps, Depends(get_deps)],
     principal: Annotated[Principal, Depends(current_principal)],
 ) -> AgentRunResponse:
-    """Continue a paused run. Two different refusals, kept apart on purpose: a body this app did not
-    issue as a checkpoint at all is a 422, and a checkpoint it issued but will not honour -- edited,
-    expired, unsigned, or already spent -- is a 403 carrying `detail.reason`, so a caller can tell
-    which without parsing prose.
+    """Continue a paused run. Two different refusals, kept apart on purpose: a body that is not a
+    checkpoint shape at all is a 422 naming the field, and a checkpoint this app issued but will not
+    honour -- edited, expired, unsigned, already spent, or issued to another principal -- is one
+    opaque 403. The reason is logged against the agent id and the checkpoint nonce and is
+    deliberately absent from the response: the caller holds the checkpoint, so telling them which
+    check failed would let them tune the next attempt. The principal is the resume owner, so a run
+    paused with an identity can only be resumed by that identity.
     """
 
     try:
@@ -310,10 +319,13 @@ async def resume_agent(
     try:
         result = await runtime.resume(checkpoint, event.decision, principal=principal)
     except CheckpointRefusalError as refusal:
-        raise HTTPException(
-            status_code=403,
-            detail={"reason": refusal.reason, "message": str(refusal)},
-        ) from refusal
+        logger.warning(
+            "refused a resume for agent %s (nonce %s): %s",
+            checkpoint.agent_id,
+            checkpoint.integrity.nonce if checkpoint.integrity else None,
+            refusal.reason,
+        )
+        raise HTTPException(status_code=403, detail=RESUME_REFUSED) from refusal
     return _response(result)
 
 
