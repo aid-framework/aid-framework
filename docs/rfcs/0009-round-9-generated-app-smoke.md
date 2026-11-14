@@ -9,26 +9,30 @@
 | Verified against | `origin/main` at `c6ac24d`, release `0.1.178`, branch `nithin554-round-8-phase-c` |
 | Runtime used | `runtimes/python/.venv/Scripts/python.exe` — CPython 3.12.15 |
 
-> **What a reviewer must decide.** One reordering and one contradiction.
+> **What a reviewer must decide.** Two corrections and one reordering.
 >
-> The reordering: the brief puts generated-app smoke tests first. Phase 0 found that generated
-> apps are already booted in three CI jobs, and that the linters which would have caught the
-> Round 8 defect are already configured for those trees but never pointed at them. The smallest
-> first increment is therefore not a smoke job — it is three lines of configuration in
-> `check-all.mjs` (§3, Phase A).
+> **Correction 1.** The brief says generated apps are not booted in CI. They are, in three
+> jobs, and two of those jobs (`evals`, `guarded-reply`) also run `ruff` and `mypy` on the
+> generated trees. Both are required contexts in the `main` ruleset. CI was never blind to the
+> Round 8 class; §1.7 shows what is actually missing.
 >
-> The contradiction: the brief says PR #221 is open and must not be touched. It merged before
+> **Correction 2.** The brief says PR #221 is open and must not be touched. It merged before
 > this round began (§1.4, §4.1).
+>
+> The reordering: because CI already covers the trees, the smallest first increment is not a
+> new smoke job. It is making the *local* gate faithful to the required CI gate — four steps in
+> `check-all.mjs` that today runs only `pytest` for those two examples (§3, Phase A).
 
 Test and CI hardening only. No product features, no spec changes, no new diagnostics, and no
 changes to the resume implementation.
 
 The brief for this round rests on a premise that Phase 0 found to be false: that generated
 applications are not booted in CI, so a defect like the Round 8 `RESUME_REFUSED` name error
-could not be caught. Generated applications *are* booted, in three separate jobs. What actually
-let that defect through is narrower and cheaper to fix: the linters that would have caught it
-already exist, are already configured for the generated trees, and are simply never pointed at
-them.
+could not be caught. Generated applications *are* booted, in three separate jobs, and the two
+example jobs run `ruff` and `mypy` at the example's own configuration. What is actually wrong is
+narrower: the local `pnpm check` does not run those same four steps, so a contributor's green
+local run does not mean what it appears to mean, and a comment in `ci.yml` describes one of the
+required jobs as advisory.
 
 That changes the smallest first increment, so §3 reorders the phases. Everything else below is
 PASS/FAIL/UNCLEAR against the seven Phase 0 items, with the command or `file:line` that
@@ -190,25 +194,21 @@ the site is inconsistent with its two siblings, which are documented. The fix is
 `score` the docstring it should have had and drop the `...`, matching Phase E's shape. One
 line added, one removed.
 
-### 1.7 Other constructs that are valid syntax and fail at runtime — the class is `F821`, and the check already exists and never runs
+### 1.7 Other constructs that are valid syntax and fail at runtime — the class is `F821`, CI already catches it, and the local gate does not
 
 The Round 8 defect was a module-level name used but never bound (`RESUME_REFUSED`), emitted
 because a bare expression sat where an assignment belonged. The static rule that catches this
 is pyflakes `F821` (undefined name).
 
-Three facts, all measured:
-
-**The rule is enabled.** Both examples select it, and neither suppresses it for generated
-code. `examples/support-copilot/pyproject.toml`:
+**The rule is enabled in both examples, and it catches the exact defect.** Neither suppresses
+it for generated code — `examples/support-copilot/pyproject.toml`:
 
 ```toml
 "app/generated/**" = ["TID252", "T201", "ANN001", "ANN201"]
 ```
 
-`examples/guarded-reply/pyproject.toml` carries the same selection. `runtimes/python/pyproject.toml`
-selects `"F"  # pyflakes` too.
-
-**The rule catches the exact defect.** On a copy with the `RESUME_REFUSED` assignment deleted:
+`examples/guarded-reply/pyproject.toml` carries the same selection. On a copy with the
+`RESUME_REFUSED` assignment deleted:
 
 ```text
 $ ruff check --config examples/support-copilot/pyproject.toml exact_bug.py
@@ -219,50 +219,85 @@ F821 Undefined name `RESUME_REFUSED`
 Found 1 error.
 ```
 
-**The check never runs on these files.** `python:ruff` is
-`argv: ['python','-m','ruff','check','.']` with `cwd: 'runtimes/python'` (`check-all.mjs:178-184`).
-The same is true of `python:mypy` (`:192-198`). Generated example code is therefore never
-linted. That is the entirety of why CI missed the defect.
+**CI already runs this, on both examples.** The `evals` job (`ci.yml:155`) sets
+`working-directory: examples/support-copilot` for the whole job (`:161`) and runs `Lint`
+(`:200`), `Format check` (`:203`) and `Typecheck` (`:206`). The `guarded-reply` job (`:218`)
+runs the same three at `examples/guarded-reply` (`:274`, `:278`, `:282`).
 
-Both examples are clean under their own configuration today, and the cost of running them is
-small:
+**And both jobs are required.** Ruleset 24455063 (`main`) lists twelve required contexts:
+
+```text
+$ gh api repos/aid-framework/aid-framework/rulesets/24455063 --jq '.rules[]...'
+REQUIRED: ["node","workflows","licenses","python","typescript","evals","e2e",
+           "conformance","guarded-reply","release-plan","tofu","cdk"]
+```
+
+So a pull request that contains an undefined name in generated code cannot merge. That is why
+`evals` and `guarded-reply` both report `pass` on #221 — the fix was already in the branch when
+the PR ran — and it is the sense in which **CI was never blind to this class**. An earlier draft
+of this RFC claimed otherwise; the required-context query above is what corrects it.
+
+**What is actually missing is the local gate.** `scripts/check-all.mjs` has only two steps for
+these trees, both `pytest`:
+
+```text
+evals:test           pytest   cwd: examples/support-copilot
+guarded-reply:test   pytest   cwd: examples/guarded-reply
+```
+
+There is no `ruff` and no `mypy` step for either example; `python:ruff` and `python:mypy` are
+scoped to `runtimes/python` (`:178-198`). A contributor therefore gets a green `pnpm check` and
+can still fail two *required* CI jobs. That is a real parity gap, it is what Phase A closes, and
+it costs almost nothing to close:
 
 | Target | ruff | mypy (strict) |
 | --- | --- | --- |
 | `examples/support-copilot` | 0.37 s, all checks passed | 9.95 s, 52 files, no issues |
 | `examples/guarded-reply` | 0.18 s, all checks passed | 8.26 s, 26 files, no issues |
 
-`F821` is not the only rule in the selection that would help — `B` (bugbear), `RET`, `SIM` and
-`ANN` all apply to emitted code — but it is the one that would have caught this round's
-predecessor.
+Both trees are clean today, so the steps pass on arrival.
+
+**A stale comment in the same file.** `ci.yml:151` reads:
+
+```yaml
+# Advisory, on purpose: `evals` is not a required context in the `main` ruleset.
+```
+
+The ruleset requires `evals`. The comment is wrong in the direction that cost this repository
+before: a reader concludes a failing job does not block, so a red `evals` means nothing. It
+belongs in Phase A as a one-line correction.
 
 ## 2. Findings register
 
 | # | Finding | Severity | Phase |
 | --- | --- | --- | --- |
-| 1 | `python:ruff` and `python:mypy` run only in `runtimes/python`, so generated example code is never linted, even though both examples configure the rules that catch the Round 8 defect | **high** — this is the actual cause | A |
-| 2 | `e2e` never exercises a refusal; it resumes once with a valid checkpoint and stops | medium | B |
-| 3 | #116 (`Metric.score`) is open; 0008's "docstring is the body" argument does not apply to it | low | C |
-| 4 | Two of the four `release-plan` cases (stacked pull requests, unreleased base) are untested at the job level | medium | C |
-| 5 | A template tree is not bootable: no `pyproject.toml`, no `app/main.py` | informational — bounds what a smoke job proves | D |
-| 6 | `check-docs-claims` counts an example's files with `PRUNED`, which prunes `__pycache__` and `.pytest_cache` but not `.mypy_cache` or `.ruff_cache` (`:220`), while its source walk uses `SOURCE_PRUNED`, which does (`:223-230`). A single file under `examples/support-copilot/.mypy_cache` makes the count 68 against the documented 67 and fails the check. Nothing in today's `pnpm check` creates that directory, because `python:mypy` runs with `cwd: runtimes/python`. **Phase A creates exactly that directory** by linting with `cwd: examples/support-copilot`, and `lint:md` (`check-all.mjs:146`) runs before `python:mypy` (`:193`), so Phase A would pass once and fail on every run after | **must be fixed in Phase A**, or Phase A self-breaks | A |
-| 7 | The brief says #221 is open and untouchable; it merged before the round began | must be reported | §4 |
+| 1 | `check-all.mjs` runs only `pytest` for both examples, while the *required* CI jobs `evals` (`ci.yml:200-206`) and `guarded-reply` (`:274-282`) also run `ruff` and `mypy` at those trees. A green `pnpm check` therefore coexists with failing required CI | medium — a local/CI parity gap, not a CI blind spot | A |
+| 2 | `ci.yml:151` calls `evals` "advisory ... not a required context in the `main` ruleset"; ruleset 24455063 requires it | medium — it teaches a reader to ignore a red required job | A |
+| 3 | `e2e` never exercises a refusal; it resumes once with a valid checkpoint and stops | medium | B |
+| 4 | #116 (`Metric.score`) is open; 0008's "docstring is the body" argument does not apply to it | low | C |
+| 5 | Two of the four `release-plan` cases (stacked pull requests, unreleased base) are untested at the job level | medium | C |
+| 6 | A template tree is not bootable: no `pyproject.toml`, no `app/main.py` | informational — bounds what a smoke job proves | D |
+| 7 | `check-docs-claims` counts an example's files with `PRUNED`, which prunes `__pycache__` and `.pytest_cache` but not `.mypy_cache` or `.ruff_cache` (`:220`), while its source walk uses `SOURCE_PRUNED`, which does (`:223-230`). A single file under `examples/support-copilot/.mypy_cache` makes the count 68 against the documented 67 and fails the check. Nothing in today's `pnpm check` creates that directory, because `python:mypy` runs with `cwd: runtimes/python`. **Phase A creates exactly that directory** by linting with `cwd: examples/support-copilot`, and `lint:md` (`check-all.mjs:146`) runs before `python:mypy` (`:193`), so Phase A would pass once and fail on every run after | **must be fixed in Phase A**, or Phase A self-breaks | A |
+| 8 | The brief says #221 is open and untouchable; it merged before the round began | must be reported | §4 |
 
 ## 3. Phase order, revised
 
 The brief orders A (smoke tests) then B (resume review-as-tests) then C then D. Phase 0
-changes that: the smallest increment that prevents the Round 8 class is not a smoke job, it is
-pointing two existing linters at two existing directories. It is three lines of configuration
-and 0.55 s, and it catches the defect statically at the exact line, before a server is started.
+changes that: CI already boots the generated apps and already lints and typechecks them, and
+those jobs block merges. The smallest useful increment is therefore not a new smoke job. It is
+making the local gate run the same four steps the required CI jobs already run, so that a green
+`pnpm check` predicts a green required check.
 
 Revised order, smallest and highest value first:
 
-- **Phase A — lint the generated trees.** Add `ruff` and `mypy` steps at each example's own
-  configuration to `check-all.mjs`, and add `.mypy_cache` and `.ruff_cache` to `PRUNED` in
-  `scripts/check-docs-claims.mjs` so the file-count claim survives the new cache directories
-  (finding 6 — without it Phase A passes once and then fails on every subsequent run).
-  Acceptance: deleting the `RESUME_REFUSED` assignment fails `pnpm check` with `F821`, and two
-  consecutive `pnpm check` runs both pass. Effort: ~0.55 s ruff, ~18 s mypy, two files changed.
+- **Phase A — make the local gate faithful.** Add `ruff` and `mypy` steps for both examples to
+  `scripts/check-all.mjs`, add `.mypy_cache` and `.ruff_cache` to `PRUNED` in
+  `scripts/check-docs-claims.mjs` so the documented file counts survive the new cache
+  directories (finding 7 — without it the first run passes and every later run fails), and
+  correct the stale "advisory" comment at `ci.yml:151` (finding 2).
+  Acceptance: the step list matches the required jobs, two consecutive `pnpm check` runs both
+  pass, and deleting the `RESUME_REFUSED` assignment fails `pnpm check` with `F821`.
+  Effort: ~0.55 s ruff, ~18 s mypy, three files changed.
 - **Phase B — extend `e2e` to the refusal path.** Three assertions against the already-running
   server: a tampered checkpoint is refused with 403 and an opaque body; a second resume of a
   spent checkpoint is refused with 403 and the same body; the two bodies are byte-identical, so
@@ -307,8 +342,10 @@ declared signing key that is absent fails startup rather than the first resume, 
    regardless.
 2. **Generated apps are already booted** in three jobs (§1.1), which the brief does not
    anticipate.
-3. **The linters that catch the defect are already configured**, just never invoked on
-   generated code (§1.7).
+3. **CI already lints and typechecks both examples, and those jobs are required** (§1.7). The
+   defect class was never a CI blind spot. What is missing is the same four steps in the local
+   `pnpm check`, plus a stale comment claiming the `evals` job is advisory. An earlier draft of
+   this RFC asserted the CI-gap version; the ruleset query corrected it.
 4. **#116 is not a false positive in the sense 0008 recorded**; it is a fourth site to which
    0008's reasoning does not apply (§1.6).
 5. **There is no `AGENTS.md`.** `CONTRIBUTING.md` is the agent-instruction file, and the
@@ -316,16 +353,19 @@ declared signing key that is absent fails startup rather than the first resume, 
 
 ## 5. Cost
 
-| Change | Added CI time | New harness |
+| Change | Added local `pnpm check` time | New harness |
 | --- | --- | --- |
 | Phase A, ruff over both examples | ~0.6 s | none |
 | Phase A, mypy over both examples | ~18 s | none |
+| Phase A, stale comment at `ci.yml:151` | 0 | none |
 | Phase B, three `e2e` assertions | ~0 (server already running) | none |
 | Phase B, if a template boot job is added | ~1.2 s generate + install + boot | yes, and it tests harness-owned bootstrap |
 | Phase C, tests + one-line fix | ~0 | none |
 | Phase D, three tests | ~2 s | none |
 
-Nothing here needs a nightly job; every phase fits in the pull-request job.
+The CI side already pays the ruff and mypy cost for both examples today (`ci.yml:200-206`,
+`:274-282`), so Phase A adds no CI minutes at all; it only stops the local gate from being
+weaker than the remote one. Nothing here needs a nightly job.
 
 ## 6. What this round does not do
 
