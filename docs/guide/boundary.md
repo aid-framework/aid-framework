@@ -137,6 +137,28 @@ If a step cannot be answered, the honest outcome is not a caveat in the review â
 to the spec or a line in the customer's plan, and the gate that should have caught it is the one
 to fix.
 
+## What the end-to-end job proves, and what it does not
+
+The `e2e` job boots the example app in this repository and drives it over a real socket:
+`pnpm e2e` runs `node scripts/e2e-example.mjs`, which regenerates `examples/support-copilot`,
+starts it under uvicorn, and posts to the pipeline, the agent and the resume route. A separate
+`evals` job runs that example's own test suite and `ruff` over it, and a `guarded-reply` job does
+the same for the second example. All three are required checks, so a change that breaks a
+generated app's request path, or its types, cannot merge.
+
+What that proves is narrower than "the generator works". It proves that *this* document, with the
+platforms it declares, produces an app that starts and answers. A construct no example declares is
+not exercised by it, and the [support matrix](../reference/support.md) is where that distinction
+is written down.
+
+It also does not boot a **template** tree. `aid init --template enterprise-approvals --gen` emits
+routers and no application: no `app/main.py`, no `pyproject.toml`. That is deliberate â€” the Python
+target stops at routers and leaves the entrypoint to the application that mounts them, which is
+why `aid dev` refuses when `app/main.py` is absent
+(`packages/cli/src/commands/dev.ts`). A job that booted a template would have to supply that
+entrypoint itself, and would then be testing its own bootstrap rather than anything AID generated.
+There is no such job, and this page does not claim one.
+
 ## What this page is not
 
 It is not a compliance claim, and it does not replace the [support matrix](../reference/support.md):

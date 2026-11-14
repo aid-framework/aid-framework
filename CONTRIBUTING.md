@@ -208,7 +208,13 @@ explicitly excluded in `site/.vitepress/config.mts`.
    (`docs/design.md` §10).
 6. **Keep main green.** CI runs both regimes — golden files *and* evals — plus the end-to-end check that
    regenerates the example and boots it. Cost and latency gates are not wired up yet.
-7. **Be patient and kind.** This is a young project; reviewers may ask design questions before merging code.
+7. **Carry the command behind every status claim.** If a PR, a commit or a doc says a check passes,
+   is skipped, or is unavailable on this machine, paste the command and its output. "CI is green"
+   without the run, or "the gate refuses this" without the diagnostic, is a claim a reviewer has to
+   re-derive — and the one time it is wrong it is wrong silently. `docs/rfcs/0006-citation-gate.md`
+   is the round that closed that class of error for docs, and the same standard applies to PR
+   descriptions.
+8. **Be patient and kind.** This is a young project; reviewers may ask design questions before merging code.
 
 ## Releasing
 
