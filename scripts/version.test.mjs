@@ -913,3 +913,146 @@ describe('the declared subcommand', () => {
     expect(declaredVersion({ config: parsed, root: dir })).toBe('0.1.53');
   });
 });
+
+/**
+ * The `release-plan` pull request job (`ci.yml:493-571`) does not diff against the newest
+ * tag. It archives the base branch, reads the version *its manifests declare*, writes that
+ * single tag to `tags.txt`, runs `decide`, and then `verify`s that every manifest in the
+ * pull request declares the planned version.
+ *
+ * Every part of that is unit-tested above; the composition is not, and the composition is
+ * where a contributor loses an afternoon. Each case below is one the job really produces,
+ * with the manifest tree it really verifies against.
+ */
+describe("the release-plan job's composition", () => {
+  const script = fileURLToPath(new URL('version.mjs', import.meta.url));
+
+  /**
+   * The manifest tree the job's `verify` step runs against: two packages whose manifests
+   * all declare `declared`, which is what a stamped pull request looks like.
+   *
+   * @param {string} declared
+   * @returns {string} the fixture root
+   */
+  function stampedTree(declared) {
+    const dir = mkdtempSync(join(tmpdir(), 'aid-plan-'));
+    mkdirSync(join(dir, 'packages/spec'), { recursive: true });
+    mkdirSync(join(dir, 'runtimes/python'), { recursive: true });
+    writeFileSync(
+      join(dir, 'packages/spec/package.json'),
+      `${JSON.stringify({ name: '@aid-framework/spec', version: declared }, null, 2)}\n`,
+    );
+    writeFileSync(
+      join(dir, 'runtimes/python/pyproject.toml'),
+      `[project]\nname = "aid-runtime-python"\nversion = "${declared}"\n`,
+    );
+    writeFileSync(
+      join(dir, 'release.config.json'),
+      JSON.stringify({
+        ...baseConfig(),
+        packages: [
+          { name: '@aid-framework/spec', path: 'packages/spec', registry: 'npm' },
+          { name: 'aid-runtime-python', path: 'runtimes/python', registry: 'pypi' },
+        ],
+      }),
+    );
+    return dir;
+  }
+
+  /** @param {string} dir @param {string} version */
+  function runVerify(dir, version) {
+    const result = spawnSync(
+      process.execPath,
+      [script, 'verify', '--config', join(dir, 'release.config.json'), '--version', version],
+      { encoding: 'utf8' },
+    );
+    return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+  }
+
+  /** @param {string} dir @param {(dir: string) => void} body */
+  function withTree(dir, body) {
+    try {
+      body(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * `base` is what the base branch declares, and therefore the only tag the job feeds
+   * `decide`; `stamped` is what the pull request's manifests say. Nothing here is a tag
+   * list, because the job reads no tags at all.
+   */
+  const cases = [
+    {
+      name: 'a single releasable pull request stamped for its own release',
+      base: '0.1.179',
+      stamped: '0.1.180',
+      plan: 'v0.1.180',
+      verifyStatus: 0,
+    },
+    {
+      // The stacking failure mode: the child layer inherited the parent's stamp, so the
+      // plan moves past it and `verify` refuses. Failing here is correct -- the fix is a
+      // re-stamp, not a looser gate -- and this is the case a contributor will hit.
+      name: 'a stacked pull request still carrying the parent layer’s stamp',
+      base: '0.1.179',
+      stamped: '0.1.179',
+      plan: 'v0.1.180',
+      verifyStatus: 1,
+    },
+    {
+      name: 'the same stacked pull request after a re-stamp on the new base',
+      base: '0.1.179',
+      stamped: '0.1.180',
+      plan: 'v0.1.180',
+      verifyStatus: 0,
+    },
+  ];
+
+  for (const testCase of cases) {
+    it(`${testCase.name}: plans ${testCase.plan}`, () => {
+      const plan = decideFor(['scripts/version.mjs'], { tags: [`v${testCase.base}`] });
+
+      expect(plan.release).toBe(true);
+      expect(plan.currentVersion).toBe(`v${testCase.base}`);
+      expect(plan.tag).toBe(testCase.plan);
+
+      withTree(stampedTree(testCase.stamped), (dir) => {
+        const result = runVerify(dir, testCase.plan.slice(1));
+
+        expect(result.status).toBe(testCase.verifyStatus);
+        if (testCase.verifyStatus === 0) {
+          expect(result.stdout).toContain(`all 2 manifests declare ${testCase.plan.slice(1)}`);
+        } else {
+          // The refusal has to name the planned version and the command that fixes it,
+          // because the author sees this in a CI log and nothing else.
+          expect(result.stderr).toContain(`refusing to release ${testCase.plan.slice(1)}`);
+          expect(result.stderr).toContain('scripts/version.mjs stamp');
+        }
+      });
+    });
+  }
+
+  it('plans from the base manifests, not the tag list, while a merge is still untagged', () => {
+    // `release.yml` mints the tag only after CI on main passes, so between a releasable
+    // merge and its tag the newest tag is a patch behind the manifests. Reading the
+    // manifests plans 0.1.180; reading the tags would plan 0.1.179, the version the pull
+    // request already declares, and fail a correctly stamped change.
+    const fromManifests = decideFor(['scripts/version.mjs'], { tags: ['v0.1.179'] });
+    const fromTagsOnly = decideFor(['scripts/version.mjs'], { tags: ['v0.1.178'] });
+
+    expect(fromManifests.tag).toBe('v0.1.180');
+    expect(fromTagsOnly.tag).toBe('v0.1.179');
+  });
+
+  it('releases nothing for a docs-only pull request, so the job exits before stamping', () => {
+    const plan = decideFor(['docs/guide/boundary.md', 'docs/guide/delivery.md'], {
+      tags: ['v0.1.179'],
+    });
+
+    expect(plan.release).toBe(false);
+    expect(plan.tag).toBeNull();
+    expect(plan.reason).toContain('no releasable paths changed');
+  });
+});
