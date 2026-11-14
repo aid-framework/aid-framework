@@ -7,6 +7,8 @@
  * the detectors can be tested against a synthetic violating document, so a
  * guard that silently stopped matching is caught rather than passing as a clean
  * repository.
+ *
+ * docs-claims-file: family; it defines the syntax those worked examples are written in
  */
 
 /**
@@ -167,6 +169,12 @@ export function aidFlags(text) {
 }
 
 /**
+ * How far into a file a file-wide marker may sit. A header, not a haystack: a marker a
+ * thousand lines in would be a comment nobody reviewing the file's purpose would read.
+ */
+const FILE_ANNOTATION_WINDOW = 15;
+
+/**
  * The namespaces a diagnostic code can belong to, each backed by a
  * `*DIAGNOSTIC_CODES` constant in the package that emits it.
  */
@@ -246,6 +254,60 @@ export function codeAnnotation(line) {
   const match = line.match(/<!--\s*docs-claims:\s*(retired|family);\s*(.*?)\s*-->/);
   if (match === null) return undefined;
   return { kind: match[1] ?? '', reason: (match[2] ?? '').trim() };
+}
+
+/**
+ * The same marker, written in a source file's own comment syntax.
+ *
+ * A docstring in product code cites diagnostics the same way a page does, and drifted
+ * the same way: `packages/ir/src/gates/resume.ts` described a gate that no registry
+ * declares, and nothing failed, because the citation check only read Markdown. Source
+ * comments are not published, so the marker is a line comment, and the same two kinds
+ * and the same written reason apply.
+ *
+ * Both `//` and `#` are accepted because the runtime is Python and the packages are
+ * TypeScript, and a check that only understood one would silently cover half the tree.
+ *
+ * @param {string} line
+ * @returns {{ kind: string, reason: string } | undefined}
+ */
+export function sourceCodeAnnotation(line) {
+  const match = line.match(/(?:\/\/|#)?\s*docs-claims:\s*(retired|family);\s*(.*?)\s*$/);
+  if (match === null) return undefined;
+  return { kind: match[1] ?? '', reason: (match[2] ?? '').trim() };
+}
+
+/**
+ * A file-wide marker for source that has to name unresolvable tokens to do its job.
+ *
+ * The citation checker and this parser hold the regular expression that recognises a
+ * code, so their own comments spell tokens that resolve to nothing. Marking those lines
+ * one by one would put markers inside the text that explains markers, so a file may opt
+ * out once, in its header, with a reason. Every file that does is printed by the check,
+ * so the exemption is visible in the build log rather than buried in code.
+ *
+ * @param {string} text
+ * @returns {{ line: number, kind: string, reason: string } | undefined}
+ */
+export function fileCodeAnnotation(text) {
+  const lines = text.split('\n').slice(0, FILE_ANNOTATION_WINDOW);
+  for (const [index, line] of lines.entries()) {
+    const match = line.match(/(?:\/\/|#)?\s*docs-claims-file:\s*(retired|family);\s*(.*?)\s*$/);
+    if (match === null) continue;
+    return { line: index + 1, kind: match[1] ?? '', reason: (match[2] ?? '').trim() };
+  }
+  return undefined;
+}
+
+/**
+ * A source line with its marker removed, so the reason a reviewer wrote is not itself
+ * scanned for codes. A reason reads like prose and may well name the family it excuses.
+ *
+ * @param {string} line
+ * @returns {string}
+ */
+export function withoutSourceAnnotations(line) {
+  return line.replace(/(?:\/\/|#)?\s*docs-claims(?:-file)?:\s*(?:retired|family);.*$/, '');
 }
 
 /**

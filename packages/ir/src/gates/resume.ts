@@ -1,5 +1,5 @@
 /**
- * Gates 25â€“28 â€” the resume route's integrity.
+ * Gates 25–28 — the resume route's integrity.
  *
  * `POST /agents/resume` takes a checkpoint and continues a run from it. That checkpoint
  * carries the pending tool call and the human's answer, so **holding one is authority to
@@ -7,22 +7,25 @@
  * the body was the capability, and a holder could approve their own held call, swap the
  * pending arguments, or replay a spent checkpoint.
  *
- * Three refusals stand in for that, and each is an *error* only where the profile
- * promised the control:
+ * Four refusals stand in for that. Two depend on the profile that promised the control;
+ * two are errors under every profile, because they describe a document the route cannot
+ * honour at all rather than a control the author declined to pay for:
  *
- * - `ir/resume-unsigned` â€” `profile: enterprise` with a pausable agent and no
+ * - `ir/resume-unsigned` — `profile: enterprise` with a pausable agent and no
  *   `state.signingKeyEnv`. Version-gated, following `eval-coverage`: below 0.32 the
  *   document cannot express the fix, so it is a warning there rather than an error the
  *   author has no way to clear.
- * - `ir/resume-replay-weak` â€” a pausable agent and no durable store, so a spent
+ * - `ir/resume-replay-weak` — a pausable agent and no durable store, so a spent
  *   checkpoint is remembered only in the process that answered it. Error under
  *   `enterprise`, warning under `standard`: one surviving process is the honest default
  *   for a small deployment, and the limit is stated rather than hidden.
- * - `ir/resume-key-conflict` â€” one route, one key, one store. Pausable agents that
+ * - `ir/resume-key-conflict` — one route, one key, one store. Pausable agents that
  *   disagree about either are refused, because the route cannot honour both and picking
  *   one silently would sign a checkpoint with a key its author did not name.
- * - `ir/resume-secret-inline` â€” the signing key must be *named*, never carried, and must
- *   not be the same variable as the connection string.
+ * - `ir/resume-key-alias` — the variable `state.signingKeyEnv` names already holds
+ *   another credential (the run-store connection string, a provider key, the OTLP
+ *   endpoint, or a deployment secret), so one secret would both sign every checkpoint
+ *   and reach that system, and neither could be rotated alone.
  *
  * The state declaration is resolved per agent (`agent.state ?? document state`) exactly
  * as `buildAgents` resolves it, so these gates and the generator cannot disagree about

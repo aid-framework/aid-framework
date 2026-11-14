@@ -12,8 +12,10 @@
  * the registry and refuses a citation it cannot resolve, so a retired code fails the build here
  * rather than reading as true on the site.
  *
- * `{policyCodes}` is substituted with the derived number of registered `ir/policy-*` and
- * `ir/predicate-*` codes. The sentence used to spell the number by hand, and got it wrong by ten.
+ * `{policyCodes}` is substituted with the derived number of registered codes in two
+ * families: `ir/policy-*` (docs-claims: family; the published count is the size of this
+ * group) and `ir/predicate-*` (docs-claims: family; one number covers both). The sentence
+ * used to spell the number by hand, and got it wrong by ten.
  */
 
 /** The concerns, in table order. A row key must appear here and here must be no other row. */

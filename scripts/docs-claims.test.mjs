@@ -22,11 +22,14 @@ import {
   commandsNamed,
   diagnosticCodes,
   exactPins,
+  fileCodeAnnotation,
   headingSlugs,
   isProposalPage,
   proposalStatus,
   slugifyHeading,
+  sourceCodeAnnotation,
   targetTokens,
+  withoutSourceAnnotations,
 } from './docs-claims.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -436,36 +439,36 @@ describe('codeAnnotation', () => {
   });
 });
 
-describe('the diagnostic codes the docs cite', () => {
-  /**
-   * An independent read of the registries: the point of this test is that the
-   * published pages resolve, so it re-derives the set rather than trusting the
-   * checker's own parser to agree with itself.
-   *
-   * @returns {Set<string>}
-   */
-  function registered() {
-    /** @type {Set<string>} */
-    const codes = new Set();
-    const registries = [
-      'packages/ir/src/diagnostics.ts',
-      'packages/spec/src/diagnostics.ts',
-      'packages/spec/src/overlay.ts',
-      'packages/cli/src/diagnostics.ts',
-      'packages/generator-sdk/src/diagnostics.ts',
-    ];
-    for (const path of registries) {
-      for (const match of read(path).matchAll(
-        /export const [A-Z0-9_]*DIAGNOSTIC_CODES = \{([\s\S]*?)\n\} as const;/g,
-      )) {
-        for (const code of (match[1] ?? '').matchAll(/'([a-z]+\/[a-z0-9-]+)'/g)) {
-          if (code[1]) codes.add(code[1]);
-        }
+/**
+ * An independent read of the registries: the point of these tests is that the
+ * published pages and the source comments resolve, so it re-derives the set rather
+ * than trusting the checker's own parser to agree with itself.
+ *
+ * @returns {Set<string>}
+ */
+function registered() {
+  /** @type {Set<string>} */
+  const codes = new Set();
+  const registries = [
+    'packages/ir/src/diagnostics.ts',
+    'packages/spec/src/diagnostics.ts',
+    'packages/spec/src/overlay.ts',
+    'packages/cli/src/diagnostics.ts',
+    'packages/generator-sdk/src/diagnostics.ts',
+  ];
+  for (const path of registries) {
+    for (const match of read(path).matchAll(
+      /export const [A-Z0-9_]*DIAGNOSTIC_CODES = \{([\s\S]*?)\n\} as const;/g,
+    )) {
+      for (const code of (match[1] ?? '').matchAll(/'([a-z]+\/[a-z0-9-]+)'/g)) {
+        if (code[1]) codes.add(code[1]);
       }
     }
-    return codes;
   }
+  return codes;
+}
 
+describe('the diagnostic codes the docs cite', () => {
   it('reads all five registries', () => {
     const codes = registered();
     expect(codes.size).toBeGreaterThan(200);
@@ -534,3 +537,76 @@ function walkMarkdown() {
   }
   return files;
 }
+
+describe('source comments that cite diagnostics', () => {
+  it('reads a line-comment marker, a hash marker, and a bare one in a block comment', () => {
+    expect(sourceCodeAnnotation('// docs-claims: retired; the old name')).toEqual({
+      kind: 'retired',
+      reason: 'the old name',
+    });
+    expect(sourceCodeAnnotation('# docs-claims: family; one prefix, ten codes')).toEqual({
+      kind: 'family',
+      reason: 'one prefix, ten codes',
+    });
+    expect(sourceCodeAnnotation(' * families: `ir/policy-*` docs-claims: family; a group')).toEqual(
+      {
+        kind: 'family',
+        reason: 'a group',
+      },
+    );
+  });
+
+  it('is undefined without a marker, so an unmarked citation is still checked', () => {
+    expect(sourceCodeAnnotation(' * - `ir/resume-key-alias` — the variable already holds')).toBe(
+      undefined,
+    );
+    expect(sourceCodeAnnotation('// docs-claims: allowed; because')).toBeUndefined();
+  });
+
+  /**
+   * The defect this check was written for, kept as a fixture: the docstring of
+   * `packages/ir/src/gates/resume.ts` named a gate that no registry declares, and the
+   * Markdown-only check could not see it. Nothing excuses this line, so the check sees
+   * the token, and the registry does not have it — which is exactly the failure.
+   */
+  it('leaves an unmarked, unregistered code visible to the check', () => {
+    const line = ' * - `ir/resume-secret-inline` — the signing key must be named';
+
+    expect(sourceCodeAnnotation(line)).toBeUndefined();
+    expect(diagnosticCodes(withoutSourceAnnotations(line)).map((code) => code.token)).toEqual([
+      'ir/resume-secret-inline',
+    ]);
+    expect(registered().has('ir/resume-secret-inline')).toBe(false);
+    expect(registered().has('ir/resume-key-alias')).toBe(true);
+  });
+
+  it('reports a wildcard as a wildcard, so an unnamed family cannot pass as a code', () => {
+    const line = ' * the derived number of registered `ir/policy-*` codes.';
+    const found = diagnosticCodes(withoutSourceAnnotations(line));
+
+    expect(found.map((code) => code.wildcard)).toEqual([true]);
+    expect(registered().has('ir/policy-*')).toBe(false);
+  });
+
+  it('does not scan the reason a marker carries', () => {
+    const line = ' * signing families docs-claims: family; covers ir/policy-* and ir/predicate-*';
+
+    expect(diagnosticCodes(withoutSourceAnnotations(line))).toEqual([]);
+  });
+
+  it('reads a file-wide marker and the line it sits on', () => {
+    const text = '/**\n * Purpose.\n *\n * docs-claims-file: family; it defines the syntax\n */\n';
+
+    expect(fileCodeAnnotation(text)).toEqual({
+      line: 4,
+      kind: 'family',
+      reason: 'it defines the syntax',
+    });
+  });
+
+  it('does not find a file-wide marker past the header', () => {
+    const text = `${'\n'.repeat(20)}// docs-claims-file: family; too far down\n`;
+
+    expect(fileCodeAnnotation(text)).toBeUndefined();
+  });
+});

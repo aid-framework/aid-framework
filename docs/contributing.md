@@ -44,7 +44,7 @@ uv pip install --python .venv -e "runtimes/python[dev]" -e "examples/support-cop
 | `pnpm build` | Compiles the TypeScript packages to `dist/` |
 | `pnpm test` | Unit, spec-validation and release-gate tests |
 | `pnpm e2e` | Regenerates `examples/support-copilot`, asserts it is byte-identical, boots it and answers a request |
-| `pnpm lint` | Biome, markdownlint and config validation |
+| `pnpm lint` | Biome, markdownlint, the citation check and config validation |
 | `pnpm lint:actions` | actionlint over `.github/workflows` |
 | `pnpm lint:licenses` | Dependency licence audit |
 | `pnpm docs:check` | The generated reference pages still match their sources |
@@ -55,6 +55,24 @@ uv pip install --python .venv -e "runtimes/python[dev]" -e "examples/support-cop
 `docs:check` reads the sources, so it needs no build. The gates that read the build -
 `docs:head`, `docs:links` and `docs:a11y` - need `pnpm docs:build` first; CI runs them in the
 same job, immediately after the build.
+
+`lint:md` also runs `scripts/check-docs-claims.mjs`. It resolves every diagnostic code, CLI
+command and flag, spec field path, profile name and repository path cited in `docs/` and
+`README.md` against the registry that declares it, and every diagnostic code named in a comment
+or annotation string under `packages/`, `runtimes/`, `scripts/`, `site/` and `examples/`. An
+unregistered code fails with the file, the line and the nearest registered alternatives. If a
+line has to cite a family of codes, or a name that has been retired, say so on the line and
+write why:
+
+```markdown
+`ir/policy-*` is refused below. <!-- docs-claims: family; the gate names each code separately -->
+```
+
+A source comment takes the same marker without the HTML wrapper, as
+`// docs-claims: family; reason in a sentence`. A file that names bad codes throughout - the
+checker's own fixtures, for example - declares it once in its header with `docs-claims-file:` in
+the same form, inside the first fifteen lines. Every exemption is printed by the check, so it is
+reviewable rather than silent.
 
 The Python trees have their own gates, run from each directory:
 
