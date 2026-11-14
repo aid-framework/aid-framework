@@ -217,17 +217,22 @@ const EXAMPLES_README = 'examples/README.md';
 
 // Build output and vendored trees hold copies of READMEs and generated files,
 // not claims about this repository, so they are not part of any surface.
-const PRUNED = new Set(['node_modules', 'dist', 'build', '.venv', '__pycache__', '.pytest_cache']);
-
-// The same idea for the source walk, plus the tool caches a build leaves behind.
-const SOURCE_PRUNED = new Set([
-  ...PRUNED,
-  '.next',
-  '.turbo',
+const PRUNED = new Set([
+  'node_modules',
+  'dist',
+  'build',
+  '.venv',
+  '__pycache__',
+  '.pytest_cache',
+  // Tool caches. They are not tracked and not shipped, but `pnpm check` creates them next to
+  // the tree it lints, so counting them would make a documented file count depend on whether
+  // the linter had already run.
   '.mypy_cache',
   '.ruff_cache',
-  'coverage',
 ]);
+
+// The same idea for the source walk, plus the build caches it leaves behind.
+const SOURCE_PRUNED = new Set([...PRUNED, '.next', '.turbo', 'coverage']);
 
 /**
  * The trees whose comments and string literals cite diagnostics. `examples` and
