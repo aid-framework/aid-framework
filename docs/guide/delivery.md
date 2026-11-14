@@ -327,7 +327,7 @@ and the risk that remains — beside the checklist to run before the review.
 | Audit sink | `deployments.<d>.audit` | `ir/profile-audit` | Gated and generated; the archive is declared only when the document pins one |
 | Redaction of recorded text | `observability.redact` | `ir/security-redaction-incomplete` | Enforced by the pipeline at the render and by an agent run at its tool arguments, and honoured by `aid trace export` for both. Two stated limits: a value arriving only in prose, and a document that declares no tool, which the build refuses |
 | Output guardrail | any guardrail inspecting model output | `ir/profile-guardrail` | Gated and generated |
-| Private network | `deployments.<d>.network.private: true` | `ir/profile-network` | Gated and generated; a two-AZ VPC with private task subnets and one NAT gateway |
+| Private network | `deployments.<d>.network.private: true` | `ir/profile-network` | Gated, not generated. The pin states where your traffic has to go, and no module reads it: the container module builds a two-AZ VPC with private task subnets and one NAT gateway whenever you do not supply `vpc_id`, pin or no pin |
 | Change approval | `deployments.<d>.approvals` for production | `ir/profile-approvals` | Gated and generated as a pause |
 | Eval coverage | a `gate.ci` eval claiming each HTTP pipeline | `ir/eval-uncovered` | A warning under `profile: standard`, a refusal for `enterprise` from spec `0.31` |
 | Identity | `deployments.<d>.identity` — issuer, audience, claims | `ir/profile-identity` | Gated only. **No token verification is generated** |

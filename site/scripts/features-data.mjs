@@ -613,9 +613,9 @@ export const DECLARED_FEATURES = [
     id: 'delivery-controls',
     title: 'Durable run state, deployment identity, private network and change approval',
     declares: 'state, deployments[].identity, deployments[].network, deployments[].approvals',
-    enforces: 'ir/profile-identity, ir/identity-verified-by',
+    enforces: 'ir/profile-identity, ir/identity-verified-by, ir/profile-network',
     missing:
-      'What *is* generated: the region pin, the audit sink and the private-network setting reach the OpenTofu, the profile gate refuses an `enterprise` deployment missing any of them, `requiresApproval` reaches the generated tool step, the checkpoint is signed with the key `resume.signingKeyEnv` names, and a declared `state` store holds the checkpoint nonce. What is not: no generator verifies a token (`identity.verifiedBy` names who does), and no generated code persists the paused run itself, so the checkpoint still returns to the caller.',
+      'What *is* generated: the region pin and the audit sink reach the OpenTofu, the profile gate refuses an `enterprise` deployment missing either of them or missing the `network.private` pin, `requiresApproval` reaches the generated tool step, the checkpoint is signed with the key `resume.signingKeyEnv` names, and a declared `state` store holds the checkpoint nonce. What is not: `network.private` states a requirement and selects no module -- the container module builds its two-AZ VPC with private task subnets and one NAT gateway whenever you do not supply `vpc_id`, whether the pin is set or not, and no generator branches on the key. Also not: no generator verifies a token (`identity.verifiedBy` names who does), and no generated code persists the paused run itself, so the checkpoint still returns to the caller.',
     href: './reference/spec.md#top-level-keys',
     since: '0.1.143',
   },
