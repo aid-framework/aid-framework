@@ -21,8 +21,8 @@ features:
     details: You find out at build time, not in production. Streaming on a target that cannot stream, a batch deployment with no pipeline, a cloud and target with no module — each is a named diagnostic with the fix.
   - title: Know what a run costs before you ship it
     details: A model alias resolves to one pinned id, never a floating vendor default, and a cost profile prices every call so the budget gate compares the declared ceiling with the recorded total.
-  - title: Prompt injection is a build error
-    details: The security gate refuses a POST route that passes caller text to a prompt with no input guardrail, so the check happens at generation time instead of during an incident review. An agent that can pause gets a signed, expiring checkpoint, and a policy that needs a signed-in caller refuses the anonymous default rather than trusting it. Your own authentication in front of the app is still yours to wire, `identity.verifiedBy` names who does it, and the delivery playbook says so.
+  - title: A prompt path with no guardrail is a build error
+    details: The security gate refuses an HTTP route that passes caller text to a prompt when no declared guardrail has an input stage, so the missing control is caught at generation time instead of during an incident review. It does not detect injection itself; the guardrail you declare does that. An agent that can pause gets a signed, expiring checkpoint, and a policy that needs a signed-in caller refuses the anonymous default rather than trusting it. Your own authentication in front of the app is still yours to wire, `identity.verifiedBy` names who does it, and the delivery playbook says so.
   - title: Evals gate like tests
     details: A quality or spend regression fails the build, not a dashboard. An eval declares a regression budget over a dataset, and `aid eval --compare` exits non-zero when either allowance is exceeded.
   - title: Infrastructure from the same spec
@@ -206,7 +206,7 @@ links to the spec section that declares it.
 | Gate | What it catches | What breaks without it |
 | --- | --- | --- |
 | Capability | A target that cannot honour a declared feature, such as streaming on a target that cannot stream | A route that compiles, deploys, and fails on its first real user request |
-| Security | A POST route that passes caller text to a prompt with no input guardrail | An endpoint open to prompt injection from the day it ships |
+| Security | An HTTP route that passes caller text to a prompt with no input guardrail | An endpoint open to prompt injection from the day it ships |
 | Cost | An eval that declares a budget for a model with no cost profile, or an estimated run cost above that budget | A budget nobody can enforce, and a cost regression that reaches customers unnoticed |
 | Eval coverage | An HTTP pipeline with no CI eval claiming it | A prompt edit that quietly makes answers worse, with nothing to catch it |
 | Deploy and infra | An unknown cloud, a cloud and target pair with no module, or streaming on an HTTP API | An apply that fails under deadline, on infrastructure nobody validated first |

@@ -232,7 +232,7 @@ export const SHIPPED_FEATURES = [
     id: 'security-gate',
     title: 'Unprotected routes are refused',
     detail:
-      'A POST route that passes caller text to a prompt with no input guardrail fails the build before it can be exposed.',
+      'An HTTP route that passes caller text to a prompt with no input guardrail fails the build before it can be exposed.',
     declaredBy: 'guardrails[].stages',
     href: './reference/spec.md#guardrail',
     since: '0.1.18',
