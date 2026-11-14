@@ -106,7 +106,12 @@ class Metric(Protocol):
 
     async def score(
         self, case: EvalCase, prediction: str, *, context: RunContext | None = None
-    ) -> MetricResult: ...
+    ) -> MetricResult:
+        """Score one prediction, which is the only thing a metric has to implement.
+
+        ``context`` carries what a model-backed metric needs and a string metric
+        ignores, so a metric that cannot run raises rather than returning a number.
+        """
 
 
 def normalize(text: str) -> str:
