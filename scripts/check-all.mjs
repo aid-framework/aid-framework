@@ -161,6 +161,10 @@ export const REQUIRED_STEPS = [
  * Each one mirrors a CI job. They are the part a green `pnpm check` used to hide, so each
  * carries the command it runs rather than delegating to a script that would repeat it.
  *
+ * Every command a *required* CI job runs must appear here. `evals` and `guarded-reply` are
+ * both required contexts in the `main` ruleset, and both lint and typecheck their example, so
+ * a local gate that stopped at `pytest` would report green for a branch that cannot merge.
+ *
  * @type {Step[]}
  */
 export const EXTERNAL_STEPS = [
@@ -204,9 +208,51 @@ export const EXTERNAL_STEPS = [
     tools: ['python'],
   },
   {
+    id: 'evals:ruff',
+    job: 'evals',
+    argv: ['python', '-m', 'ruff', 'check', '.'],
+    cwd: 'examples/support-copilot',
+    tools: ['python'],
+  },
+  {
+    id: 'evals:ruff-format',
+    job: 'evals',
+    argv: ['python', '-m', 'ruff', 'format', '--check', '.'],
+    cwd: 'examples/support-copilot',
+    tools: ['python'],
+  },
+  {
+    id: 'evals:mypy',
+    job: 'evals',
+    argv: ['python', '-m', 'mypy'],
+    cwd: 'examples/support-copilot',
+    tools: ['python'],
+  },
+  {
     id: 'guarded-reply:test',
     job: 'guarded-reply',
     argv: ['python', '-m', 'pytest'],
+    cwd: 'examples/guarded-reply',
+    tools: ['python'],
+  },
+  {
+    id: 'guarded-reply:ruff',
+    job: 'guarded-reply',
+    argv: ['python', '-m', 'ruff', 'check', '.'],
+    cwd: 'examples/guarded-reply',
+    tools: ['python'],
+  },
+  {
+    id: 'guarded-reply:ruff-format',
+    job: 'guarded-reply',
+    argv: ['python', '-m', 'ruff', 'format', '--check', '.'],
+    cwd: 'examples/guarded-reply',
+    tools: ['python'],
+  },
+  {
+    id: 'guarded-reply:mypy',
+    job: 'guarded-reply',
+    argv: ['python', '-m', 'mypy'],
     cwd: 'examples/guarded-reply',
     tools: ['python'],
   },

@@ -518,6 +518,9 @@ function walkMarkdown() {
     '.venv',
     '__pycache__',
     '.pytest_cache',
+    // Tool caches `pnpm check` creates beside the trees it lints.
+    '.mypy_cache',
+    '.ruff_cache',
   ]);
 
   /** @param {string} directory */
