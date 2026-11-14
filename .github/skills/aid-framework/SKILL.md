@@ -24,7 +24,7 @@ Three things decide how you work with it:
 
 | You are… | Start with | Section |
 | --- | --- | --- |
-| Evaluating the framework | `npx @aid-framework/cli init my-app --gen` | [1](#1-try-it-without-cloning) |
+| Evaluating the framework | `npx @aid-framework/cli init my-app --template support-copilot --gen` | [1](#1-try-it-without-cloning) |
 | Starting a greenfield service | `aid init <dir> --template <name>` | [2](#2-start-a-new-service) |
 | Bringing an existing spec | `aid init <dir> --from <spec>` | [3](#3-adopt-an-existing-spec) |
 | Needing a TypeScript/Next.js service | `--target ts-vercel` | [4](#4-compile-the-typescript-target) |
@@ -41,25 +41,45 @@ Three things decide how you work with it:
 The CLI is published. Node.js 24 or newer, no repository checkout:
 
 ```bash
-npx @aid-framework/cli init my-app --gen
+npx @aid-framework/cli init my-app --template support-copilot --gen
 cd my-app
 npx @aid-framework/cli validate
-npx @aid-framework/cli dev
 ```
 
-`init` writes `app/app.spec.yaml`, a README, and two CI workflows. `validate` runs spec parsing, the
-IR build, and every gate. `--gen` compiles immediately, so a refusal arrives before you have read
-anything.
+`init` writes `app/app.spec.yaml`, a README, the template's `customers/` overlay, the CI workflows
+and the generated tree; `--gen` compiles immediately, so a contradiction in the spec is refused
+before you have read anything.
 
-The generated routers import the Python runtime. Outside `aid dev`, install it yourself:
+Without `--template` the starter spec declares a project name and a target and nothing else. It
+validates clean, because there is no construct to refuse, and it serves nothing, because it declares
+no pipeline. Use a template when you want to watch a gate do its job.
+
+Two things `init` does not supply, and both are refusals rather than silent failures when they are
+missing. The entry point is yours, because only the application knows what to mount:
+
+```python
+# app/main.py - routing names come from app/generated/routes/__init__.py
+from fastapi import FastAPI
+
+from app.generated.routes.answer_message import answer_message_router
+
+app = FastAPI(title="support-copilot")
+app.include_router(answer_message_router)
+```
+
+and the runtime, installed into whichever interpreter `aid dev` will actually run. `dev` tries
+`python3`, then `python`, then `uv` from `PATH`:
 
 ```bash
 pip install aid-runtime-python "fastapi>=0.115,<1" "uvicorn>=0.30,<1"
-uvicorn app.main:app --reload
+npx @aid-framework/cli dev
 ```
 
-`app/main.py` is yours to write: a few lines mounting the generated routers. Nothing else in the
-serving path is.
+Neither omission is a puzzle when it happens: no entry point is `cli/dev-entry-missing` at
+`app/main.py`, and an interpreter that cannot import both `aid_runtime` and `uvicorn` is
+`cli/dev-uvicorn-missing`. The first hint tells you to run `aid init`, which cannot help — `init`
+writes no entry point — so write the file and re-run. Serving without `dev` works too:
+`uvicorn app.main:app --reload` with that same install.
 
 ## 2. Start a new service
 
@@ -82,6 +102,10 @@ Both carry an `overridable` block, because a template is the base half of the ov
 
 Neither template is a scaffold to strip. Delete a guardrail and the profile gate refuses the build,
 which is the intended feedback.
+
+Both emit routers and no application. There is no `app/main.py` and no `pyproject.toml` in either
+tree: the entry point is yours to write (see [1](#1-try-it-without-cloning)), and `aid dev` names the
+file it cannot find rather than inventing one.
 
 ## 3. Adopt an existing spec
 
@@ -132,6 +156,9 @@ npx @aid-framework/cli dev
 `dev` regenerates the tree and serves it on port 8000 with a reloader. `--no-gen` serves what is on
 disk, `--no-reload` turns the reloader off, `--port` moves it.
 
+It needs an `app/main.py` to serve and an interpreter that can import `aid_runtime` and `uvicorn`; it
+refuses with a code naming whichever is missing rather than starting a server that answers nothing.
+
 To check the guardrails themselves against a red-team corpus, rather than waiting for a hostile
 request:
 
@@ -149,13 +176,18 @@ overridable:
     from: [us-east-1, eu-west-1]
   models.fast.modelId:
     from: [gpt-4o-mini, gpt-4.1-mini]
+  state.signingKeyEnv:
+    from: [AID_CHECKPOINT_KEY, ACME_CHECKPOINT_KEY]
+  state.urlEnv:
+    from: [AID_STATE_DB, ACME_STATE_DB]
   agents.triage_agent.maxCostBudget:
     max: 0.05
   evals.reply_quality.gate.maxRegression:
     max: 0.1
 ```
 
-A customer overlay names the base and changes nothing else. Any path outside the block is refused.
+A customer overlay names the base and changes nothing else. Any path outside the block is refused
+with `overlay/path-not-overridable`, so the block is the whole of what a customer may move.
 
 ```bash
 npx @aid-framework/cli resolve customers/acme-eu.yaml --check
@@ -166,6 +198,12 @@ npx @aid-framework/cli fleet customers
 `--check` fails when the committed resolved spec has drifted from its overlay, so review happens on
 the diff rather than on trust. `fleet` reports every customer's profile, pins, ceilings and gate
 status in one table, and is safe to run in CI because it reads files and nothing else.
+
+The `state.*` entries are the ones that earn their keep across a fleet, where the base declares
+checkpoint state at all. A signing key and a state store are named in the spec by *environment
+variable*, never by value, so opening those paths lets one base serve many customers while each
+deployment names its own key and its own database. The value still lives in the environment; the
+overlay moves only the name.
 
 Aggregate across deployments from their trace sinks:
 
@@ -299,9 +337,11 @@ app/app.spec.yaml: error: the agents gate rejected "pa_review_agent": it may tak
 ```
 
 Work the refusals in order. `spec/*` means the document cannot be parsed as this version of the
-language, so fix that before an IR gate can say anything useful. A refusal under `ir/capability-*` or
-`ir/target-*` means the named target cannot do what the spec asks — pick another target or drop the
-construct; the framework will not emit a stub for it. Everything else is an `ir/*` gate: the spec
+language, so fix that before an IR gate can say anything useful. A capability refusal means the
+build cannot honour the construct: `ir/target-unknown` for a target no capability declaration covers,
+`ir/capability-unknown` for a capability name outside the vocabulary, and `ir/capability-missing`
+when the target is real but does not declare what the IR requires. Pick another target or drop the
+construct — the framework will not emit a stub for it. Everything else is an `ir/*` gate: the spec
 parsed, the target can express it, and the build is refusing on policy.
 
 ## What is gated, and what is only declared
@@ -314,16 +354,26 @@ Keep these apart in anything you write or tell a user:
 - **Declared, not verified.** Identity issuers, network peering, reviewer identities, and secret
   values. The build refuses a spec that omits them; it cannot confirm they exist.
 - **Generated but not yet protected.** An agent that can pause gets a `POST /agents/resume` route
-  alongside `POST /agents/{agent_id}/run`. The checkpoint it accepts replays the conversation and the
-  pending tool calls, so treat it as a bearer capability: the build proves the route exists, not that
-  the caller is allowed to continue someone else's run. Put it behind your own authorizer before you
-  expose it outside a trusted network.
+  alongside `POST /agents/{agent_id}/run`, and the checkpoint it accepts replays the conversation and
+  the pending tool calls, so whoever holds it can continue that run. The checkpoint itself is
+  defended: it is signed with the key `state.signingKeyEnv` names, it expires after
+  `checkpointTtlMinutes`, and it is claimed once in the declared store — an edited checkpoint and a
+  spent one are answered by the same opaque 403, with the reason written to the operator log rather
+  than returned. What no generated code proves is that the *caller* may submit it. Put the route
+  behind your own authorizer before exposing it outside a trusted network.
+  Two declarations decide how much of that holds. With no `state` block the store is in-process, so a
+  spent checkpoint is refused only in the worker that issued it: `enterprise` refuses that spec and
+  `standard` warns with `ir/resume-replay-weak`. And because the signer is built per request, a
+  declared-but-unset signing key is not a startup failure — it refuses every resume instead.
 - **Not generated.** Retrieval migrations are emitted for an operator to apply (`aid migrate`).
   Managed knowledge base re-ingestion is a request to the engine that owns it (`aid kb`). Neither
   runs on its own.
 
 Anything else you are tempted to claim: check `docs/features.md`, which is generated from the
-registry, and the CLI reference at `docs/reference/cli.md`.
+registry, and the CLI reference at `docs/reference/cli.md`. For which claims are backed by an app
+that actually boots — and which jobs do the booting — read
+[`docs/guide/boundary.md`](../../../docs/guide/boundary.md); the end-to-end job boots the two
+examples, not every tree `init` can emit.
 
 ## The tree
 
@@ -349,6 +399,7 @@ If a generated file must change, change the spec and re-run `aid gen`. If the sp
 - [`docs/guide/writing-a-spec.md`](../../../docs/guide/writing-a-spec.md) — the declaration, section by section.
 - [`docs/guide/generated-tree.md`](../../../docs/guide/generated-tree.md) — what lands where, and why.
 - [`docs/guide/delivery.md`](../../../docs/guide/delivery.md) — overlays, fleet, promotion, approvals.
+- [`docs/guide/boundary.md`](../../../docs/guide/boundary.md) — what the build refuses, and what it only declares.
 - [`docs/reference/spec.md`](../../../docs/reference/spec.md) — every key, generated from the schema.
 - [`docs/reference/cli.md`](../../../docs/reference/cli.md) — every command and flag, generated from the CLI.
 - [`examples/scenarios/`](../../../examples/scenarios/) — worked scenarios across both market segments.

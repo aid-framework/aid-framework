@@ -25,6 +25,7 @@ import {
   fileCodeAnnotation,
   headingSlugs,
   isProposalPage,
+  MARKDOWN_ROOTS,
   proposalStatus,
   slugifyHeading,
   sourceCodeAnnotation,
@@ -500,6 +501,16 @@ describe('the diagnostic codes the docs cite', () => {
     }
     expect(unresolved).toEqual([]);
   });
+
+  /**
+   * The skill states product behaviour as flatly as any page under `docs/`, and it
+   * is held to the same check. Dropping `.github` from the walk would silently make
+   * it the one prose surface where a retired code survives.
+   */
+  it('reads the agent skill, so a code it cites cannot drift unseen', () => {
+    const corpus = walkMarkdown().map((file) => file.replace(/\\/g, '/'));
+    expect(corpus).toContain('.github/skills/aid-framework/SKILL.md');
+  });
 });
 
 /**
@@ -508,9 +519,6 @@ describe('the diagnostic codes the docs cite', () => {
 function walkMarkdown() {
   const files = ['README.md', 'examples/README.md'];
 
-  // Must match `markdownFiles()` in check-docs-claims.mjs: the package and
-  // runtime READMEs carry install and per-target claims, so a surface the test
-  // skips is a surface where drift is invisible.
   const PRUNED = new Set([
     'node_modules',
     'dist',
@@ -535,7 +543,9 @@ function walkMarkdown() {
     }
   }
 
-  for (const directory of ['docs', 'packages', 'runtimes', 'examples']) {
+  // The roots come from `MARKDOWN_ROOTS` rather than a copy, so this test cannot
+  // examine a different corpus from the check it mirrors.
+  for (const directory of MARKDOWN_ROOTS) {
     if (statSync(join(ROOT, directory), { throwIfNoEntry: false }) !== undefined) walk(directory);
   }
   return files;
