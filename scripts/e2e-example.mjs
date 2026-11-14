@@ -356,6 +356,37 @@ async function postWhenReady(server, path, body, headers = {}) {
 }
 
 /**
+ * The reasons the app logged for its refusals.
+ *
+ * The generated route logs why a checkpoint was refused and returns one fixed sentence, so
+ * the operator log is the only place the real reason exists. Reading it is what lets the
+ * assertions below prove two refusals failed *different* checks while answering identically:
+ * identical bodies alone would also be satisfied by one check firing twice.
+ *
+ * @param {{ output: () => string }} server
+ * @param {number} count
+ * @returns {Promise<string[]>}
+ */
+async function refusalReasons(server, count) {
+  const pattern = /refused a resume for agent \S+ \(nonce [^)]*\): (.+)/g;
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const reasons = [];
+    for (const match of server.output().matchAll(pattern)) {
+      const reason = match[1]?.trim();
+      if (reason) reasons.push(reason);
+    }
+    if (reasons.length >= count) return reasons;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `the operator log showed ${reasons.length} refusal(s), wanted ${count}:\n${server.output()}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+/**
  * Remove a directory the app has just released, yielding between attempts.
  *
  * Windows keeps the sqlite file locked for a moment after the process that opened it exits,
@@ -422,6 +453,12 @@ async function assertRegeneratedAppAnswers(directory) {
  * request has to finish it, which is only reachable if the emitted route built a runtime
  * over this app's gateway and handed back a checkpoint a client can hold.
  *
+ * The two refusals are asserted here as well, because they are what makes the checkpoint a
+ * capability rather than a bearer token: an edited checkpoint and a spent one must both be
+ * refused, and the *same* refusal must come back for both. Two distinct bodies would answer
+ * "was it the signature or the replay?" for whoever is holding the checkpoint and guessing,
+ * which is the oracle the generated route's opaque 403 exists to close.
+ *
  * @param {string} directory
  */
 async function assertRegeneratedAgentPausesAndResumes(directory) {
@@ -441,6 +478,25 @@ async function assertRegeneratedAgentPausesAndResumes(directory) {
     require(paused.checkpoint !== null, `the pause carried no checkpoint: ${startedBody}`);
     log(`    POST /agents/refund_agent/run -> 200 paused, checkpoint handed back`);
 
+    // A flipped signature byte, with the payload otherwise intact: the checkpoint still
+    // parses, so this reaches the signature check rather than the 422 that a malformed body
+    // would earn. Sent before the genuine resume because a refused resume must not spend the
+    // nonce -- if it did, the assertion below would be testing a checkpoint it broke.
+    const tampered = structuredClone(paused.checkpoint);
+    const signature = tampered.integrity?.signature;
+    const signed = typeof signature === 'string' && signature !== '';
+    require(signed, 'the pause handed back an unsigned checkpoint');
+    tampered.integrity.signature = (signature[0] === 'a' ? 'b' : 'a') + signature.slice(1);
+    const edited = await postWhenReady(
+      server,
+      '/agents/resume',
+      { checkpoint: tampered, decision: 'approve' },
+      DEMO_SUBJECT_HEADER,
+    );
+    const editedBody = await edited.text();
+    require(edited.status === 403, `an edited checkpoint answered ${edited.status}: ${editedBody}`);
+    log('    POST /agents/resume (edited) -> 403 refused');
+
     const resumed = await postWhenReady(
       server,
       '/agents/resume',
@@ -457,6 +513,39 @@ async function assertRegeneratedAgentPausesAndResumes(directory) {
     require(finished.answer ===
       AGENT_ANSWER, `the answer was not the scripted one: ${resumedBody}`);
     log(`    POST /agents/resume -> 200 completed ${JSON.stringify(finished.answer)}`);
+
+    // The same checkpoint, now spent. It has to fail on the replay claim *after* the
+    // signature and owner checks pass, so a 403 here is the one-time claim doing its work
+    // rather than the signature check catching a copy that went stale.
+    const replayed = await postWhenReady(
+      server,
+      '/agents/resume',
+      { checkpoint: paused.checkpoint, decision: 'approve' },
+      DEMO_SUBJECT_HEADER,
+    );
+    const replayedBody = await replayed.text();
+    const spentStatus = replayed.status;
+    require(spentStatus === 403, `a spent checkpoint answered ${spentStatus}: ${replayedBody}`);
+
+    // The oracle assertion. The route deliberately logs the reason and returns one fixed
+    // sentence; a body that differed between "edited" and "spent" -- or that named the
+    // failed check -- would tell a caller which part of the checkpoint to change next.
+    require(replayedBody !== '', 'both refusals were empty, so "identical" proves nothing');
+    const differ = `edited -> ${editedBody} / spent -> ${replayedBody}`;
+    require(replayedBody === editedBody, `the two refusals differ, which is an oracle: ${differ}`);
+    const leak = /tamper|replay|spent|signature|nonce|expir|owner|unsigned|already|stale/i;
+    require(!leak.test(replayedBody), `the refusal names the failed check: ${replayedBody}`);
+
+    // The other half of the oracle claim: the bodies match *because* the route hides a
+    // reason, not because both requests failed the same check. The log is where the two
+    // differ, and neither reason may reappear in the response.
+    const reasons = await refusalReasons(server, 2);
+    require(reasons[0] !== reasons[1], `both refusals logged one reason: ${reasons[0]}`);
+    for (const reason of reasons) {
+      require(!replayedBody.includes(reason), `the body repeats the logged reason: ${reason}`);
+    }
+    log(`    operator log: two distinct reasons ("${reasons[0]}" / "${reasons[1]}")`);
+    log('    POST /agents/resume (spent) -> 403 refused, byte-identical to the edited refusal');
   } finally {
     await stopApp(server);
   }
