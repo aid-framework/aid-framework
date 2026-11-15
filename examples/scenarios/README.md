@@ -52,11 +52,19 @@ node ../../../packages/cli/dist/cli.js gen --dry-run
 ## `prior-auth-review/` — enterprise profile, every delivery control declared
 
 A prior-authorization desk. Not a different feature set from the two above so much as a different
-standard of proof: the deployment is region-pinned to `eu-central-1`, authenticates with OIDC, runs
-private with `declared-only` egress, ships audit records to CloudWatch for 730 days, and requires two
-named approvers before a production change. Traces export over OTLP and feedback is captured with the
-`rationale` field redacted and a retention window. The eval carries a promotion policy, so improving
-the prompt is a gated change rather than an edit.
+standard of proof: the deployment is region-pinned to `eu-central-1`, authenticates with OIDC, claims
+a private placement with `declared-only` egress, ships audit records to CloudWatch for 730 days, and
+requires two named approvers before a production change. Traces export over OTLP and feedback is
+captured with the `rationale` field redacted and a retention window. The eval carries a promotion
+policy, so improving the prompt is a gated change rather than an edit.
+
+It is pinned to `specVersion: "0.33"` on purpose, and that pin is part of the lesson. At that version
+`network.private: true` was read by the profile gate and by no emitter, so the document *claims* a
+private placement it does not get: the emitted load balancer is public and its ingress rule opens
+`0.0.0.0/0`. The key was retired rather than promoted in 0.37, because a version bump must not move
+live traffic, and `ingress: internal` is what actually selects the private subnets — which is why
+`warranty-claims` below writes it. Read [the migrations](../../docs/migration.md) before copying a
+deployment block out of this one.
 
 Delete `audit`, `identity`, `network` or `approvals` from the deployment and `aid validate` refuses the
 document with `ir/profile-audit`, `ir/profile-identity`, `ir/profile-network` or
