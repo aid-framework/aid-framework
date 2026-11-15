@@ -1049,12 +1049,14 @@ Deliberately **not** built, and stated rather than implied:
   convention; `aid report` answers the operations question from a directory that may be a CI
   download with no spec in it. Joining them would make the report refuse whenever the two names
   disagreed.
-- **No dashboards, no alerts, no exporter.** §10.3's `observability.export` is still intent, so there
-  is still nothing that emits OTLP from a generated runtime -- and the report reads files, so it does
-  not depend on that half.
-- **`cost` and `latency` as spec-level metrics stay refused at generation.** The report measures both
-  from traces; the gate still refuses to let a spec *declare* them, because no generated runtime
-  measures them. Those are different claims and the difference is the whole point of §10's table.
+- **Nothing from §10.3 to depend on, when it shipped.** The report reads files, so it did not wait
+  on the telemetry half, and at that point there was no dashboard, alarm or exporter to read. §10.7
+  and §10.8 have since added alarms and an exporter; the report still reads files rather than traces,
+  so neither changed what it can claim.
+- **No cross-deployment aggregate in the spec.** A single eval case can bound `cost` (`CostCeiling`,
+  from the gateway ledger) and `latency` (`LatencyCeiling`, from the clock) under `py-fastapi`;
+  `ts-vercel` refuses both with `eval-metric-unsupported` because it emits no binding for them. What
+  the report adds is the fleet total across deployments, which no one case can state.
 - **No `--since`/`--until` window.** The trace reader supports one, but a fleet report over a download
   has one window already: whatever the download contains.
 
@@ -1098,8 +1100,9 @@ Deliberately **not** built:
 - **No generated dashboards.** Alerts are a closed list with a numeric threshold; a dashboard is an
   open-ended layout, and a generated one that guessed at the panel that matters would be worse than
   the console click it replaced. Â§12 keeps it listed as unbuilt.
-- **No collector, no exporter.** `export: otlp` is still intent; `alert_channel_ids` defaults to
-  empty for the same reason -- the compiler does not know your account ids and will not invent them.
+- **No collector.** `alert_channel_ids` defaults to empty because the compiler does not know your
+  account ids and will not invent them. §10.8 gives the runtime an exporter, but the collector behind
+  `endpointEnv` is still yours to run and to name.
 - **No paging integration.** The alarm action list is a variable the operator sets, not a channel
   the compiler creates.
 

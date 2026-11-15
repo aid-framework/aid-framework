@@ -23,7 +23,11 @@ Start from the enterprise golden path, which is already a complete, gate-clean s
 $ aid init desk --template enterprise-approvals
 created app/app.spec.yaml
 created README.md
+created customers/contoso-us.yaml
+created app/business/__init__.py
+created app/business/principal.py
 next: aid validate, then aid gen
+
 $ cd desk
 $ aid validate
 app/app.spec.yaml: ok (0 errors, 0 warnings)
@@ -69,7 +73,7 @@ $ aid resolve customers/acme.yaml --out customers/acme.spec.yaml
 wrote customers/acme.spec.yaml (3 overrides applied)
 ```
 
-Three overrides, one spec. The result is a plain 0.29 document: it has `profile: enterprise`, the
+Three overrides, one spec. The result is a plain 0.38 document: it has `profile: enterprise`, the
 base's guardrails, identity, network and approval policy, the customer's region and model, and the
 customer's ceiling of 1.5 -- and it is what you commit next to the overlay so a reviewer can see
 both the intent and the effect.

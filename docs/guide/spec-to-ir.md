@@ -15,7 +15,7 @@ app.spec.yaml
    v
 validated document
    |  packages/ir/src/build.ts          lower, apply defaults, resolve, sort
-   |  packages/ir/src/gates/index.ts    runGates(): 16 gates, one report
+   |  packages/ir/src/gates/index.ts    runGates(): 30 gates, one report
    v
 IR v0.1  --(packages/ir/src/serialize.ts)--> canonical JSON
 ```
