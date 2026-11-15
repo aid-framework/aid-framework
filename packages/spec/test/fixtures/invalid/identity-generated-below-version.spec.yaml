@@ -1,0 +1,19 @@
+specVersion: "0.34"
+
+project:
+  name: claims-desk
+
+deployments:
+  prod:
+    target: container
+    cloud: aws
+    region: eu-central-1
+    secrets: [OPENAI_API_KEY]
+    identity:
+      kind: oidc
+      issuer: https://login.example.com
+      audience: aid-claims
+      # `aid` asks for a generated checker. At 0.34 it is just a component name, so the
+      # build would emit the anonymous seam and trust every caller -- the version gate
+      # refuses the earlier reading rather than letting the word mean something it did not.
+      verifiedBy: aid

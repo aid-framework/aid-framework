@@ -1613,6 +1613,10 @@ function buildDeploymentIdentity(
   if (scopesClaim !== undefined) shape.scopesClaim = scopesClaim;
   const verifiedBy = asString(identity.verifiedBy);
   if (verifiedBy !== undefined) shape.verifiedBy = verifiedBy;
+  const jwksUri = asString(identity.jwksUri);
+  if (jwksUri !== undefined) shape.jwksUri = jwksUri;
+  const subjectClaim = asString(identity.subjectClaim);
+  if (subjectClaim !== undefined) shape.subjectClaim = subjectClaim;
   return shape;
 }
 

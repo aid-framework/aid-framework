@@ -88,6 +88,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.32',
   '0.33',
   '0.34',
+  '0.35',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -254,6 +255,30 @@ export const RESUME_SIGNING_MIN_VERSION: SpecVersion = '0.32';
  * undeclared when the author had in fact declared it.
  */
 export const IDENTITY_VERIFIED_BY_MIN_VERSION: SpecVersion = '0.33';
+
+/**
+ * The literal `identity.verifiedBy` value that asks AID to *generate* the verifier rather
+ * than name one the customer runs.
+ *
+ * `verifiedBy` was introduced as the name of a component -- a module path, a gateway, a
+ * service -- because AID did not verify tokens. That stays true of every other value. This
+ * one is reserved: it is not a module path and never reads as one, and it is the whole
+ * difference between a deployment whose tokens are checked and one whose tokens are
+ * checked *by something the spec names*.
+ */
+export const IDENTITY_GENERATED_VERIFIER = 'aid';
+
+/**
+ * The first spec version that accepts `verifiedBy: aid`, `identity.jwksUri` and
+ * `identity.subjectClaim`.
+ *
+ * All three exist to describe a verifier AID emits, so none of them means anything in a
+ * document that cannot ask for one. Reading them as absent below this version would
+ * silently build an app that trusts every caller while the document says otherwise, and
+ * reading them as present would promise a check the build does not make -- so a document
+ * that declares one is told which version it needs.
+ */
+export const IDENTITY_GENERATED_MIN_VERSION: SpecVersion = '0.35';
 
 /**
  * The first spec version under which `enterprise` refuses a pausable agent whose deployment
@@ -745,6 +770,7 @@ function scopeDiagnostics(
   trajectoryMetricVersionDiagnostics(spec, diagnostics, reported);
   resumeSigningVersionDiagnostics(spec, diagnostics, reported);
   identityVerifiedByVersionDiagnostics(spec, diagnostics, reported);
+  identityGeneratedVersionDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
   routeDiagnostics(spec, diagnostics, reported);
@@ -1308,6 +1334,65 @@ function identityVerifiedByVersionDiagnostics(
       }),
     );
     reported.add(JSON.stringify(path));
+  }
+}
+
+/**
+ * `verifiedBy: aid`, `identity.jwksUri` and `identity.subjectClaim` arrived in 0.35, nested
+ * inside `identity` like `verifiedBy` itself, so no version gate covers them.
+ *
+ * The three are one rule rather than three because they describe one thing: a verifier AID
+ * emits. A document below 0.35 that names `aid` has no such verifier to configure, and one
+ * that configures a verifier without asking for it has written a key with no effect. Both
+ * are reported by path so the author can fix the version instead of the keys -- lowering
+ * the document to the keys this build honours would leave the deployment trusting every
+ * caller, which is the state this version exists to end.
+ */
+function identityGeneratedVersionDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) return;
+  if (specVersionAtLeast(declared, IDENTITY_GENERATED_MIN_VERSION)) return;
+  const deployments = spec.deployments;
+  if (deployments === null || typeof deployments !== 'object' || Array.isArray(deployments)) return;
+  for (const [id, rawDeployment] of Object.entries(deployments as Record<string, unknown>)) {
+    const identity = asRecord(asRecord(rawDeployment).identity);
+    if (identity.verifiedBy === IDENTITY_GENERATED_VERIFIER) {
+      const path = ['deployments', id, 'identity', 'verifiedBy'];
+      if (!reported.has(JSON.stringify(path))) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.notSupported,
+            message: `'deployments.${id}.identity.verifiedBy: ${IDENTITY_GENERATED_VERIFIER}' requires specVersion ${IDENTITY_GENERATED_MIN_VERSION}, but this specification declares version ${declared}`,
+            path,
+            hint: `set specVersion: "${IDENTITY_GENERATED_MIN_VERSION}"; the value asks AID to generate the token verifier, which no earlier version can do, and every other verifiedBy value still names a component you run yourself`,
+          }),
+        );
+        reported.add(JSON.stringify(path));
+      }
+    }
+    for (const key of ['jwksUri', 'subjectClaim'] as const) {
+      if (!(key in identity)) continue;
+      const path = ['deployments', id, 'identity', key];
+      if (reported.has(JSON.stringify(path))) continue;
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: `'deployments.${id}.identity.${key}' requires specVersion ${IDENTITY_GENERATED_MIN_VERSION}, but this specification declares version ${declared}`,
+          path,
+          hint:
+            key === 'jwksUri'
+              ? `set specVersion: "${IDENTITY_GENERATED_MIN_VERSION}"; the key says where the generated verifier fetches signing keys, and a document below ${IDENTITY_GENERATED_MIN_VERSION} asks for no generated verifier to fetch them`
+              : `set specVersion: "${IDENTITY_GENERATED_MIN_VERSION}"; the key says which claim names the caller the generated verifier binds a paused run to, and a document below ${IDENTITY_GENERATED_MIN_VERSION} declares no generated verifier`,
+        }),
+      );
+      reported.add(JSON.stringify(path));
+    }
   }
 }
 

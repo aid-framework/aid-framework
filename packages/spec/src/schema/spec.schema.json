@@ -44,7 +44,8 @@
         "0.31",
         "0.32",
         "0.33",
-        "0.34"
+        "0.34",
+        "0.35"
       ]
     },
     "profile": {
@@ -2042,37 +2043,47 @@
       }
     },
     "identity": {
-      "description": "The identity provider a deployment trusts, as a reference: an issuer URL a reader can fetch and an audience name. No field accepts a credential. AID records the reference and gates its presence; it does not generate token verification, so `verifiedBy` (spec 0.33) names the component that really checks a token. Moving to another IdP is a reviewed spec change rather than an environment variable nobody reads.",
+      "description": "The identity provider a deployment trusts. No field accepts a credential, and none holds a secret: `verifiedBy` names a component, or the literal `aid` asks AID to generate one (spec 0.35). With `verifiedBy: aid` the generated `current_principal` dependency verifies the bearer token against the issuer's JWKS and refuses anything it cannot verify, so `issuer`, `audience` and `jwksUri` stop being references and become the check's own configuration. Any other `verifiedBy` value names a component the customer runs, and AID generates no verification for it. Moving to another IdP is a reviewed spec change rather than an environment variable nobody reads.",
       "type": "object",
       "required": ["kind", "issuer"],
       "additionalProperties": false,
       "properties": {
         "kind": {
-          "description": "`oidc` is a JWT issuer the app validates tokens from. `saml` is declared for an organisation whose SSO asserts identity before the gateway forwards it; either way the check is the verifier named in `verifiedBy`, not something AID emits.",
+          "description": "`oidc` is a JWT issuer the app validates tokens from. `saml` is declared for an organisation whose SSO asserts identity before the gateway forwards it. The generated verifier implements `oidc` only -- it checks signed JWTs and accepts no symmetric algorithm -- so `ir/identity-kind` refuses `saml` with `verifiedBy: aid` rather than emitting a verifier that would never match an assertion.",
           "enum": ["oidc", "saml"]
         },
         "issuer": {
-          "description": "The issuer URL the token's `iss` claim must equal exactly. AID records it in the IR and the profile gate refuses an `enterprise` deployment that names no identity provider; no generated code compares this value, so the verifier named in `verifiedBy` is what checks it.",
+          "description": "The issuer URL the token's `iss` claim must equal exactly. `verifiedBy: aid` makes this the value the generated verifier compares, rather than a reference the profile gate merely records.",
           "type": "string",
           "pattern": "^https://[^\\s]+$"
         },
         "audience": {
-          "description": "The `aud` claim the token must carry. Omitted means the project id, which is the audience a verifier should expect. AID records it and emits no check.",
+          "description": "The `aud` claim the token must carry. Omitted means the project id. Required -- with no default -- when `verifiedBy: aid`, because an audience nothing pins is an audience any token for any other service in the same issuer satisfies; `ir/identity-audience` refuses the omission.",
+          "type": "string",
+          "minLength": 1
+        },
+        "jwksUri": {
+          "description": "Where the generated verifier fetches the issuer's signing keys. Spec 0.35, and required when `verifiedBy: aid`. Named rather than discovered from `issuer` so the trust decision is one reviewable line in the spec instead of an HTTP request the process makes at startup, and so a private or non-standard key endpoint can be declared. Must be `https`. The keys are cached and re-fetched before they expire, and a token naming an unknown key id triggers at most one re-fetch per cooldown.",
+          "type": "string",
+          "pattern": "^https://[^\\s]+$"
+        },
+        "subjectClaim": {
+          "description": "Which claim names the caller. Spec 0.35. Omitted means `sub`, which is what OIDC providers issue. The generated verifier sets the runtime `Principal.subject` from it, and that subject is what binds a paused checkpoint to the person who paused it -- so a deployment that changes this claim changes who may resume whose run.",
           "type": "string",
           "minLength": 1
         },
         "rolesClaim": {
-          "description": "Which claim holds the token's roles, so the verifier named in `verifiedBy` can map them onto the runtime `Principal` that `auth` policies read. Omitted means `roles`. AID records the name; it reads no claim itself.",
+          "description": "Which claim holds the token's roles, so the verifier can map them onto the runtime `Principal` that `auth` policies read. Omitted means `roles`. Read by the generated verifier when `verifiedBy: aid`, and by whatever component is named otherwise.",
           "type": "string",
           "minLength": 1
         },
         "scopesClaim": {
-          "description": "Which claim holds the token's scopes. Omitted means `scp`, which is what OIDC providers issue. AID records the name; the verifier applies it.",
+          "description": "Which claim holds the token's scopes. Omitted means `scp`, which is what OIDC providers issue; a single space-delimited string is split, so the OAuth2 spelling `scope` works when named. Read by the generated verifier when `verifiedBy: aid`.",
           "type": "string",
           "minLength": 1
         },
         "verifiedBy": {
-          "description": "Who verifies tokens for this deployment, named so a reviewer can point at it: a module path such as `app.business.principal:current_principal`, a gateway, or a service. Spec 0.33. AID generates no token verification, so this is what turns the responsibility into a declaration instead of an implication -- `enterprise` refuses a deployment that declares `identity` without it (`ir/identity-verified-by`).",
+          "description": "Who verifies tokens for this deployment. Either the literal `aid` (spec 0.35), which asks AID to generate the verifier, or the name of a component the customer runs: a module path such as `app.business.principal:current_principal`, a gateway, or a service (spec 0.33). `enterprise` refuses a deployment that declares `identity` without it (`ir/identity-verified-by`), because an issuer alone does not say who checks a token. The difference between the two forms is the difference between a control the build enforces and one the build records; `docs/features.md` keeps them apart.",
           "type": "string",
           "minLength": 1
         }

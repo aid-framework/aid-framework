@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aid-runtime-python"
-version = "0.1.187"
+version = "0.1.188"
 description = "The AID Framework Python runtime: model gateway with pinning and cost budgets, prompt registry, tool executor, OTel GenAI tracing, plain-async pipeline, and an eval harness that gates on statistical regression against a stored baseline."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -50,6 +50,13 @@ deepagents = ["deepagents==0.7.32"]
 # extra in the status it returns when the exporter is absent, so the fix is in
 # the message rather than in a traceback.
 otlp = ["opentelemetry-exporter-otlp-proto-http>=1.24,<2"]
+# Token verification for a deployment that declares an identity provider. An extra
+# because `aid_runtime.identity` is imported by one generated module and by nothing on
+# the serving path of a spec that declares no identity: a service that trusts no issuer
+# should not install a JWT library to say so. `[crypto]` is not optional decoration --
+# it is what turns a JWK into a key object, and without it PyJWT verifies HMAC only,
+# which `aid_runtime.identity` refuses to accept.
+identity = ["pyjwt[crypto]>=2.8,<3"]
 dev = [
   "mypy>=1.11,<3",
   # Both the SDK and the OTLP exporter, so the `configured` path is covered by a
@@ -58,6 +65,10 @@ dev = [
   # extra exists to prevent.
   "opentelemetry-exporter-otlp-proto-http>=1.24,<2",
   "opentelemetry-sdk>=1.24,<2",
+  # So the verifier is exercised against a real signature implementation rather than a
+  # patched one, for the same reason the OTLP exporter is here: the failure mode this
+  # guards against is the dependency being absent where it is assumed present.
+  "pyjwt[crypto]>=2.8,<3",
   "pytest>=8,<10",
   "pytest-asyncio>=0.24,<2",
   "ruff>=0.6,<1",

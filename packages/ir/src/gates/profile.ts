@@ -38,7 +38,13 @@
 
 import { IDENTITY_VERIFIED_BY_MIN_VERSION, specVersionAtLeast } from '@aid-framework/spec';
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
-import { CLOUD_AUDIT_SINKS, CLOUD_REGIONS, type IR, type SpecCloud } from '../shapes.js';
+import {
+  CLOUD_AUDIT_SINKS,
+  CLOUD_REGIONS,
+  GENERATED_VERIFIER,
+  type IR,
+  type SpecCloud,
+} from '../shapes.js';
 import { type GateOptions, type GateResult, NO_SUPPRESSIONS, reporter } from './contract.js';
 
 /** The spec version that first let a deployment declare the enterprise control set. */
@@ -181,17 +187,18 @@ export function profileGate(ir: IR, options: GateOptions): GateResult {
       deployment.identity.verifiedBy === undefined &&
       specVersionAtLeast(ir.specVersion, IDENTITY_VERIFIED_BY_MIN_VERSION)
     ) {
-      // AID emits no token verification, so `identity` names the issuer and nothing more.
-      // The enterprise profile's claim that callers arrive with a verifiable principal is
-      // only true if somebody named is doing the verifying, so the document has to say who.
+      // `identity` names an issuer, and an issuer does not say who checks a token. The
+      // enterprise profile's claim that callers arrive with a verifiable principal is only
+      // true if somebody named is doing the verifying, so the document has to say who --
+      // either a component the customer runs or, from 0.35, `aid` for the generated check.
       // Below 0.33 the key does not exist, which is why the check is version-gated rather
       // than an unsatisfiable demand on a document that cannot answer it.
       diagnostics.push(
         report.error({
           code: IR_DIAGNOSTIC_CODES.identityVerifiedBy,
-          message: `the profile gate rejected "${id}": the enterprise profile requires \`identity.verifiedBy\`, because AID generates no token verification and the issuer alone does not say who checks it`,
+          message: `the profile gate rejected "${id}": the enterprise profile requires \`identity.verifiedBy\`, because the issuer alone does not say who checks a token`,
           path: ['deployments', id, 'identity', 'verifiedBy'],
-          hint: `name the component that verifies tokens before they reach a route, such as \`verifiedBy: api-gateway\` or \`verifiedBy: app/business/principal.py\` -- AID emits the check point, not the check`,
+          hint: `set \`verifiedBy: ${GENERATED_VERIFIER}\` to have AID generate the verifier from \`issuer\`, \`audience\` and \`jwksUri\`, or name the component you run yourself, such as \`verifiedBy: api-gateway\` or \`verifiedBy: app/business/principal.py\``,
         }),
       );
     }

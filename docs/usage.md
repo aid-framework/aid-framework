@@ -759,8 +759,9 @@ Covers:
 - **A Dockerfile and an image**
 - **Delivery profiles with a pinned placement and audit sink**
 - **Durable run state, deployment identity, private network and change approval** *(declared
-  and gated; the run store and the token check stay yours — see
-  [the features page](features.md#declared-and-gated-not-generated))*
+  and gated; the private-network pin and the component-name form of `identity.verifiedBy` stay
+  yours — see [the features page](features.md#declared-and-gated-not-generated))*
+- **A token verifier the build writes, not one it names**
 - **Eject**
 - **A review pack that keeps proved and declared apart**
 

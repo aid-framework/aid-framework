@@ -1,0 +1,18 @@
+specVersion: "0.34"
+
+project:
+  name: claims-desk
+
+deployments:
+  prod:
+    target: container
+    cloud: aws
+    region: eu-central-1
+    secrets: [OPENAI_API_KEY]
+    identity:
+      kind: oidc
+      issuer: https://login.example.com
+      audience: aid-claims
+      # Which claim names the caller is only meaningful to a verifier; below 0.35 the
+      # checkpoint binds to whatever the app sets, so the key would be read by nobody.
+      subjectClaim: email

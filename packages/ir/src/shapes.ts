@@ -1351,8 +1351,47 @@ export interface DeploymentIdentityShape {
   /**
    * Who verifies tokens, named for a reviewer. Required by `enterprise` from spec 0.33,
    * because a claim of identity with nothing behind it is what this field replaces.
+   *
+   * The literal {@link GENERATED_VERIFIER} is the one value that is not a name of
+   * something the customer runs: it asks AID to generate the verifier, and from spec 0.35
+   * the generated `current_principal` dependency then actually checks the bearer token.
    */
   verifiedBy?: string;
+  /**
+   * Where the generated verifier fetches signing keys. Set only alongside
+   * `verifiedBy: aid`, and then required: named rather than discovered from `issuer` so
+   * the key source is a line in the spec a reviewer reads, not a request the process
+   * makes at startup.
+   */
+  jwksUri?: string;
+  /** The claim naming the caller. Absent means `sub`. Read only by the generated verifier. */
+  subjectClaim?: string;
+}
+
+/**
+ * The `identity.verifiedBy` value that asks AID to generate the verifier.
+ *
+ * Distinct from every other value, which names a component the customer operates. The two
+ * are kept apart everywhere a maturity claim is made, because one is a control the build
+ * enforces (a generated check, a generated test, a gate that refuses an unusable
+ * configuration) and the other is a declaration the build records.
+ */
+export const GENERATED_VERIFIER = 'aid';
+
+/**
+ * The spec version that made {@link GENERATED_VERIFIER} mean "generate the check".
+ *
+ * Below it the literal is not reserved, so a document that happens to name a component
+ * `aid` is a document naming a component. Every reader of `verifiedBy` has to compare
+ * against this and not against the bare literal: the generator would otherwise emit a
+ * verifier an earlier document never asked for, which is the one way this feature could
+ * change the meaning of a spec that did not change.
+ */
+export const IDENTITY_GENERATED_MIN_VERSION = '0.35';
+
+/** True when this deployment asks AID to generate the token verifier. */
+export function generatesVerifier(identity: DeploymentIdentityShape | undefined): boolean {
+  return identity?.verifiedBy === GENERATED_VERIFIER;
 }
 
 /** The token protocols a deployment can trust. `oidc` covers every OIDC-compliant IdP. */

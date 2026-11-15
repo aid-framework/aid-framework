@@ -765,6 +765,17 @@ export const SHIPPED_FEATURES = [
     href: './reference/spec.md#top-level-keys',
     since: '0.1.159',
   },
+  {
+    id: 'generated-verifier',
+    maturity: 'emitted',
+    evidence: { path: 'packages/generators/py-fastapi/src/emit/agents.ts', marker: 'JwksVerifier' },
+    title: 'A token verifier the build writes, not one it names',
+    detail:
+      'Spec 0.35 reserves `deployments[].identity.verifiedBy: aid`, and `py-fastapi` answers it by generating a real check instead of a seam. Every earlier `verifiedBy` named a component -- a module path, a gateway, a service -- and `ir/identity-verified-by` proved only that somebody was named. The literal `aid` is an instruction: the runtime ships `JwksVerifier`, which fetches `identity.jwksUri`, verifies the signature over the algorithms OIDC allows (RS, PS and ES at 256, 384 and 512 -- never `none`, never HMAC, so the key-confusion class is not reachable), compares `iss`, `aud` and `exp` with 30 seconds of leeway, caches the key set for five minutes and refetches once on an unknown `kid`. The generated `current_principal` keeps its signature and stops admitting everyone: no header, or a token it will not honour, is a `401` with `WWW-Authenticate: Bearer`. Four refusals gate the form -- `ir/identity-kind` (no SAML is generated), `ir/identity-audience`, `ir/identity-keys` (a `jwksUri` over `https` is required) and `ir/identity-conflict` (two deployments that disagree, including one that asks and one that declares an identity but stays silent). The limit is stated rather than hidden: it trusts the `jwksUri` the document declares, so it proves the token was signed by whoever publishes at that URI, not that the URI is the tenant the reviewers meant. A component name is still a declaration, and a document that omits `verifiedBy` still gets the anonymous principal.',
+    declaredBy: 'deployments[].identity',
+    href: './reference/spec.md#top-level-keys',
+    since: '0.1.188',
+  },
 ];
 
 /**
@@ -796,7 +807,7 @@ export const DECLARED_FEATURES = [
     declares: 'state, deployments[].identity, deployments[].network, deployments[].approvals',
     enforces: 'ir/profile-identity, ir/identity-verified-by, ir/profile-network',
     missing:
-      'What *is* generated: the region pin and the audit sink reach the OpenTofu, the profile gate refuses an `enterprise` deployment missing either of them or missing the `network.private` pin, `requiresApproval` reaches the generated tool step, the checkpoint is signed with the key `state.signingKeyEnv` names, a declared `state` store holds the checkpoint nonce, and a paused run is written to that store so `POST /agents/runs/{run_id}/resume` continues it after a restart. What is not: `network.private` states a requirement and selects no module -- the container module builds its two-AZ VPC with private task subnets and one NAT gateway whenever you do not supply `vpc_id`, whether the pin is set or not, and no generator branches on the key. Also not: no generator verifies a token (`identity.verifiedBy` names who does).',
+      'What *is* generated: the region pin and the audit sink reach the OpenTofu, the profile gate refuses an `enterprise` deployment missing either of them or missing the `network.private` pin, `requiresApproval` reaches the generated tool step, the checkpoint is signed with the key `state.signingKeyEnv` names, a declared `state` store holds the checkpoint nonce, and a paused run is written to that store so `POST /agents/runs/{run_id}/resume` continues it after a restart. What is not: `network.private` states a requirement and selects no module -- the container module builds its two-AZ VPC with private task subnets and one NAT gateway whenever you do not supply `vpc_id`, whether the pin is set or not, and no generator branches on the key. Also not: no generator verifies a token unless the deployment writes `verifiedBy: aid`, which from spec 0.35 makes `py-fastapi` generate the check (`generated-verifier` above) -- any other value names a component and is a declaration only.',
     href: './reference/spec.md#top-level-keys',
     since: '0.1.143',
   },
@@ -882,8 +893,15 @@ export const REFUSALS = [
     id: 'enterprise-profile-without-identity',
     title: 'An `enterprise` profile with no identity reference',
     reason:
-      "A regulated deployment has to say where a caller is authenticated, so an `enterprise` spec with no `deployments[].identity` is refused by the `profile` gate. The block carries an issuer, an audience and the claim names that become the runtime `Principal`; signature verification stays in `business/`, so AID never holds a tenant's signing key. `network`, `region` and `approvals` are refused separately -- `ir/profile-network` and `ir/profile-approvals` -- because each has its own fix.",
+      "A regulated deployment has to say where a caller is authenticated, so an `enterprise` spec with no `deployments[].identity` is refused by the `profile` gate. The block carries an issuer, an audience and the claim names that become the runtime `Principal`, and from spec 0.35 it can also name a key set: `verifiedBy: aid` makes `py-fastapi` generate the verification, while any other value names a component to write in `business/`. Either way AID never holds a tenant's signing key -- a generated verifier reads the public keys at `jwksUri`. `network`, `region` and `approvals` are refused separately -- `ir/profile-network` and `ir/profile-approvals` -- because each has its own fix.",
     code: 'ir/profile-identity',
+  },
+  {
+    id: 'generated-verifier-incomplete',
+    title: 'A generated verifier the document has not given enough to check',
+    reason:
+      '`verifiedBy: aid` is the one value of the key that asks the build to write a check, so it is refused unless the document supplies what a check needs. `ir/identity-kind` refuses it on `kind: saml`, because no SAML verification is generated. `ir/identity-audience` refuses a deployment with no `audience`, because a token checked for issuer alone is a token from any application on that issuer. `ir/identity-keys` refuses a deployment with no `jwksUri`, because there is no key set to verify against. `ir/identity-conflict` refuses two deployments that ask for different things -- a generated verifier beside a named one, or a generated verifier beside a deployment that declares an identity and asks for nothing -- because `current_principal` is one dependency for the whole tree and honouring only the asking deployment would check tokens from an issuer the other never named.',
+    code: 'ir/identity-keys',
   },
   {
     id: 'enterprise-profile-with-public-network',
@@ -1176,6 +1194,7 @@ export const CAPABILITY_FAMILIES = [
       'eject',
       'profiles',
       'delivery-controls',
+      'generated-verifier',
       'review-pack',
     ],
   },

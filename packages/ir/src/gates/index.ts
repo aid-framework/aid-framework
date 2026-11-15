@@ -30,6 +30,7 @@ import { evalCoverageGate } from './eval-coverage.js';
 import { evalMetricGate } from './eval-metrics.js';
 import { guardrailCoverageGate, guardrailPolicyGate } from './guardrails.js';
 import { hitlSideEffectGate } from './hitl.js';
+import { identityGate } from './identity.js';
 import { knowledgeBaseGate } from './knowledge-base.js';
 import { memoryRefsGate } from './memory.js';
 import { normalizeGate } from './normalize.js';
@@ -60,6 +61,7 @@ export const GATES = {
   'guardrails/coverage': guardrailCoverageGate,
   'guardrails/policies': guardrailPolicyGate,
   'hitl/side-effects': hitlSideEffectGate,
+  identity: identityGate,
   'memory/refs': memoryRefsGate,
   'retrievers/knowledge-bases': knowledgeBaseGate,
   'deploy/streaming': deployStreamingGate,
