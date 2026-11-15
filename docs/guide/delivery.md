@@ -363,6 +363,26 @@ Both are recorded in the reference and on the features page rather than left for
 discover by reading generated code. Neither blocks a delivery: they are a line in your networking
 plan and an environment variable in your release.
 
+## The review pack
+
+Handing a reviewer the table above invites them to read their control as "generated" when most
+rows are only gated. Print the split for the customer that is actually shipping instead:
+
+```bash
+aid review customers/acme.spec.yaml
+```
+
+The pack prints two lists. The first is one line: the document parses, reduces to the IR, and
+every build-time gate accepted it. The second is every declaration the build accepted without
+being able to check it — the issuer, the audit sink and its retention, the region pin, the
+placement and its egress rule, the approvers and how many are required, the secret names — each
+with the path that declared it. A spec the build refuses is refused here too, rather than
+itemised: a pack that listed a region pin for a spec that failed an earlier gate would ask a
+reviewer to approve a control the build never reached.
+
+Use it as the agenda for the review. What the build proved is one line of it, and everything
+else belongs to the platform owner to confirm.
+
 ## Leave the boundary clean
 
 Every artifact in this playbook is inside the ownership boundary, so `aid eject` still works:

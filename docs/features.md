@@ -417,6 +417,15 @@ Four series -- `agent.cost`, `agent.tokens`, `eval.cost` and `eval.latency.p95` 
 - **Reference:** [cli](./reference/cli.md#report)
 - **Since:** `0.1.148`
 
+### A review pack that keeps proved and declared apart
+
+`aid review [spec]` prints what the build checked and what it only accepted as a declaration, each with the path a reviewer has to go and confirm: the identity issuer, the audit sink and its retention, the region pin, the private placement and its egress rule, the approvers and how many are required, and the secret names the platform must supply. It re-uses the `validate` pipeline and adds no gate, so a spec the build refuses is refused here too -- a pack for a spec that does not build would itemise controls the build never reached. The distinction it prints is the one the framework insists on everywhere else: the build reads the document, and it cannot contact your identity provider, look inside your network, or ask your approvers whether they agreed.
+
+- **Turned on by:** `aid review`
+- **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/commands/review.ts`)
+- **Reference:** [cli](./reference/cli.md#review)
+- **Since:** `0.1.185`
+
 ### Promotion policy for a candidate
 
 Spec 0.28 states what a candidate is allowed to cost in quality and in spend: `evals[].gate.promotion` names the baseline prompt version, the quality drop and cost increase it may not exceed, and -- under `enterprise` -- who records the approval. `aid eval --compare` judges a recorded candidate baseline against a recorded accepted one and exits non-zero on a regression. Nothing auto-deploys: promotion is a gate pass plus a file in the tree.

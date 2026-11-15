@@ -30,7 +30,7 @@ Three things decide how you work with it:
 | Needing a TypeScript/Next.js service | `--target ts-vercel` | [4](#4-compile-the-typescript-target) |
 | Serving it locally | `aid dev` | [5](#5-run-it-locally) |
 | Delivering to many customers | `overridable`, `customers/`, `aid fleet` | [6](#6-deliver-one-spec-to-many-customers) |
-| Passing an enterprise review | `profile: enterprise` | [7](#7-meet-an-enterprise-review) |
+| Passing an enterprise review | `profile: enterprise`, `aid review` | [7](#7-meet-an-enterprise-review) |
 | Improving a live agent | `aid trace export`, `aid eval --compare` | [8](#8-improve-an-agent-without-auto-deploying) |
 | Shipping infrastructure | `aid infra gen` | [9](#9-derive-the-infrastructure) |
 | Owning a generated file | `aid eject` | [10](#10-take-ownership-of-a-generated-file) |
@@ -275,6 +275,19 @@ what a build can check without an account or a network call. It does not verify 
 issuer exists, that the private network is peered, or that the named reviewers are real people. Those
 are properties of your platform. State them as declared, not as verified.
 
+Print the split rather than restating it, so the reviewer gets a list and not a claim:
+
+```bash
+npx @aid-framework/cli review
+```
+
+`review` re-uses the `validate` pipeline and adds no gate of its own: it prints one line for what
+the build proved and then every declaration it accepted without being able to check -- issuer,
+audit sink and retention, region pin, placement and egress rule, approvers and the count required,
+secret names -- each with the path that declared it. A spec the build refuses is refused here too,
+because a pack for a spec that does not build would itemise controls the build never reached. It
+reads files and nothing else, so it belongs in the review artifact your CI job uploads.
+
 ## 8. Improve an agent without auto-deploying
 
 The improvement loop is file-based. Traces become a dataset, the dataset gates a candidate, a human
@@ -370,7 +383,8 @@ Keep these apart in anything you write or tell a user:
   runs on its own.
 
 Anything else you are tempted to claim: check `docs/features.md`, which is generated from the
-registry, and the CLI reference at `docs/reference/cli.md`. For which claims are backed by an app
+registry, and the CLI reference at `docs/reference/cli.md`. For one concrete spec, `aid review`
+prints this split as two lists -- what the build proved, and what it only accepted as declared. For which claims are backed by an app
 that actually boots — and which jobs do the booting — read
 [`docs/guide/boundary.md`](../../../docs/guide/boundary.md); the end-to-end job boots the two
 examples, not every tree `init` can emit.

@@ -188,7 +188,7 @@ below is the delivery plan this round is the first increment of.
 
 | Phase | Smallest shippable increment | Why here |
 | --- | --- | --- |
-| **B. Delivery method** | `docs/guide/delivery-method.md` + `aid review <dir>`: one readiness pack per customer (profile coverage, pins, gate results, unresolved declared-only constructs) | A consultancy sells a method before it sells a feature. Costs no spec change. |
+| **B. Delivery method** | `aid review [spec]`: one readiness pack per customer (what the build proved, then every declaration it only accepted as declared, each with the path that made it), plus a section in `docs/guide/delivery.md` | A consultancy sells a method before it sells a feature. Costs no spec change. **Shipped in `0.1.185`.** |
 | **A1. Durable run state** | Actually persist a paused run: generated checkpoint table, `POST /agents/resume` reading from it | The largest honest gap in `DECLARED_FEATURES`. A client whose agent dies mid-run does not care which cloud it cannot survive on. |
 | **A2. Cost at runtime** | Meter spend per run against `maxCostBudget`, refuse the next step when exhausted | Second question every client asks; today cost is priced at build time only. |
 | **A3. Identity verification** | Verify a token against the declared `identity.issuer` instead of naming who does | Moves `ir/identity-verified-by` from declared to enforced with code. |
@@ -200,6 +200,11 @@ Each phase follows the rule this one was built to enforce: **a row moves from `D
 to `SHIPPED_FEATURES` in the release that starts emitting it, and not before.** A1's entry is
 already written down as declared; it becomes shipped only when a paused run outlives a process.
 
+Track B added no gate, which is why it was safe to ship in the same round as the registry it
+reads: `aid review` runs the existing `validate` pipeline and splits its result, so the pack can
+never disagree with the build. A spec the build refuses is refused here too -- the pack is not a
+way to obtain a partial verdict.
+
 ## 9. What this round does not prove
 
 - **That a marker is the *right* marker.** The test proves the cited symbol is in the cited file.
@@ -210,3 +215,7 @@ already written down as declared; it becomes shipped only when a paused run outl
 - **That no other prose overclaims.** This audit found three claims by reading. Nothing scans prose
   for the phrase "the generator writes". A follow-up could extend `scripts/docs-claims.mjs` in that
   direction; it is not done here.
+- **That a review pack is a control.** `aid review` lists what the spec declares and what the build
+  checked. It cannot see that the account already enforces a region policy regardless of the
+  document, and it cannot see whether anyone reads the pack before approving. It replaces an
+  overclaim with an agenda, not with a review.

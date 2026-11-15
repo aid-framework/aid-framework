@@ -20,6 +20,7 @@ Every command accepts `-h` / `--help` for its own usage. All except `dev` accept
 | [`validate`](#validate) | parse the spec, build the IR, and run every build-time gate |
 | [`resolve`](#resolve) | resolve a customer overlay into the concrete spec it means |
 | [`fleet`](#fleet) | report every customer overlay, its profile, pins, ceilings and gate status |
+| [`review`](#review) | print what the build proved about a service, and what it only accepted as declared |
 | [`gen`](#gen) | compile the spec and reconcile the tree with it |
 | [`dev`](#dev) | regenerate the tree and run the application on a local server |
 | [`guard`](#guard) | measure the guardrails against a red-team corpus |
@@ -87,6 +88,19 @@ report every customer overlay, its profile, pins, ceilings and gate status
 
 ```sh
 aid fleet [dir]
+```
+
+| Option | Description |
+| --- | --- |
+| `--json` | print one JSON document on stdout |
+| `-h`, `--help` | print this command's usage |
+
+## `review`
+
+print what the build proved about a service, and what it only accepted as declared
+
+```sh
+aid review [spec]
 ```
 
 | Option | Description |
