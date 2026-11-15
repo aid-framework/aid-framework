@@ -4,10 +4,11 @@ import { createContext } from '../src/index.js';
 import { lowerSpec } from '../src/pipeline.js';
 import { templateSpec } from '../src/templates.js';
 import { buildVisualDocument } from '../src/visualize/document.js';
-import type { VisualGraph } from '../src/visualize/graph.js';
-import { buildVisualGraph, VISUAL_GROUPS } from '../src/visualize/graph.js';
+import type { VisualGraph, VisualNode } from '../src/visualize/graph.js';
+import { buildVisualGraph, VISUAL_GRAPH_VERSION, VISUAL_GROUPS } from '../src/visualize/graph.js';
 import type { Layout } from '../src/visualize/layout.js';
 import { layoutGraph } from '../src/visualize/layout.js';
+import { renderPage } from '../src/visualize/page.js';
 import { startVisualServer } from '../src/visualize/server.js';
 import type { Project } from './helpers.js';
 import { aid, diagnosticsOf, EXAMPLE_SPEC, project, SPEC_PATH } from './helpers.js';
@@ -217,6 +218,166 @@ describe('the server the page is served from', () => {
       await second.close();
       await first.close();
     }
+  });
+});
+
+/** A pipeline that branches, so the picture has arms to enter and a join to leave. */
+function branchedSpec(): string {
+  return templateSpec('support-copilot', 'demo').replace(
+    `          as: reply
+      - emit:
+          event: Reply`,
+    `          as: reply
+      - branch:
+          when: "hasRole('agent')"
+          then:
+            - guard:
+                guardrail: message_injection
+                stage: input
+                text: "{{ event.message }}"
+          else:
+            - guard:
+                guardrail: message_injection
+                stage: input
+                text: "{{ event.message }}"
+      - emit:
+          event: Reply`,
+  );
+}
+
+/** The least graph `layoutGraph` accepts: two pipelines, one of which a batch job names. */
+function twoPipelineGraph(): VisualGraph {
+  const node = (
+    id: string,
+    kind: string,
+    group: 'service' | 'infra',
+    label: string,
+    detail?: string,
+  ): VisualNode => ({ id, kind, group, label, detail, path: id, facts: [] });
+  return {
+    graphVersion: VISUAL_GRAPH_VERSION,
+    specVersion: '0.0.0',
+    irVersion: '0.0.0',
+    profile: 'standard',
+    project: { name: 'demo', namespace: 'demo', targets: ['py-fastapi'] },
+    groups: [],
+    nodes: [
+      node('project', 'project', 'service', 'demo'),
+      node('pipeline:served', 'pipeline', 'service', 'served'),
+      node('step:served/0', 'step:emit', 'service', 'emit'),
+      node('pipeline:nightly', 'pipeline', 'service', 'nightly'),
+      node('step:nightly/0', 'step:emit', 'service', 'emit'),
+      node('deployment:api', 'deployment', 'infra', 'api', 'container · aws'),
+      node('deployment:batch', 'deployment', 'infra', 'batch', 'batch · aws'),
+    ],
+    edges: [
+      { from: 'deployment:batch', to: 'pipeline:nightly', kind: 'deploys' },
+      { from: 'step:served/0', to: 'project', kind: 'uses' },
+    ],
+  };
+}
+
+describe('the process the diagram draws', () => {
+  const graph = graphOf(branchedSpec());
+  const layout = layoutGraph(graph);
+  const from = (id: string): string[] =>
+    graph.edges.filter((edge) => edge.kind === 'flow' && edge.from === id).map((edge) => edge.to);
+
+  it('draws the declared order of the steps, not just that they belong to a pipeline', () => {
+    expect(from('step:answer_message/0')).toEqual(['step:answer_message/1']);
+  });
+
+  it('enters every arm of a branch, and rejoins them on the step that follows', () => {
+    // Which arm is listed first is the graph's stable sort, not the spec's; both must be
+    // entered, and both must reach the step that follows.
+    expect(from('step:answer_message/1').sort()).toEqual([
+      'step:answer_message/1.else.0',
+      'step:answer_message/1.then.0',
+    ]);
+    for (const arm of ['1.then.0', '1.else.0']) {
+      expect(from(`step:answer_message/${arm}`)).toEqual(['step:answer_message/2']);
+    }
+  });
+
+  it('puts run order left to right, and stacks the arms of one step into its column', () => {
+    const x = (id: string): number =>
+      layout.nodes.find((placed) => placed.node.id === `step:answer_message/${id}`)?.x ??
+      Number.NaN;
+    const y = (id: string): number =>
+      layout.nodes.find((placed) => placed.node.id === `step:answer_message/${id}`)?.y ??
+      Number.NaN;
+
+    expect(x('0')).toBeLessThan(x('1'));
+    expect(x('1')).toBeLessThan(x('1.then.0'));
+    expect(x('1.then.0')).toBe(x('1.else.0'));
+    expect(y('1.then.0')).not.toBe(y('1.else.0'));
+    expect(x('1.else.0')).toBeLessThan(x('2'));
+  });
+
+  it('heads each lane with where it runs, read off the deployment the spec declares', () => {
+    expect(layout.lanes.length).toBe(1);
+    const [lane] = layout.lanes;
+    expect(lane?.pipeline).toBe('pipeline:answer_message');
+    expect(lane?.steps).toBe(5);
+    expect(lane?.undeployed).toBe(false);
+    expect(lane?.placements.join()).toContain('api');
+  });
+
+  it('keeps the whole process inside its lane', () => {
+    const [lane] = layout.lanes;
+    if (lane === undefined) throw new Error('the fixture declares a pipeline');
+    for (const placed of layout.nodes) {
+      if (!placed.node.id.startsWith('step:')) continue;
+      expect(placed.x).toBeGreaterThanOrEqual(lane.x);
+      expect(placed.y).toBeGreaterThanOrEqual(lane.y);
+      expect(placed.x + placed.width).toBeLessThanOrEqual(lane.x + lane.width);
+      expect(placed.y + placed.height).toBeLessThanOrEqual(lane.y + lane.height);
+    }
+  });
+
+  it('serves every pipeline from a deployment that names none, and only one when it does', () => {
+    const lanes = layoutGraph(twoPipelineGraph()).lanes;
+    const byId = new Map(lanes.map((lane) => [lane.pipeline, lane]));
+
+    // A deployment that answers requests cannot name a pipeline, so it runs the whole
+    // service: absence of a `deploys` edge means every pipeline, not none.
+    expect(byId.get('pipeline:served')?.placements).toEqual(['api (container · aws)']);
+    // A batch job names exactly one, so it serves that one and leaves the other alone.
+    expect(byId.get('pipeline:nightly')?.placements).toEqual([
+      'api (container · aws)',
+      'batch (batch · aws)',
+    ]);
+    expect(byId.get('pipeline:served')?.undeployed).toBe(false);
+  });
+
+  it('draws a pipeline no deployment serves, and says so, instead of dropping it', () => {
+    const graph = twoPipelineGraph();
+    const lanes = layoutGraph({
+      ...graph,
+      nodes: graph.nodes.filter((n) => n.id !== 'deployment:api'),
+    }).lanes;
+
+    expect(lanes.map((lane) => lane.pipeline)).toEqual(['pipeline:served', 'pipeline:nightly']);
+    expect(lanes[0]?.placements).toEqual([]);
+    expect(lanes[0]?.undeployed).toBe(true);
+    expect(lanes[1]?.undeployed).toBe(false);
+  });
+});
+
+describe('the page the reader gets', () => {
+  const html = renderPage();
+
+  it('says what a run-order edge means, and colours it like one', () => {
+    expect(html).toContain('"flow":');
+    expect(html).toContain('the step that runs after this one');
+  });
+
+  it('draws the lane band and never writes the read-only SVG className', () => {
+    expect(html).toContain('lane-where');
+    // `#canvas` is an <svg>, so its `className` is a read-only SVGAnimatedString: assigning
+    // it throws and takes the first drag with it. The canvas has to go through classList.
+    expect(html).not.toMatch(/canvas\.className\s*=/);
+    expect(html).toContain("canvas.classList.add('dragging')");
   });
 });
 
