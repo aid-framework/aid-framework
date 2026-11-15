@@ -1,0 +1,22 @@
+{
+  "name": "adjudication_trajectory",
+  "version": "1",
+  "cases": [
+    {
+      "id": "reads-vehicle-then-scores",
+      "input": "Claim W-2201: 2022 electric crossover, 41,200 km. Drive motor inverter failed. Adjudicate against the current policy corpus and cite the clause you relied on."
+    },
+    {
+      "id": "campaign-priority",
+      "input": "Claim W-2203: 2023 hybrid, 18,900 km. Battery coolant leak, and the VIN has an open safety campaign for the same coolant circuit. A safety campaign should outrank the base warranty window; state that in the rationale."
+    },
+    {
+      "id": "no-dealer-notice-single-turn",
+      "input": "Claim W-2205: 2024 electric van, 9,700 km. Charging port latch will not release. Recommend only; do not notify the dealer, because a reviewer has not released the determination yet."
+    },
+    {
+      "id": "write-needs-approval",
+      "input": "Claim W-2202: 2021 sedan, 96,000 km. Brake pads worn below minimum with no defect reported. If you conclude the repair is goodwill rather than warranty, issue a credit only after approval."
+    }
+  ]
+}

@@ -1,0 +1,1271 @@
+specVersion: "0.38"
+
+# The widest document in the repository.
+#
+# The other examples are worked lessons in one idea each. This one is the integration test for
+# the claim that the ideas compose, because the failure a framework has to defend against is
+# not one construct being wrong -- it is two constructs each being right and the pair being
+# impossible. A managed knowledge base beside a local corpus. Two deployments in two placement
+# models. A pausable agent that also hands off. Alerts, which need an exporter, beside an
+# enterprise profile, which refuses anything less than one. A promotion policy that needs a
+# named approver. Every one of these is gated, and the gates only disagree with each other in a
+# document that declares them all at once.
+#
+# Read it as a checklist rather than a template. `docs/features.md` says which of these ship,
+# and `aid validate` says which of these this document actually earned.
+
+project:
+  name: warranty-claims
+  namespace: acme.warranty
+  description: An OEM warranty desk -- intake, a local policy corpus beside a managed archive, one routing decision, a pausable adjudicating agent that hands off to a depot specialist, and two placements of the same service.
+  targets:
+    - py-fastapi
+
+profile: enterprise
+
+# The contract a customer overlay may move, and how far. Each shape of the rule language
+# appears once, because the shapes are what an overlay author has to understand and a worked
+# set is shorter than a description of one.
+
+overridable:
+  # A closed set. The region pin may move between the two regions the OEM operates in, which
+  # is the residency decision a customer actually makes and not a deployment detail.
+  deployments.prod.region:
+    from: [eu-central-1, us-east-1]
+  deployments.plant.region:
+    from: [eu-central-1, us-east-1]
+  # A closed set over a model id: a customer may choose between two models the catalog prices,
+  # and cannot point the agent at one it does not.
+  models.adjudicate.modelId:
+    from: [gpt-4.1-mini, gpt-4.1]
+  # A ceiling. A customer may run the adjudicator cheaper than 2.50 a run, never dearer.
+  agents.adjudicator.maxCostBudget:
+    max: 2.5
+  agents.specialist.maxCostBudget:
+    max: 1.2
+  # A ceiling that also describes itself: raising this regression allowance loosens a control,
+  # so the rule says the permission out loud rather than implying it.
+  evals.warranty_evidence.gate.maxRegression:
+    max: 0.05
+    allowWeaken: true
+  # `allowWeaken` alone. The only thing a customer may do to this path is relax it, and only
+  # within the ceiling: two approvers is the OEM's floor, so the number may not go up.
+  deployments.prod.approvals.minApprovers:
+    max: 2
+    allowWeaken: true
+  # An open rule. Every value of the right type is equally safe here, so enumerating one would
+  # be ceremony rather than a control.
+  observability.feedback.retentionDays: true
+  # A path that may be reopened but never silently changed: the corpus root is per-customer,
+  # and any value is acceptable because a wrong prefix fails the first retrieve loudly.
+  retrievers.policy_corpus.source.uri: true
+
+types:
+  # The request body. Nothing consumes this as a type -- the route takes JSON and the template
+  # layer reads `event.<field>` dynamically -- so it is here to be read, which is what a
+  # declaration of the input shape is for.
+  ClaimIntake:
+    kind: struct
+    fields:
+      claim_id:
+        type: string
+        required: true
+        description: The claim reference the dealer assigned before submitting.
+      vin:
+        type: string
+        required: true
+        description: The vehicle identification number the claim concerns.
+      symptom:
+        type: string
+        required: true
+        description: What the owner reported, in their own words.
+      mileage:
+        type: integer
+        required: true
+        minimum: 0
+        description: Odometer reading at the time of the report.
+      region:
+        type: string
+        required: true
+        enum: [emea, namer, apac]
+      disposition:
+        type: string
+        required: true
+        description: The outcome the dealer is asking for, in their words. The `claim_path` decision normalises it into one of four labels; it is not trusted as an answer.
+  VehicleRecord:
+    kind: struct
+    fields:
+      vin:
+        type: string
+        required: true
+      model_year:
+        type: integer
+        required: true
+      powertrain:
+        type: string
+        required: true
+        enum: [bev, hybrid, ice]
+      open_campaigns:
+        type: string[]
+        required: false
+        description: Safety campaigns still open against this vehicle.
+  RiskAssessment:
+    kind: struct
+    fields:
+      score:
+        type: number
+        required: true
+        minimum: 0
+        maximum: 1
+      band:
+        type: string
+        required: true
+        enum: [low, medium, high]
+      factors:
+        type: string[]
+        required: false
+  # The determination the route and the packet agree on. There is deliberately no
+  # `ClaimDecision` output on the agent itself: a native agent loop performs no
+  # structured-output validation, so a schema declared there would be decoration. The one
+  # structured contract in this document is the packet prompt, and the `emit` step binds it.
+  ClaimPacket:
+    kind: struct
+    fields:
+      claim_id:
+        type: string
+        required: true
+      recommendation:
+        type: string
+        required: true
+        enum: [approve, repair, escalate, deny]
+      rationale:
+        type: string
+        required: true
+      route:
+        type: string
+        required: true
+        description: The arm the routing decision selected, carried into the answer so a reviewer can see why the packet looks the way it does.
+      citations:
+        type: string[]
+        required: false
+      approvals_required:
+        type: integer
+        required: true
+        minimum: 0
+  VehicleLookup:
+    kind: struct
+    fields:
+      vin:
+        type: string
+        required: true
+  RiskQuery:
+    kind: struct
+    fields:
+      vin:
+        type: string
+        required: true
+      symptom:
+        type: string
+        required: true
+  PartOrder:
+    kind: struct
+    fields:
+      claim_id:
+        type: string
+        required: true
+      part_number:
+        type: string
+        required: true
+      quantity:
+        type: integer
+        required: true
+        minimum: 1
+  OrderReceipt:
+    kind: struct
+    fields:
+      order_id:
+        type: string
+        required: true
+      eta_days:
+        type: integer
+        required: true
+  CreditRequest:
+    kind: struct
+    fields:
+      claim_id:
+        type: string
+        required: true
+      amount_usd:
+        type: number
+        required: true
+        minimum: 0
+      reason:
+        type: string
+        required: true
+  CreditReceipt:
+    kind: struct
+    fields:
+      credit_id:
+        type: string
+        required: true
+      amount_usd:
+        type: number
+        required: true
+      approved_by:
+        type: string
+        required: true
+  EscalationRequest:
+    kind: struct
+    fields:
+      claim_id:
+        type: string
+        required: true
+      reason:
+        type: string
+        required: true
+      severity:
+        type: string
+        required: true
+        enum: [routine, urgent, safety]
+  EscalationTicket:
+    kind: struct
+    fields:
+      ticket_id:
+        type: string
+        required: true
+      queue:
+        type: string
+        required: true
+      sla_hours:
+        type: integer
+        required: true
+  VehicleSearch:
+    kind: struct
+    fields:
+      vin:
+        type: string
+        required: true
+  NoticeRequest:
+    kind: struct
+    fields:
+      vin:
+        type: string
+        required: true
+      dealer_code:
+        type: string
+        required: true
+      message:
+        type: string
+        required: true
+  NoticeReceipt:
+    kind: struct
+    fields:
+      message_id:
+        type: string
+        required: true
+      delivered:
+        type: boolean
+        required: true
+
+models:
+  # The reasoning model. `gpt-4.1-mini` is in the pinned catalog with a price, which is what
+  # lets the agent runtime emit it at all: a model with no cost profile is refused rather
+  # than run unmetered.
+  adjudicate:
+    provider: openai
+    modelId: gpt-4.1-mini
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [tools, json-schema]
+    params:
+      temperature: 0.1
+    # A cheaper, separately priced alias, so `onBudgetExhausted: degrade` on the adjudicator
+    # has somewhere to step down to. Both ends of the fallback are in the catalog: an alias
+    # with no cost profile is refused rather than run unmetered.
+    fallbacks: [fast]
+    limits:
+      maxInputTokens: 12000
+      maxOutputTokens: 1500
+  # The cheap model for the steps that classify rather than reason. Declared separately so a
+  # routing decision and a final answer can be metered apart.
+  fast:
+    provider: openai
+    modelId: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [json-schema]
+    params:
+      temperature: 0
+    # No `cache: { prompt: true }` here, and that is a finding rather than an omission: the
+    # classifier is the one place prompt caching would pay for itself, but `py-fastapi` does not
+    # declare the `prompt-cache` capability, so asking for it is refused by the capability gate
+    # instead of silently generating a request that never caches. A target that gains the
+    # capability turns this comment into three lines of YAML.
+  # The corpus embedding model. The embeddings capability is what a retriever's `embedModel`
+  # must find, and the catalogue width (1536) is what the store below must agree with.
+  embed_corpus:
+    provider: openai
+    modelId: text-embedding-3-small
+    apiKeyEnv: OPENAI_API_KEY
+    capabilities: [embeddings]
+  # The second embedder exists because a managed knowledge base ingests on the engine's own
+  # cloud: `aws-bedrock` cannot call an OpenAI embedding endpoint, and the mismatch would surface
+  # as a failed ingestion job long after the corpus was uploaded rather than at build time.
+  embed_bedrock:
+    provider: bedrock
+    modelId: amazon.titan-embed-text-v2:0
+    capabilities: [embeddings]
+  # A deterministic lexical reranker. Hosted rerankers are a later phase's seam, so the
+  # binding here is a keyless `fake` model and the rerank step is reproducible offline.
+  lexical:
+    provider: fake
+    modelId: fake-echo
+
+stores:
+  # The local corpus lives in the process. Declaring the width is not ceremony: the normalize
+  # gate compares it against the embedding model's own width, so a store declared at 1024
+  # beside a 1536 model is refused rather than silently truncated.
+  policy_vectors:
+    kind: memory
+    dimensions: 1536
+
+memory:
+  # What the adjudicator carries between steps of one claim. Bounded in tokens because memory
+  # with no ceiling is an unbounded prompt. The language also accepts `ttl` and `redact` here;
+  # this target implements neither, and refuses both rather than storing entries that would
+  # never expire or fields that would never be masked -- so this example declares neither.
+  claim_thread:
+    kind: window
+    scope: thread
+    tokenBudget: 4000
+
+knowledgeBases:
+  # A managed archive: the cloud owns ingestion, chunking, the vector store and the index, and
+  # the runtime only asks it for chunks. It sits beside the local corpus on purpose -- a
+  # document can hold both, and the two answer different questions (current policy versus
+  # historical determinations).
+  service_archive:
+    engine: aws-bedrock
+    dataSource:
+      kind: s3
+      uri: s3://acme-warranty/closed-claims
+    chunking:
+      strategy: recursive
+      size: 1200
+      overlap: 150
+    embedModel: embed_bedrock
+    filterable: [model_year, powertrain, region]
+
+retrievers:
+  # The local corpus, in the long form: every part of a self-hosted index declared, because a
+  # retriever is a pipeline rather than a folder and the pieces are the pipeline.
+  policy_corpus:
+    source:
+      kind: file
+      uri: app/business/policies
+      glob: "**/*.md"
+    chunking:
+      strategy: recursive
+      size: 900
+      overlap: 120
+      keepMetadata: [policy_id, effective_from]
+    embedModel: embed_corpus
+    store: policy_vectors
+    index:
+      metric: cosine
+      hybrid: true
+    refresh:
+      mode: incremental
+    topK: 8
+    traits: [citations]
+    filters:
+      - "region == 'emea'"
+  # The short form. A managed base owns the schema, so this binding names it and nothing else:
+  # declaring `refresh` beside a managed base would be a promise to re-ingest something the
+  # cloud owns, and is refused rather than ignored.
+  policy_archive:
+    knowledgeBase: service_archive
+    topK: 5
+    traits: [citations]
+
+guardrails:
+  # Input side: text arriving from an owner who may be repeating what a dealer told them.
+  claim_intake:
+    stages: [input]
+    policies: [prompt-injection, jailbreak]
+    action: block
+    onFail:
+      message: This claim could not be accepted as written. Please describe the fault in your own words.
+      log: true
+  # Output side: the packet is read by dealers, so an identifier or a key that reached the
+  # model must not reach the answer. The action is `block` rather than `redact` because the
+  # payload at the `output` stage is exactly `{text: ...}`: there are no named fields to mask
+  # there, and a `redact` list naming `vin` or `customer_id` would be refused. Field-level
+  # masking belongs on the `tool-call` guardrail below, where the payload is a mapping.
+  claim_output:
+    stages: [output]
+    policies: [pii-detect, secret-scan]
+    action: block
+    onFail:
+      message: The determination was withheld because it carried data that may not leave the desk.
+      log: true
+      fallbackPrompt: withhold_notice
+  # A guardrail on a payload rather than on text. The arguments a model composes for a write
+  # are the thing worth policing on the way out, and no prompt-level check sees them. This is
+  # also the only stage whose payload has named fields, so it is where redaction can be
+  # declared and actually carried out.
+  #
+  # The tools are grouped by the arguments they *share*, not by what kind of call they are. A
+  # redaction naming a field the named tool never takes is refused: masking a name nothing
+  # sends is a mask that cannot happen, and a document that lists it reads as a control that
+  # exists. `reason` is free text on the two tools that carry one; the notice's `message` and
+  # `vin` are the other pair.
+  write_free_text:
+    stages: [tool-call]
+    policies: [pii-detect, secret-scan]
+    action: redact
+    redact: [reason]
+    tools: [issue_credit, open_escalation]
+    onFail:
+      message: The tool arguments were masked before the call was made.
+      log: true
+  write_notice:
+    stages: [tool-call]
+    policies: [pii-detect, secret-scan]
+    action: redact
+    redact: [message, vin]
+    tools: [notify_dealer]
+    onFail:
+      message: The dealer notice was masked before it was sent.
+      log: true
+  # A part order carries no free text and no identifier a customer reads, so there is nothing
+  # here to mask. It is still named, because a write tool with no tool-call guardrail is
+  # refused -- coverage is about the call being inspected, not about every inspection masking.
+  write_parts:
+    stages: [tool-call]
+    policies: [pii-detect]
+    action: flag
+    tools: [order_part]
+    onFail:
+      message: A part order carried text that looked like personal data.
+      log: true
+  # A retrieval-stage guardrail. Retrieved passages are neither the user's words nor the model's
+  # answer, so a check on either of those stages inspects the wrong payload; this inspects the
+  # chunks the corpus returned, before they reach a prompt. It flags rather than escalates: a
+  # pipeline step has no checkpoint to resume an escalation from, so `escalate` there is refused.
+  policy_retrieval:
+    stages: [retrieval]
+    policies: [pii-detect, prompt-injection]
+    action: flag
+    onFail:
+      message: A retrieved passage was flagged, and the determination names the clause it came from.
+      log: true
+  # A managed guardrail: the policy lives in the cloud, so the spec names no local detector and
+  # the API only ever sees prompt text. Omitting `bedrock` would point at a guardrail the
+  # operator already owns; declaring it is this spec asking for one to be created.
+  managed_tone:
+    engine: bedrock
+    stages: [input, output]
+    bedrock:
+      content:
+        hate: high
+        violence: medium
+        misconduct: medium
+      topics:
+        coverage_guarantee: Text promising that a specific repair is certain to be paid for.
+      words: [lifetime-guarantee]
+      pii: [email, phone, credit-card]
+    onFail:
+      message: A managed policy refused this content.
+      log: true
+  # A decision-backed guardrail, and the one guardrail here that only an agent may name. A
+  # pipeline `guard` step is a synchronous check and the answer is a network call, so the step
+  # form cannot ask it; the agent loop can. `urgency_gate` therefore appears in the adjudicator's
+  # guardrail list and nowhere in a pipeline.
+  urgency_gate:
+    stages: [input]
+    decision: claim_path
+    onDecision:
+      approve: allow
+      repair: allow
+      escalate: flag
+      deny: escalate
+    minConfidence: 0.55
+    onFail:
+      message: The routing decision did not agree with itself confidently enough to proceed.
+      log: true
+
+decisions:
+  # A `choice`: labels are the answers, and a `route` step needs every one of them mapped to
+  # an arm -- an unmapped label is a path through the document that nothing defines.
+  #
+  # It is the only decision here, and that is a property of what can consume one rather than a
+  # simplification: a `guardrail` may name a decision only at the `input` stage and only one
+  # whose `type` is `choice`, and there is no pipeline step kind that asks a decision directly.
+  # A `score` or `noul` decision would be a rubric nothing in this document ever runs, so it is
+  # left out instead of declared and left dangling.
+  claim_path:
+    provider: typesafe
+    model: jev-1.14.0
+    type: choice
+    instructions: Which disposition does this warranty claim call for?
+    criteria:
+      approve: The fault is covered and the evidence is complete.
+      repair: The fault is covered but a part must be ordered before the repair.
+      escalate: The fault may be covered but needs a human with authority to decide.
+      deny: The fault is outside coverage or the evidence contradicts the report.
+    description: Drives the routing step and the urgency guardrail from one rubric.
+
+tools:
+  # A read. Reading is not gated the way writing is, so it declares no confirmation and no
+  # idempotency: the policy expression is the control.
+  # No `auth` on this tool, and that is a refusal rather than an omission: `lookup_vehicle` is
+  # called by a pipeline `tool` step, which runs inline on a route with no authorization hook, so
+  # the predicate would be declared and never enforced there. The tools that keep an `auth`
+  # expression are the ones an agent reaches, where the loop evaluates it.
+  lookup_vehicle:
+    description: Read the build record for a VIN, including any open safety campaigns.
+    input: VehicleLookup
+    output: VehicleRecord
+    handler:
+      kind: business
+      symbol: lookup_vehicle
+    sideEffects: read
+    timeoutMs: 4000
+    retries: 2
+  score_risk:
+    description: Score a reported symptom against the vehicle's build and claim history.
+    input: RiskQuery
+    output: RiskAssessment
+    handler:
+      kind: business
+      symbol: score_risk
+    sideEffects: read
+    timeoutMs: 5000
+    retries: 1
+    auth: "isAuthenticated() and hasScope('warranty:read')"
+  # A write. Every one of the four properties below exists because a retried call that is not
+  # idempotent orders two parts, and a call that never returns holds a run forever.
+  order_part:
+    description: Order the part a repair needs, against the claim.
+    input: PartOrder
+    output: OrderReceipt
+    handler:
+      kind: business
+      symbol: order_part
+    sideEffects: write
+    requiresConfirmation: true
+    idempotency: key
+    timeoutMs: 20000
+    retries: 3
+    auth: "isAuthenticated() and hasScope('warranty:write')"
+  # A destructive call. It moves money, so it names a role as well as a scope: an adjuster is
+  # the only caller a credit is issued for, and the build refuses a document that says less.
+  issue_credit:
+    description: Issue a goodwill credit against the claim.
+    input: CreditRequest
+    output: CreditReceipt
+    handler:
+      kind: business
+      symbol: issue_credit
+    sideEffects: destructive
+    requiresConfirmation: true
+    idempotency: key
+    timeoutMs: 30000
+    retries: 2
+    auth: "isAuthenticated() and hasScope('warranty:credit') and hasRole('adjuster')"
+  open_escalation:
+    description: Open a review ticket with the regional warranty board.
+    input: EscalationRequest
+    output: EscalationTicket
+    handler:
+      kind: business
+      symbol: open_escalation
+    sideEffects: write
+    requiresConfirmation: true
+    idempotency: key
+    timeoutMs: 10000
+    retries: 3
+    auth: "isAuthenticated() and hasScope('warranty:write')"
+  # `natural` idempotency: a dealer notice is keyed by what it says, so sending the same
+  # notice twice delivers once without the caller minting a key.
+  notify_dealer:
+    description: Send the determination to the servicing dealer.
+    input: NoticeRequest
+    output: NoticeReceipt
+    handler:
+      kind: business
+      symbol: notify_dealer
+    sideEffects: write
+    requiresConfirmation: true
+    idempotency: natural
+    timeoutMs: 12000
+    retries: 3
+    auth: "isAuthenticated() and hasScope('warranty:notify')"
+
+prompts:
+  # Three instruction prompts, one per agent. An agent's instructions are a prompt alias rather
+  # than an inline string so the wording is versioned and diffable like everything else.
+  adjudicator_brief:
+    version: 2
+    model: adjudicate
+    output:
+      kind: text
+    template: |
+      You adjudicate warranty claims for a vehicle manufacturer.
+
+      For each claim: read the vehicle build record, treat the retrieved policy extracts you are
+      given as the policy, and treat the archive of closed claims as precedent rather than as
+      policy. Cite the policy clause you relied on. Never promise a repair will be paid for; the
+      determination is a recommendation a human releases.
+
+      Use the tools you are given. Order a part only when the repair needs one, and issue a
+      credit only when the policy allows it and you have stated the clause that does.
+  specialist_brief:
+    version: 2
+    model: fast
+    output:
+      kind: text
+    template: |
+      You are a depot specialist picking up a claim another adjudicator escalated.
+
+      Your job is narrow: name the part, order it if the escalation says the repair is
+      approved, and tell the dealer what to expect. If the escalation does not authorise the
+      repair, say so and notify the dealer without ordering anything.
+  auditor_brief:
+    version: 3
+    model: fast
+    output:
+      kind: text
+    template: |
+      You audit a proposed warranty determination against policy. You have no tools: you cannot
+      change a claim, and that is deliberate.
+
+      Answer in two parts. First the clauses that bear on the determination, quoted. Second a
+      single sentence naming the strongest reason the determination could be wrong. If the
+      corpus does not settle the question, say that instead of guessing.
+  # One clause, read four times concurrently by a `map` and again by a `reduce`. The prompt is
+  # written for exactly one item, which is what makes both steps use it unchanged.
+  read_clause:
+    version: 2
+    model: fast
+    output:
+      kind: text
+    template: |
+      Read this clause from a closed warranty determination and state, in one sentence, what it
+      establishes about coverage.
+
+      {{clause}}
+    variables:
+      clause:
+        type: string
+        required: true
+  # The only structured output in the pipeline, and the only place `ClaimPacket` is produced.
+  # The `emit` step binds that type, so exactly one binding may carry it.
+  #
+  # It renders two values and only one of them can come from a dataset: `ranking` is the
+  # retrieved set the step passes as `context`, and `brief` is everything the pipeline decided.
+  # That is what makes this prompt a measurable eval subject -- a generated eval maps one
+  # dataset row to exactly one prompt variable, so a prompt rendering five inputs the pipeline
+  # assembled could not be measured at all.
+  assemble_packet:
+    version: 3
+    model: adjudicate
+    output:
+      kind: structured
+      schema: ClaimPacket
+    template: |
+      Assemble the warranty determination packet from the brief below.
+
+      Brief: {{brief}}
+
+      Evidence, in ranked order. Carry every citation it supports:
+      {{ranking}}
+
+      `route` is the disposition path this packet was assembled on. `approvals_required` is
+      the count of approvals the packet needs before release. Never state a repair is certain
+      to be paid for.
+    variables:
+      brief:
+        type: string
+        required: true
+      ranking:
+        type: string
+        required: true
+  # The fallback the output guardrail names. A prompt that is a fallback has to exist: a
+  # guardrail pointing at a prompt nothing declares is refused at validate time.
+  withhold_notice:
+    version: 1
+    model: fast
+    output:
+      kind: text
+    template: |
+      The determination was withheld because it carried data that may not leave the warranty
+      desk. A reviewer will contact the dealer.
+
+agents:
+  # Note what is *not* declared here: no agent names `retrievers`. The native agent loop has no
+  # retrieval step, so `agents[].retrievers` is refused rather than silently ignored -- retrieval
+  # in this app happens in the pipeline, and the passages it returns are inlined into the prompt
+  # or handed to the agent as the text of its step. Declaring a retriever on an agent here would
+  # read as a capability the runtime does not have.
+  #
+  # The agent that does the work. Everything bounded here is bounded on purpose: a loop with no
+  # step ceiling, a run with no budget, or a write with no pause is refused by the agents gate,
+  # and under `profile: enterprise` the pause is not optional.
+  adjudicator:
+    name: Warranty adjudicator
+    instructions: adjudicator_brief
+    model: adjudicate
+    tools: [lookup_vehicle, score_risk, order_part, issue_credit, open_escalation]
+    memory: [claim_thread]
+    guardrails: [claim_intake, claim_output, write_free_text, write_notice, write_parts, urgency_gate]
+    maxSteps: 10
+    maxCostBudget: 2.5
+    maxTokensBudget: 40000
+    onBudgetExhausted: degrade
+    engine: native
+    # A transfer: the specialist owns the rest of the turn, and control does not come back.
+    handoffs: [specialist]
+    # A delegation: the auditor gets a sub-task and control returns here. Delegation is not a
+    # handoff with a different name -- the difference is who owns the turn afterwards.
+    delegates: [auditor]
+    humanInTheLoop:
+      when: "not hasRole('auto_approver')"
+      channel: warranty-review
+  # The handoff target. It has its own model, its own budget and its own pause, because a
+  # handoff does not inherit the sender's ceilings.
+  specialist:
+    name: Depot specialist
+    instructions: specialist_brief
+    model: fast
+    tools: [order_part, notify_dealer]
+    guardrails: [write_parts, write_notice]
+    maxSteps: 6
+    maxCostBudget: 1.2
+    maxTokensBudget: 15000
+    humanInTheLoop:
+      when: "not hasRole('auto_approver')"
+      channel: depot-review
+  # The delegation target, and the only agent a pipeline step may name: a step runs an agent to
+  # completion, so an agent that can pause or that declares memory is not a legal target.
+  auditor:
+    name: Policy auditor
+    instructions: auditor_brief
+    model: fast
+    guardrails: [claim_output]
+    maxSteps: 4
+    maxCostBudget: 0.5
+    maxTokensBudget: 9000
+
+# One store for the project rather than one per agent. A run is one run history, and the resume
+# gates want every pausable agent to agree on it -- two agents with different signing keys is
+# two resume paths nobody can reason about.
+#
+# `ttlHours` is retention; `checkpointTtlMinutes` is the window a pause may be resumed in. The
+# first must exceed the second, or a row would be pruned while its checkpoint was still live.
+state:
+  kind: postgres
+  urlEnv: AID_RUN_STATE_URL
+  signingKeyEnv: AID_CHECKPOINT_KEY
+  checkpointTtlMinutes: 60
+  ttlHours: 24
+
+pipelines:
+  warranty_intake:
+    description: Intake to determination. The whole step vocabulary this build supports, in one route.
+    trigger:
+      http:
+        method: post
+        path: /warranty/claims
+    steps:
+      # 1. A guard on text that came from outside.
+      - guard:
+          guardrail: claim_intake
+          stage: input
+          text: "{{ event.symptom }}"
+      # 2. A tool the pipeline calls explicitly. Nothing here is model-chosen: a step is a
+      #    control-flow decision the spec made, which is what keeps Phase 0's order visible.
+      - tool:
+          tool: lookup_vehicle
+          input:
+            vin: "{{ event.vin }}"
+          as: vehicle
+      # 3. One retrieval at pipeline level, and the choice of which one is a gate's doing. A
+      #    retrieval metric resolves to exactly one retriever by looking at its target
+      #    pipeline's top-level steps, so the index that is measured has to be the one named
+      #    here. The archive is retrieved further down, inside a fan-out, where no metric can
+      #    confuse it for this one.
+      - retrieve:
+          retriever: policy_corpus
+          query: "{{ event.symptom }}"
+          as: policy_hits
+      # 4. Authorization branching. `when` sees only the caller's Principal -- it answers "who
+      #    is asking", never "what did the last step produce". The arms apply different input
+      #    guardrails because the risk differs: traffic from a trusted agent is checked against
+      #    the managed policy, owner-submitted traffic against the warranty intake policy.
+      #
+      #    Neither arm binds a name, and that is deliberate rather than tidy. A `branch` merges
+      #    its arms by name and the merged binding is untyped, so a value the rest of the
+      #    pipeline reads is produced outside the branch rather than inside it.
+      #
+      #    `urgency_gate` is not usable as either arm. It is answered by a decision, and a
+      #    pipeline `guard` step is a synchronous check while the answer is a network call; the
+      #    adjudicator names it instead, in the agent loop where the call can be waited on.
+      - branch:
+          when: "hasRole('agent')"
+          then:
+            - guard:
+                guardrail: managed_tone
+                stage: input
+                text: "{{ event.symptom }}"
+          else:
+            - guard:
+                guardrail: claim_intake
+                stage: input
+                text: "{{ event.symptom }}"
+      # 5. Data-driven control flow. A `route` reads a request field, which `branch` cannot:
+      #    `when` is a Principal predicate, and the disposition is body content. Every label
+      #    `claim_path` can answer must reach an arm, and `default` is refused here because
+      #    `on` already maps all four.
+      #
+      #    The disposition is classified by a `decision` rather than by a prompt, for a reason
+      #    a gate enforces: every top-level `generate` is a subject a pipeline eval has to
+      #    measure, this pipeline already renders one, and a pipeline eval measures one prompt
+      #    on one model. The decision keeps the classification declared and out of the way.
+      #
+      #    Each arm reads the same clause and then writes. The write is per-arm because the
+      #    decision is what authorises it -- a repair path must not be able to issue a credit.
+      #    Every write carries `requiresApproval`, including `deny`: telling a dealer their
+      #    claim is refused is a message a human signs off on. The two arms that write a money
+      #    or quantity argument pass it as a literal, so on those paths no model picks an amount.
+      - route:
+          decision: claim_path
+          input: "{{ event.disposition }}"
+          on:
+            approve:
+              - generate:
+                  prompt: read_clause
+                  input:
+                    clause: "{{ policy_hits }}"
+                  as: assessment
+              - tool:
+                  tool: issue_credit
+                  input:
+                    claim_id: "{{ event.claim_id }}"
+                    amount_usd: 1250
+                    reason: "{{ assessment }}"
+                  requiresApproval: true
+                  as: credit
+            repair:
+              - generate:
+                  prompt: read_clause
+                  input:
+                    clause: "{{ policy_hits }}"
+                  as: assessment
+              - tool:
+                  tool: order_part
+                  input:
+                    claim_id: "{{ event.claim_id }}"
+                    part_number: PN-4471-A
+                    quantity: 1
+                  requiresApproval: true
+                  as: part_order
+            # The arm that escalates, and the only one whose write the adjudicator may also
+            # perform itself: the pipeline opens the region escalation, the agent can add to it.
+            escalate:
+              - generate:
+                  prompt: read_clause
+                  input:
+                    clause: "{{ policy_hits }}"
+                  as: assessment
+              - tool:
+                  tool: open_escalation
+                  input:
+                    claim_id: "{{ event.claim_id }}"
+                    reason: "{{ assessment }}"
+                    severity: routine
+                  requiresApproval: true
+                  as: escalation
+            deny:
+              - generate:
+                  prompt: read_clause
+                  input:
+                    clause: "{{ policy_hits }}"
+                  as: assessment
+              - tool:
+                  tool: notify_dealer
+                  input:
+                    vin: "{{ event.vin }}"
+                    dealer_code: north-01
+                    message: "{{ assessment }}"
+                  requiresApproval: true
+                  as: notice
+          as: disposition
+      # 6. Independent work, concurrently. Results merge into one context in branch order, so
+      #    `precedent` and `risk` are both available afterwards. The archive retrieve lives here
+      #    rather than at pipeline level so that `warranty_retrieval` resolves: it names the
+      #    policy corpus, and a metric that could mean either index would measure neither.
+      - parallel:
+          branches:
+            - - retrieve:
+                  retriever: policy_archive
+                  query: "{{ assessment }}"
+                  as: precedent
+            - - tool:
+                  tool: score_risk
+                  input:
+                    vin: "{{ event.vin }}"
+                    symptom: "{{ event.symptom }}"
+                  as: risk
+      # 7. An agent as a step. It runs to completion and binds its answer; it cannot pause,
+      #    because a pipeline step has no human in its loop. A struct binding reaches a text
+      #    template one field at a time -- `{{ vehicle }}` is refused, because there is no
+      #    single string to substitute -- so the step names the fields it means.
+      - agent:
+          agent: auditor
+          text: "{{ assessment }} | vin: {{ vehicle.vin }} | powertrain: {{ vehicle.powertrain }}"
+          as: audit_note
+      # 8. A guard on a payload rather than on prose: the answer is about to be assembled from
+      #    retrieved text, so the audit note is checked at the output stage first.
+      - guard:
+          guardrail: claim_output
+          stage: output
+          text: "{{ audit_note }}"
+      # 9. Reranking is a step, not a retriever property, because it ranks against the answer
+      #    rather than against the query. The lexical reranker is the only one implemented.
+      - rerank:
+          over: policy_hits
+          query: "{{ assessment }}"
+          model: lexical
+          topN: 3
+          as: ranking
+      # 10. A guardrail on a retrieval binding: at this stage a single reference is the payload,
+      #     and the passages it names are what the guardrail inspects.
+      - guard:
+          guardrail: policy_retrieval
+          stage: retrieval
+          text: "{{ ranking }}"
+      # 11. One prompt, every item, concurrently. `map` binds the ordered list of results.
+      - map:
+          over: precedent
+          as: clause_readings
+          step:
+            generate:
+              prompt: read_clause
+              input:
+                clause: "{{ item }}"
+              as: reading
+      # 12. The same prompt again through `reduce`, which also applies it per item but binds the
+      #     list for a following step to combine. Combining stays explicit.
+      - reduce:
+          over: precedent
+          prompt: read_clause
+          as: clause_rollup
+      # 13. The final answer, structured, with the citations the retrieval carried. The brief is
+      #     the determination itself; `ranking` arrives as `context`, which is the step's
+      #     retrieved set rather than a template the spec keeps in sync by hand.
+      #
+      #     One value, not a composed sentence, and that is the gate again: a request field
+      #     cannot be interpolated into a template a prompt is typed from, so the packet's route
+      #     and vehicle are read from the retrieved set and the response, not from here.
+      - generate:
+          prompt: assemble_packet
+          input:
+            brief: "{{ assessment }}"
+          context: ranking
+          as: packet
+      # 14. The response. Exactly one binding carries this type, which is what lets the
+      #     generator know what the route returns.
+      - emit:
+          event: ClaimPacket
+
+evals:
+  # A pipeline eval that can run in CI: every metric here is deterministic and offline. The
+  # subject is the packet prompt, because that is the one prompt this pipeline renders that a
+  # dataset row can fill: `brief` comes from the row and `ranking` is the retrieved set the step
+  # passes as `context`, which the harness supplies empty.
+  warranty_evidence:
+    target: pipeline:warranty_intake
+    dataset:
+      source: file
+      uri: evals/warranty_evidence.json
+    metrics:
+      - kind: json-schema
+        schema: ClaimPacket
+      # The promotion policy below bounds a cost allowance, so the eval has to score its own
+      # spend -- otherwise the allowance would bound a number no run measures.
+      - kind: cost
+        max: 0.35
+    gate:
+      ci: true
+      maxRegression: 0.05
+      samples: 3
+      # A promotion is judged rather than trusted: a candidate that regresses quality past the
+      # allowance, or costs more than the allowance, is refused. Under `enterprise` it also
+      # needs a named approver and a committed record before it can land.
+      promotion:
+        baseline:
+          prompt: assemble_packet
+          version: 2
+        allowedQualityDrop: 0.05
+        allowedCostIncrease: 0.2
+        approval:
+          by: [warranty-platform-lead, clinical-safety-officer]
+          record: app/approvals/assembly-version-3.md
+  # The retrieval surface, in an eval of its own. A `retrieval` metric scores a ranked retrieved
+  # set, and a generated eval otherwise scores one prediction per case; this target emits one
+  # harness per eval, so mixing the two would generate a module that measures one and silently
+  # drops the other. `expectDocs` is spelled relative to the retriever's source uri.
+  warranty_retrieval:
+    target: pipeline:warranty_intake
+    dataset:
+      source: file
+      uri: evals/warranty_retrieval.json
+    metrics:
+      - kind: retrieval
+        expectDocs:
+          - coverage.md
+          - exclusions.md
+        k: 5
+    gate:
+      ci: true
+      maxRegression: 0.05
+  # A trajectory eval. It scores the run rather than the answer: which tools were called, in
+  # what order, how many model calls it took, and whether the pause was respected.
+  adjudication_trajectory:
+    target: agent:adjudicator
+    dataset:
+      source: file
+      uri: evals/adjudication_trajectory.json
+    metrics:
+      - kind: tool-trace
+        expect: [lookup_vehicle, score_risk]
+        ordered: true
+      # Below the agent's own `maxSteps` of 10, or the ceiling could never fail.
+      - kind: step-count
+        maxSteps: 8
+      - kind: forbidden-tool
+        forbid: [notify_dealer]
+      - kind: approval-respected
+    gate:
+      ci: true
+      maxRegression: 0.02
+      samples: 5
+      minMean: 1
+  specialist_trajectory:
+    target: agent:specialist
+    dataset:
+      source: file
+      uri: evals/specialist_trajectory.json
+    metrics:
+      - kind: step-count
+        maxSteps: 4
+      - kind: cost
+        max: 0.15
+    gate:
+      ci: true
+      maxRegression: 0.02
+  # The auditor's eval measures rigour from the run, not by asking a second model to judge it.
+  # An `llm-judge` or `decision` metric on an agent eval is refused: the judge's calls are not in
+  # the recorded transcript, so a replayed run would diverge from its recording instead of
+  # measuring it -- and a model-backed metric cannot carry the threshold that makes this a gate.
+  # Cost and step count are what this build can honestly hold an audit to.
+  audit_rigour:
+    target: agent:auditor
+    dataset:
+      source: file
+      uri: evals/audit_rigour.json
+    metrics:
+      - kind: cost
+        max: 0.05
+      - kind: step-count
+        maxSteps: 3
+    gate:
+      ci: true
+      maxRegression: 0.02
+      samples: 3
+
+observability:
+  # An enterprise deployment that keeps no trace cannot answer the audit question the profile
+  # promises, so `trace: false` here would be refused rather than honoured.
+  trace: true
+  export: otlp
+  endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT
+  # The fields a trace must never carry. The security gate derives a set and refuses a declared
+  # set that drops one; naming more than it derives is allowed, and this names more.
+  redact: [vin, customer_id, symptom, rationale, dealer_code]
+  # Alerts are derived from declared budgets, so a series only exists where the runtime writes
+  # one. Guardrail-hit rate and approval latency are deliberately not alertable: they are span
+  # events, and no metric derivation reads events, so an alarm over them would always be silent.
+  alerts:
+    - id: adjudicator_spend
+      metric: agent.cost
+      window: 1h
+      aggregate: sum
+      threshold: 25
+      source: adjudicator
+    - id: adjudicator_tokens
+      metric: agent.tokens
+      window: 6h
+      aggregate: max
+      threshold: 250000
+      source: adjudicator
+    - id: eval_latency
+      metric: eval.latency.p95
+      window: 24h
+      aggregate: p95
+      threshold: 4500
+      source: warranty_evidence
+  # The signals the app accepts back from the people who use it. `persistent: true` without a
+  # retention window is refused, and a `correction` signal is refused unless its redaction set
+  # covers every field the spec already marks sensitive.
+  feedback:
+    persistent: true
+    retentionDays: 180
+    pii:
+      redact: [vin, customer_id, symptom, rationale, dealer_code]
+    signals:
+      reviewer_verdict:
+        kind: thumbs
+        description: The reviewing adjuster agrees or disagrees with the determination.
+      reviewer_correction:
+        kind: correction
+        description: The correction a reviewer made, which is the highest-value training signal in the loop.
+      escalation_outcome:
+        kind: escalation
+        description: How a handoff to the region actually resolved.
+
+gateways:
+  # A managed MCP gateway: the cloud hosts the endpoint and federates tools this spec does not
+  # own. Nothing here enters the generated tool registry -- `tools:` is unchanged, and the
+  # runtime reaches these over an MCP client.
+  tool_gateway:
+    description: Federated tool surface the agent runtime reaches over MCP.
+    authorizer:
+      kind: jwt
+      discoveryUrl: https://login.example.com/.well-known/openid-configuration
+      audience: [aid-warranty-gateway]
+    targets:
+      - name: parts_catalogue
+        kind: openApiSchema
+        description: The parts ordering system the plant already runs.
+        openApiSchema:
+          uri: s3://acme-warranty/openapi/parts.json
+          bucketOwnerAccountId: "123456789012"
+      - name: depot_desk
+        kind: mcpServer
+        description: The depot's existing MCP server, which already exposes its own tools.
+        mcpServer:
+          endpoint: https://mcp.depot.example.com
+
+deployments:
+  # Two placements of one service. The same spec, the same image contract, two answers to
+  # "where does this run" -- a managed container for the OEM's own desk, and a Helm release on
+  # a cluster for a customer who asked for BYO.
+  prod:
+    target: container
+    cloud: aws
+    region: eu-central-1
+    # Not `streaming: true`. Both `claim_output` and `managed_tone` inspect the output stage, and
+    # a guardrail cannot see a reply that has already been sent -- buffering the stream to check
+    # it first would not be a stream. This service returns one complete packet, so it does not
+    # need to stream and cannot honestly claim to.
+    streaming: false
+    concurrency: 20
+    autoscale:
+      min: 2
+      max: 12
+      metric: cpu
+    secrets:
+      - OPENAI_API_KEY
+      - AID_RUN_STATE_URL
+      - AID_CHECKPOINT_KEY
+      - OTEL_EXPORTER_OTLP_ENDPOINT
+    env:
+      - name: AID_ENV
+        value: production
+    audit:
+      sink: cloudwatch
+      retentionDays: 730
+    identity:
+      kind: oidc
+      issuer: https://login.example.com
+      audience: aid-warranty
+      jwksUri: https://login.example.com/.well-known/jwks.json
+      rolesClaim: roles
+      scopesClaim: scp
+      # `aid` asks for a generated verifier rather than naming a component the customer runs.
+      # The difference is the difference between a control the build enforces and one it
+      # records, and it is why `audience` and `jwksUri` become required here.
+      verifiedBy: aid
+    network:
+      ingress: internal
+      allowFrom: [10.0.0.0/8, 172.16.0.0/12]
+      egress: declared-only
+    approvals:
+      require: [security, platform]
+      minApprovers: 2
+    # The managed agent runtime. Container-only, because the platform schedules and addresses
+    # the process rather than the operator keeping it warm -- which is why this needs exactly
+    # one HTTP route, and why only one pipeline above carries `trigger.http`.
+    runtime:
+      platform: aws-agentcore
+      memory:
+        shortTerm: true
+      session:
+        ttlMinutes: 60
+      gateway: tool_gateway
+  # The BYO placement. The workload is the image `target: container` already builds, so a
+  # cluster is a destination rather than a second generation path.
+  plant:
+    target: kubernetes
+    cloud: aws
+    region: eu-central-1
+    concurrency: 8
+    secrets:
+      - OPENAI_API_KEY
+      - AID_RUN_STATE_URL
+      - AID_CHECKPOINT_KEY
+      - OTEL_EXPORTER_OTLP_ENDPOINT
+    audit:
+      sink: cloudwatch
+      retentionDays: 730
+    identity:
+      kind: oidc
+      issuer: https://login.example.com
+      audience: aid-warranty
+      jwksUri: https://login.example.com/.well-known/jwks.json
+      rolesClaim: roles
+      scopesClaim: scp
+      # The same issuer, audience and JWKS as `prod`, and that is forced rather than chosen: a
+      # generated verifier is one verifier for the whole app, serving every route. The gate
+      # refuses a document where one deployment asks for it and another does not, because the
+      # generated check would then run on a deployment whose document named something else.
+      #
+      # The cost of the constraint is the interesting part: a plant that authenticated against
+      # its own IdP would give up `verifiedBy: aid` entirely and name the component it runs on
+      # both deployments instead. Both are legal; only one can be generated.
+      verifiedBy: aid
+    network:
+      ingress: internal
+      allowFrom: [10.0.0.0/8]
+      egress: declared-only
+    approvals:
+      require: [security, platform]
+      minApprovers: 2
+    # No `image` here. The chart is a placement for the artifact `prod` already builds, so the
+    # registry block belongs to the container deployment and this one names none -- declaring
+    # one would ask the generator to publish an artifact a `kubernetes` target never builds,
+    # and it is refused for exactly that reason. `k8s.image` is a chart value an operator sets.
+    # The chart's defaults pin the release name to the project and the namespace to `default`,
+    # so a namespace is declared.
+    #
+    # There is no `ingress` block here, and that is the most interesting refusal in the document.
+    # A chart ingress is the cluster's public entry point; `profile: enterprise` requires every
+    # deployment to be privately placed, so `kubernetes.ingress` and `ingress: internal` are
+    # mutually exclusive and the network gate refuses the pair rather than generating a Service
+    # one of the two layers expects to be unreachable. The release ships a ClusterIP Service and
+    # an Ingress-less path; the OEM fronts it with its own internal load balancer. On a standard
+    # profile the same block is legal and carries `tlsSecret`, which under `enterprise` would be
+    # required -- so the control is not missing, the placement is.
+    kubernetes:
+      namespace: warranty-claims

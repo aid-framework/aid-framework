@@ -1,0 +1,30 @@
+{
+  "name": "warranty_evidence",
+  "version": "1",
+  "cases": [
+    {
+      "id": "powertrain-in-warranty",
+      "input": "Claim W-2201: 2022 electric crossover, 41,200 km. Drive motor inverter failed. Owner reports a warning light that appeared two weeks ago; the vehicle is inside the powertrain warranty window."
+    },
+    {
+      "id": "wear-item-excluded",
+      "input": "Claim W-2202: 2021 sedan, 96,000 km. Brake pads and discs worn below the minimum. No defect reported, routine servicing only."
+    },
+    {
+      "id": "open-safety-campaign",
+      "input": "Claim W-2203: 2023 hybrid, 18,900 km. Battery coolant leak. The VIN has an open safety campaign for the same coolant circuit."
+    },
+    {
+      "id": "ambiguous-consequential-damage",
+      "input": "Claim W-2204: 2020 diesel van, 132,000 km. A failed water pump stripped the timing belt and damaged the cylinder head. Vehicle is past the base warranty; the extended powertrain cover has a consequential-damage exclusion."
+    },
+    {
+      "id": "region-pinned-emea",
+      "input": "Claim W-2205: 2024 electric van, 9,700 km. Charging port latch will not release. Registered in the EMEA region."
+    },
+    {
+      "id": "symptom-pii-present",
+      "input": "Claim W-2206: 2022 crossover, 55,000 km. Owner Anna Kowalska, mobile +48 600 000 000, reports a rattle from the front subframe that started after a repair at 48,000 km."
+    }
+  ]
+}

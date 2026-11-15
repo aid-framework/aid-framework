@@ -1,0 +1,18 @@
+{
+  "name": "audit_rigour",
+  "version": "1",
+  "cases": [
+    {
+      "id": "settled-by-policy",
+      "input": "Determination: approve. Claim W-2201, drive motor inverter failure at 41,200 km, inside the powertrain window. Audit this against the policy corpus."
+    },
+    {
+      "id": "unsettled-by-policy",
+      "input": "Determination: deny. Claim W-2204, consequential engine damage at 132,000 km. The extended cover excludes consequential damage but the water pump itself may be covered. Audit this against the policy corpus and say whether the corpus settles it."
+    },
+    {
+      "id": "contradicts-precedent",
+      "input": "Determination: repair. Claim W-2202, brake pads worn below minimum, no defect reported. Audit this: the corpus treats wear items as excluded, and the determination recommends a repair."
+    }
+  ]
+}
