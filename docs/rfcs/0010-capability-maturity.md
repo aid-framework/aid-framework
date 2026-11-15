@@ -209,6 +209,12 @@ deferred by decision. That is worth saying rather than quietly editing: a roadma
 plan instead of from the tree will overcount what is left, and the overcount reads as a promise to
 whoever plans against it.
 
+**Where the table stands after `0.1.188`:** six of the seven rows are `Shipped`, and A4 is
+`Deferred` with a written reopening trigger. No row is `Open`. That is not a claim the work is
+finished — it is a claim that the plan this table was written from has been carried out or
+explicitly set aside, so the next round's RFC should start from a new table rather than adding rows
+under a heading that no longer reads as a plan.
+
 Each phase follows the rule this round was built to enforce: **a row moves from `DECLARED_FEATURES`
 to `SHIPPED_FEATURES` in the release that starts emitting it, and not before.** A1 was the first
 test of it. The row said declared while the run lived only in the response, and it moved in
