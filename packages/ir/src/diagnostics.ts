@@ -73,6 +73,7 @@ export const IR_DIAGNOSTIC_CODES = {
   resumeKeyConflict: 'ir/resume-key-conflict',
   resumeKeyAlias: 'ir/resume-key-alias',
   resumeOwnerUnbound: 'ir/resume-owner-unbound',
+  stateRetention: 'ir/state-retention',
   approvalStepTool: 'ir/approval-step-tool',
   cloudUnsupported: 'ir/cloud-unsupported',
   regionTarget: 'ir/region-target',
@@ -227,6 +228,9 @@ export const IR_DIAGNOSTIC_METADATA = {
   'ir/security-store-secret': { condition: 'a store whose `uri` is a literal connection string' },
   'ir/security-unauthenticated-path': {
     condition: 'a route that reaches a writing tool with no authentication',
+  },
+  'ir/state-retention': {
+    condition: 'a run retention shorter than the checkpoint window a paused run must outlive',
   },
 } as const satisfies Readonly<Partial<Record<IrDiagnosticCode, DiagnosticMetadata>>>;
 

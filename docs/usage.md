@@ -486,6 +486,12 @@ An agent declares its instructions, its model, its tools, its step and cost ceil
 whether a run may pause for a human. The loop is generated; the tool bodies are yours.
 
 ```yaml
+state:
+  kind: sqlite
+  urlEnv: AID_STATE_DB
+  signingKeyEnv: AID_CHECKPOINT_KEY
+  ttlHours: 24
+
 agents:
   refund_agent:
     name: Refund agent
@@ -500,10 +506,14 @@ agents:
       channel: refunds
 ```
 
+`kind: sqlite` is one filesystem and suits one replica; a store more than one replica shares
+is `kind: postgres`.
+
 What comes out:
 
 - The tool loop, its step and cost ceilings, and the resume route a paused run returns to.
-  `refund_agent` above is what creates `POST /agents/resume`.
+  `refund_agent` above is what creates `POST /agents/resume`, and -- because it declares a
+  store -- `POST /agents/runs/{run_id}/resume` beside it.
 - `app/business/tools/` for the bodies, created once and never overwritten, so the generated
   loop calls your function rather than a stub.
 - Guardrails run per tool call, which is why `refund_args` can inspect arguments that no
@@ -521,16 +531,20 @@ what an enterprise review asks for:
 
 - **Step-level human approval**: a tool marked `requiresConfirmation` pauses the run where it
   stands, and the approval resumes from that step rather than replaying the ones before it.
-  The checkpoint is signed with the key `resume.signingKeyEnv` names and expires after
-  `resume.checkpointTtlMinutes`, and the resume handler refuses a tampered or stale one.
+  The checkpoint is signed with the key `state.signingKeyEnv` names and expires after
+  `state.checkpointTtlMinutes`, and the resume handler refuses a tampered or stale one.
   Under the enterprise profile a side-effecting tool without one is refused.
 - **Durable run state**: the spec names a store and the `state` gate refuses an agent that
-  can write with none, because a pause with nowhere to wait is not a pause. The store is
-  used for one thing -- the checkpoint nonce, claimed there so a replay across replicas is
-  refused -- while the run itself returns to the caller, so a paused run outlives the
-  request and not the process and resuming after a restart is the application's to arrange.
-  The [features page](features.md#declared-and-gated-not-generated) lists this beside the
-  other constructs that are declared and gated without a fully generated artefact.
+  can write with none, because a pause with nowhere to wait is not a pause. The store does
+  two things: the checkpoint nonce is claimed there, so a replay across replicas is refused,
+  and the paused run itself is written there under an id the app owns, so the resume survives
+  the request, the replica and the restart. The response carries `run_id`, and
+  `POST /agents/runs/{run_id}/resume` continues it -- the run is named in the path and the
+  body carries the decision only, so a caller cannot pair one run's id with another run's
+  checkpoint. The row is claimed in the same write that reads it, and `ir/state-retention`
+  refuses a retention shorter than the checkpoint window, because a run that expires before
+  its approval arrives cannot be resumed at all. What it is not: a queue, and nothing sweeps
+  an expired row -- the store prunes on the next write.
 
 A gateway federates tools that already exist behind one managed MCP endpoint: the platform
 hosts the endpoint, each target keeps owning its own tool list, and the app reaches a single

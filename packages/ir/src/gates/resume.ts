@@ -42,7 +42,12 @@
 
 import { RESUME_OWNER_BINDING_MIN_VERSION, specVersionAtLeast } from '@aid-framework/spec';
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
-import type { AgentShape, AgentStateShape, IR } from '../shapes.js';
+import {
+  type AgentShape,
+  type AgentStateShape,
+  DEFAULT_CHECKPOINT_TTL_MINUTES,
+  type IR,
+} from '../shapes.js';
 import { type GateOptions, type GateResult, NO_SUPPRESSIONS, reporter } from './contract.js';
 
 /**
@@ -139,8 +144,46 @@ export function resumeGate(ir: IR, options: GateOptions): GateResult {
   checkAgreement(pausing, diagnostics, report);
   checkKeyPlacement(ir, diagnostics, report);
   checkOwnerBinding(ir, pausing, diagnostics, report, enterprise);
+  checkRetention(pausing, diagnostics, report);
 
   return { diagnostics, suppressed: NO_SUPPRESSIONS };
+}
+
+/**
+ * Retention and resumability are two clocks, and one ordering of them cannot work.
+ *
+ * `ttlHours` is how long a written run is *kept*; `checkpointTtlMinutes` is how long it may
+ * be *resumed*. Keeping a run longer than it can be resumed is the normal, useful case: the
+ * row is audit material after the approval window closes. Keeping it for *less* time than
+ * the window is the impossible one -- the store prunes the row while the checkpoint inside
+ * it still says the run is live, so a resume that the signature would accept fails on a
+ * missing row, and the caller cannot tell that from an id that never existed.
+ *
+ * The default window is 15 minutes, so this only fires on a declared retention under a
+ * quarter of an hour. It is refused rather than warned in both profiles: unlike replay
+ * protection, there is no profile for which a silently unrunnable resume is acceptable.
+ */
+function checkRetention(
+  pausing: AgentShape[],
+  diagnostics: IrDiagnostic[],
+  report: Reporter,
+): void {
+  const [first] = pausing;
+  if (first === undefined) return;
+  const state: AgentStateShape | undefined = first.state;
+  if (state?.ttlHours === undefined) return;
+  const windowMinutes = state.checkpointTtlMinutes ?? DEFAULT_CHECKPOINT_TTL_MINUTES;
+  const retainedMinutes = state.ttlHours * 60;
+  if (retainedMinutes >= windowMinutes) return;
+
+  diagnostics.push(
+    report.error({
+      code: IR_DIAGNOSTIC_CODES.stateRetention,
+      message: `the resume gate rejected "${first.id}": \`state.ttlHours\` keeps a paused run for ${retainedMinutes} minutes (${state.ttlHours}h) while \`checkpointTtlMinutes\` lets it be resumed for ${windowMinutes} -- the store would prune the row while its checkpoint was still valid, so an approval inside the window fails on a missing run and the caller cannot tell that from an id that was never issued`,
+      path: ['agents', first.id, 'state', 'ttlHours'],
+      hint: `raise \`ttlHours\` to at least ${Math.ceil(windowMinutes / 60)} (${windowMinutes} minutes, the resume window), or lower \`checkpointTtlMinutes\` to ${retainedMinutes} so a pause cannot outlive the row that holds it`,
+    }),
+  );
 }
 
 /**

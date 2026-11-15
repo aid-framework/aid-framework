@@ -343,6 +343,7 @@ def build(
     provider: FakeProvider | None = None,
     signer: Any = None,
     nonces: Any = None,
+    runs: Any = None,
 ) -> Harness:
     fake = provider if provider is not None else FakeProvider(name=PROVIDER, script=script)
     runtime = AgentRuntime.from_ir(
@@ -355,5 +356,6 @@ def build(
         tracer=tracer,
         signer=signer,
         nonces=nonces,
+        runs=runs,
     )
     return Harness(runtime=runtime, provider=fake, ledger=runtime.gateway.ledger)

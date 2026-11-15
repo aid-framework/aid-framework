@@ -189,7 +189,7 @@ below is the delivery plan this round is the first increment of.
 | Phase | Smallest shippable increment | Why here |
 | --- | --- | --- |
 | **B. Delivery method** | `aid review [spec]`: one readiness pack per customer (what the build proved, then every declaration it only accepted as declared, each with the path that made it), plus a section in `docs/guide/delivery.md` | A consultancy sells a method before it sells a feature. Costs no spec change. **Shipped in `0.1.185`.** |
-| **A1. Durable run state** | Actually persist a paused run: generated checkpoint table, `POST /agents/resume` reading from it | The largest honest gap in `DECLARED_FEATURES`. A client whose agent dies mid-run does not care which cloud it cannot survive on. |
+| **A1. Durable run state** | Actually persist a paused run: generated checkpoint table, `POST /agents/resume` reading from it | The largest honest gap in `DECLARED_FEATURES`. A client whose agent dies mid-run does not care which cloud it cannot survive on. **Shipped in `0.1.186`.** |
 | **A2. Cost at runtime** | Meter spend per run against `maxCostBudget`, refuse the next step when exhausted | Second question every client asks; today cost is priced at build time only. |
 | **A3. Identity verification** | Verify a token against the declared `identity.issuer` instead of naming who does | Moves `ir/identity-verified-by` from declared to enforced with code. |
 | **A4. Azure / Kubernetes** | One target through the capability matrix, with refusals for unsupported pairs | Only after A1–A3: portability of a service that cannot survive a restart is a demo. |
@@ -197,8 +197,10 @@ below is the delivery plan this round is the first increment of.
 | **A6. Composed pipelines** | `pipelines[].steps` referencing agents, with step budgets | Last: it multiplies every earlier decision. |
 
 Each phase follows the rule this one was built to enforce: **a row moves from `DECLARED_FEATURES`
-to `SHIPPED_FEATURES` in the release that starts emitting it, and not before.** A1's entry is
-already written down as declared; it becomes shipped only when a paused run outlives a process.
+to `SHIPPED_FEATURES` in the release that starts emitting it, and not before.** A1 was the first
+test of it. The row said declared while the run lived only in the response, and it moved in
+`0.1.186` — in the release that generated the store, not in the one that described it, and with the
+new `ir/state-retention` refusal arriving beside it.
 
 Track B added no gate, which is why it was safe to ship in the same round as the registry it
 reads: `aid review` runs the existing `validate` pipeline and splits its result, so the pack can

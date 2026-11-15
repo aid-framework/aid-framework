@@ -206,8 +206,10 @@ describe('a declared signing key that no environment provides', () => {
     expect(source.match(/_resume_protection\(\)/g) ?? []).toHaveLength(2);
     expect(source).toContain('signer, nonces = _resume_protection()');
 
-    // ...and `build_runtime` is what each handler calls, once per request.
-    expect(source.match(/build_runtime\(/g) ?? []).toHaveLength(3);
+    // ...and `build_runtime` is what each handler calls, once per request. Counted against
+    // the routes so a route added later is covered without editing this number.
+    const routes = source.match(/@agent_router\.post\(/g) ?? [];
+    expect(source.match(/build_runtime\(/g) ?? []).toHaveLength(routes.length + 1);
     expect(source).toContain(
       'runtime = build_runtime(gateway=deps.gateway, tools=deps.agent_tools)',
     );

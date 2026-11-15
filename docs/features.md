@@ -228,6 +228,15 @@ A tool that writes something pauses the run for a person, and the approved run c
 - **Reference:** [spec](./reference/spec.md#agent-humanintheloop)
 - **Since:** `0.1.27`
 
+### Durable run state
+
+A spec that declares a store gets a run written to it under an id the app owns, so a pause outlives the process rather than only the request: the response carries `run_id` and `POST /agents/runs/{run_id}/resume` continues that run, with the decision in the body and the run named in the path. The row is claimed in the same write that reads it, so one resume lands once across replicas. The store is not a queue and nothing sweeps an expired row -- it is pruned on the next write -- and `ir/state-retention` refuses a retention shorter than the checkpoint window, because a run that expires before its approval arrives is a run that cannot be resumed.
+
+- **Turned on by:** `state, agents[].state`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/agents.ts`)
+- **Reference:** [spec](./reference/spec.md#agentstate)
+- **Since:** `0.1.186`
+
 ### Memory tiers
 
 What is remembered, for how long, within what token budget, and where it lives.
@@ -547,19 +556,11 @@ The coverage rule has always named the HTTP pipelines no CI-gating eval claims; 
 
 These constructs are in the spec language and a gate enforces them, but no generator emits the behaviour they name, so they are listed apart from the inventory above and are not counted on the homepage. The declaration is what a reviewer reads before an apply; the last bullet is the part still to write.
 
-### Durable run state
-
-- **Declared by:** `state, agents[].state`
-- **Enforced by:** `ir/agents-state-store`
-- **Not yet generated:** The declared store is used for one thing: the checkpoint nonce, claimed in the database the `state` block names so a replay across replicas is refused. The run itself is not persisted -- the generated resume route hands the checkpoint back to the caller -- so a paused run outlives the request, not the process, and resuming after a restart is the application's to arrange. The `state` gate refuses an agent that can write with no store at all.
-- **Reference:** [spec](./reference/spec.md#agentstate)
-- **Since:** `0.1.143`
-
 ### Durable run state, deployment identity, private network and change approval
 
 - **Declared by:** `state, deployments[].identity, deployments[].network, deployments[].approvals`
 - **Enforced by:** `ir/profile-identity, ir/identity-verified-by, ir/profile-network`
-- **Not yet generated:** What *is* generated: the region pin and the audit sink reach the OpenTofu, the profile gate refuses an `enterprise` deployment missing either of them or missing the `network.private` pin, `requiresApproval` reaches the generated tool step, the checkpoint is signed with the key `resume.signingKeyEnv` names, and a declared `state` store holds the checkpoint nonce. What is not: `network.private` states a requirement and selects no module -- the container module builds its two-AZ VPC with private task subnets and one NAT gateway whenever you do not supply `vpc_id`, whether the pin is set or not, and no generator branches on the key. Also not: no generator verifies a token (`identity.verifiedBy` names who does), and no generated code persists the paused run itself, so the checkpoint still returns to the caller.
+- **Not yet generated:** What *is* generated: the region pin and the audit sink reach the OpenTofu, the profile gate refuses an `enterprise` deployment missing either of them or missing the `network.private` pin, `requiresApproval` reaches the generated tool step, the checkpoint is signed with the key `state.signingKeyEnv` names, a declared `state` store holds the checkpoint nonce, and a paused run is written to that store so `POST /agents/runs/{run_id}/resume` continues it after a restart. What is not: `network.private` states a requirement and selects no module -- the container module builds its two-AZ VPC with private task subnets and one NAT gateway whenever you do not supply `vpc_id`, whether the pin is set or not, and no generator branches on the key. Also not: no generator verifies a token (`identity.verifiedBy` names who does).
 - **Reference:** [spec](./reference/spec.md#top-level-keys)
 - **Since:** `0.1.143`
 

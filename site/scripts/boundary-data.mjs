@@ -98,10 +98,11 @@ export const BOUNDARY_TABLE_METADATA = Object.freeze({
     risk: 'A policy requiring a signed-in caller refuses rather than trusts, but only if the principal is real',
   },
   'Durable state': {
-    codes: ['ir/agents-state-store', 'ir/resume-replay-weak'],
+    codes: ['ir/agents-state-store', 'ir/resume-replay-weak', 'ir/state-retention'],
     generated:
-      'The nonce claimed in the store the `state` block names, so a replay is refused across replicas and restarts',
-    provide: 'The database, and persisting the paused run if it must outlive the process',
+      'The paused run written to the store the `state` block names, under the `run_id` the response reports and continued by the stored-run resume route -- the run is named in the path, the decision in the body -- plus the nonce claimed in the same store so a replay is refused across replicas and restarts',
+    provide:
+      'The database, its backups, and someone watching how much a table that never shrinks on its own is holding',
     risk: 'Under `standard` the checkpoint is signed but replayable; `enterprise` refuses that document',
   },
   Secrets: {

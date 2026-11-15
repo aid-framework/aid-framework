@@ -13,7 +13,9 @@
  *    agent route and a pipeline route price against the same ledger and call the same
  *    tool objects.
  * 3. The routes. `POST /agents/{agent_id}/run` starts a run. `POST /agents/resume` exists
- *    only when some agent can actually pause -- see below.
+ *    only when some agent can actually pause -- see below. When the spec also declares a
+ *    `state` store, the app writes each paused run to it and `POST
+ *    /agents/runs/{run_id}/resume` continues one by id.
  *
  * ## Why the resume route is conditional
  *
@@ -47,6 +49,26 @@
  * both errors (`ir/resume-unsigned`, `ir/resume-replay-weak`) and `profile: standard` warns
  * about both, because an unsigned checkpoint is only ever as good as the endpoint that
  * accepts it.
+ *
+ * ## A declared `state` store moves the body from the caller to the app
+ *
+ * A checkpoint handed back to the caller is a capability, and it is only durable for as long
+ * as the caller holds it: an approval that arrives on another replica, or after the pod that
+ * paused the run has been replaced, has nothing to continue. When the spec declares a `state`
+ * store the app writes every paused run to it and returns a `run_id` as well, and
+ * `/agents/runs/{run_id}/resume` reads the body back. Two properties follow, and neither
+ * rests on the caller behaving:
+ *
+ * - the resumed body was authored by this app, so a caller naming a run cannot edit the
+ *   conversation, the pending call or the approval before continuing it;
+ * - the row is claimed in the write that reads it, so an id resumes once across replicas
+ *   rather than once per worker.
+ *
+ * The checkpoint route stays, because a caller that already holds one should not have to
+ * round-trip through the store to use it -- and because a run paused before the store was
+ * configured must still be resumable. What changes with the store is which path is
+ * *durable*, and that is the honest distinction to describe: a checkpoint resumes the run it
+ * carries, a run id resumes the run the app recorded.
  */
 
 import type {
@@ -91,6 +113,19 @@ export function hasResumeRoute(ir: IR): boolean {
 }
 
 /**
+ * Whether this app writes a paused run somewhere a later request can read it.
+ *
+ * True exactly when a pausable agent resolved a `state`, which is what `ir/agents-state-store`
+ * and `ir/resume-replay-weak` judge. With no store the app keeps the pre-store contract --
+ * the checkpoint goes back to the caller and the run outlives the request, not the process --
+ * and this module emits no `run_id` and no resume-by-id route rather than one that would
+ * only work against the worker that paused the run.
+ */
+export function hasRunStore(ir: IR): boolean {
+  return resumeState(ir) !== undefined;
+}
+
+/**
  * The store the emitted signer and nonce store read from.
  *
  * One route serves every pausable agent, so one store has to serve all of them, and
@@ -123,7 +158,8 @@ function resumeState(ir: IR): AgentStateShape | undefined {
  *
  * The lifetime has no `None` form. An undeclared `checkpointTtlMinutes` emits no constant at
  * all and the call omits `ttl_seconds`, so the runtime's own default is the only place the
- * number lives rather than a second copy here that can drift from it.
+ * number lives rather than a second copy here that can drift from it. The same holds for
+ * `ttlHours`: undeclared, no retention constant is emitted and the store prunes nothing.
  */
 function resumeConfig(state: AgentStateShape | undefined): string {
   const lines = [
@@ -133,6 +169,9 @@ function resumeConfig(state: AgentStateShape | undefined): string {
   ];
   if (state?.checkpointTtlMinutes !== undefined) {
     lines.push(`CHECKPOINT_TTL_SECONDS = ${state.checkpointTtlMinutes * 60}`);
+  }
+  if (state?.ttlHours !== undefined) {
+    lines.push(`CHECKPOINT_RETAIN_SECONDS = ${state.ttlHours * 3600}`);
   }
   return lines.join('\n');
 }
@@ -309,6 +348,25 @@ const RESUME_REQUEST = [
 ].join('\n');
 
 /**
+ * The body of a resume by id: the answer, and nothing that identifies the run.
+ *
+ * The run id is the path, not a field, so a request cannot name one run in the URL and
+ * another in the body. That is the whole difference between this shape and
+ * `AgentResumeRequest`: a stored run does not need the caller to hand back a checkpoint,
+ * because the app wrote the run down itself.
+ */
+const RUN_DECISION_REQUEST = [
+  'class AgentDecisionRequest(BaseModel):',
+  pythonDoc(
+    'The answer to the question a stored run is asking. The run is named by the path.',
+    INDENT,
+  ),
+  `${INDENT}model_config = ConfigDict(extra="forbid")`,
+  '',
+  `${INDENT}decision: HumanDecision`,
+].join('\n');
+
+/**
  * The signer and nonce store, or `(None, None)` when the spec declares no signing key.
  *
  * Both are read from the environment on each call rather than at import, which is how the
@@ -342,7 +400,7 @@ function resumeProtection(ttl: boolean): string {
   ].join('\n');
 }
 
-function buildRuntime(resume: boolean): string {
+function buildRuntime(resume: boolean, durable: boolean): string {
   const signature = [
     'def build_runtime(',
     `${INDENT}*,`,
@@ -375,17 +433,64 @@ function buildRuntime(resume: boolean): string {
     `${INDENT}${INDENT}tools=tools,`,
     `${INDENT}${INDENT}signer=signer,`,
     `${INDENT}${INDENT}nonces=nonces,`,
+    ...(durable ? [`${INDENT}${INDENT}runs=_run_store(),`] : []),
     `${INDENT})`,
   ].join('\n');
 }
 
-function response(resume: boolean): string {
+/**
+ * The store a paused run is written to, or nothing when the spec declares no `state`.
+ *
+ * Separate from `_resume_protection` on purpose. A signature and a store are two different
+ * guarantees and a document may have one without the other: `ir/resume-unsigned` warns about
+ * a store with no signing key, and that document still deserves a run that outlives its
+ * process. Tying the two together would withdraw durability from exactly the documents the
+ * gate merely warned about.
+ *
+ * `retain_seconds` is emitted only when `ttlHours` was declared. Passing a `None` here would
+ * be indistinguishable from omitting it, so the argument itself is conditional -- there is
+ * one form of "not declared" in the generated text, as there is in the spec.
+ */
+function runStore(retain: boolean): string {
+  const args = [
+    'CHECKPOINT_STATE_KIND',
+    'CHECKPOINT_STATE_URL_ENV',
+    ...(retain ? ['retain_seconds=CHECKPOINT_RETAIN_SECONDS'] : []),
+  ];
+  const oneLine = `${INDENT}return run_store_from_env(${args.join(', ')})`;
+  const call =
+    oneLine.length <= MAX_LINE
+      ? [oneLine]
+      : [
+          `${INDENT}return run_store_from_env(`,
+          ...args.map((arg) => `${INDENT}${INDENT}${arg},`),
+          `${INDENT})`,
+        ];
+  return [
+    'def _run_store() -> RunStore:',
+    pythonDoc(
+      'The store a paused run is written to, resolved from the environment per request.',
+      INDENT,
+    ),
+    ...call,
+  ].join('\n');
+}
+
+function response(resume: boolean, durable: boolean): string {
+  const tail = durable
+    ? ', and either `/agents/resume` or `/agents/runs/{run_id}/resume` takes back'
+    : resume
+      ? ', and is what `/agents/resume` takes back'
+      : '';
   return [
     'class AgentRunResponse(BaseModel):',
     pythonDoc(
       'A run that finished, or one that stopped and is asking a question. `checkpoint` is ' +
-        'present exactly when `status` is `paused`' +
-        (resume ? ', and is what `/agents/resume` takes back.' : '.'),
+        `present exactly when \`status\` is \`paused\`${tail}.` +
+        (durable
+          ? ' `run_id` names the stored run and is empty for a run that was not stored:' +
+            ' only a paused run is written, so a finished run has nothing to continue.'
+          : ''),
       INDENT,
     ),
     `${INDENT}model_config = ConfigDict(extra="forbid")`,
@@ -395,6 +500,7 @@ function response(resume: boolean): string {
     `${INDENT}answer: str = ""`,
     `${INDENT}cost_usd: float = 0.0`,
     `${INDENT}total_tokens: int = 0`,
+    ...(durable ? [`${INDENT}run_id: str = ""`] : []),
     `${INDENT}pending: dict[str, Any] | None = None`,
     `${INDENT}checkpoint: dict[str, Any] | None = None`,
   ].join('\n');
@@ -417,21 +523,24 @@ function conditionalArgument(name: string, subject: string, indent: string): str
   return [`${indent}${name}=(`, `${indent}${INDENT}${value}`, `${indent}),`].join('\n');
 }
 
-const TO_RESPONSE = [
-  'def _response(result: RunResult) -> AgentRunResponse:',
-  pythonDoc('A runtime result as the wire shape this module publishes.', INDENT),
-  `${INDENT}checkpoint = result.checkpoint`,
-  `${INDENT}pending = result.approval`,
-  `${INDENT}return AgentRunResponse(`,
-  `${INDENT}${INDENT}agent_id=result.agent_id,`,
-  `${INDENT}${INDENT}status=str(result.status),`,
-  `${INDENT}${INDENT}answer=result.answer,`,
-  `${INDENT}${INDENT}cost_usd=result.cost_usd,`,
-  `${INDENT}${INDENT}total_tokens=result.total_tokens,`,
-  conditionalArgument('pending', 'pending', `${INDENT}${INDENT}`),
-  conditionalArgument('checkpoint', 'checkpoint', `${INDENT}${INDENT}`),
-  `${INDENT})`,
-].join('\n');
+function toResponse(durable: boolean): string {
+  return [
+    'def _response(result: RunResult) -> AgentRunResponse:',
+    pythonDoc('A runtime result as the wire shape this module publishes.', INDENT),
+    `${INDENT}checkpoint = result.checkpoint`,
+    `${INDENT}pending = result.approval`,
+    `${INDENT}return AgentRunResponse(`,
+    `${INDENT}${INDENT}agent_id=result.agent_id,`,
+    `${INDENT}${INDENT}status=str(result.status),`,
+    `${INDENT}${INDENT}answer=result.answer,`,
+    `${INDENT}${INDENT}cost_usd=result.cost_usd,`,
+    `${INDENT}${INDENT}total_tokens=result.total_tokens,`,
+    ...(durable ? [`${INDENT}${INDENT}run_id=result.run_id,`] : []),
+    conditionalArgument('pending', 'pending', `${INDENT}${INDENT}`),
+    conditionalArgument('checkpoint', 'checkpoint', `${INDENT}${INDENT}`),
+    `${INDENT})`,
+  ].join('\n');
+}
 
 const ROUTER = 'agent_router = APIRouter()';
 
@@ -532,7 +641,58 @@ const RESUME_ROUTE = [
   `${INDENT}return _response(result)`,
 ].join('\n');
 
+/**
+ * The resume route for a run this app stored, emitted only when it stores one.
+ *
+ * A second route rather than a `run_id` alternative inside `AgentResumeRequest`, because the
+ * two bodies are different sizes on purpose: a checkpoint is a bearer capability with a
+ * signature to verify, an id is a reference the store resolves. One shape carrying either
+ * would have to treat "both sent" and "neither sent" as validation cases, and `extra="forbid"`
+ * means the shape cannot be widened without a spec change.
+ *
+ * The refusal is the same opaque 403 as `/agents/resume`, for the same reason -- but the
+ * reason is logged against the run id instead of a nonce, since a caller naming an id never
+ * held one. `unknown-run`, `expired` and `replayed` are all reachable here, so an id that
+ * never existed and one already spent are indistinguishable to the caller, which is what
+ * keeps a guessed id from confirming itself.
+ */
+function resumeRunCall(): string {
+  const oneLine = `${INDENT}${INDENT}result = await runtime.resume_run(run_id, event.decision, principal=principal)`;
+  if (oneLine.length <= MAX_LINE) return oneLine;
+  return [
+    `${INDENT}${INDENT}result = await runtime.resume_run(`,
+    `${INDENT}${INDENT}${INDENT}run_id, event.decision, principal=principal`,
+    `${INDENT}${INDENT})`,
+  ].join('\n');
+}
+
+function resumeStoredRoute(): string {
+  return [
+    '@agent_router.post("/agents/runs/{run_id}/resume", response_model=AgentRunResponse)',
+    'async def resume_stored_run(',
+    `${INDENT}run_id: str,`,
+    `${INDENT}event: AgentDecisionRequest,`,
+    `${INDENT}deps: Annotated[Deps, Depends(get_deps)],`,
+    `${INDENT}principal: Annotated[Principal, Depends(current_principal)],`,
+    ') -> AgentRunResponse:',
+    pythonDoc(
+      'Continue a paused run by id. The stored body is the one this app wrote, so the ' +
+        'caller cannot have edited it; the row is claimed as it is read, so the id resumes ' +
+        'once. A run paused with an identity can only be resumed by that identity.',
+      INDENT,
+    ),
+    `${INDENT}runtime = build_runtime(gateway=deps.gateway, tools=deps.agent_tools)`,
+    `${INDENT}try:`,
+    resumeRunCall(),
+    `${INDENT}except CheckpointRefusalError as refusal:`,
+    `${INDENT}${INDENT}logger.warning("refused a resume of run %s: %s", run_id, refusal.reason)`,
+    `${INDENT}${INDENT}raise HTTPException(status_code=403, detail=RESUME_REFUSED) from refusal`,
+    `${INDENT}return _response(result)`,
+  ].join('\n');
+}
+
 function exports(ir: IR): string {
+  const durable = hasRunStore(ir);
   const names = [
     'AGENT_IDS',
     'DOCUMENT',
@@ -540,6 +700,7 @@ function exports(ir: IR): string {
     'build_runtime',
     'current_principal',
     ...(hasResumeRoute(ir) ? ['resume_agent'] : []),
+    ...(durable ? ['resume_stored_run'] : []),
     'run_agent',
   ].map(pythonString);
   const oneLine = `__all__ = [${names.join(', ')}]`;
@@ -552,6 +713,8 @@ export function emitAgents(ir: IR): EmittedFile {
   const resume = hasResumeRoute(ir);
   const state = resumeState(ir);
   const ttl = state?.checkpointTtlMinutes !== undefined;
+  const durable = hasRunStore(ir);
+  const retain = state?.ttlHours !== undefined;
   const ids = agents.map((agent) => pythonString(agent.id));
   return generated(
     AGENTS_PATH,
@@ -573,10 +736,14 @@ export function emitAgents(ir: IR): EmittedFile {
             'AgentRuntime',
             ...(resume ? ['HumanDecision'] : []),
             'ModelGateway',
-            ...(resume ? ['NonceStore', 'nonce_store_from_env', 'signer_from_env'] : []),
+            ...(resume ? ['NonceStore'] : []),
             'Principal',
             'RunResult',
+            ...(durable ? ['RunStore'] : []),
             'Tool',
+            ...(resume ? ['nonce_store_from_env'] : []),
+            ...(durable ? ['run_store_from_env'] : []),
+            ...(resume ? ['signer_from_env'] : []),
           ]),
           importFrom('aid_runtime.agents.ir', ['from_ir']),
           importFrom('fastapi', ['APIRouter', 'Depends', 'HTTPException']),
@@ -595,16 +762,19 @@ export function emitAgents(ir: IR): EmittedFile {
       ...(resume ? [resumeConfig(state)] : []),
       REQUEST,
       ...(resume ? [RESUME_REQUEST] : []),
-      response(resume),
+      ...(durable ? [RUN_DECISION_REQUEST] : []),
+      response(resume, durable),
       ...(resume ? [resumeProtection(ttl)] : []),
-      buildRuntime(resume),
-      TO_RESPONSE,
+      ...(durable ? [runStore(retain)] : []),
+      buildRuntime(resume, durable),
+      toResponse(durable),
       ROUTER,
       ...(resume ? [LOGGER] : []),
       ...(resume ? [RESUME_REFUSED] : []),
       PRINCIPAL,
       RUN_ROUTE,
       ...(resume ? [RESUME_ROUTE] : []),
+      ...(durable ? [resumeStoredRoute()] : []),
       exports(ir),
     ]),
   );

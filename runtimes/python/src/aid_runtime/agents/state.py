@@ -192,6 +192,11 @@ class RunResult(BaseModel):
     cost_usd: float = Field(default=0.0, ge=0.0)
     total_tokens: int = Field(default=0, ge=0)
     checkpoint: AgentCheckpoint | None = None
+    # The id a paused run was stored under, when the runtime was given a store. Empty
+    # otherwise, which is the honest answer for a document that declared no
+    # `agentState`: the run outlived the request and nothing more. `checkpoint` stays
+    # populated in both cases, so a caller that ignores this field keeps working.
+    run_id: str = ""
     guardrails: tuple[GuardrailRecord, ...] = ()
 
     @property

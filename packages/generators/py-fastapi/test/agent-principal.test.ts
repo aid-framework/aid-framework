@@ -38,11 +38,16 @@ describe('the principal an agent route runs as', () => {
   it('is seeded from a dependency, not from the runtime default', () => {
     const module = agentsModule();
 
-    // Both routes, because a resume continues a run the run route started: a resume that
-    // lost the caller would silently re-evaluate every policy against whoever asked.
+    // Every route, because a resume continues a run the run route started: a resume that
+    // lost the caller would silently re-evaluate every policy against whoever asked. Counting
+    // against the routes rather than hard-coding their number is what makes this a check on
+    // the invariant -- a route added without a principal fails here instead of silently
+    // outliving the test that was written before it existed.
+    const routes = module.match(/@agent_router\.post\(/g) ?? [];
+    expect(routes.length).toBeGreaterThanOrEqual(2);
     expect(
       module.match(/principal: Annotated\[Principal, Depends\(current_principal\)\]/g),
-    ).toHaveLength(2);
+    ).toHaveLength(routes.length);
     expect(module).toContain('def current_principal() -> Principal:');
     expect(module).toContain('"current_principal",');
   });

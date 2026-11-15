@@ -123,9 +123,11 @@ class CheckpointRefusalError(AidRuntimeError):
     """A resume body this app will not honour, with a stable machine-readable reason.
 
     ``reason`` is one of ``tampered``, ``expired``, ``unbound``, ``replayed`` or
-    ``unsigned``. It is for the log: the generated route answers every one of them with
-    the same opaque 403, so a caller cannot use the distinction as an oracle. Library
-    embedders that want the distinction can read it here.
+    ``unsigned``. ``unknown-run`` is raised by the run store instead of the signer, when a
+    caller names a ``run_id`` nothing is stored under. Every one of them is for the log:
+    the generated route answers all of them with the same opaque 403, so a caller cannot
+    use the distinction as an oracle. Library embedders that want the distinction can read
+    it here.
     """
 
     def __init__(self, reason: str, message: str) -> None:
