@@ -17,7 +17,7 @@ Every console block below is real output from this repository's CLI, re-captured
 this page describes. Two lines are elided for length and marked with a `#` comment -- `ir/eval-uncovered`
 on the `refund` pipeline and `ir/resume-unsigned` on the 0.27 agent, which fires on any document before
 0.32 that can pause. The counts are the real ones, and both diagnostics are shown in full in
-[delivery controls](delivery-controls.md#what-026-requires-of-enterprise).
+[delivery controls](delivery-controls.md#what-0-26-requires-of-enterprise).
 
 ## The spec
 
@@ -340,7 +340,7 @@ is the point:
   the app calls them at startup. Nothing installs on import, and the SDK plus OTLP exporter are
   installed as the `aid-runtime-python[otlp]` extra rather than added to your dependency set.
   `ts-vercel` installs no exporter and refuses `export: otlp` instead of accepting a destination
-  nothing is sent to ([features](../features.md), [RFC §10.8](../rfcs/0001-agents-at-scale.md)).
+  nothing is sent to ([features](../features.md); `docs/rfcs/0001-agents-at-scale.md` §10.8).
 - **Alerts are generated as infrastructure; dashboards are not.** Spec 0.30 adds
   `observability.alerts`: a metric, a window, a reduction and a threshold, optionally scoped to one
   agent or eval. `aid infra gen` turns each one into a real CloudWatch alarm, Cloud Monitoring policy
@@ -355,7 +355,7 @@ is the point:
   rather than `$0.000000`, because "nothing was measured" and "measured zero" are different answers.
 
 Everything above is recorded as shipped or not built in
-[RFC §10](../rfcs/0001-agents-at-scale.md#10-what-is-specified-here-but-not-built) rather than implied
+`docs/rfcs/0001-agents-at-scale.md` §10 rather than implied
 by a command that does not exist. The capabilities 0.27 describes —
 `observability-export` and, since 0.1.158, `agent-trajectory-evals` — are counted on the
 [features page](../features.md) rather than left to a walkthrough to assert. The refusals shown above
