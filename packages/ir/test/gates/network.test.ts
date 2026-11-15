@@ -91,7 +91,7 @@ describe('network', () => {
     deployment.target = 'kubernetes';
     deployment.kubernetes = {
       namespace: 'claims-prod',
-      ingress: { host: 'claims.example.com' },
+      ingress: { host: 'claims.example.com', className: 'nginx' },
     };
 
     const diagnostic = onlyDiagnosticWith(

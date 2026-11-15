@@ -218,7 +218,9 @@ describe('profile', () => {
     // The 0.36 spelling of the same mistake, kept for documents that cannot write
     // `ingress` yet. It names the value the document actually used.
     const ir = mutateIR(CONTROLS);
-    first(ir.deployments).network = { private: false };
+    // A 0.36 document resolves `ingress` to `public` while keeping the flag, so the
+    // refusal has to name the flag rather than the placement it implied.
+    first(ir.deployments).network = { ingress: 'public', private: false };
 
     const diagnostic = onlyDiagnosticWith(gate(ir).diagnostics, IR_DIAGNOSTIC_CODES.profileNetwork);
     expect(diagnostic.message).toContain('declares `network.private: false`');
@@ -260,7 +262,7 @@ describe('profile', () => {
 
   it('leaves egress policy to the deployment rather than to the profile', () => {
     const ir = mutateIR(CONTROLS);
-    first(ir.deployments).network = { private: true, egress: 'open' };
+    first(ir.deployments).network = { ingress: 'public', private: true, egress: 'open' };
 
     expect(gate(ir).diagnostics).toEqual([]);
   });
