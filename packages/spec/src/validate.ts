@@ -90,6 +90,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.34',
   '0.35',
   '0.36',
+  '0.37',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -292,6 +293,16 @@ export const IDENTITY_GENERATED_MIN_VERSION: SpecVersion = '0.35';
  * exists to prevent.
  */
 export const KUBERNETES_MIN_VERSION: SpecVersion = '0.36';
+
+/**
+ * The first spec version that replaces `network.private` with `ingress` and `allowFrom`.
+ *
+ * One version for both directions, because the key is one decision: a document below it may
+ * not name `ingress` (no emitter read it, so accepting it would record a placement the build
+ * ignores), and a document at or above it may not name `private` (the flag is retired, and
+ * accepting both would leave two spellings that disagree about which one is authoritative).
+ */
+export const NETWORK_INGRESS_MIN_VERSION: SpecVersion = '0.37';
 
 /**
  * The first spec version under which `enterprise` refuses a pausable agent whose deployment
@@ -785,6 +796,7 @@ function scopeDiagnostics(
   identityVerifiedByVersionDiagnostics(spec, diagnostics, reported);
   identityGeneratedVersionDiagnostics(spec, diagnostics, reported);
   kubernetesVersionDiagnostics(spec, diagnostics, reported);
+  networkVersionDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
   routeDiagnostics(spec, diagnostics, reported);
@@ -1459,6 +1471,76 @@ function kubernetesVersionDiagnostics(
         message: `'deployments.${id}.kubernetes' requires specVersion ${KUBERNETES_MIN_VERSION}, but this specification declares version ${declared}`,
         path,
         hint: `set specVersion: "${KUBERNETES_MIN_VERSION}"; the block configures the Helm chart's placement, and no chart is emitted below that version`,
+      }),
+    );
+    reported.add(JSON.stringify(path));
+  }
+}
+
+/**
+ * `network.ingress` replaced `network.private` in 0.37, and the gate runs in both
+ * directions.
+ *
+ * Below 0.37 the schema still accepts `private`, and `ingress` was not in that version's
+ * vocabulary: a document that names it was written against a newer language, and reading it
+ * as absent would emit a public load balancer for a document that asked for an internal one.
+ * At or above 0.37 the flag is retired, and a document that still spells it is refused rather
+ * than interpreted -- in particular it is *not* promoted to `internal`, because the flag
+ * selected no placement in any version that accepted it, so promoting it would take a live
+ * deployment off the network on a version bump.
+ */
+function networkVersionDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) return;
+  const deployments = spec.deployments;
+  if (deployments === null || typeof deployments !== 'object' || Array.isArray(deployments)) return;
+
+  const atLeast = specVersionAtLeast(declared, NETWORK_INGRESS_MIN_VERSION);
+  for (const [id, rawDeployment] of Object.entries(deployments as Record<string, unknown>)) {
+    const network = asRecord(asRecord(rawDeployment).network);
+    if (Object.keys(network).length === 0) continue;
+
+    for (const key of atLeast ? ['private'] : ['ingress', 'allowFrom']) {
+      if (!(key in network)) continue;
+      const path = ['deployments', id, 'network', key];
+      if (reported.has(JSON.stringify(path))) continue;
+      diagnostics.push(
+        errorDiagnostic({
+          code: DIAGNOSTIC_CODES.notSupported,
+          message: atLeast
+            ? `'deployments.${id}.network.private' is not accepted at specVersion ${declared}; the key was retired in ${NETWORK_INGRESS_MIN_VERSION}`
+            : `'deployments.${id}.network.${key}' requires specVersion ${NETWORK_INGRESS_MIN_VERSION}, but this specification declares version ${declared}`,
+          path,
+          hint: atLeast
+            ? `replace \`private: true\` with \`ingress: internal\` plus \`allowFrom\`, and \`private: false\` with \`ingress: public\`; the old flag selected no placement, so nothing moves until you say which one you meant`
+            : `set specVersion: "${NETWORK_INGRESS_MIN_VERSION}"; below it \`network.private\` is the only placement key, and no emitter reads \`ingress\`, so the declaration would be recorded and ignored`,
+        }),
+      );
+      reported.add(JSON.stringify(path));
+    }
+
+    // A block that names only `egress` says what the workload may call but not who may
+    // call it, and the placement is the decision with a public default -- so reading it as
+    // absent would answer a question the author did not answer. The check names neither
+    // key rather than the one this version wants, so a document that spells the other
+    // version's key gets the version diagnostic above instead of two complaints.
+    if ('ingress' in network || 'private' in network) continue;
+    const path = ['deployments', id, 'network'];
+    if (reported.has(JSON.stringify(path))) continue;
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.schemaViolation,
+        message: `'deployments.${id}.network' declares neither 'ingress' nor 'private', so it does not say how the service is reached`,
+        path,
+        hint: atLeast
+          ? 'declare `ingress: public` to be reachable from the internet, or `ingress: internal` with `allowFrom` to be reachable only from networks you name'
+          : 'declare `private: true` to pin the private placement, or `private: false` to say the deployment is reachable directly',
       }),
     );
     reported.add(JSON.stringify(path));

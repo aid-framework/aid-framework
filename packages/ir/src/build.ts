@@ -44,6 +44,7 @@ import {
   type BranchStep,
   DECISION_ON_ERROR,
   DECISION_QUESTION_TYPES,
+  DEFAULT_DEPLOYMENT_INGRESS,
   DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_OBSERVABILITY,
   DEFAULT_PROFILE,
@@ -51,6 +52,7 @@ import {
   DEPLOY_TARGETS,
   DEPLOYMENT_EGRESS,
   DEPLOYMENT_IDENTITY_KINDS,
+  DEPLOYMENT_INGRESS,
   type DecisionOnError,
   type DecisionQuestionType,
   type DecisionShape,
@@ -60,6 +62,7 @@ import {
   type DeploymentIdentityKind,
   type DeploymentIdentityShape,
   type DeploymentImageShape,
+  type DeploymentIngress,
   type DeploymentKubernetesShape,
   type DeploymentNetworkShape,
   type DeploymentRuntimeShape,
@@ -1623,7 +1626,14 @@ function buildDeploymentIdentity(
   return shape;
 }
 
-/** How a deployment is reachable and what it may reach. */
+/**
+ * How a deployment is reachable and what it may reach.
+ *
+ * `ingress` is resolved here and nowhere else. The alternative -- letting each emitter
+ * read the raw network block -- is how the old `private` boolean ended up meaning one
+ * thing in the document and another in the generated modules: every emitter had its own
+ * reason to ignore it. One resolution means one answer.
+ */
 function buildDeploymentNetwork(
   raw: unknown,
   id: string,
@@ -1631,21 +1641,55 @@ function buildDeploymentNetwork(
 ): DeploymentNetworkShape | undefined {
   const network = asRecord(raw);
   if (network === undefined) return undefined;
-  // `private` is schema-required, so absence means validation was bypassed. Reading a
-  // missing flag as `false` would emit a public deployment from a document that meant to
-  // ask for a private one, so the builder reports instead of guessing.
-  if (typeof network.private !== 'boolean') {
+
+  const declaredIngress = asString(network.ingress);
+  const declaresPrivate = typeof network.private === 'boolean';
+  // A block that names neither says nothing about reachability. Emitting `public` for it
+  // would answer a question the document did not ask, and the answer would be the weaker
+  // of the two, so this reports instead of guessing.
+  if (declaredIngress === undefined && !declaresPrivate) {
     context.diagnostics.push(
       errorDiagnostic({
         code: IR_DIAGNOSTIC_CODES.profileNetwork,
-        message: `deployment "${id}" declares network placement with no boolean \`private\` flag`,
-        path: ['deployments', id, 'network', 'private'],
-        hint: 'set `private: true` for private placement or `private: false` to reach the internet directly',
+        message: `deployment "${id}" declares a network block with neither \`ingress\` nor \`private\``,
+        path: ['deployments', id, 'network'],
+        hint: 'declare `ingress: public` to be reachable from the internet, or `ingress: internal` with `allowFrom` to be reachable only from networks you name',
       }),
     );
     return undefined;
   }
-  const shape: DeploymentNetworkShape = { private: network.private };
+
+  const shape: DeploymentNetworkShape = { ingress: DEFAULT_DEPLOYMENT_INGRESS };
+
+  if (declaredIngress !== undefined) {
+    if (!(DEPLOYMENT_INGRESS as readonly string[]).includes(declaredIngress)) {
+      context.diagnostics.push(
+        errorDiagnostic({
+          code: IR_DIAGNOSTIC_CODES.networkIngress,
+          message: `deployment "${id}" declares \`network.ingress: ${declaredIngress}\`, which is not a reachability mode`,
+          path: ['deployments', id, 'network', 'ingress'],
+          hint: `use one of ${DEPLOYMENT_INGRESS.join(', ')}`,
+        }),
+      );
+      return undefined;
+    }
+    shape.ingress = declaredIngress as DeploymentIngress;
+  }
+
+  // The pre-0.37 boolean is projected and deliberately *not* promoted to `internal` when
+  // it is `true`. It never selected a private placement -- the emitted load balancer was
+  // internet-facing -- so resolving it to `internal` here would take a live deployment off
+  // the network the moment its author bumped a version number. A 0.37 document is refused
+  // the key outright by `spec/not-supported`, so this branch only ever serves documents
+  // written against the version that had it.
+  if (declaresPrivate) shape.private = network.private as boolean;
+
+  const allowFrom = network.allowFrom;
+  if (Array.isArray(allowFrom)) {
+    const cidrs = allowFrom.filter((entry): entry is string => typeof entry === 'string');
+    if (cidrs.length > 0) shape.allowFrom = cidrs;
+  }
+
   const egress = asString(network.egress);
   if (egress !== undefined && (DEPLOYMENT_EGRESS as readonly string[]).includes(egress)) {
     shape.egress = egress as DeploymentEgress;

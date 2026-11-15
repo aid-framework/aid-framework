@@ -34,6 +34,7 @@ import { identityGate } from './identity.js';
 import { knowledgeBaseGate } from './knowledge-base.js';
 import { kubernetesGate } from './kubernetes.js';
 import { memoryRefsGate } from './memory.js';
+import { networkGate } from './network.js';
 import { normalizeGate } from './normalize.js';
 import {
   alertsGate,
@@ -67,6 +68,7 @@ export const GATES = {
   'retrievers/knowledge-bases': knowledgeBaseGate,
   'deploy/streaming': deployStreamingGate,
   kubernetes: kubernetesGate,
+  network: networkGate,
   'orchestration/deepagents': orchestrationDeepagentsGate,
   profile: profileGate,
   state: stateGate,

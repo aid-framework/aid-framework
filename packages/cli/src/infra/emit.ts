@@ -252,6 +252,17 @@ export interface DeployGatewayTarget {
  */
 export interface DeployTfvars {
   readonly project: { readonly name: string; readonly namespace: string };
+  /**
+   * Whether the shared load balancer is internal, and the CIDRs allowed to reach it.
+   *
+   * Absent unless a `container` deployment asked for `network.ingress: internal`, which
+   * is what keeps a pre-0.37 tfvars byte-identical: the module's default is `false`, so
+   * silence and `false` mean the same thing and no document has to be regenerated to
+   * stay on the internet. Environment-level rather than per-service because the module
+   * builds one load balancer for every container service in it.
+   */
+  readonly internal?: boolean;
+  readonly internal_allow_from?: readonly string[];
   readonly services: Readonly<
     Record<
       string,
@@ -649,8 +660,18 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
     };
   }
 
+  // Environment-level because the container module builds one load balancer for every
+  // service in it, and the `network` gate refuses a set that disagrees. Emitted only for
+  // `internal`, so a project that never asked for it keeps the tfvars it had.
+  const containerServices = plan.services.filter((service) => service.target === 'container');
+  const internal = containerServices.some((service) => service.network?.ingress === 'internal');
+  const internalAllowFrom = [
+    ...new Set(containerServices.flatMap((service) => service.network?.allowFrom ?? [])),
+  ];
+
   return {
     project: { name: plan.project.name, namespace: plan.project.namespace },
+    ...(internal ? { internal, internal_allow_from: internalAllowFrom } : {}),
     services,
     guardrails,
     model_armor_templates: modelArmorTemplates,

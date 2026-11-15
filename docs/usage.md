@@ -676,8 +676,9 @@ class of customer the app is built for. `standard` is the default, and it is wha
 `profile` means, so a document written before `0.25` reads exactly as it did. `enterprise`
 requires the three controls `0.25` can generate — a region pin, an audit sink, and at least one
 `output`-stage guardrail — because a gate that asks for a control the schema cannot express is a
-gate nobody can pass. Identity, private networking and production approval policy are the next
-increments, and the reference says so rather than implying they are enforced today.
+gate nobody can pass. Identity, network placement and production approval policy were the next
+increments and have since shipped, each as its own named refusal; the reference says which
+version added each one rather than implying they were always enforced.
 
 ```yaml
 profile: enterprise
@@ -768,6 +769,40 @@ would read as a placement that never happened. So is an ingress with no `ingress
 namespace that is not a DNS label, and — under `profile: enterprise` — an ingress with no
 `tlsSecret`, since an enterprise placement terminating plaintext HTTP is a mistake with a fix.
 
+Where a deployment sits on the network is a separate key, and from spec `0.37` it names a
+placement rather than asserting one:
+
+```yaml
+deployments:
+  claims:
+    target: container
+    cloud: aws
+    region: eu-west-1
+    network:
+      ingress: internal      # public | internal | private-link
+      allowFrom: [10.0.0.0/8, 172.16.0.0/12]
+      egress: declared-only
+```
+
+`public` is the default and is what every document written before `0.37` actually got, so
+nothing moves on a version bump. `internal` reaches the emitter: the container module builds an
+internal load balancer and admits the `allowFrom` ranges to it, and a `kubernetes` deployment is
+internal already because its `Service` is `ClusterIP`. `private-link` is refused, because naming
+a private endpoint AID does not create would be a declaration pretending to be a placement.
+
+What is refused:
+
+- `internal` with no `allowFrom`, a `public` placement with `allowFrom`, and an `allowFrom` entry
+  that is not a CIDR — the container module's own precondition fails the plan too, so a hand-edited
+  `tfvars` does not get past it.
+- A placement the target cannot express: `batch` invocations have no ingress, and `edge` is a
+  CloudFront function that is public by definition.
+- Two container deployments in one document that want different placements, because the emitted
+  environment has one load balancer and the second declaration would never be read.
+- `network.private`, at `0.37` and above. It never selected a placement in any generated module,
+  so it is retired rather than promoted; declaring it below `0.37` is still accepted and still
+  behaves exactly as it did.
+
 `aid eject` moves a generated file into `business/` and stops generating it. After that the
 file is yours, and the manifest says so instead of re-reporting it as drift.`aid review` prints the split a reviewer has to work from. It runs the same pipeline as`validate` and adds no gate, so a spec the build refuses is refused rather than itemised.
 
@@ -793,9 +828,10 @@ Covers:
 - **A Dockerfile and an image**
 - **A Helm chart for a cluster target**
 - **A cluster placement with an addressable ingress**
+- **A network placement that reaches the generator**
 - **Delivery profiles with a pinned placement and audit sink**
-- **Durable run state, deployment identity, private network and change approval** *(declared
-  and gated; the private-network pin and the component-name form of `identity.verifiedBy` stay
+- **Durable run state, deployment identity and change approval** *(declared
+  and gated; the approver names and the component-name form of `identity.verifiedBy` stay
   yours — see [the features page](features.md#declared-and-gated-not-generated))*
 - **A token verifier the build writes, not one it names**
 - **Eject**

@@ -163,7 +163,13 @@ describe('profile', () => {
       issuer: 'https://login.example.com',
       audience: 'aid-claims',
     });
-    expect(deployment.network).toEqual({ private: true, egress: 'declared-only' });
+    // A pre-0.37 document keeps its own spelling: `private` is projected as written, and
+    // `ingress` states the placement that spelling actually selected, which was `public`.
+    expect(deployment.network).toEqual({
+      ingress: 'public',
+      private: true,
+      egress: 'declared-only',
+    });
     expect(deployment.approvals).toEqual({
       require: ['security', 'platform'],
       minApprovers: 2,
@@ -190,22 +196,45 @@ describe('profile', () => {
     const diagnostic = onlyDiagnosticWith(gate(ir).diagnostics, IR_DIAGNOSTIC_CODES.profileNetwork);
     expect(diagnostic.path).toEqual(['deployments', 'prod', 'network']);
     expect(diagnostic.message).toContain('requires private networking');
-    expect(diagnostic.hint).toContain('network: { private: true }');
+    expect(diagnostic.hint).toContain('network: { ingress: internal');
   });
 
   it('refuses a deployment the spec places on a public network', () => {
-    // Declaring the field is not enough: `private: false` is a deployment the spec put on
+    // Declaring the field is not enough: `ingress: public` is a deployment the spec put on
     // the internet, and the profile asked for one that is not.
     const ir = mutateIR(CONTROLS);
-    first(ir.deployments).network = { private: false };
+    first(ir.deployments).network = { ingress: 'public', egress: 'declared-only' };
 
     const diagnostic = onlyDiagnosticWith(gate(ir).diagnostics, IR_DIAGNOSTIC_CODES.profileNetwork);
     // The message says what was declared rather than what is missing, because the fix is
     // to change a value and not to add a key.
-    expect(diagnostic.message).toContain('declares `network.private: false`');
+    expect(diagnostic.message).toContain('declares `network.ingress: public`');
     expect(diagnostic.message).not.toContain('does not place the workload in one');
+    expect(diagnostic.path).toEqual(['deployments', 'prod', 'network', 'ingress']);
+    expect(diagnostic.hint).toContain('set `ingress: internal`');
+  });
+
+  it('refuses a deployment that declares its network as not private', () => {
+    // The 0.36 spelling of the same mistake, kept for documents that cannot write
+    // `ingress` yet. It names the value the document actually used.
+    const ir = mutateIR(CONTROLS);
+    // A 0.36 document resolves `ingress` to `public` while keeping the flag, so the
+    // refusal has to name the flag rather than the placement it implied.
+    first(ir.deployments).network = { ingress: 'public', private: false };
+
+    const diagnostic = onlyDiagnosticWith(gate(ir).diagnostics, IR_DIAGNOSTIC_CODES.profileNetwork);
+    expect(diagnostic.message).toContain('declares `network.private: false`');
     expect(diagnostic.path).toEqual(['deployments', 'prod', 'network', 'private']);
-    expect(diagnostic.hint).toContain('set `network.private: true`');
+  });
+
+  it('accepts an enterprise deployment that declares an internal ingress', () => {
+    const ir = mutateIR(CONTROLS);
+    first(ir.deployments).network = {
+      ingress: 'internal',
+      allowFrom: ['10.0.0.0/8'],
+    };
+
+    expect(codesOf(gate(ir).diagnostics)).toEqual([]);
   });
 
   it('refuses an approval policy that can never be satisfied', () => {
@@ -233,7 +262,7 @@ describe('profile', () => {
 
   it('leaves egress policy to the deployment rather than to the profile', () => {
     const ir = mutateIR(CONTROLS);
-    first(ir.deployments).network = { private: true, egress: 'open' };
+    first(ir.deployments).network = { ingress: 'public', private: true, egress: 'open' };
 
     expect(gate(ir).diagnostics).toEqual([]);
   });

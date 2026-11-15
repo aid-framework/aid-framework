@@ -53,6 +53,10 @@ locals {
     local.create_network ? aws_subnet.private[*].id : var.private_subnet_ids
   )
 
+  # The load balancer's own placement. An internal one has no public address, so
+  # publishing it in a public subnet would be a listener nothing can route to.
+  ingress_subnet_ids = var.internal ? local.private_subnet_ids : local.public_subnet_ids
+
   # IAM, ECS and ALB names allow letters, digits and hyphens only, while a namespace
   # may carry a dot; the replacement is what keeps `aid.test` a legal name. The
   # truncation matches the shortest of the limits (32, for an ALB).
@@ -224,10 +228,23 @@ resource "aws_security_group" "alb" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "alb_http" {
-  count             = length(local.routed) > 0 ? 1 : 0
+  count             = (length(local.routed) > 0 && !var.internal) ? 1 : 0
   security_group_id = aws_security_group.alb[0].id
   description       = "HTTP from anywhere. Terminate TLS in front of this when you need it."
   cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 80
+  to_port           = 80
+  ip_protocol       = "tcp"
+}
+
+# One rule per declared range rather than one rule with a list: the provider models an
+# ingress rule as a single CIDR, so a list would have to be flattened by count and the
+# result would re-index whenever the list was reordered.
+resource "aws_vpc_security_group_ingress_rule" "alb_http_internal" {
+  for_each          = var.internal ? toset(var.internal_allow_from) : toset([])
+  security_group_id = aws_security_group.alb[0].id
+  description       = "HTTP from a declared source range. The load balancer has no public address."
+  cidr_ipv4         = each.value
   from_port         = 80
   to_port           = 80
   ip_protocol       = "tcp"
@@ -580,17 +597,22 @@ resource "aws_lb" "this" {
   count = length(local.paths) > 0 ? 1 : 0
 
   name               = "${local.prefix}-alb"
-  internal           = false
+  internal           = var.internal
   load_balancer_type = "application"
-  subnets            = local.public_subnet_ids
+  subnets            = local.ingress_subnet_ids
   security_groups    = [aws_security_group.alb[0].id]
   idle_timeout       = var.idle_timeout
   tags               = var.tags
 
   lifecycle {
     precondition {
-      condition     = length(local.public_subnet_ids) >= 2
-      error_message = "A load balancer needs at least two subnets in different availability zones. Supply public_subnet_ids, or leave vpc_id empty to have the module build a VPC."
+      condition     = length(local.ingress_subnet_ids) >= 2
+      error_message = "A load balancer needs at least two subnets in different availability zones. Supply public_subnet_ids (or private_subnet_ids for an internal load balancer), or leave vpc_id empty to have the module build a VPC."
+    }
+
+    precondition {
+      condition     = !var.internal || length(var.internal_allow_from) > 0
+      error_message = "An internal load balancer admits no traffic without internal_allow_from. Declare network.allowFrom with the CIDRs that may reach it."
     }
 
     precondition {

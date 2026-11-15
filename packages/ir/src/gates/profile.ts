@@ -209,10 +209,10 @@ export function profileGate(ir: IR, options: GateOptions): GateResult {
           code: IR_DIAGNOSTIC_CODES.profileNetwork,
           message: `the profile gate rejected "${id}": the enterprise profile requires private networking, and this deployment does not place the workload in one`,
           path: ['deployments', id, 'network'],
-          hint: 'add `network: { private: true }`, or set `profile: standard` if the workload is meant to be internet-reachable directly',
+          hint: 'add `network: { ingress: internal, allowFrom: [<your CIDR>] }`, or set `profile: standard` if the workload is meant to be internet-reachable directly',
         }),
       );
-    } else if (!deployment.network.private) {
+    } else if (deployment.network.private === false) {
       // Declared `false` rather than omitted, so the refusal names what was written instead
       // of what is missing -- the operator's fix is to change a value, not to add a key.
       diagnostics.push(
@@ -220,7 +220,16 @@ export function profileGate(ir: IR, options: GateOptions): GateResult {
           code: IR_DIAGNOSTIC_CODES.profileNetwork,
           message: `the profile gate rejected "${id}": the enterprise profile requires private networking, and this deployment declares \`network.private: false\``,
           path: ['deployments', id, 'network', 'private'],
-          hint: 'set `network.private: true`, or set `profile: standard` if the workload is meant to be internet-reachable directly',
+          hint: 'replace it with `network.ingress: internal` and the networks allowed to reach the service, or set `profile: standard` if the workload is meant to be internet-reachable directly',
+        }),
+      );
+    } else if (deployment.network.ingress === 'public' && deployment.network.private !== true) {
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.profileNetwork,
+          message: `the profile gate rejected "${id}": the enterprise profile requires private networking, and this deployment declares \`network.ingress: public\``,
+          path: ['deployments', id, 'network', 'ingress'],
+          hint: 'set `ingress: internal` with `allowFrom`, or set `profile: standard` if the workload is meant to be internet-reachable directly',
         }),
       );
     }

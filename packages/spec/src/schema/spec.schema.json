@@ -46,11 +46,12 @@
         "0.33",
         "0.34",
         "0.35",
-        "0.36"
+        "0.36",
+        "0.37"
       ]
     },
     "profile": {
-      "description": "The operating profile: a named bundle of defaults and required controls, not a mode. `standard` is the default and is what an absent `profile` means, so every spec written before 0.25 keeps exactly the behaviour it had. `enterprise` requires the controls a regulated deployment cannot go without, and the profile gate refuses a spec that declares it and then omits them: a region pin, an audit sink, a declared identity provider, private networking and an approval policy on every deployment, plus at least one guardrail that runs on output. A requirement that a spec could not satisfy is never added to a profile, so `enterprise` is always passable. Declarable from spec v0.25; the identity, network and approval requirements are enforced from 0.26. From 0.33 the identity requirement also covers `verifiedBy`: AID generates no token verification, so an `enterprise` deployment must name the component that performs it (`ir/identity-verified-by`).",
+      "description": "The operating profile: a named bundle of defaults and required controls, not a mode. `standard` is the default and is what an absent `profile` means, so every spec written before 0.25 keeps exactly the behaviour it had. `enterprise` requires the controls a regulated deployment cannot go without, and the profile gate refuses a spec that declares it and then omits them: a region pin, an audit sink, a declared identity provider, a private network placement and an approval policy on every deployment, plus at least one guardrail that runs on output. A requirement that a spec could not satisfy is never added to a profile, so `enterprise` is always passable. Declarable from spec v0.25; the identity, network and approval requirements are enforced from 0.26. From 0.33 the identity requirement also covers `verifiedBy`: AID generates no token verification, so an `enterprise` deployment must name the component that performs it (`ir/identity-verified-by`). From 0.37 the network requirement is a placement, `network.ingress: internal`, rather than the retired `network.private: true` flag, which never selected a placement in any generated module.",
       "enum": ["standard", "enterprise"]
     },
     "project": { "$ref": "#/$defs/project" },
@@ -1952,7 +1953,7 @@
           "$ref": "#/$defs/identity"
         },
         "network": {
-          "description": "Where this deployment's compute sits on the network. Spec 0.26. `private: true` is the placement pin, and `enterprise` requires it on every deployment: the profile gate refuses a missing or false pin with `ir/profile-network`. The generated container module already builds a two-AZ VPC with private task subnets and one NAT gateway, so the pin states a requirement rather than selecting a different module, and no gate refuses a cloud for lacking a private-placement module because no generator branches on this key yet.",
+          "description": "Where this deployment's compute sits on the network. Spec 0.26. `ingress` is the placement: `public` (the default, and what every document written before 0.37 actually got), `internal`, or `private-link`. `internal` is generated -- a `container` deployment gets an internal load balancer whose security group admits only the `allowFrom` ranges, and a `kubernetes` deployment already has a `ClusterIP` Service -- while `private-link` is declared and refused with `ir/network-ingress-unsupported`, because naming a private endpoint AID does not create would be a declaration pretending to be a placement. `enterprise` requires a private placement and refuses a missing or `public` one with `ir/profile-network`. The retired `private: true` flag is still parsed below 0.37 so an existing document keeps building, and is refused at 0.37 rather than reinterpreted: promoting it would take every existing `enterprise` deployment off the public internet on a version bump. `egress` remains declaration-only -- no module reads it.",
           "$ref": "#/$defs/network"
         },
         "approvals": {
@@ -2095,14 +2096,30 @@
       }
     },
     "network": {
-      "description": "Private placement for a deployment. `private: true` is the only value that satisfies the `enterprise` profile; a deployment may declare `private: false` explicitly, which behaves like omitting the key and is what lets the profile gate's refusal say what was declared rather than what was missing.",
+      "description": "How a deployment is reachable. Spec 0.37 replaced the `private` flag with `ingress`, because one boolean covered three unrelated decisions -- whether the load balancer has a public address, which sources may reach it, and whether it is exposed through a provider private endpoint. Each target already behaved differently under `private`, so the flag never selected a placement: it recorded an intention. `ingress` selects one, and the `network` gate refuses a value the chosen target cannot build.",
       "type": "object",
-      "required": ["private"],
       "additionalProperties": false,
+      "minProperties": 1,
       "properties": {
-        "private": { "type": "boolean" },
+        "ingress": {
+          "description": "Who can reach the service. `public` gives a `container` deployment a public load balancer and is what every deployment had before this key existed, so it is the default. `internal` gives the load balancer no public address and admits only `allowFrom`; it requires `allowFrom` on `container` and is refused on `serverless` and `edge`, which have no private placement to select. On `kubernetes` it is a no-op, because the chart's Service is already `ClusterIP`. `private-link` is refused: no module emits a private endpoint yet, and AID does not accept a value it cannot generate.",
+          "enum": ["public", "internal", "private-link"]
+        },
+        "allowFrom": {
+          "description": "Source CIDRs admitted to an `internal` load balancer. Required when `ingress: internal` targets `container`, because an internal listener that admits nobody is an outage that plans cleanly. Refused on `public` (which already admits everyone) and on targets that emit no rule to attach it to. `0.0.0.0/0` and `::/0` are refused: an internal load balancer open to the internet is a public one with a misleading name.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(?:3[0-2]|[12]?[0-9])$|^[0-9a-fA-F]{0,4}(?::[0-9a-fA-F]{0,4}){2,7}/(?:12[0-8]|1[01][0-9]|[1-9]?[0-9])$"
+          }
+        },
+        "private": {
+          "description": "Deprecated at spec 0.37 and refused in a 0.37 document; use `ingress` and `allowFrom`. Kept in the schema so a document written for an earlier version still parses, and kept in the IR so that document keeps the meaning its version gave it. It was never promoted to `internal` on the version bump: it selected no placement, so promoting it would take a live deployment off the network to satisfy a spelling change.",
+          "type": "boolean"
+        },
         "egress": {
-          "description": "What the workload may reach outbound. `declared-only` (the default) routes egress through the endpoints the generated module creates for the declared dependencies and creates no path to the internet; `open` adds a NAT path, which is accepted and is documented as the weaker placement.",
+          "description": "What the workload may reach outbound. Accepted and recorded; no generated module changes its egress rules from it yet, so treat it as declared rather than enforced. `open` is documented as the weaker placement.",
           "enum": ["declared-only", "open"]
         }
       }

@@ -60,11 +60,18 @@ export const BOUNDARY_TABLE_METADATA = Object.freeze({
     risk: 'AID emits the sink, never its contents or its policy',
   },
   'Private network': {
-    codes: ['ir/profile-network'],
+    codes: [
+      'ir/profile-network',
+      'ir/network-ingress',
+      'ir/network-ingress-unsupported',
+      'ir/network-target-incapable',
+      'ir/network-allow-from',
+      'ir/network-ingress-conflict',
+    ],
     generated:
-      'The container module builds a two-AZ VPC with one NAT gateway when you do not supply `vpc_id`; the agent runtime is generated with `network_mode = "PUBLIC"`',
+      'The container module builds a two-AZ VPC with one NAT gateway when you do not supply `vpc_id`, and an `ingress: internal` deployment gets an internal load balancer admitting only `allowFrom`; a `kubernetes` deployment is `ClusterIP` already; the agent runtime is generated with `network_mode = "PUBLIC"`',
     provide: 'Your VPC, its two private subnet ids, the egress rules, the peering and the DNS',
-    risk: '`network.private: true` satisfies the profile gate, and no module reads it: a task that must not reach the internet is your configuration, not the flag',
+    risk: 'The placement selects the topology; that your ranges reach it, that the VPC is peered and that the name resolves are your network’s, and `egress` is still read by no module',
   },
   'Input and output guardrails': {
     codes: ['ir/profile-guardrail', 'ir/security-input-guardrail'],

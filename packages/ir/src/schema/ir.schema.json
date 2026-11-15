@@ -1545,7 +1545,7 @@
       }
     },
     "deploymentIdentity": {
-      "description": "The identity provider a deployment checks tokens against. A reference -- issuer URL and claim names -- so signature verification stays with the keys the customer's IdP owns.",
+      "description": "The identity provider a deployment checks tokens against. A reference -- issuer URL and claim names -- so signature verification stays with the keys the customer's IdP owns. `verifiedBy` names who does the checking: the literal `aid` asks for the generated verifier, and then `jwksUri` says where it fetches keys; any other value names a component the customer runs, which the build records but cannot confirm.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "issuer"],
@@ -1554,16 +1554,21 @@
         "issuer": { "type": "string", "minLength": 1 },
         "audience": { "type": "string", "minLength": 1 },
         "rolesClaim": { "type": "string", "minLength": 1 },
-        "scopesClaim": { "type": "string", "minLength": 1 }
+        "scopesClaim": { "type": "string", "minLength": 1 },
+        "verifiedBy": { "type": "string", "minLength": 1 },
+        "jwksUri": { "type": "string", "minLength": 1 },
+        "subjectClaim": { "type": "string", "minLength": 1 }
       }
     },
     "deploymentNetwork": {
-      "description": "Where the workload runs and what it may reach. `private` is required so the IR never implies a placement the spec did not ask for.",
+      "description": "How the workload is reachable. `ingress` is always resolved, so an emitter reads one key rather than re-deriving the default. `private` is the pre-0.37 spelling, projected only when the spec declared it: it is kept so a document written for an earlier version keeps the meaning its version gave it, and it is never promoted to `internal`.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["private"],
+      "required": ["ingress"],
       "properties": {
         "private": { "type": "boolean" },
+        "ingress": { "enum": ["public", "internal", "private-link"] },
+        "allowFrom": { "type": "array", "items": { "type": "string" } },
         "egress": { "enum": ["declared-only", "open"] }
       }
     },

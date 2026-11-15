@@ -65,6 +65,11 @@ export const IR_DIAGNOSTIC_CODES = {
   profileGuardrail: 'ir/profile-guardrail',
   profileIdentity: 'ir/profile-identity',
   profileNetwork: 'ir/profile-network',
+  networkIngress: 'ir/network-ingress',
+  networkIngressUnsupported: 'ir/network-ingress-unsupported',
+  networkTargetIncapable: 'ir/network-target-incapable',
+  networkAllowFrom: 'ir/network-allow-from',
+  networkIngressConflict: 'ir/network-ingress-conflict',
   identityVerifiedBy: 'ir/identity-verified-by',
   identityKind: 'ir/identity-kind',
   identityAudience: 'ir/identity-audience',
@@ -200,6 +205,22 @@ export const IR_DIAGNOSTIC_METADATA = {
   'ir/kubernetes-ingress-tls': {
     condition: 'an `enterprise` kubernetes ingress with no `tlsSecret`',
   },
+  'ir/network-allow-from': {
+    condition:
+      '`internal` with no `allowFrom`, `allowFrom` on a `public` placement, or an entry that is not a CIDR',
+  },
+  'ir/network-ingress': {
+    condition: 'a `network.ingress` outside `public`, `internal` and `private-link`',
+  },
+  'ir/network-ingress-conflict': {
+    condition: 'two `container` deployments in one document that want different placements',
+  },
+  'ir/network-ingress-unsupported': {
+    condition: 'a `private-link` placement, which AID names but does not create',
+  },
+  'ir/network-target-incapable': {
+    condition: 'an `internal` placement on a target with no ingress to place',
+  },
   'ir/observability-export': {
     condition: 'activity exported with `trace` off, or enterprise with no export',
   },
@@ -212,7 +233,9 @@ export const IR_DIAGNOSTIC_METADATA = {
   'ir/profile-identity': {
     condition: 'enterprise with no identity, or an identity kind AID does not define',
   },
-  'ir/profile-network': { condition: 'enterprise with no `network.private` flag' },
+  'ir/profile-network': {
+    condition: 'enterprise with no private `network.ingress` (or the retired `private` flag)',
+  },
   'ir/profile-region': { condition: 'enterprise with no region pinned' },
   'ir/profile-unknown': { condition: 'a profile AID does not define' },
   'ir/promotion-approval': { condition: 'an enterprise promotion with no recorded approval' },

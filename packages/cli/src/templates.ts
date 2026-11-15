@@ -364,7 +364,8 @@ deployments:
       audience: aid-claims
       verifiedBy: app/business/principal.py
     network:
-      private: true
+      ingress: internal
+      allowFrom: [10.0.0.0/8]
       egress: declared-only
     approvals:
       require: [security, platform]
@@ -467,7 +468,11 @@ function enterpriseApprovalsReadme(projectName: string): string {
     '  feature into a named responsibility. `app/business/principal.py` is the file the',
     '  template ships and `verifiedBy` names: it returns the anonymous principal until you',
     '  fill it in, so every `auth` policy refuses rather than admitting an unverified caller.',
-    '- **Private networking.** `network.private: true` with `egress: declared-only`.',
+    '- **Private networking.** `network.ingress: internal` with `allowFrom` naming the',
+    '  networks allowed to reach the load balancer, plus `egress: declared-only`. The',
+    '  container module emits an internal load balancer in the private subnets and opens its',
+    '  security group to exactly those CIDRs; `10.0.0.0/8` is a placeholder, so replace it',
+    '  with the customer network before this reaches an account.',
     '- **Audit.** `audit.sink` and a `retentionDays` floor.',
     '- **Approvals on a production change.** `deployments.prod.approvals` requires two',
     '  reviewers from `security` and `platform`.',

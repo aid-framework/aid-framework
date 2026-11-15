@@ -1979,3 +1979,112 @@ deployments:
     expect(spawn.calls).toHaveLength(0);
   });
 });
+
+/**
+ * The reachability declaration reaching the module that builds the load balancer.
+ *
+ * The key is environment-level rather than per service because the container module builds
+ * one load balancer for every service in the environment, which is also why the `network`
+ * gate refuses a set that disagrees. It is emitted only when a service asks for it, so a
+ * project that never mentions reachability keeps the tfvars it already had.
+ */
+describe('internal ingress in generated infra', () => {
+  const REACH = `specVersion: "0.37"
+project:
+  name: reach
+  namespace: aid.test
+  targets: [py-fastapi]
+models:
+  small:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+prompts:
+  answer:
+    version: 1
+    model: small
+    template: "Answer the request."
+    output:
+      kind: text
+guardrails:
+  inbound:
+    engine: builtin
+    policies: [prompt-injection]
+    stages: [input, output]
+    action: block
+    onFail:
+      message: rejected.
+      log: true
+pipelines:
+  ping:
+    trigger:
+      http:
+        method: get
+        path: /ping
+    steps:
+      - generate:
+          prompt: answer
+          as: reply
+evals:
+  answers:
+    target: pipeline:ping
+    dataset:
+      source: file
+      uri: datasets/ping.jsonl
+    metrics:
+      - kind: contains
+        field: reply
+        value: pong
+    gate:
+      ci: true
+deployments:
+  api:
+    target: container
+    cloud: aws
+    region: eu-west-1
+    secrets: [OPENAI_API_KEY]
+    network:
+      ingress: internal
+      allowFrom: [10.0.0.0/8, 172.16.0.0/12]
+`;
+
+  /** The same spec with no `network` block, which is every project written before 0.37. */
+  const PUBLIC = REACH.replace(
+    `    network:
+      ingress: internal
+      allowFrom: [10.0.0.0/8, 172.16.0.0/12]
+`,
+    '',
+  );
+
+  function generated(spec: string): Record<string, unknown> {
+    const made = scratchSpec(spec);
+    const run = aid(made, ['infra', 'gen', '--json']);
+    if (run.code !== 0) {
+      const { diagnostics } = JSON.parse(run.stdout) as {
+        diagnostics: { severity: string; code: string; message: string }[];
+      };
+      throw new Error(
+        `infra gen refused: ${diagnostics
+          .map((d) => `${d.severity} ${d.code}: ${d.message}`)
+          .join(' | ')}`,
+      );
+    }
+    return JSON.parse(made.read(TFVARS)) as Record<string, unknown>;
+  }
+
+  it('tells the module to build an internal load balancer and who may reach it', () => {
+    const tfvars = generated(REACH);
+
+    expect(tfvars.internal).toBe(true);
+    expect(tfvars.internal_allow_from).toEqual(['10.0.0.0/8', '172.16.0.0/12']);
+  });
+
+  it('emits neither key for a deployment that never asked for a private placement', () => {
+    const tfvars = generated(PUBLIC);
+
+    expect(tfvars).not.toHaveProperty('internal');
+    expect(tfvars).not.toHaveProperty('internal_allow_from');
+  });
+});

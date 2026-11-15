@@ -224,7 +224,7 @@ diagnostic, so an enterprise spec either has them or does not build:
 | Pinned region and cloud per deployment | `ir/profile-region` |
 | Audit sink per deployment | `ir/profile-audit` |
 | Declared identity integration (`identity`) | `ir/profile-identity` |
-| Private networking (`network.private: true`) | `ir/profile-network` |
+| Private network placement (`network.ingress: internal`) | `ir/profile-network` |
 | Approval policy for production (`approvals`) | `ir/profile-approvals` |
 | At least one guardrail inspecting model output | `ir/profile-guardrail` |
 
@@ -244,7 +244,8 @@ deployments:
       issuer: https://login.example.com
       audience: aid-claims
     network:
-      private: true
+      ingress: internal
+      allowFrom: [10.0.0.0/8]
       egress: declared-only
     approvals:
       require: [security, platform]
