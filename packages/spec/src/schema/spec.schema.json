@@ -2219,7 +2219,7 @@
           "required": ["signals"],
           "properties": {
             "signals": {
-              "description": "The signals this app accepts, by name. One entry per endpoint the generator emits, so a reviewer reads the data surface rather than discovering it in code.",
+              "description": "The signals this app accepts, by name, so a reviewer reads the data surface rather than discovering it in code. No endpoint is generated for a signal yet: the entry is what the feedback gate checks, and the route that collects it is the application's to write.",
               "type": "object",
               "minProperties": 1,
               "propertyNames": { "$ref": "#/$defs/name" },

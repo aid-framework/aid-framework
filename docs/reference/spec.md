@@ -885,7 +885,7 @@ The signals the generated app accepts back from the people who use it, and the h
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `signals` | map of `feedbackSignal` | yes | The signals this app accepts, by name. One entry per endpoint the generator emits, so a reviewer reads the data surface rather than discovering it in code. |
+| `signals` | map of `feedbackSignal` | yes | The signals this app accepts, by name, so a reviewer reads the data surface rather than discovering it in code. No endpoint is generated for a signal yet: the entry is what the feedback gate checks, and the route that collects it is the application's to write. |
 | `pii` | object (fields below) | no | What must be stripped from a signal before it is stored. Omitted, this defaults to every field the security gate derives as sensitive, exactly as `redact` defaults for a trace; the feedback gate still refuses a declared set that drops one. No generated app stores or routes a signal yet, so the set is a statement the gate checks rather than a transform the runtime performs. |
 | `retentionDays` | `integer` | no | How long a stored signal is kept. `0` means it is held no longer than the request that wrote it, which is the only value that lets a text-storing signal skip the redaction requirement. |
 | `persistent` | `boolean` | no | Whether a signal outlives the process. Defaults to false. Declaring true without `retentionDays` is refused by the feedback gate, because keeping a record forever is not a policy a spec can leave unstated. |
