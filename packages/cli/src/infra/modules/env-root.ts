@@ -345,7 +345,7 @@ const CONTAINER_INPUTS = [
   '}',
   '',
   'variable "private_subnet_ids" {',
-  '  description = "Subnets the tasks run in. They need egress to pull an image."',
+  '  description = "Subnets the tasks or functions run in. They need egress to pull an image."',
   '  type        = list(string)',
   '  default     = []',
   '}',
@@ -538,6 +538,10 @@ function awsEnvRoot(modules: EnvRootModules): { variables: string; main: string 
         'bedrock_region  = var.bedrock_region',
         `knowledge_bases = ${knowledgeBases}`,
         'tags            = var.tags',
+        'vpc_id          = var.vpc_id',
+        'vpc_subnet_ids  = var.egress_declared_only ? var.private_subnet_ids : []',
+        'egress_declared_only = var.egress_declared_only',
+        'egress_private_cidrs = var.egress_private_cidrs',
       ]),
     );
     outputs.push([

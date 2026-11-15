@@ -280,6 +280,58 @@ resource "aws_iam_role_policy" "knowledge_base" {
   })
 }
 
+resource "aws_security_group" "restricted" {
+  count       = var.egress_declared_only ? 1 : 0
+  name        = "${var.project.namespace}-${var.project.name}-functions"
+  description = "From the spec: DNS, HTTPS and the private ranges this workload lives in -- nothing else"
+  vpc_id      = var.vpc_id
+  tags        = var.tags
+}
+
+# A security group can only admit, so `declared-only` is spelled by never admitting the
+# instance metadata endpoint rather than by subtracting its range. That is why port 443 is
+# named: a rule for "all protocols from 0.0.0.0/0" would admit port 80 as well.
+resource "aws_vpc_security_group_egress_rule" "https" {
+  count             = var.egress_declared_only ? 1 : 0
+  security_group_id = aws_security_group.restricted[0].id
+  description       = "HTTPS out: every model call and every tool endpoint"
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "dns_udp" {
+  count             = var.egress_declared_only ? 1 : 0
+  security_group_id = aws_security_group.restricted[0].id
+  description       = "DNS, which a function in a VPC has no other way to resolve through"
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "udp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "dns_tcp" {
+  count             = var.egress_declared_only ? 1 : 0
+  security_group_id = aws_security_group.restricted[0].id
+  description       = "DNS over TCP, for a resolver that falls back to it"
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "tcp"
+}
+
+# The ranges the workload lives in stay reachable on every protocol, so a function still
+# opens its own store and its own vector index. Operator input, because no report the
+# build reads states the VPC range.
+resource "aws_vpc_security_group_egress_rule" "private" {
+  for_each          = toset(var.egress_declared_only ? var.egress_private_cidrs : [])
+  security_group_id = aws_security_group.restricted[0].id
+  description       = "The private range this workload lives in"
+  cidr_ipv4         = each.value
+  ip_protocol       = "-1"
+}
+
 resource "aws_lambda_function" "service" {
   for_each = local.serverless
 
@@ -294,6 +346,18 @@ resource "aws_lambda_function" "service" {
 
   environment {
     variables = merge(local.literal_env[each.key], local.secret_env[each.key])
+  }
+
+  # An attachment and a restriction arrive together: env-root fills the subnet list only
+  # for a deployment that declared `network.egress: declared-only`. A function outside a
+  # VPC keeps the network AWS manages, which is the shape every project had before the key.
+  dynamic "vpc_config" {
+    for_each = length(var.vpc_subnet_ids) > 0 ? [1] : []
+
+    content {
+      subnet_ids         = var.vpc_subnet_ids
+      security_group_ids = aws_security_group.restricted[*].id
+    }
   }
 
   lifecycle {
@@ -313,6 +377,14 @@ resource "aws_lambda_function" "service" {
         if variable.secret
       ])
       error_message = "Service \"${each.key}\" references a secret with no secret_arns entry. Add name -> ARN for every secret it declares."
+    }
+
+    # `declared-only` bounds egress through a security group, and a function outside a VPC
+    # has no security group: its traffic leaves through the network AWS manages. So the pair
+    # is refused here rather than deployed as a key that does nothing.
+    precondition {
+      condition     = !var.egress_declared_only || (length(var.vpc_subnet_ids) > 0 && var.vpc_id != "")
+      error_message = "The spec declares network.egress: declared-only, which needs a function inside a VPC to have any effect. Set vpc_id and vpc_subnet_ids in this environment's tfvars, or drop the key."
     }
   }
 }

@@ -84,6 +84,7 @@ export const CLI_DIAGNOSTIC_CODES = {
   infraCloudConflict: 'cli/infra-cloud-conflict',
   infraCloudBackendUnsupported: 'cli/infra-cloud-backend-unsupported',
   infraCloudTargetUnsupported: 'cli/infra-cloud-target-unsupported',
+  infraCloudEgressUnsupported: 'cli/infra-cloud-egress-unsupported',
   infraGuardrailUnsupported: 'cli/infra-guardrail-unsupported',
   infraKnowledgeBaseUnsupported: 'cli/infra-knowledge-base-unsupported',
   infraRuntimeUnsupported: 'cli/infra-runtime-unsupported',
@@ -219,11 +220,16 @@ export const CLI_DIAGNOSTIC_CODES = {
  * The one-line condition a published `cli/*` refusal covers.
  *
  * The same shape the IR keeps for its codes, and partial for the same reason: only codes a
- * page publishes need a condition. The boundary page cites exactly one.
+ * page publishes need a condition. The boundary page cites two, both in the private-network
+ * row, because the cloud a deployment is pinned to is only known at `infra gen`.
  */
 export const CLI_DIAGNOSTIC_METADATA = {
   'cli/infra-cloud-conflict': {
     condition: 'a `--cloud` flag that disagrees with the spec the modules were generated from',
+  },
+  'cli/infra-cloud-egress-unsupported': {
+    condition:
+      '`egress: declared-only` on a target whose emitter writes no rule for the pinned cloud',
   },
 } as const satisfies Readonly<Partial<Record<CliDiagnosticCode, DiagnosticMetadata>>>;
 

@@ -48,6 +48,7 @@ import {
   KNOWLEDGE_BASE_CLOUDS,
   pinnedCloud,
   resolveCloud,
+  unsupportedEgress,
   unsupportedGateways,
   unsupportedKnowledgeBases,
   unsupportedRuntimes,
@@ -404,6 +405,28 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
             code: CLI_DIAGNOSTIC_CODES.infraCloudTargetUnsupported,
             message: `The plan targets ${missing.join(', ')}, which GCP has no module for: ${services}.`,
             hint: 'On GCP `serverless`, `container` and `batch` all have modules; only `edge` does not. Retarget the service, or deploy this environment with --cloud aws.',
+          }),
+        ],
+      });
+    }
+
+    // `egress: declared-only` is emitted by the AWS container and serverless modules. A
+    // cloud with neither would emit a tree that reads as restrictive and is not, so refuse
+    // instead: the `network` gate refuses a *target* with no workload, and this refuses the
+    // *cloud* the target would land in. The `helm` backend needs no entry here -- its
+    // NetworkPolicy restricts the release whatever cloud the cluster runs on.
+    const unrestricted = unsupportedEgress(deployPlan, cloud);
+    if (unrestricted.length > 0) {
+      const ids = unrestricted.map((id) => `"${id}"`).join(', ');
+      return outcome({
+        command,
+        exitCode: EXIT_FAILURE,
+        fields,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.infraCloudEgressUnsupported,
+            message: `${ids} declare \`egress: declared-only\`, but the ${cloud} modules write no egress restriction, so the generated network would not be one.`,
+            hint: 'Deploy this environment with --cloud aws, or emit a chart with --iac helm to get the NetworkPolicy, or drop `egress` and accept the platform default.',
           }),
         ],
       });

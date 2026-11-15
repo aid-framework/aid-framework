@@ -59,7 +59,7 @@ variable "public_subnet_ids" {
 }
 
 variable "private_subnet_ids" {
-  description = "Subnets the tasks run in. They need egress to pull an image."
+  description = "Subnets the tasks or functions run in. They need egress to pull an image."
   type        = list(string)
   default     = []
 }

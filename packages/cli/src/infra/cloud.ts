@@ -93,6 +93,23 @@ export const CLOUD_TARGETS: Readonly<Record<Cloud, readonly string[]>> = {
 /** The targets the `helm` backend renders: one Deployment and Service per release. */
 export const HELM_TARGETS = ['kubernetes'] as const;
 
+/**
+ * The targets whose module writes a restricted egress on each cloud.
+ *
+ * `declared-only` is a restriction only where a module writes the rule: the AWS container
+ * module narrows the task security group and the AWS serverless module narrows a Lambda's.
+ * The Cloud Run modules write none, so a GCP plan that declared `declared-only` would emit
+ * a tree that reads as restrictive and is not -- refused here rather than approximated.
+ * `kubernetes` is not listed because a cluster is served by the `helm` backend, which does
+ * emit a NetworkPolicy; like `CLOUD_TARGETS`, this table describes the tofu and CDK
+ * backends only.
+ */
+export const CLOUD_EGRESS_TARGETS: Readonly<Record<Cloud, readonly string[]>> = {
+  aws: ['container', 'serverless'],
+  gcp: [],
+  azure: [],
+};
+
 /** The backends `aid infra` can emit. */
 export const IAC_BACKENDS = ['tofu', 'cdk', 'helm'] as const;
 
@@ -116,6 +133,25 @@ export function unsupportedTargets(
   return [...new Set(plan.services.map((service) => service.target))].filter(
     (target) => !known.includes(target),
   );
+}
+
+/**
+ * The plan's deployments that declare `egress: declared-only` on this cloud but have no
+ * module that writes the restriction.
+ *
+ * A cloud with no entry, rather than an empty module, is the case this exists for: the
+ * deployment is otherwise supported, so nothing else in the command would notice, and the
+ * operator would apply a network that looks private and is not.
+ */
+export function unsupportedEgress(
+  plan: { services: readonly { id: string; target: string; network?: { egress?: string } }[] },
+  cloud: Cloud,
+): string[] {
+  const supported = CLOUD_EGRESS_TARGETS[cloud];
+  return plan.services
+    .filter((service) => service.network?.egress === 'declared-only')
+    .filter((service) => !supported.includes(service.target))
+    .map((service) => service.id);
 }
 
 /**

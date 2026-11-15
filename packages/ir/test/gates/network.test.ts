@@ -69,7 +69,8 @@ describe('network', () => {
     );
     expect(diagnostic.path).toEqual(['deployments', 'prod', 'network', 'ingress']);
     expect(diagnostic.message).toContain('"serverless"');
-    expect(diagnostic.hint).toContain('emits no VPC');
+    expect(diagnostic.hint).toContain('public HTTP API');
+    expect(diagnostic.hint).toContain('rather than who calls it');
   });
 
   it('names the edge target as reachable from the internet by definition', () => {
@@ -195,7 +196,9 @@ describe('network', () => {
   });
 
   it('refuses declared-only egress on a target that emits no workload egress', () => {
-    for (const target of ['serverless', 'edge', 'batch'] as const) {
+    // `serverless` is not in this list: the Lambda gets a security group and a
+    // `vpc_config`, so the restriction is emitted where before it was a bare declaration.
+    for (const target of ['edge', 'batch'] as const) {
       const ir = mutateIR(NETWORK);
       const deployment = first(ir.deployments);
       deployment.target = target;
@@ -212,7 +215,7 @@ describe('network', () => {
   });
 
   it('names the target swap each egress refusal is asking for', () => {
-    const hints = (['serverless', 'edge', 'batch'] as const).map((target) => {
+    const hints = (['edge', 'batch'] as const).map((target) => {
       const ir = mutateIR(NETWORK);
       const deployment = first(ir.deployments);
       deployment.target = target;
@@ -221,15 +224,17 @@ describe('network', () => {
         gate(ir).diagnostics,
         IR_DIAGNOSTIC_CODES.networkEgressUnsupported,
       );
-      // Every hint names the two targets that do emit the restriction.
+      // Every hint names a target that does emit the restriction.
       expect(diagnostic.hint).toMatch(/container|kubernetes/);
       return diagnostic.hint;
     });
-    expect(new Set(hints).size).toBe(3);
+    expect(new Set(hints).size).toBe(2);
   });
 
-  it('accepts declared-only egress on the two targets that emit it', () => {
-    for (const target of ['container', 'kubernetes'] as const) {
+  it('accepts declared-only egress on the three targets that emit it', () => {
+    // `serverless` attaches a security group to the Lambda; `container` narrows the task
+    // group; `kubernetes` writes a NetworkPolicy. All three write a rule.
+    for (const target of ['container', 'serverless', 'kubernetes'] as const) {
       const ir = mutateIR(NETWORK);
       const deployment = first(ir.deployments);
       deployment.target = target;
@@ -239,12 +244,37 @@ describe('network', () => {
     }
   });
 
+  it('lets serverless restrict egress while still refusing it a private placement', () => {
+    // The two layers are independent, and `serverless` now holds one and not the other: a
+    // function can be attached to a VPC for its outbound traffic without the HTTP API in
+    // front of it becoming unreachable from the internet. A gate that treated the pair as
+    // one answer would either refuse a satisfiable spec or accept an unsatisfiable one.
+    const egressOnly = mutateIR(NETWORK);
+    const attached = first(egressOnly.deployments);
+    attached.target = 'serverless';
+    attached.network = { ingress: 'public', egress: 'declared-only' };
+    expect(codesOf(gate(egressOnly).diagnostics)).toEqual([]);
+
+    const withPrivateIngress = mutateIR(NETWORK);
+    const refused = first(withPrivateIngress.deployments);
+    refused.target = 'serverless';
+    refused.network = { ingress: 'internal', egress: 'declared-only' };
+    const diagnostics = gate(withPrivateIngress).diagnostics;
+    expect(codesOf(diagnostics)).toEqual([IR_DIAGNOSTIC_CODES.networkTargetIncapable]);
+    // The refusal must not suggest the fix the profile gate used to suggest, because it
+    // would leave the reader with a spec that cannot build either.
+    expect(
+      onlyDiagnosticWith(diagnostics, IR_DIAGNOSTIC_CODES.networkTargetIncapable).hint,
+    ).not.toContain('ingress: internal');
+  });
+
   it('reports the egress refusal alongside an ingress mistake, not instead of it', () => {
     // Two independent declarations, two independent fixes: suppressing one because the
-    // other failed would hide a line the reader still has to change.
+    // other failed would hide a line the reader still has to change. `edge` is the target
+    // where both hold -- it can be placed neither privately nor behind an egress rule.
     const ir = mutateIR(NETWORK);
     const deployment = first(ir.deployments);
-    deployment.target = 'serverless';
+    deployment.target = 'edge';
     deployment.network = { ingress: 'internal', egress: 'declared-only' };
 
     expect(codesOf(gate(ir).diagnostics).sort()).toEqual([

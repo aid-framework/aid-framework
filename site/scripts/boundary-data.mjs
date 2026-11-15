@@ -68,12 +68,13 @@ export const BOUNDARY_TABLE_METADATA = Object.freeze({
       'ir/network-allow-from',
       'ir/network-ingress-conflict',
       'ir/network-egress-unsupported',
+      'cli/infra-cloud-egress-unsupported',
     ],
     generated:
-      'The container module builds a two-AZ VPC with one NAT gateway when you do not supply `vpc_id`, and an `ingress: internal` deployment gets an internal load balancer admitting only `allowFrom`; a `kubernetes` deployment gets a `NetworkPolicy` admitting the same ranges. `egress: declared-only` replaces the blanket rule with DNS, HTTPS and the private ranges on `container`, and with a `NetworkPolicy` that subtracts the instance metadata range on `kubernetes`; the agent runtime is generated with `network_mode = "PUBLIC"`',
+      'The container module builds a two-AZ VPC with one NAT gateway when you do not supply `vpc_id`, and an `ingress: internal` deployment gets an internal load balancer admitting only `allowFrom`; a `kubernetes` deployment gets a `NetworkPolicy` admitting the same ranges. `egress: declared-only` replaces the blanket rule with DNS, HTTPS and the private ranges on `container`; on `serverless` it attaches the function to the VPC you name behind its own restricted security group carrying the same rules; on `kubernetes` it writes a `NetworkPolicy` that subtracts the instance metadata range; the agent runtime is generated with `network_mode = "PUBLIC"`',
     provide:
-      'Your VPC, its two private subnet ids, the peering, the DNS, and a CNI that enforces the policy',
-    risk: 'The placement selects the topology; that your ranges reach it, that the VPC is peered and that the name resolves are your network’s. A `NetworkPolicy` is enforced by the CNI, so on a cluster whose CNI ignores the policy API it applies and blocks nothing -- and a security group cannot subtract a range, which is why only the cluster form excludes the metadata endpoint by name',
+      'Your VPC, its two private subnet ids, a route out of them and the peering, the DNS, and a CNI that enforces the policy',
+    risk: 'The placement selects the topology; that your ranges reach it, that the VPC is peered and that the name resolves are your network’s. A `NetworkPolicy` is enforced by the CNI, so on a cluster whose CNI ignores the policy API it applies and blocks nothing -- and a security group cannot subtract a range, which is why only the cluster form excludes the metadata endpoint by name. A `serverless` deployment can never be privately placed, so `declared-only` bounds what it calls, not who calls it, and the attachment still needs a route out that the generator does not build. On a cloud whose `serverless` path emits no egress rule at all the declaration is refused at `infra gen`, because the gate cannot see the cloud a deployment will be pinned to',
   },
   'Input and output guardrails': {
     codes: ['ir/profile-guardrail', 'ir/security-input-guardrail'],

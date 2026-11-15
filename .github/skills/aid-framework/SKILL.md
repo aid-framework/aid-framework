@@ -284,12 +284,20 @@ generate differs by target and by what the provider can express:
   admits DNS, HTTPS and the private ranges the workload lives in. It cannot say "everything except".
 - A `kubernetes` deployment gets a `NetworkPolicy`, which *can* subtract: the internet rule carries
   `except: 169.254.0.0/16`, so the instance metadata endpoint is excluded by name.
+- A `serverless` deployment accepts `declared-only` for the same reason a `container` one does, and
+  the function is attached to the VPC you name behind its own restricted security group. Its
+  `ingress`, however, is still refused: a function behind an HTTP API is reached by the internet.
+  Egress bounds what it calls; nothing bounds who calls it. That asymmetry is also why the profile
+  gate retargets an enterprise `serverless` deployment at `container` instead of telling it to
+  declare a placement it can never have.
 - A `NetworkPolicy` object is not enforcement. Calico, Cilium and Antrea implement the policy API;
   flannel alone accepts the object and blocks nothing. The generated chart says so in the template
   header and its README, and no build can observe which CNI your cluster runs.
-- `egress: declared-only` on `serverless`, `edge` or `batch` is refused with
-  `ir/network-egress-unsupported`. Targets that emit no workload egress rule do not get a declaration
-  that looks like a control.
+- `egress: declared-only` on `edge` or `batch` is refused with `ir/network-egress-unsupported`.
+  Targets that emit no workload egress rule do not get a declaration that looks like a control. The
+  cloud is refused separately, at `infra gen` (`cli/infra-cloud-egress-unsupported`), because the IR
+  gate cannot see `cloud` — a `serverless` deployment pinned to GCP gets no egress rule from the
+  Cloud Run path, and a refusal written in the IR would be guessing at a value the overlay sets.
 
 The one identity control the build *does* generate is the token check, and only when you ask for it by
 name. `verifiedBy` has two meanings, and the difference is the whole point:

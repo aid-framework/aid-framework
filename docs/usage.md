@@ -793,23 +793,37 @@ a private endpoint AID does not create would be a declaration pretending to be a
 `egress` is the third layer and, from spec `0.38`, it is generated too. `declared-only` means DNS,
 HTTPS to the internet, and the private ranges the workload lives in — nothing else. On `container`
 the task security group stops admitting `0.0.0.0/0` on every protocol and gets four rules instead;
-on `kubernetes` the chart emits an egress `NetworkPolicy` whose internet rule subtracts
-`169.254.0.0/16`, so the instance metadata endpoint is excluded by name. That subtraction is why the
-two forms differ: a security group can allow a set, it cannot allow "everything except". `open` is
-the default and keeps the single unrestricted rule, so a document that never asked for a restriction
-is not taken off the network by a generator upgrade.
+on `serverless` the function is attached to the VPC you name behind its own restricted security
+group with the same rules; on `kubernetes` the chart emits an egress `NetworkPolicy` whose internet
+rule subtracts `169.254.0.0/16`, so the instance metadata endpoint is excluded by name. That
+subtraction is why the forms differ: a security group can allow a set, it cannot allow "everything
+except". `open` is the default and keeps the single unrestricted rule, so a document that never
+asked for a restriction is not taken off the network by a generator upgrade.
+
+`serverless` is the asymmetric target, and the two layers are worth keeping apart there. An egress
+rule is satisfiable: the function reaches the networks you name and nothing else. An internal
+placement is not: a function behind an HTTP API is reached by the internet, and there is no load
+balancer to make internal. So `serverless` accepts `egress: declared-only` and still refuses
+`ingress: internal` — and because that combination is unsatisfiable, the profile gate does not tell
+an enterprise `serverless` deployment to add a placement it can never have. It tells you to retarget
+the deployment at `container`. The attachment also needs a route out of those subnets, which the
+generator does not build; that is yours.
 
 What is refused:
 
 - `internal` with no `allowFrom`, a `public` placement with `allowFrom`, and an `allowFrom` entry
   that is not a CIDR — the container module's own precondition fails the plan too, so a hand-edited
   `tfvars` does not get past it.
-- A placement the target cannot express: `batch` invocations have no ingress, and `edge` is a
-  CloudFront function that is public by definition.
+- A placement the target cannot express: `batch` invocations have no ingress, `edge` is a
+  CloudFront function that is public by definition, and `serverless` is a function behind a public
+  HTTP API with no load balancer to make internal.
 - Two container deployments in one document that want different placements, because the emitted
   environment has one load balancer and the second declaration would never be read.
-- `egress: declared-only` on a target that emits no workload egress rule — `serverless`, `edge` and
-  `batch` — rather than accepting a declaration no artifact applies.
+- `egress: declared-only` on a target that emits no workload egress rule — `edge` and `batch` —
+  rather than accepting a declaration no artifact applies. The refusal is per target here and per
+  cloud at `infra gen`: the IR cannot see the cloud a deployment will be pinned to, so a
+  `serverless` declaration is refused there when that cloud's function path emits no rule
+  (`cli/infra-cloud-egress-unsupported`).
 - `network.private`, at `0.37` and above. It never selected a placement in any generated module,
   so it is retired rather than promoted; declaring it below `0.37` is still accepted and still
   behaves exactly as it did.

@@ -729,12 +729,32 @@ declaration was accurate.
 
 | Refusal | What it is | The fix |
 | --- | --- | --- |
-| `ir/network-egress-unsupported` | `egress: declared-only` on `serverless`, `edge` or `batch`, none of which emit a workload egress rule. | Target `container` or `kubernetes`, or drop `egress` and accept the platform default. |
+| `ir/network-egress-unsupported` | `egress: declared-only` on `edge` or `batch`, neither of which emits a workload egress rule. | Target `container`, `serverless` or `kubernetes`, or drop `egress` and accept the platform default. |
+| `cli/infra-cloud-egress-unsupported` | `declared-only` on a target whose emitter writes no rule for the cloud you pinned — `serverless` on GCP, whose Cloud Run path emits none. | Pin a cloud that emits it, or drop `egress`. |
 
-That refusal fires below 0.38 as well. It is not a language change -- `declared-only` meant the same
-thing before -- it is the build admitting that on those targets it never meant anything. A document
-that relied on it was never protected, and the diagnostic says so rather than leaving the belief in
-place.
+The first refusal fires below 0.38 as well. It is not a language change -- `declared-only` meant the
+same thing before -- it is the build admitting that on those targets it never meant anything. A
+document that relied on it was never protected, and the diagnostic says so rather than leaving the
+belief in place.
+
+The second is a different layer, and the split is deliberate. The IR gate cannot see `cloud`: it is
+optional per deployment, and a base spec that a customer overlay pins never names one, so a
+cloud-specific refusal there would be a guess. `infra gen` resolves the cloud, so that is where the
+refusal lives -- the same split that already governs `edge`, which is emitted only on AWS.
+
+### `serverless` can now say what it calls, never who calls it
+
+From the 0.1.192 release a `serverless` deployment accepts `egress: declared-only` and the Lambda
+module attaches the function to the VPC you name behind its own restricted security group, with the
+same DNS, HTTPS and private-range rules the container task gets. Its `ingress` is unchanged and
+still refused: a function behind an HTTP API is reached by the internet, and there is no load
+balancer to make internal.
+
+The two halves are worth keeping apart because the profile gate used to conflate them. An enterprise
+`serverless` deployment was told to add `network: { ingress: internal, allowFrom: [...] }` -- a fix
+the network gate refuses on that very target. The hint now retargets the deployment at `container`
+instead of prescribing something unsatisfiable. Nothing about your document changes: it could not
+declare the placement before, and it still cannot.
 
 ### What is still yours
 
@@ -750,6 +770,14 @@ Two limits, and they are different ones:
 
 Neither is a peering check. `egress: declared-only` narrows what the workload may attempt; whether the
 route exists is still your platform. `aid review` lists both among the things only you can confirm.
+
+A `serverless` attachment adds a third: the function's subnets need a route out. The `container`
+module builds a two-AZ VPC with one NAT gateway when you do not supply `vpc_id`; the `serverless`
+module builds no VPC and consumes `vpc_id` and `vpc_subnet_ids` from the environment's tfvars, which
+means a project that runs both still has to name the VPC for the functions -- the container module's
+VPC is its own and is not handed over. An attached function in subnets with no NAT gateway and no VPC
+endpoint cannot reach anything, which the module's own precondition states rather than discovering at
+invoke time.
 
 ## 0.34 to 0.35: the verifier the build can actually generate {#generated-verifier-release}
 

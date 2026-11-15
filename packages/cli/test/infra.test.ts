@@ -225,6 +225,18 @@ deployments:
     secrets: []
 `;
 
+/**
+ * The same deployment declaring a declared-only egress. 0.38 is the first version that can
+ * spell `egress`, so a document that declares it has to be at least that new.
+ */
+const SERVERLESS_EGRESS = MANAGED_SPEC.replace(
+  'specVersion: "0.11"',
+  'specVersion: "0.38"',
+).replace(
+  '    target: serverless\n    secrets: []\n',
+  '    target: serverless\n    secrets: []\n    network:\n      ingress: public\n      egress: declared-only\n',
+);
+
 /** The same guardrail, but with the policy left to the operator: no `bedrock:` block. */
 const OPERATOR_OWNED_SPEC = `specVersion: "0.11"
 project:
@@ -1693,6 +1705,29 @@ pipelines:
     expect(made.walk()).not.toContain(TFVARS);
   });
 
+  it('refuses declared-only egress on GCP, whose Cloud Run path emits no rule', () => {
+    // The IR gate accepts the declaration because `serverless` emits the restriction on
+    // AWS. Which compute a target compiles to is a property of the cloud, and the cloud is
+    // resolved here rather than in the IR, so this is the first layer that can see it.
+    const made = project(SERVERLESS_EGRESS);
+    created.push(made);
+
+    const run = aid(made, ['infra', 'gen', '--cloud', 'gcp', '--json']);
+    expect(run.code).toBe(1);
+    const refused = diagnosticsOf(run).map((d) => d.code);
+    expect(refused).toEqual(['cli/infra-cloud-egress-unsupported']);
+    expect(diagnosticsOf(run)[0]?.message).toContain('api');
+    expect(made.walk()).not.toContain(TFVARS);
+  });
+
+  it('accepts declared-only egress on the cloud that emits it', () => {
+    const made = project(SERVERLESS_EGRESS);
+    created.push(made);
+
+    expect(aid(made, ['infra', 'gen', '--cloud', 'aws']).code).toBe(0);
+    expect(JSON.parse(made.read(TFVARS)).egress_declared_only).toBe(true);
+  });
+
   it('refuses a Bedrock guardrail on GCP, which has nothing to evaluate it', () => {
     const made = project(MANAGED_SPEC);
     created.push(made);
@@ -2117,5 +2152,25 @@ deployments:
     const tfvars = generated(publicEgress);
     expect(tfvars.egress_declared_only).toBe(true);
     expect(tfvars).not.toHaveProperty('internal');
+  });
+
+  it('restricts egress for a serverless deployment, which attaches the function to a VPC', () => {
+    // A function outside a VPC has no security group, so the declaration used to have
+    // nothing to act on. The module now creates the group and attaches the function.
+    const made = scratchSpec(SERVERLESS_EGRESS);
+    expect(aid(made, ['infra', 'gen']).code).toBe(0);
+
+    expect(JSON.parse(made.read(TFVARS)).egress_declared_only).toBe(true);
+    const main = made.read(`${GENERATED}/modules/serverless/main.tf`);
+    expect(main).toContain('resource "aws_security_group" "restricted"');
+    expect(main).toContain('dynamic "vpc_config"');
+  });
+
+  it('leaves a serverless deployment outside a VPC when the spec declares no egress', () => {
+    // Attaching every existing project's functions to a VPC on a version bump would put
+    // them in a network whose route out nobody declared.
+    const tfvars = generated(MANAGED_SPEC);
+
+    expect(tfvars).not.toHaveProperty('egress_declared_only');
   });
 });
