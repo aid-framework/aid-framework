@@ -878,6 +878,16 @@ export const AGENT_STATE_KINDS = ['postgres', 'sqlite'] as const;
 export type AgentStateKind = (typeof AGENT_STATE_KINDS)[number];
 
 /**
+ * The resume window a document that declares no `checkpointTtlMinutes` gets, in minutes.
+ *
+ * Mirrors `aid_runtime.agents.resume.DEFAULT_CHECKPOINT_TTL_MINUTES`, because the gate that
+ * compares a declared retention against this window has to compare it against the number
+ * the generated app will actually use. Two independent 15s that could drift would make
+ * `ir/state-retention` decide on a window nobody enforces.
+ */
+export const DEFAULT_CHECKPOINT_TTL_MINUTES = 15;
+
+/**
  * A durable run store, from spec 0.26. A long-running agent -- one that pauses for an
  * approval, or that outlives a single request -- has to write step results somewhere the
  * next request can read.
@@ -886,19 +896,22 @@ export type AgentStateKind = (typeof AGENT_STATE_KINDS)[number];
  * side-effecting tool with no store declared (`ir/agents-state-store`), and the signing key
  * `signingKeyEnv` names is what the generated resume route verifies a checkpoint against.
  *
- * What the build does not do with it: nothing constructs a store from this shape. The
- * generated resume route hands the checkpoint back to the caller instead of writing it, so
- * a run outlives the request and not the process. `urlEnv` is recorded, not read.
+ * The generated resume route builds this store at request time
+ * (`run_store_from_env`) and writes every pause to it, so a paused run is continued by
+ * naming a `run_id` rather than by handing the checkpoint back. That makes the run outlive
+ * the process, which is what an approval arriving an hour later needs; the checkpoint still
+ * returns too, so a caller written against the older shape keeps working.
  */
 export interface AgentStateShape {
   kind: AgentStateKind;
   /** The environment variable holding the connection string. */
   urlEnv: string;
   /**
-   * How long a saved run is kept, in hours. Recorded for the store's own retention policy;
-   * AID emits no deletion job, because it does not delete an operator's rows on a policy it
-   * invented. Unrelated to the window a pause may be resumed in -- `checkpointTtlMinutes`
-   * governs that.
+   * How long a saved run is kept, in hours. The generated store prunes expired rows on the
+   * next write, which keeps a table from growing without deciding an operator's retention
+   * policy for them; no separate deletion job is emitted. It is a different number from the
+   * window a pause may be resumed in -- `checkpointTtlMinutes` governs that, and
+   * `ir/state-retention` refuses a retention shorter than it.
    */
   ttlHours?: number;
   /**
@@ -909,8 +922,9 @@ export interface AgentStateShape {
    */
   signingKeyEnv?: string;
   /**
-   * How long a pause may be resumed for, in minutes. Absent means the runtime default
-   * (15). The deadline is inside the signature, so a holder cannot extend it.
+   * How long a pause may be resumed for, in minutes. Absent means
+   * {@link DEFAULT_CHECKPOINT_TTL_MINUTES}. The deadline is inside the signature, so a
+   * holder cannot extend it.
    */
   checkpointTtlMinutes?: number;
 }

@@ -35,19 +35,26 @@ from aid_runtime.agents import (
     HumanApproval,
     HumanDecision,
     InProcessMemoryStore,
+    InProcessRunStore,
     MemoryDefinition,
     MemoryStore,
     NonceStore,
     PendingApproval,
+    PostgresRunStore,
     Principal,
     RunResult,
     RunStatus,
+    RunStore,
     RuntimeSpec,
+    SqliteRunStore,
     StepKind,
     StepRecord,
     ThreadMemory,
     ToolSpec,
+    new_run_id,
     nonce_store_from_env,
+    run_store_for,
+    run_store_from_env,
     signer_from_env,
 )
 from aid_runtime.cache import CompletionCache, cache_key_for
@@ -357,7 +364,7 @@ from aid_runtime.types import (
 )
 
 #: Kept in sync with ``pyproject.toml`` by a test, so the two cannot drift.
-__version__ = "0.1.185"
+__version__ = "0.1.186"
 
 __all__ = [
     "AGENT_LABEL",
@@ -475,6 +482,7 @@ __all__ = [
     "HumanDecision",
     "InMemoryVectorStore",
     "InProcessMemoryStore",
+    "InProcessRunStore",
     "IndexSpec",
     "IngestReport",
     "JsonSchemaValid",
@@ -515,6 +523,7 @@ __all__ = [
     "PipelineContext",
     "PipelineError",
     "PolicyEvaluationError",
+    "PostgresRunStore",
     "Principal",
     "PromptNotFoundError",
     "PromptRegistry",
@@ -550,6 +559,7 @@ __all__ = [
     "RunOutput",
     "RunResult",
     "RunStatus",
+    "RunStore",
     "Runner",
     "RuntimeSpec",
     "ScoredChunk",
@@ -560,6 +570,7 @@ __all__ = [
     "SourceKind",
     "SourceSpec",
     "SpendSummary",
+    "SqliteRunStore",
     "Step",
     "StepCount",
     "StepKind",
@@ -638,6 +649,7 @@ __all__ = [
     "local_trace_enabled",
     "map_step",
     "metric_names",
+    "new_run_id",
     "nonce_store_from_env",
     "normalize",
     "open_connector",
@@ -663,6 +675,8 @@ __all__ = [
     "route",
     "rrf_score",
     "run_evaluation",
+    "run_store_for",
+    "run_store_from_env",
     "run_structured",
     "signer_from_env",
     "similarity",

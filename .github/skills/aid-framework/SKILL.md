@@ -374,8 +374,15 @@ Keep these apart in anything you write or tell a user:
   spent one are answered by the same opaque 403, with the reason written to the operator log rather
   than returned. What no generated code proves is that the *caller* may submit it. Put the route
   behind your own authorizer before exposing it outside a trusted network.
-  Two declarations decide how much of that holds. With no `state` block the store is in-process, so a
-  spent checkpoint is refused only in the worker that issued it: `enterprise` refuses that spec and
+  A spec that declares a `state` block gets a second route beside it,
+  `POST /agents/runs/{run_id}/resume`, and the pause is written to that store rather than only handed
+  back — so the run survives the request, the replica and the restart, and the `run_id` the response
+  reports is what names it. Naming the run in the path is the point: the body carries the decision
+  and nothing else, so a caller cannot pair one run's id with another run's checkpoint, and an id
+  that never existed and one already spent are answered by the same opaque 403. That route does not
+  close the gap above — it proves the app issued that run, not that this caller may continue it.
+  Two declarations decide how much of that holds. With no `state` block there is no store at all, so
+  a spent checkpoint is refused only in the worker that issued it: `enterprise` refuses that spec and
   `standard` warns with `ir/resume-replay-weak`. And because the signer is built per request, a
   declared-but-unset signing key is not a startup failure — it refuses every resume instead.
 - **Not generated.** Retrieval migrations are emitted for an operator to apply (`aid migrate`).

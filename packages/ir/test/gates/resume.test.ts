@@ -382,3 +382,64 @@ describe('the resume gate on owner binding', () => {
     expect(outcome.codes).toEqual([]);
   });
 });
+
+/**
+ * Retention and resumability are two clocks. Keeping a run longer than it can be resumed
+ * is the useful case -- the row is audit material once the approval window closes. Keeping
+ * it for *less* time is the impossible one: the store prunes the row while its checkpoint
+ * still says the run is live.
+ */
+describe('the retention the run store honours', () => {
+  it('refuses a retention shorter than the window it has to outlive', () => {
+    const outcome = resume({ state: { ...SIGNED, ttlHours: 1, checkpointTtlMinutes: 120 } });
+
+    expect(outcome.codes).toEqual([IR_DIAGNOSTIC_CODES.stateRetention]);
+    const short = only(outcome, IR_DIAGNOSTIC_CODES.stateRetention);
+    expect(short.severity).toBe('error');
+    // Both numbers, because the fix is one of them and the author has to choose which.
+    expect(short.message).toContain('60 minutes');
+    expect(short.message).toContain('120');
+  });
+
+  it('accepts a retention equal to the window', () => {
+    const outcome = resume({ state: { ...SIGNED, ttlHours: 1, checkpointTtlMinutes: 60 } });
+    expect(outcome.codes).toEqual([]);
+  });
+
+  it('accepts a retention longer than the window', () => {
+    // The normal case: resumable for ten minutes, kept for a day as audit material.
+    const outcome = resume({ state: { ...SIGNED, ttlHours: 24, checkpointTtlMinutes: 10 } });
+    expect(outcome.codes).toEqual([]);
+  });
+
+  it('compares against the default window when none is declared', () => {
+    // 1h of retention is above the 15-minute default, so this is fine.
+    const outcome = resume({ state: { ...SIGNED, ttlHours: 1 } });
+    expect(outcome.codes).toEqual([]);
+  });
+
+  it('measures the window in minutes, not hours', () => {
+    // 2 hours of retention against a 3-hour window: a document that named both in hours
+    // and got the conversion wrong would land here.
+    const outcome = resume({ state: { ...SIGNED, ttlHours: 2, checkpointTtlMinutes: 180 } });
+    expect(outcome.codes).toEqual([IR_DIAGNOSTIC_CODES.stateRetention]);
+    expect(only(outcome, IR_DIAGNOSTIC_CODES.stateRetention).message).toContain('120 minutes');
+  });
+
+  it('is refused under both profiles', () => {
+    // Unlike replay protection, there is no profile where a silently unrunnable resume is
+    // acceptable: the failure is a missing row, indistinguishable from a bad id.
+    for (const profile of ['standard', 'enterprise']) {
+      const outcome = resume({
+        profile,
+        state: { ...SIGNED, ttlHours: 1, checkpointTtlMinutes: 120 },
+      });
+      expect(outcome.codes).toContain(IR_DIAGNOSTIC_CODES.stateRetention);
+    }
+  });
+
+  it('says nothing when no retention is declared', () => {
+    const outcome = resume({ state: { ...SIGNED, checkpointTtlMinutes: 120 } });
+    expect(outcome.codes).toEqual([]);
+  });
+});

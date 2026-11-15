@@ -33,6 +33,7 @@ alias. It is never a retry loop: a degraded frame that still does not fit fails.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -73,6 +74,7 @@ from aid_runtime.agents.resume import (
     InProcessNonceStore,
     NonceStore,
 )
+from aid_runtime.agents.runs import RunStore, new_run_id
 from aid_runtime.agents.state import (
     AgentCheckpoint,
     HumanDecision,
@@ -207,6 +209,7 @@ class AgentRuntime:
         limiter: ConcurrencyLimiter | None = None,
         signer: CheckpointSigner | None = None,
         nonces: NonceStore | None = None,
+        runs: RunStore | None = None,
     ) -> None:
         self._spec = spec
         self._gateway = gateway
@@ -221,6 +224,11 @@ class AgentRuntime:
         # before: a library embedding it directly is not silently given a key.
         self._signer = signer
         self._nonces: NonceStore = nonces if nonces is not None else InProcessNonceStore()
+        # Where a paused run is written so a *later process* can continue it. `None` keeps
+        # the pre-store behaviour exactly: the checkpoint returns to the caller and the run
+        # outlives the request only, so a library embedder is not silently handed a
+        # database, and no `run_id` is reported for a run nothing stored.
+        self._runs = runs
         self._guardrails = GuardrailEngine(spec.guardrails, decisions=spec.decisions)
         self._tools_by_name: dict[str, ToolSpec] = {
             definition.name: definition for definition in spec.tools.values()
@@ -241,6 +249,7 @@ class AgentRuntime:
         tracer: Tracer | None = None,
         signer: CheckpointSigner | None = None,
         nonces: NonceStore | None = None,
+        runs: RunStore | None = None,
     ) -> AgentRuntime:
         """Build a runtime from an emitted IR document.
 
@@ -263,6 +272,7 @@ class AgentRuntime:
             limiter=limiter,
             signer=signer,
             nonces=nonces,
+            runs=runs,
         )
 
     @property
@@ -319,7 +329,7 @@ class AgentRuntime:
             # The refusal is re-raised unchanged: publishing the spend is not a recovery.
             self._publish_spend(agent.id, start_cost, start_tokens)
             raise
-        return self._wrap(outcome, start_cost, start_tokens)
+        return await self._store(self._wrap(outcome, start_cost, start_tokens))
 
     async def resume(
         self,
@@ -343,7 +353,59 @@ class AgentRuntime:
             # Same rule as `run`: a resumed run that fails has been billed too.
             self._publish_spend(checkpoint.agent_id, start_cost, start_tokens)
             raise
-        return self._wrap(outcome, start_cost, start_tokens)
+        return await self._store(self._wrap(outcome, start_cost, start_tokens))
+
+    async def resume_run(
+        self,
+        run_id: str,
+        decision: HumanDecision | str,
+        *,
+        principal: Principal | None = None,
+    ) -> RunResult:
+        """Continue a paused run by id, reading its checkpoint from the store.
+
+        The distinction from :meth:`resume` is where the authority comes from. A caller
+        holding a checkpoint holds a capability; a caller naming a ``run_id`` holds only a
+        reference, and the store is what turns it back into a run. That makes the stored
+        path safe in two ways the hand-back path is not: the body was authored by the app,
+        so nothing the caller sends can be resumed after editing; and the row is claimed in
+        the write that reads it, so the id resumes once even across replicas.
+
+        Everything :meth:`resume` checks still happens -- signature, deadline, owner
+        binding, nonce -- because the store returns the *same* signed checkpoint the pause
+        produced. A refusal is raised before the decision is read, so an unbound caller
+        never learns whether their answer would have been accepted.
+        """
+        if self._runs is None:
+            raise ConfigurationError(
+                "this runtime was built without a run store, so there is no paused run "
+                "to resume by id; declare `agentState` so the app writes one"
+            )
+        checkpoint = await self._runs.load(run_id=run_id, now=int(time.time()))
+        return await self.resume(checkpoint, decision, principal=principal)
+
+    async def _store(self, result: RunResult) -> RunResult:
+        """Write a paused run and report the id it can be resumed by.
+
+        Only a pause is stored. A completed run has nothing to continue, and a run that
+        hit a ceiling is a failure the caller should see rather than a checkpoint to keep.
+        An unsigned checkpoint has no deadline inside it, so ``expires_at`` is ``None``
+        rather than a number this method invented: a document that declared no signing key
+        declared no window either, and the store records that instead of guessing.
+        """
+        if self._runs is None or result.status is not RunStatus.PAUSED:
+            return result
+        if result.checkpoint is None:
+            return result
+        integrity = result.checkpoint.integrity
+        run_id = new_run_id()
+        await self._runs.save(
+            run_id=run_id,
+            checkpoint=result.checkpoint,
+            expires_at=None if integrity is None else integrity.expires_at,
+            now=int(time.time()),
+        )
+        return result.model_copy(update={"run_id": run_id})
 
     async def _accept(self, checkpoint: AgentCheckpoint, principal: Principal) -> AgentCheckpoint:
         """Refuse a checkpoint this app did not issue, has expired, or already spent.

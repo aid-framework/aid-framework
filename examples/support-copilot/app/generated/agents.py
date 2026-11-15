@@ -21,8 +21,10 @@ from aid_runtime import (
     NonceStore,
     Principal,
     RunResult,
+    RunStore,
     Tool,
     nonce_store_from_env,
+    run_store_from_env,
     signer_from_env,
 )
 from aid_runtime.agents.ir import from_ir
@@ -184,9 +186,19 @@ class AgentResumeRequest(BaseModel):
     decision: HumanDecision
 
 
+class AgentDecisionRequest(BaseModel):
+    """The answer to the question a stored run is asking. The run is named by the path."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision: HumanDecision
+
+
 class AgentRunResponse(BaseModel):
     """A run that finished, or one that stopped and is asking a question. `checkpoint` is present
-    exactly when `status` is `paused`, and is what `/agents/resume` takes back.
+    exactly when `status` is `paused`, and either `/agents/resume` or `/agents/runs/{run_id}/resume`
+    takes back. `run_id` names the stored run and is empty for a run that was not stored: only a
+    paused run is written, so a finished run has nothing to continue.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -196,6 +208,7 @@ class AgentRunResponse(BaseModel):
     answer: str = ""
     cost_usd: float = 0.0
     total_tokens: int = 0
+    run_id: str = ""
     pending: dict[str, Any] | None = None
     checkpoint: dict[str, Any] | None = None
 
@@ -211,6 +224,12 @@ def _resume_protection() -> tuple[CheckpointSigner | None, NonceStore | None]:
         signer_from_env(CHECKPOINT_SIGNING_KEY_ENV, ttl_seconds=CHECKPOINT_TTL_SECONDS),
         nonce_store_from_env(CHECKPOINT_STATE_KIND, CHECKPOINT_STATE_URL_ENV),
     )
+
+
+def _run_store() -> RunStore:
+    """The store a paused run is written to, resolved from the environment per request."""
+
+    return run_store_from_env(CHECKPOINT_STATE_KIND, CHECKPOINT_STATE_URL_ENV)
 
 
 def build_runtime(
@@ -233,6 +252,7 @@ def build_runtime(
         tools=tools,
         signer=signer,
         nonces=nonces,
+        runs=_run_store(),
     )
 
 
@@ -247,6 +267,7 @@ def _response(result: RunResult) -> AgentRunResponse:
         answer=result.answer,
         cost_usd=result.cost_usd,
         total_tokens=result.total_tokens,
+        run_id=result.run_id,
         pending=None if pending is None else pending.model_dump(mode="json"),
         checkpoint=None if checkpoint is None else checkpoint.model_dump(mode="json"),
     )
@@ -329,6 +350,27 @@ async def resume_agent(
     return _response(result)
 
 
+@agent_router.post("/agents/runs/{run_id}/resume", response_model=AgentRunResponse)
+async def resume_stored_run(
+    run_id: str,
+    event: AgentDecisionRequest,
+    deps: Annotated[Deps, Depends(get_deps)],
+    principal: Annotated[Principal, Depends(current_principal)],
+) -> AgentRunResponse:
+    """Continue a paused run by id. The stored body is the one this app wrote, so the caller cannot
+    have edited it; the row is claimed as it is read, so the id resumes once. A run paused with an
+    identity can only be resumed by that identity.
+    """
+
+    runtime = build_runtime(gateway=deps.gateway, tools=deps.agent_tools)
+    try:
+        result = await runtime.resume_run(run_id, event.decision, principal=principal)
+    except CheckpointRefusalError as refusal:
+        logger.warning("refused a resume of run %s: %s", run_id, refusal.reason)
+        raise HTTPException(status_code=403, detail=RESUME_REFUSED) from refusal
+    return _response(result)
+
+
 __all__ = [
     "AGENT_IDS",
     "DOCUMENT",
@@ -336,5 +378,6 @@ __all__ = [
     "build_runtime",
     "current_principal",
     "resume_agent",
+    "resume_stored_run",
     "run_agent",
 ]
