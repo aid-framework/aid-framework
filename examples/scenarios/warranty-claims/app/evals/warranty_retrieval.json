@@ -1,0 +1,26 @@
+{
+  "name": "warranty_retrieval",
+  "version": "1",
+  "cases": [
+    {
+      "id": "base-warranty-window",
+      "input": "Is a drive motor inverter failure at 41,200 km inside the powertrain warranty?"
+    },
+    {
+      "id": "wear-item-question",
+      "input": "Are brake pads and discs covered when they are worn below the minimum?"
+    },
+    {
+      "id": "campaign-precedence",
+      "input": "The VIN has an open safety campaign for the same coolant circuit; which policy applies first?"
+    },
+    {
+      "id": "consequential-damage",
+      "input": "A failed water pump stripped the timing belt and damaged the cylinder head; is the head covered?"
+    },
+    {
+      "id": "goodwill-request",
+      "input": "The vehicle is past the base warranty but has full dealer service history; can this be handled as goodwill?"
+    }
+  ]
+}

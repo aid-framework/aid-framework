@@ -485,5 +485,5 @@ If a generated file must change, change the spec and re-run `aid gen`. If the sp
 - [`docs/guide/boundary.md`](../../../docs/guide/boundary.md) — what the build refuses, and what it only declares.
 - [`docs/reference/spec.md`](../../../docs/reference/spec.md) — every key, generated from the schema.
 - [`docs/reference/cli.md`](../../../docs/reference/cli.md) — every command and flag, generated from the CLI.
-- [`examples/scenarios/`](../../../examples/scenarios/) — worked scenarios across both market segments.
+- [`examples/scenarios/`](../../../examples/scenarios/) — worked scenarios across both market segments. `warranty-claims` is the full-width one to read once a spec starts to grow.
 - [`docs/features.md`](../../../docs/features.md) — what ships, generated from the registry.
