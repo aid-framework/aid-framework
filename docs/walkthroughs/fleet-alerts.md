@@ -91,10 +91,10 @@ $ aid validate app/app.spec.yaml
 app/app.spec.yaml: 2 error(s), 0 warning(s)
 app/app.spec.yaml: error: the alerts gate rejected this document: 4 alert(s) are declared, but observability exports nothing, so no collector derives the series they watch and every alarm would report no data forever [ir/alerts-unexported]
     at observability.alerts
-    hint: add `export: otlp` and `endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT` so the spans reach a collector, or remove the alerts block
+    hint: add `export: otlp` and `endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT` so the generated app publishes the series, or remove the alerts block
 app/app.spec.yaml: error: the observability gate rejected this deployment: profile enterprise promises an audit trail, but observability exports nothing, so every span stays inside the process [ir/observability-export]
     at observability.export
-    hint: add `observability: { trace: true, export: otlp, endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT }`; the variable holds the collector address, and AID installs no exporter for you
+    hint: add `observability: { trace: true, export: otlp, endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT }`; the variable holds the collector address, and the py-fastapi target emits `tracing_export_status()` for your entrypoint to call at startup
 ```
 
 The diagnostic is doing more than type-checking a required field. An alarm's metric exists only
@@ -158,6 +158,7 @@ also refused:
 
 ```console
 $ aid validate app/app.spec.yaml
+app/app.spec.yaml: 1 error(s), 0 warning(s)
 app/app.spec.yaml: error: the alerts gate rejected "refund_latency": `aggregate: sum` cannot interpret metric "eval.latency.p95" [ir/alerts-aggregate]
     at observability.alerts.refund_latency.aggregate
     hint: use `aggregate: p95`, because "eval.latency.p95" is a percentile series and no other reduction interprets it

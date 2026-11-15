@@ -57,19 +57,21 @@ production approval policy — and its agents that can write need somewhere dura
 | Requirement | Diagnostic | Scope |
 | --- | --- | --- |
 | A declared `identity` | `ir/profile-identity` | Every deployment |
-| A `network` with `private: true` | `ir/profile-network` | Every deployment |
-| An `approvals` policy for production | `ir/profile-approvals` | A deployment that targets production |
+| `network.ingress: internal` (or `private: true` below 0.37) | `ir/profile-network` | Every deployment |
+| An `approvals` policy that can be satisfied | `ir/profile-approvals` | Every deployment |
 | A `state` store for an agent that can call a writing tool | `ir/agents-state-store` | Every such agent |
 
-These four are scoped to `specVersion: "0.26"`, because 0.25 has no key to satisfy them with;
-holding an old document to a rule it cannot express would make it unsatisfiable.
+These four are scoped to `specVersion: "0.26"` and above, because 0.25 has no key to satisfy them
+with; holding an old document to a rule it cannot express would make it unsatisfiable.
 
-**What is gated is not yet generated.** `state`, `identity`, `network`, `approvals` and
-`requiresApproval` are validated, projected into the IR, and refused when wrong — and the
-generators that emit the store, the identity check and the pause land in their own release. That
-is stated on the `/features` row and in [`docs/migration.md`](../migration.md) rather than left for
-an operator to discover by reading generated code. AID still does not refuse a spec for omitting
-something it cannot generate, and it does not claim a capability it has not written.
+**Declared is not verified.** `state`, `identity`, `network`, `approvals` and `requiresApproval` are
+validated, refused when wrong, and generated: the region pin and audit sink reach the OpenTofu
+modules, the pause reaches the generated tool step, a 0.32 document's checkpoints are signed, and a
+declared `state` is where the claim nonce is kept. What the build cannot do is confirm that the
+issuer exists, that the network is actually peered, or that the named reviewers are real people —
+those are properties of your platform, and the honest way to report them is as inputs you wired, not
+as controls the compiler proved. The maintained statement of what ships is the delivery-controls row
+of [`docs/features.md`](../features.md), which is generated from the registry.
 
 ## Refusal 1: the missing controls
 

@@ -109,5 +109,5 @@ The abstraction stops at the parts where a wrong guess is worse than the work:
 - The generators: golden-file tests - `examples/*/app/generated/**` **is** the fixture, so a
   generator change that alters output fails unless the example is regenerated in the same
   commit.
-- Cross-target: a conformance suite of 73 cases over 40 operations, so the two targets are
+- Cross-target: a conformance suite of 77 cases over 41 operations, so the two targets are
   compared rather than assumed equal. See [Conformance](../reference/conformance.md).

@@ -9,7 +9,7 @@ between enforcement points. It classifies an inbound support ticket and answers 
 reply, over a nine-step pipeline, four guardrails that each run somewhere different, and two agents -
 one of which can pause and needs a resume route.
 
-It is 58 files on disk, 40 of them managed by the generator. See
+It is 67 files on disk, 42 of them managed by the generator. See
 [the generated tree](../guide/generated-tree.md) for the ownership split.
 
 ## Run it

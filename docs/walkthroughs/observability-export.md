@@ -13,7 +13,11 @@ still keep every span inside the process. An eval that names an agent is accepte
 runs agents offline and refused by the one that does not, and a metric that compares tool calls is
 refused anywhere there are no calls to compare.
 
-Every console block below is real output from this repository's CLI.
+Every console block below is real output from this repository's CLI, re-captured against the build
+this page describes. Two lines are elided for length and marked with a `#` comment -- `ir/eval-uncovered`
+on the `refund` pipeline and `ir/resume-unsigned` on the 0.27 agent, which fires on any document before
+0.32 that can pause. The counts are the real ones, and both diagnostics are shown in full in
+[delivery controls](delivery-controls.md#what-026-requires-of-enterprise).
 
 ## The spec
 
@@ -28,13 +32,15 @@ always refused a side-effecting tool anyone can call, and refused one no guardra
 
 ```console
 $ aid validate claims-desk.spec.yaml
-claims-desk.spec.yaml: 3 error(s), 0 warning(s)
+claims-desk.spec.yaml: 3 error(s), 2 warning(s)
+# ... warning: the eval-coverage gate flagged this pipeline: "refund" ... [ir/eval-uncovered]
 claims-desk.spec.yaml: error: the guardrails gate rejected "issue_refund": the tool has sideEffects "write" but no declared guardrail covers it at the "tool-call" stage [ir/guardrail-coverage]
     at tools.issue_refund.sideEffects
     hint: add a guardrail with stages: [tool-call] whose tools list is empty or names "issue_refund"
 claims-desk.spec.yaml: error: the observability gate rejected this deployment: profile enterprise promises an audit trail, but observability exports nothing, so every span stays inside the process [ir/observability-export]
     at observability.export
-    hint: add `observability: { trace: true, export: otlp, endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT }`; the variable holds the collector address, and AID installs no exporter for you
+    hint: add `observability: { trace: true, export: otlp, endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT }`; the variable holds the collector address, and the py-fastapi target emits `tracing_export_status()` for your entrypoint to call at startup
+# ... warning: the resume gate flagged "claims_adjudicator" ... [ir/resume-unsigned]
 claims-desk.spec.yaml: error: the security gate rejected this tool: "issue_refund" has sideEffects "write" but declares no auth, so it is callable by anyone [ir/security-missing-auth]
     at tools.issue_refund.auth
     hint: declare a policy such as isAuthenticated() and hasScope('x')
@@ -64,20 +70,30 @@ guardrails:
 
 ```console
 $ aid validate claims-desk.spec.yaml
+claims-desk.spec.yaml: 1 error(s), 2 warning(s)
+# ... warning: the eval-coverage gate flagged this pipeline: "refund" ... [ir/eval-uncovered]
 claims-desk.spec.yaml: error: the observability gate rejected this deployment: profile enterprise promises an audit trail, but observability exports nothing, so every span stays inside the process [ir/observability-export]
     at observability.export
-    hint: add `observability: { trace: true, export: otlp, endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT }`; the variable holds the collector address, and AID installs no exporter for you
+    hint: add `observability: { trace: true, export: otlp, endpointEnv: OTEL_EXPORTER_OTLP_ENDPOINT }`; the variable holds the collector address, and the py-fastapi target emits `tracing_export_status()` for your entrypoint to call at startup
+# ... warning: the resume gate flagged "claims_adjudicator" ... [ir/resume-unsigned]
 ```
 
 ## Declaration is not transport
 
-The hint is a shape, not a fix, and 0.27 is deliberately narrow about what `export: otlp` means. It
-states an **intent** and names the variable holding the collector address. It does not install an
-OpenTelemetry exporter, add a dependency to the generated project, or write collector configuration.
-Installing one stays a host decision, because a generated service should not grow a telemetry
-dependency it never asked for. What AID does guarantee is that the declaration cannot drift from the
-code: `trace` and `redact` are emitted into the generated span writer, `export: otlp` and its
-variable are recorded in the IR, and an `enterprise` document cannot be quietly missing either half.
+The hint is a shape, not a fix, and `export: otlp` is deliberately narrow: it states where telemetry
+should go and names -- never holds -- the variable carrying the collector address. What the build
+guarantees is that the declaration cannot drift from the code. `trace` and `redact` are emitted into
+the generated span writer, `export: otlp` and its variable are recorded in the IR, an `enterprise`
+document cannot be quietly missing either half, and a target that installs no exporter refuses
+`export: otlp` rather than accept a destination nothing is sent to.
+
+The transport is the runtime's, and calling it is the app's. `py-fastapi` emits
+`tracing_export_status()` into `app/generated/observability.py`; called once at startup, it installs
+an OTLP/HTTP span exporter over a batched processor from `aid-runtime-python[otlp]`. Nothing is
+installed on import, so embedding AID does not decide telemetry for its host, and the SDK and
+exporter are an extra you install rather than a dependency the generator adds. The generated
+function never raises: an unset endpoint or a missing exporter comes back as a status whose `detail`
+names the fix, because telemetry that cannot start must not stop the service from serving.
 
 So add the intent on its own and the document is refused for saying half of it:
 
@@ -88,9 +104,13 @@ observability:
 
 ```console
 $ aid validate claims-desk.spec.yaml
-claims-desk.spec.yaml:96:1: error: missing required property 'endpointEnv' [spec/schema-violation]
+claims-desk.spec.yaml: 1 error(s), 0 warning(s)
+claims-desk.spec.yaml:134:1: error: missing required property 'endpointEnv' [spec/schema-violation]
     at observability.endpointEnv
 ```
+
+A `spec/*` refusal stops the gates before they run, which is why this block has no warnings: the
+document did not parse. The line number follows wherever you put the block.
 
 `export` and `endpointEnv` require each other rather than defaulting. A default would be **a
 guessed collector** — a span exporter quietly pointed at whatever `localhost:4317` happens to be, or
@@ -108,6 +128,8 @@ observability:
 
 ```console
 $ aid validate claims-desk.spec.yaml
+claims-desk.spec.yaml: 1 error(s), 2 warning(s)
+# ... warnings: ir/eval-uncovered on "refund", ir/resume-unsigned on "claims_adjudicator", elided
 claims-desk.spec.yaml: error: the observability gate rejected this document: it declares `export: otlp` while `trace` is false, so there is nothing to export [ir/observability-export]
     at observability.export
     hint: set `trace: true` to record the spans you are exporting, or `export: none` to keep them in the process
@@ -130,7 +152,8 @@ observability:
 
 ```console
 $ aid validate claims-desk.spec.yaml
-claims-desk.spec.yaml: ok (0 errors, 0 warnings)
+claims-desk.spec.yaml: ok (0 errors, 2 warnings)
+# ... warnings: ir/eval-uncovered on "refund", ir/resume-unsigned on "claims_adjudicator", elided
 ```
 
 That block is **process-wide**. It is declared once, on the document, and not on a pipeline:
@@ -167,16 +190,18 @@ runs the agent against each case and scores the calls it made:
 
 ```console
 $ aid validate claims-desk.spec.yaml
-claims-desk.spec.yaml: ok (0 errors, 1 warnings)
+claims-desk.spec.yaml: ok (0 errors, 2 warnings)
 claims-desk.spec.yaml: warning: the eval-coverage gate flagged this pipeline: "refund" is served over HTTP but no eval with gate.ci: true targets it [ir/eval-uncovered]
     at pipelines.refund
     hint: add an eval targeting "pipeline:refund" and set gate.ci: true
+# ... warning: ir/resume-unsigned on "claims_adjudicator", elided
 ```
 
-The remaining warning is the coverage gate, not the trajectory gate, and it is the honest one: an
-eval over an agent does not cover the pipeline that reaches it, so a document that runs an agent and
-serves it over HTTP needs both. The committed example does exactly that — `examples/support-copilot`
-declares `target: agent:refund_agent`, and its tree carries
+The coverage warning is the one this section produces, and it is the honest one: an eval over an
+agent does not cover the pipeline that reaches it, so a document that runs an agent and serves it
+over HTTP needs both. The second warning is the pre-0.32 signing one from the first block, and it
+stays until the document moves to 0.32. The committed example does exactly that --
+`examples/support-copilot` declares `target: agent:refund_agent`, and its tree carries
 `app/generated/evals/refund_trajectory.py`.
 
 `ts-vercel` does not declare `agent-evals`, so the same eval is refused before a generator is
@@ -210,10 +235,11 @@ evals:
 
 ```console
 $ aid validate claims-desk.spec.yaml
-claims-desk.spec.yaml: 1 error(s), 0 warning(s)
+claims-desk.spec.yaml: 1 error(s), 1 warning(s)
 claims-desk.spec.yaml: error: the trajectory gate rejected "adjudicator_trajectory": metric 1 compares tool calls, and "pipeline:refund" returns a response with no tool calls to compare [ir/eval-trajectory]
     at evals.adjudicator_trajectory.metrics[1]
     hint: a prompt or pipeline target returns one response, so it has no trajectory: score the calls an agent makes with `target: agent:<id>`, or score the response with exact, contains, json-schema, llm-judge or assert
+# ... warning: ir/resume-unsigned on "claims_adjudicator", elided
 ```
 
 Note what is **not** refused. `cost` and `latency` are scored directly: the harness reads the gateway
@@ -304,20 +330,33 @@ The evaluator refuses:
 - writing a capture for a run that made no model call at all, because an empty transcript replays
   forever and asserts nothing.
 
-## What this build does not do
+## Where the boundary actually is
 
-Being precise about the boundary is the point of the phase:
+Three things this walkthrough once called unbuilt have shipped, and keeping the differences straight
+is the point:
 
-- **No exporter is installed.** `export: otlp` is intent and a variable name. Generated services
-  depend on the OpenTelemetry *API*, which is already in the runtime; the SDK and the OTLP exporter
-  are a host dependency.
-- **No dashboards or alerts are generated.** Alerting on cost per customer, eval drift and guardrail
-  trigger rate needs a backend AID does not ship.
-- **No fleet reporting command.** Aggregating cost, eval and trace summaries across many
-  deployments from files is designed in the RFC and not built.
+- **The exporter is generated; calling it is the app's job.** `py-fastapi` emits
+  `tracing_export_status()` and `metrics_export_status()` into `app/generated/observability.py`, and
+  the app calls them at startup. Nothing installs on import, and the SDK plus OTLP exporter are
+  installed as the `aid-runtime-python[otlp]` extra rather than added to your dependency set.
+  `ts-vercel` installs no exporter and refuses `export: otlp` instead of accepting a destination
+  nothing is sent to ([features](../features.md), [RFC §10.8](../rfcs/0001-agents-at-scale.md)).
+- **Alerts are generated as infrastructure; dashboards are not.** Spec 0.30 adds
+  `observability.alerts`: a metric, a window, a reduction and a threshold, optionally scoped to one
+  agent or eval. `aid infra gen` turns each one into a real CloudWatch alarm, Cloud Monitoring policy
+  or CDK `CfnAlarm` that treats missing data as missing rather than healthy. Four gates keep an alarm
+  from being a knob that never pages: `ir/alerts-unexported`, `ir/alerts-unproduced`,
+  `ir/alerts-aggregate` and `ir/alerts-source`. A dashboard is still not generated.
+- **Fleet reporting shipped.** `aid report <dir>` reads a directory of deployments -- each holding
+  the `*.jsonl` files its trace sink wrote and any `*.baseline.json` it committed -- and prints
+  spans, traces, measured cost, p95 latency, errors and baseline scores per customer beside a fleet
+  total. Nothing is uploaded, so the same command runs on a CI artifact download, and `--budget`
+  turns the total into a ceiling that fails the job. A deployment with no trace files shows a dash
+  rather than `$0.000000`, because "nothing was measured" and "measured zero" are different answers.
 
-Everything above is recorded as a deliberate non-build in `docs/rfcs/0001-agents-at-scale.md` §10.3
-rather than implied by a command that does not exist. The capabilities 0.27 ships —
+Everything above is recorded as shipped or not built in
+[RFC §10](../rfcs/0001-agents-at-scale.md#10-what-is-specified-here-but-not-built) rather than implied
+by a command that does not exist. The capabilities 0.27 describes —
 `observability-export` and, since 0.1.158, `agent-trajectory-evals` — are counted on the
 [features page](../features.md) rather than left to a walkthrough to assert. The refusals shown above
 join the others under [what AID refuses](../features.md#refused-on-purpose), and the eval widening is

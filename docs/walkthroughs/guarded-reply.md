@@ -4,11 +4,11 @@ description: "A minimal example proving a guard step is load-bearing exactly whe
 
 # Walkthrough: guarded-reply
 
-`examples/guarded-reply` is one pipeline, one guardrail and one claim: **a `guard` step is
+`examples/guarded-reply` is one pipeline, two guardrails and one claim: **a `guard` step is
 load-bearing exactly where no route-level table sees the payload.** It is deliberately the smallest
 example that can prove that, and the second example exists because the first could not.
 
-It is 29 files on disk. The pipeline is four steps.
+It is 32 files on disk. The pipeline is four steps.
 
 ## Run it
 

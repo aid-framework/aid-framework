@@ -131,8 +131,10 @@ narrowing command: `acme` alone is `$18.40` of the `$27.50`, so a per-deployment
 run tells you in one step whether the ceiling is stale or one customer's usage changed.
 
 `--budget` uses the same flag name, meaning and diagnostics as `aid cost` — `cli/cost-budget-invalid`
-for a value that is not a positive number, `cli/cost-over-budget` for an exceeded ceiling. There is
-no second vocabulary for the same idea, and a value that will not parse fails before any file is read.
+for a value that is not a plain non-negative decimal, `cli/cost-over-budget` for an exceeded ceiling.
+There is no second vocabulary for the same idea, and a value that will not parse fails before any file
+is read. `--budget 0` is accepted and usually fails, because an unmeasured fleet is still a fleet that
+has spent money; the flag refuses only text it cannot read as an amount, not a ceiling of zero.
 
 ## Refusal four: a file that looks like a baseline but is not one
 
@@ -259,7 +261,7 @@ a CI script can assert on them without special-casing a missing key.
 | `cli/report-dir-unreadable` | the argument is not a directory | `2` | point at the directory of deployments, or use `aid cost` for one sink |
 | `cli/report-no-deployments` | no immediate child directories | `0` + warning | check where the sink was downloaded; an empty fleet is a real answer |
 | `cli/report-baseline-invalid` | a `*.baseline.json` with no `dataset` or a non-numeric `mean` | `0` + warning | regenerate with `aid eval --baseline`; do not hand-edit |
-| `cli/cost-budget-invalid` | `--budget` is not a positive number | `2` | pass dollars, e.g. `--budget 40` |
+| `cli/cost-budget-invalid` | `--budget` is not a plain non-negative decimal | `2` | pass a plain decimal, e.g. `--budget 250`; `0` is accepted |
 | `cli/cost-over-budget` | the measured total exceeds `--budget` | `1` | raise the ceiling deliberately, or narrow with `aid cost --budget` |
 
 Every one of those refusals is a fact about the input, checked before a summary is printed. None of
