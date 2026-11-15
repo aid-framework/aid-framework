@@ -720,6 +720,21 @@ What is refused:
 `aid eject` moves a generated file into `business/` and stops generating it. After that the
 file is yours, and the manifest says so instead of re-reporting it as drift.
 
+`aid review` prints the split a reviewer has to work from. It runs the same pipeline as
+`validate` and adds no gate, so a spec the build refuses is refused rather than itemised.
+
+```sh
+aid review
+aid review --json
+```
+
+The first block is what the build checked. The second is what it only read as a declaration,
+each with the path to go and confirm: the identity issuer, the audit sink and its retention,
+the region pin, the private placement and its egress rule, the approvers and how many are
+required, and the secret names the platform must supply. The pack is not a control. It reports
+that a control was declared; it cannot contact the identity provider, look inside the network,
+or ask the approvers whether they agreed.
+
 Covers:
 
 - **Infrastructure from the spec**
@@ -733,6 +748,7 @@ Covers:
   and gated; the run store and the token check stay yours — see
   [the features page](features.md#declared-and-gated-not-generated))*
 - **Eject**
+- **A review pack that keeps proved and declared apart**
 
 ## Observability and cost
 

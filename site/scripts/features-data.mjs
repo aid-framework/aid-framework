@@ -590,6 +590,20 @@ export const SHIPPED_FEATURES = [
     since: '0.1.148',
   },
   {
+    id: 'review-pack',
+    maturity: 'tooling',
+    evidence: {
+      path: 'packages/cli/src/commands/review.ts',
+      marker: 'the build did not verify',
+    },
+    title: 'A review pack that keeps proved and declared apart',
+    detail:
+      '`aid review [spec]` prints what the build checked and what it only accepted as a declaration, each with the path a reviewer has to go and confirm: the identity issuer, the audit sink and its retention, the region pin, the private placement and its egress rule, the approvers and how many are required, and the secret names the platform must supply. It re-uses the `validate` pipeline and adds no gate, so a spec the build refuses is refused here too -- a pack for a spec that does not build would itemise controls the build never reached. The distinction it prints is the one the framework insists on everywhere else: the build reads the document, and it cannot contact your identity provider, look inside your network, or ask your approvers whether they agreed.',
+    declaredBy: 'aid review',
+    href: './reference/cli.md#review',
+    since: '0.1.185',
+  },
+  {
     id: 'promotion-gate',
     maturity: 'enforced',
     evidence: { path: 'packages/ir/src/gates/promotion.ts', marker: 'promotion' },
@@ -1158,6 +1172,7 @@ export const CAPABILITY_FAMILIES = [
       'eject',
       'profiles',
       'delivery-controls',
+      'review-pack',
     ],
   },
   {

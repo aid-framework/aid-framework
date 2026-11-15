@@ -30,6 +30,7 @@ import { migrate } from './commands/migrate.js';
 import { packageEdge } from './commands/package.js';
 import { report } from './commands/report.js';
 import { resolve } from './commands/resolve.js';
+import { review } from './commands/review.js';
 import { trace } from './commands/trace.js';
 import { validate } from './commands/validate.js';
 import type { CliContext } from './context.js';
@@ -109,6 +110,13 @@ export const COMMANDS: readonly Command[] = [
     usage: 'fleet [dir]',
     flags: [JSON_FLAG],
     run: (context, args) => fleet(context, { dir: args.positionals[0] }),
+  },
+  {
+    name: 'review',
+    summary: 'print what the build proved about a service, and what it only accepted as declared',
+    usage: 'review [spec]',
+    flags: [JSON_FLAG],
+    run: (context, args) => review(context, { spec: args.positionals[0] }),
   },
   {
     name: 'gen',
