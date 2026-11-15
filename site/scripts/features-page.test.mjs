@@ -3,9 +3,10 @@
  *
  * The page is generated, so the bands that come from `loadSupportData()` cannot drift. What
  * can drift is everything the tree does not declare: the managed service behind a target,
- * the release that first shipped a feature, the spec key that turns it on, and the
- * diagnostic named beside a refusal. Each of those is a claim a reader makes a decision on,
- * so each is asserted here against the declaration that would have to change with it.
+ * the release that first shipped a feature, the spec key that turns it on, the diagnostic
+ * named beside a refusal, and the diagnostic named as the enforcement of a declared row.
+ * Each of those is a claim a reader makes a decision on, so each is asserted here against
+ * the declaration that would have to change with it.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -185,6 +186,24 @@ describe('the features page data', () => {
         `\`${entry.code}\` is named as the enforcement of "${entry.id}", but no diagnostic table defines it`,
       ).toContain(entry.code);
       expect(page).toContain(`\`${entry.code}\``);
+    }
+  });
+
+  it('names only a diagnostic that exists as the enforcement of a declared feature', () => {
+    // A declared row's whole claim is "a gate refuses this, and here is which one". The
+    // refusal list above is held to the diagnostic table; these rows were not, so a rename
+    // could leave the honest-inventory section naming a gate that no longer answers to that
+    // code. Every code it names must be registered, and rendered beside the row.
+    for (const entry of DECLARED_FEATURES) {
+      const codes = entry.enforces.split(',').map((code) => code.trim());
+      expect(codes.length, `"${entry.title}" names no enforcing diagnostic`).toBeGreaterThan(0);
+      for (const code of codes) {
+        expect(
+          data.diagnostics,
+          `\`${code}\` is named as the enforcement of "${entry.title}", but no diagnostic table defines it`,
+        ).toContain(code);
+        expect(page, `\`${code}\` is not rendered beside "${entry.title}"`).toContain(code);
+      }
     }
   });
 
@@ -396,6 +415,29 @@ describe('homepage capability band', () => {
     }
     for (const id of claimableIds) {
       expect(claimed, `"${id}" is registered but no family sells it`).toContain(id);
+    }
+  });
+
+  it('declares each capability in exactly one registry', () => {
+    // `registeredIds` is what the band counts, so an id present in both lists would make a
+    // row that emits nothing count as shipped -- the one claim the declared inventory
+    // exists to prevent. A duplicate inside a list is the same miscount with a subtler
+    // cause, so both are refused here.
+    const lists = [
+      ['SHIPPED_FEATURES', SHIPPED_FEATURES],
+      ['AI_INFRA', AI_INFRA],
+      ['DECLARED_FEATURES', DECLARED_FEATURES],
+    ];
+    const seen = new Map();
+    for (const [name, entries] of lists) {
+      for (const entry of entries) {
+        const previous = seen.get(entry.id);
+        expect(
+          previous,
+          `"${entry.id}" is declared twice (${previous ?? ''} and ${name}); a capability lives in one registry`,
+        ).toBeUndefined();
+        seen.set(entry.id, name);
+      }
     }
   });
 
