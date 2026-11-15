@@ -24,16 +24,18 @@ Every provider below is served by `py-fastapi` and `ts-vercel` and is accepted b
 
 A `yes` means the infra planner emits a module for that target on that cloud. A dash means it refuses the plan with a named diagnostic; it does not emit unvalidated HCL. Every emitted module is byte-asserted against a committed fixture and validated with `tofu validate` in CI.
 
-| Target | `aws` | `gcp` |
-| --- | --- | --- |
-| `batch` | yes | yes |
-| `container` | yes | yes |
-| `edge` | yes | — |
-| `serverless` | yes | yes |
+| Target | `aws` | `gcp` | `azure` |
+| --- | --- | --- | --- |
+| `batch` | yes | yes | — |
+| `container` | yes | yes | — |
+| `edge` | yes | — | — |
+| `serverless` | yes | yes | — |
 
-The emitted infrastructure is OpenTofu. A plan targets one cloud at a time, because two providers in one state is a blast radius rather than a feature.
+The emitted infrastructure is OpenTofu, CDK, or a Helm chart. A plan targets one cloud at a time, because two providers in one state is a blast radius rather than a feature.
 
-Azure and Kubernetes are deferred by decision, and deferred means refused: `cloud: azure`, `cloud: kubernetes` or `cloud: k8s` is refused by `ir/cloud-unsupported`, which names the supported set and points here. The schema admits those names on purpose, so the refusal reads as a decision with a fix rather than a mistyped enum entry; a name that is not a cloud at all (`awz`) is `ir/deploy-target-unknown` instead. A cloud enters this table by way of a module set per target, byte-asserted fixtures and `tofu validate` in CI, so the trigger to reopen it is the first customer requirement that cannot be served on `aws` or `gcp` -- not a preference for a different vendor.
+`kubernetes` is a deployment target rather than a cloud, so it has no column here: `aid infra gen --iac helm` emits a chart that installs on any conformant cluster, and `cloud` keeps naming where the image registry and the audit sink live. `azure` has a column and a dash in every row because AID emits no Azure compute module. An Azure customer places the workload on their own cluster -- `target: kubernetes` with `cloud: azure` and `region: uksouth` for the registry and the `azure-monitor` audit sink -- and installs the chart on AKS. That is the boundary stated plainly: the chart is cloud-neutral, and the Azure module set does not exist. The trigger to write one is the first customer whose policy forbids running the workload on a cluster they hold the control plane for.
+
+A cloud name is not a runtime: `cloud: kubernetes`, `cloud: k8s` and `cloud: openshift` are refused by `ir/cloud-unsupported`, which names the supported set and points here. To run on a cluster, set `target: kubernetes` and let `cloud` keep describing the account the registry and audit sink belong to. A name that is not a cloud at all (`awz`) is `ir/deploy-target-unknown` instead. A cloud enters this table by way of a module set per target, byte-asserted fixtures and `tofu validate` in CI, so the trigger to add one is a customer requirement that cannot be served on `aws` or `gcp` -- not a preference for a different vendor.
 
 ## Alerts and the target you choose
 
@@ -45,7 +47,7 @@ Publishing takes two steps, and declaring the export is only the first: the seri
 
 ## Spec language
 
-The current spec language version is `0.35`.
+The current spec language version is `0.36`.
 A construct that needs a later version is reported as `spec/not-supported`, naming the version it needs, instead of being ignored.
 
 Retriever chunking strategies are all implemented in both runtimes:

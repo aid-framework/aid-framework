@@ -93,12 +93,12 @@ describe('aid validate', () => {
   });
 
   it('refuses a capitalised deferred cloud at the gate that names the deferral', () => {
-    // The schema admits `Azure` on purpose, so that the refusal can say what it is. When
+    // The schema admits `Oracle` on purpose, so that the refusal can say what it is. When
     // the pattern refused it, a reader who capitalised a cloud AID has deferred was told
     // `does not match ^[a-z][a-z0-9-]{1,30}$`, which names no cloud, no capability and no
     // fix.
     const made = scratch(templateSpec('enterprise-approvals', 'demo'));
-    const capitalised = made.read(SPEC_PATH).replace('cloud: aws', 'cloud: Azure');
+    const capitalised = made.read(SPEC_PATH).replace('cloud: aws', 'cloud: Oracle');
     expect(capitalised).not.toBe(made.read(SPEC_PATH));
     made.setSpec(capitalised);
 

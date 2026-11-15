@@ -27,7 +27,8 @@ import type {
 } from '@aid-framework/ir';
 
 import { TARGETS } from '../targets.js';
-import { type Cloud, DEFAULT_CLOUD } from './cloud.js';
+import { type Cloud, DEFAULT_CLOUD, type IacBackend } from './cloud.js';
+import { emitHelmChart } from './helm.js';
 import { emitProviderModules, envRoot, modulesOf } from './modules/index.js';
 import { INFRA_CDK_CONTEXT_PATH, INFRA_GENERATED_DIR, INFRA_PLAN_PATH } from './paths.js';
 import { awsSchedulerCronExpression } from './schedule.js';
@@ -35,6 +36,7 @@ import { awsSchedulerCronExpression } from './schedule.js';
 export {
   INFRA_CDK_CONTEXT_PATH,
   INFRA_GENERATED_DIR,
+  INFRA_HELM_CHART_DIR,
   INFRA_MANIFEST_PATH,
   INFRA_PLAN_PATH,
 } from './paths.js';
@@ -494,9 +496,20 @@ export interface DeployContext {
 /**
  * Every derived file, in a stable order. Pure: the same plan always yields the same bytes,
  * so `aid infra gen --check` can compare content instead of trusting a timestamp.
+ *
+ * `helm` is routed before the plan's two backend spellings, because a chart is not a
+ * variation on an OpenTofu root: it consumes the plan document and nothing else. The tfvars
+ * and CDK-context spellings are still *not* written for it, since a file no backend reads is
+ * a file that drifts.
  */
-export function emitInfra(plan: DeployPlan, options: { cloud?: Cloud } = {}): InfraFile[] {
+export function emitInfra(
+  plan: DeployPlan,
+  options: { cloud?: Cloud; iac?: IacBackend } = {},
+): InfraFile[] {
   const cloud = options.cloud ?? DEFAULT_CLOUD;
+  if (options.iac === 'helm') {
+    return [{ path: INFRA_PLAN_PATH, contents: json(plan) }, ...emitHelmChart(plan)];
+  }
   return [
     { path: INFRA_PLAN_PATH, contents: json(plan) },
     { path: `${INFRA_GENERATED_DIR}/deploy.auto.tfvars.json`, contents: json(tfvars(plan)) },

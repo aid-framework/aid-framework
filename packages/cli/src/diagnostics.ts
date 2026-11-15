@@ -89,6 +89,13 @@ export const CLI_DIAGNOSTIC_CODES = {
   infraRuntimeUnsupported: 'cli/infra-runtime-unsupported',
   infraGatewayUnsupported: 'cli/infra-gateway-unsupported',
   infraKnowledgeBaseDestroy: 'cli/infra-knowledge-base-destroy',
+  // The `helm` backend emits a workload chart and nothing else. Each of these names a
+  // spec construct the chart does not render, because emitting a chart that silently
+  // omitted the resource the document asked for would look like a successful deploy.
+  infraHelmSurfaceUnsupported: 'cli/infra-helm-surface-unsupported',
+  infraHelmTargetRequired: 'cli/infra-helm-target-required',
+  infraKubernetesBackendRequired: 'cli/infra-kubernetes-backend-required',
+  infraHelmNotDriven: 'cli/infra-helm-not-driven',
   infraGeneratedOutdated: 'cli/infra-generated-outdated',
   infraNotGenerated: 'cli/infra-not-generated',
   infraEnvRootMissing: 'cli/infra-env-root-missing',

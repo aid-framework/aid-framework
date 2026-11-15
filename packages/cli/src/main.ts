@@ -369,9 +369,10 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'infra',
-    summary: 'derive the deployment wiring from the spec and drive OpenTofu or AWS CDK',
+    summary:
+      'derive the deployment wiring from the spec (OpenTofu, AWS CDK, or a Helm chart) and drive a backend',
     usage:
-      'infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--iac <tofu|cdk>] [--cloud <aws|gcp>] [--force]',
+      'infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--iac <tofu|cdk|helm>] [--cloud <aws|gcp|azure>] [--force]',
     maxPositionals: 2,
     flags: [
       booleanFlag('dry-run', 'gen: report what would change, and write nothing'),
@@ -383,13 +384,13 @@ export const COMMANDS: readonly Command[] = [
       ),
       valueFlag(
         'iac',
-        'tofu|cdk',
-        'plan, apply and drift: which backend to drive; defaults to tofu',
+        'tofu|cdk|helm',
+        'which backend to emit (gen) or drive (plan, apply, drift); defaults to tofu. helm renders a chart for target: kubernetes and is not driven by this command',
       ),
       valueFlag(
         'cloud',
-        'aws|gcp',
-        'which cloud the module set targets, and so which env root an action runs in; defaults to aws',
+        'aws|gcp|azure',
+        'which cloud the module set targets, and so which env root an action runs in; defaults to aws. azure is served by iac helm only',
       ),
       booleanFlag('confirm-prod', 'required to apply to prod'),
       booleanFlag('force', 'gen: overwrite generated files that were edited by hand'),

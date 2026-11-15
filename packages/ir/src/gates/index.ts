@@ -32,6 +32,7 @@ import { guardrailCoverageGate, guardrailPolicyGate } from './guardrails.js';
 import { hitlSideEffectGate } from './hitl.js';
 import { identityGate } from './identity.js';
 import { knowledgeBaseGate } from './knowledge-base.js';
+import { kubernetesGate } from './kubernetes.js';
 import { memoryRefsGate } from './memory.js';
 import { normalizeGate } from './normalize.js';
 import {
@@ -65,6 +66,7 @@ export const GATES = {
   'memory/refs': memoryRefsGate,
   'retrievers/knowledge-bases': knowledgeBaseGate,
   'deploy/streaming': deployStreamingGate,
+  kubernetes: kubernetesGate,
   'orchestration/deepagents': orchestrationDeepagentsGate,
   profile: profileGate,
   state: stateGate,

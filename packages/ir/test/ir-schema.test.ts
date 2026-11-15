@@ -154,11 +154,35 @@ describe('ir.schema.json', () => {
       validate({ ...base, deployments: [{ ...deployment, ...extra }] });
 
     expect(validate({ ...base, deployments: [deployment] })).toBe(true);
-    expect(placed({ cloud: 'azure' })).toBe(false);
+    expect(placed({ cloud: 'azure' })).toBe(true);
     expect(placed({ cloud: 'gcp' })).toBe(true);
+    expect(placed({ cloud: 'openshift' })).toBe(false);
     expect(placed({ audit: { sink: 'splunk' } })).toBe(false);
     expect(placed({ audit: {} })).toBe(false);
     expect(placed({ audit: { sink: 'cloudwatch', retentionDays: 0 } })).toBe(false);
     expect(placed({ audit: { sink: 'cloudwatch', retentionDays: 30 } })).toBe(true);
+    expect(placed({ audit: { sink: 'azure-monitor' } })).toBe(true);
+  });
+
+  it('rejects a cluster placement the chart is not driven by', () => {
+    const deployment = {
+      id: 'api',
+      target: 'kubernetes',
+      streaming: false,
+      secrets: [],
+      env: [],
+      traits: [],
+    };
+    const placed = (extra: Record<string, unknown>): boolean =>
+      validate({ ...base, deployments: [{ ...deployment, ...extra }] });
+
+    expect(validate({ ...base, deployments: [deployment] })).toBe(true);
+    expect(placed({ kubernetes: {} })).toBe(true);
+    expect(placed({ kubernetes: { namespace: 'claims' } })).toBe(true);
+    expect(placed({ kubernetes: { namespace: 'Claims' } })).toBe(false);
+    expect(placed({ kubernetes: { ingress: { host: 'claims.example.com' } } })).toBe(false);
+    expect(
+      placed({ kubernetes: { ingress: { host: 'claims.example.com', className: 'nginx' } } }),
+    ).toBe(true);
   });
 });

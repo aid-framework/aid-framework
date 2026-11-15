@@ -33,7 +33,7 @@ Every command accepts `-h` / `--help` for its own usage. All except `dev` accept
 | [`report`](#report) | compare many deployments from their trace sinks and recorded eval baselines |
 | [`doctor`](#doctor) | diagnose the tree against the spec: drift, versions, missing files |
 | [`eject`](#eject) | take ownership of a generated file: move it to business/ and stop generating it |
-| [`infra`](#infra) | derive the deployment wiring from the spec and drive OpenTofu or AWS CDK |
+| [`infra`](#infra) | derive the deployment wiring from the spec (OpenTofu, AWS CDK, or a Helm chart) and drive a backend |
 | [`package`](#package) | build the archive an `edge` deployment hands to Lambda@Edge |
 
 ## `init`
@@ -307,10 +307,10 @@ aid eject <path> [--target <name>] [--dry-run]
 
 ## `infra`
 
-derive the deployment wiring from the spec and drive OpenTofu or AWS CDK
+derive the deployment wiring from the spec (OpenTofu, AWS CDK, or a Helm chart) and drive a backend
 
 ```sh
-aid infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--iac <tofu|cdk>] [--cloud <aws|gcp>] [--force]
+aid infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--iac <tofu|cdk|helm>] [--cloud <aws|gcp|azure>] [--force]
 ```
 
 | Option | Description |
@@ -318,8 +318,8 @@ aid infra <gen|plan|apply|drift> [spec] [--dry-run|--check] [--env <name>] [--ia
 | `--dry-run` | gen: report what would change, and write nothing |
 | `--check` | gen: exit non-zero when the generated tree is out of date |
 | `--env <name>` | environment root (infra/envs/&lt;name&gt;, infra/envs/gcp-&lt;name&gt;, or infra/cdk/&lt;name&gt;); plan, apply and drift use dev |
-| `--iac <tofu\|cdk>` | plan, apply and drift: which backend to drive; defaults to tofu |
-| `--cloud <aws\|gcp>` | which cloud the module set targets, and so which env root an action runs in; defaults to aws |
+| `--iac <tofu\|cdk\|helm>` | which backend to emit (gen) or drive (plan, apply, drift); defaults to tofu. helm renders a chart for target: kubernetes and is not driven by this command |
+| `--cloud <aws\|gcp\|azure>` | which cloud the module set targets, and so which env root an action runs in; defaults to aws. azure is served by iac helm only |
 | `--confirm-prod` | required to apply to prod |
 | `--force` | gen: overwrite generated files that were edited by hand |
 | `--json` | print one JSON document on stdout |

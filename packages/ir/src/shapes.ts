@@ -1161,7 +1161,7 @@ export type GuardrailDecisionAction = (typeof GUARDRAIL_DECISION_ACTIONS)[number
  * cannot represent, and a test pins it against the schema's `target` enum so a target
  * added to one side cannot be silently coerced on the other.
  */
-export const DEPLOY_TARGETS = ['serverless', 'container', 'batch', 'edge'] as const;
+export const DEPLOY_TARGETS = ['serverless', 'container', 'batch', 'edge', 'kubernetes'] as const;
 
 export type DeploymentTarget = (typeof DEPLOY_TARGETS)[number];
 
@@ -1188,24 +1188,29 @@ export const DEFAULT_PROFILE: Profile = 'standard';
  * keeps its own `CLOUDS` because `site/scripts/support-data.mjs` parses that literal out of
  * the source to build the support matrix; a test pins the two lists equal so neither can
  * drift silently.
+ *
+ * `azure` joined in spec 0.36 with exactly one served path: `target: kubernetes` rendered by
+ * `aid infra gen --iac helm`. It is deliberately not a `tofu` or `cdk` cloud -- AID emits no
+ * Azure OpenTofu module, so `--iac tofu --cloud azure` is refused rather than emitting an
+ * empty root. The region table exists because residency pinning is one of the enterprise
+ * controls the profile gate requires, and a region the parser cannot check is not a pin.
  */
-export const SPEC_CLOUDS = ['aws', 'gcp'] as const;
+export const SPEC_CLOUDS = ['aws', 'gcp', 'azure'] as const;
 
 export type SpecCloud = (typeof SPEC_CLOUDS)[number];
 
 /**
  * Clouds a customer may name that AID does not provision.
  *
- * Azure and Kubernetes are deferred by decision, recorded in
- * `docs/rfcs/0004-round-4-resume-and-agent-loop.md` §6: neither is built, and the reopening
- * trigger is the first customer requirement that cannot be served on `aws` or `gcp`. The
- * rest are simply not served. Naming any of them is `ir/cloud-unsupported` — a refusal that
+ * Azure left this list in spec 0.36: it is served now, though only through the Helm backend.
+ * Kubernetes is still here on purpose -- `cloud: kubernetes` is a category error (a cluster is
+ * a deploy target, not a cloud), and saying so is more useful than accepting it. The rest are
+ * simply not served. Naming any of them is `ir/cloud-unsupported` — a refusal that
  * says what AID does provision — rather than `ir/deploy-target-unknown`, which is kept for a
  * value that is not a cloud name at all (a typo). The distinction is the point: one reads as
  * a decision, the other as a mistake.
  */
 export const UNSERVED_CLOUDS = [
-  'azure',
   'kubernetes',
   'k8s',
   'openshift',
@@ -1301,6 +1306,28 @@ export const CLOUD_REGIONS: Readonly<Record<SpecCloud, readonly string[]>> = {
     'us-west3',
     'us-west4',
   ],
+  azure: [
+    'australiaeast',
+    'brazilsouth',
+    'canadacentral',
+    'centralindia',
+    'centralus',
+    'eastus',
+    'eastus2',
+    'francecentral',
+    'germanywestcentral',
+    'japaneast',
+    'koreacentral',
+    'northeurope',
+    'southafricannorth',
+    'southeastasia',
+    'swedencentral',
+    'switzerlandnorth',
+    'uksouth',
+    'westeurope',
+    'westus2',
+    'westus3',
+  ],
 };
 
 /**
@@ -1309,13 +1336,19 @@ export const CLOUD_REGIONS: Readonly<Record<SpecCloud, readonly string[]>> = {
  * A sink names a service the customer already runs. Naming one that belongs to the other
  * cloud is refused (`ir/audit-target`) rather than emitted as a resource the deploy cannot
  * create -- the same rule as `CLOUD_REGIONS`, for the same reason.
+ *
+ * `azure-monitor` joined in spec 0.36. It is a *declared* sink: the Helm chart does not
+ * create a Log Analytics workspace or a diagnostic setting, so an Enterprise deployment on
+ * Azure satisfies `ir/profile-audit` by naming the workspace the platform team already
+ * operates. The gate checks the document; it cannot check the workspace exists.
  */
 export const CLOUD_AUDIT_SINKS: Readonly<Record<SpecCloud, readonly AuditSink[]>> = {
   aws: ['cloudwatch', 's3'],
   gcp: ['gcs', 'bigquery'],
+  azure: ['azure-monitor'],
 };
 
-export const AUDIT_SINKS = ['cloudwatch', 's3', 'gcs', 'bigquery'] as const;
+export const AUDIT_SINKS = ['cloudwatch', 's3', 'gcs', 'bigquery', 'azure-monitor'] as const;
 
 export type AuditSink = (typeof AUDIT_SINKS)[number];
 
@@ -1419,6 +1452,50 @@ export interface DeploymentNetworkShape {
 export const DEPLOYMENT_EGRESS = ['declared-only', 'open'] as const;
 
 export type DeploymentEgress = (typeof DEPLOYMENT_EGRESS)[number];
+
+/**
+ * The namespace a `target: kubernetes` release installs into when the spec names none.
+ *
+ * `default` and not a project-derived name, because the chart is installed by an operator
+ * who may have provisioned a namespace per environment already; inventing one would either
+ * fail against a namespace that does not exist or silently create a second one beside it.
+ */
+export const DEFAULT_KUBERNETES_NAMESPACE = 'default';
+
+/**
+ * Where a `target: kubernetes` deployment lands on a cluster, from spec 0.36.
+ *
+ * The placement, not the workload. The workload is the image `target: container` already
+ * builds, so the same app runs on a cluster without a second generation path; what this
+ * block decides is what the emitted Helm chart's values say. Deliberately small: AID owns
+ * the workload contract (probes, resources, the secret reference, identity, ingress) and
+ * does not own the customer's storage classes, node pools, service mesh or admission
+ * policy.
+ */
+export interface DeploymentKubernetesShape {
+  /** The namespace the release installs into. Absent means `default`. */
+  namespace?: string;
+  /** Expose the service through an Ingress, or emit a ClusterIP Service only. */
+  ingress?: DeploymentKubernetesIngressShape;
+}
+
+/** How a `target: kubernetes` deployment is exposed. */
+export interface DeploymentKubernetesIngressShape {
+  /** The hostname the Ingress routes. */
+  host: string;
+  /**
+   * The `ingressClassName` the cluster resolves. Required, because an Ingress with no
+   * class is routed by whichever controller the cluster registered as the default -- a
+   * property of the cluster rather than of this spec.
+   */
+  className: string;
+  /**
+   * The name of a `kubernetes.io/tls` Secret already in the cluster. A name, never
+   * certificate material: the chart writes no secret, so the certificate lifecycle stays
+   * with the customer.
+   */
+  tlsSecret?: string;
+}
 
 /**
  * Who has to sign off before a change lands, from spec 0.26.
@@ -1555,6 +1632,12 @@ export interface DeploymentShape {
   network?: DeploymentNetworkShape;
   /** Who has to sign off before a production change lands (spec 0.26). */
   approvals?: DeploymentApprovalsShape;
+  /**
+   * Where a `target: kubernetes` deployment lands on a cluster (spec 0.36). Present only
+   * on that target, which `ir/kubernetes-block-misplaced` enforces on the way in; the
+   * emitted Helm chart reads it as its values.
+   */
+  kubernetes?: DeploymentKubernetesShape;
   /**
    * Where a container image is published. Present only on a `target: container`
    * deployment, and only from spec 0.4. The registry is one of

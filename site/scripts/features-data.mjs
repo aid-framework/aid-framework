@@ -49,6 +49,34 @@ export const CLOUD_REFUSALS = [
       'Cloud CDN serves static assets and cannot run the app, so there is no GCP resource to map `edge` to.',
     code: 'cli/infra-cloud-target-unsupported',
   },
+  {
+    cloud: 'azure',
+    target: 'serverless',
+    reason:
+      'AID emits no Azure Functions module, so there is no plan to apply. The workload AID does generate for Azure is the Helm chart: set `target: kubernetes` and install it on AKS.',
+    code: 'cli/infra-cloud-target-unsupported',
+  },
+  {
+    cloud: 'azure',
+    target: 'container',
+    reason:
+      'AID emits no Container Apps module. `target: container` builds the image and `target: kubernetes` places it, so an Azure deployment declares the cluster target and keeps `cloud: azure` for its registry and audit sink.',
+    code: 'cli/infra-cloud-target-unsupported',
+  },
+  {
+    cloud: 'azure',
+    target: 'batch',
+    reason:
+      'AID emits no Azure Container Instances or Container Apps Job module, so a run-to-completion job has no resource to map to.',
+    code: 'cli/infra-cloud-target-unsupported',
+  },
+  {
+    cloud: 'azure',
+    target: 'edge',
+    reason:
+      'Azure Front Door serves assets and cannot run the app, so there is no Azure resource to map `edge` to.',
+    code: 'cli/infra-cloud-target-unsupported',
+  },
 ];
 
 /**
@@ -387,6 +415,31 @@ export const SHIPPED_FEATURES = [
     declaredBy: 'aid infra --iac cdk',
     href: './reference/cli.md#infra',
     since: '0.1.57',
+  },
+  {
+    id: 'helm',
+    maturity: 'emitted',
+    evidence: { path: 'packages/cli/src/infra/helm.ts', marker: 'CHART_VERSION' },
+    title: 'A Helm chart for a cluster target',
+    detail:
+      'A `kubernetes` deployment emits a chart instead of a cloud module: a Deployment, a Service, an Ingress when one is declared, and a values file covering the image, the replicas, the resource requests and the pod security context. The chart is cloud-neutral, so the same bytes install on AKS, EKS or GKE, and `cloud` and `region` still name where the image registry and the audit sink live.',
+    declaredBy: 'aid infra gen --iac helm',
+    href: './reference/cli.md#infra',
+    since: '0.1.189',
+  },
+  {
+    id: 'kubernetes-placement',
+    maturity: 'enforced',
+    evidence: {
+      path: 'packages/ir/src/gates/kubernetes.ts',
+      marker: 'IR_DIAGNOSTIC_CODES.kubernetesBlockMisplaced',
+    },
+    title: 'A cluster placement with an addressable ingress',
+    detail:
+      'A `kubernetes` deployment declares its namespace and, optionally, the ingress that publishes it. A `kubernetes` block on a deployment that is not placed on a cluster is refused rather than ignored, because it would read as a placement that never happened. An ingress must name an `ingressClassName`, and under `profile: enterprise` the TLS secret that terminates it.',
+    declaredBy: 'deployments[].kubernetes',
+    href: './reference/spec.md#deployment',
+    since: '0.1.189',
   },
   {
     id: 'eject',
@@ -883,6 +936,20 @@ export const REFUSALS = [
     code: 'cli/infra-cloud-target-unsupported',
   },
   {
+    id: 'cluster-placement-without-helm',
+    title: 'A `kubernetes` deployment sent through an OpenTofu or CDK backend',
+    reason:
+      'A cluster is not a cloud module: the plan for a `kubernetes` deployment is a Helm chart, and neither OpenTofu nor CDK emits one. The refusal names the backend that does, because "run `aid infra gen --iac helm`" is a fix and "pick another cloud" is not.',
+    code: 'cli/infra-kubernetes-backend-required',
+  },
+  {
+    id: 'cluster-block-off-a-cluster',
+    title: 'A `kubernetes` block on a deployment that is not placed on a cluster',
+    reason:
+      'The block declares a namespace and an ingress, and both are meaningless unless the workload is placed on a cluster. Ignoring it would let a spec read as a cluster placement while the plan emitted a serverless function, so the `kubernetes` gate refuses the mismatch instead.',
+    code: 'ir/kubernetes-block-misplaced',
+  },
+  {
     id: 'enterprise-profile-without-audit',
     title: 'An `enterprise` profile with a required control missing',
     reason:
@@ -1196,6 +1263,8 @@ export const CAPABILITY_FAMILIES = [
       'delivery-controls',
       'generated-verifier',
       'review-pack',
+      'helm',
+      'kubernetes-placement',
     ],
   },
   {

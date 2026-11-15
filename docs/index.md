@@ -37,7 +37,7 @@ You write the part that is actually yours: one spec, the prompt text and the too
 Everything between the spec and a deployable service is generated, gated and reproducible.
 
 ```yaml
-specVersion: "0.35"
+specVersion: "0.36"
 
 project:
   name: support-copilot
@@ -179,7 +179,7 @@ behind these counts.
 | **[Guardrails and decisions](./reference/spec.md#guardrail)** | `guardrails[], decisions[]` | An unprotected route is refused before it exists, and a judgement can be a checked decision instead of prose. | 6 |
 | **[Quality gates](./reference/spec.md#eval)** | `evals[]` | A quality regression fails the build, and every route that reaches users has an eval claiming it. | 10 |
 | **[Agents and tools](./reference/spec.md#agent)** | `agents[], tools[]` | The plumbing is generated and the tool bodies stay yours; a loop that could run unbounded or unpriced is refused. | 4 |
-| **[Deployment and infrastructure](./reference/targets.md#capability-matrix)** | `deployments[], aid infra` | The Dockerfile, OpenTofu or CDK and CI your cloud needs, plus the profile, region, audit sink and approvals an enterprise review asks for. | 10 |
+| **[Deployment and infrastructure](./reference/targets.md#capability-matrix)** | `deployments[], aid infra` | The Dockerfile, OpenTofu or CDK and CI your cloud needs, plus the profile, region, audit sink and approvals an enterprise review asks for. | 12 |
 | **[Observability and cost](./reference/cli.md#trace)** | `traces[], observability, aid cost, aid report` | Traces and costs leave only for the collector your policy names, alarms are generated infrastructure, and one report compares every customer. | 7 |
 | **[Fleet repeatability](./reference/cli.md#fleet)** | `overridable, aid resolve, aid fleet` | One reviewed base spec, one small overlay per customer: only paths the base opened can move, and the fleet is one command over git. | 4 |
 

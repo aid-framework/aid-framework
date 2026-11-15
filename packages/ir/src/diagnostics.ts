@@ -84,6 +84,9 @@ export const IR_DIAGNOSTIC_CODES = {
   auditTarget: 'ir/audit-target',
   cloudConflict: 'ir/cloud-conflict',
   auditConflict: 'ir/audit-conflict',
+  kubernetesBlockMisplaced: 'ir/kubernetes-block-misplaced',
+  kubernetesIngressClass: 'ir/kubernetes-ingress-class',
+  kubernetesIngressTls: 'ir/kubernetes-ingress-tls',
   orchestrationDeepagents: 'ir/orchestration-deepagents',
   evalUncovered: 'ir/eval-uncovered',
   evalTrajectory: 'ir/eval-trajectory',
@@ -187,6 +190,15 @@ export const IR_DIAGNOSTIC_METADATA = {
   'ir/identity-keys': { condition: 'a generated verifier with no named signing-key source' },
   'ir/identity-conflict': {
     condition: 'deployments that ask for a generated verifier and disagree about the provider',
+  },
+  'ir/kubernetes-block-misplaced': {
+    condition: 'a `kubernetes` block on a deployment whose target is not `kubernetes`',
+  },
+  'ir/kubernetes-ingress-class': {
+    condition: 'a kubernetes ingress that names no class, or one that is not a DNS label',
+  },
+  'ir/kubernetes-ingress-tls': {
+    condition: 'an `enterprise` kubernetes ingress with no `tlsSecret`',
   },
   'ir/observability-export': {
     condition: 'activity exported with `trace` off, or enterprise with no export',

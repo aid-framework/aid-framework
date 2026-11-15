@@ -1588,8 +1588,26 @@
       "additionalProperties": false,
       "required": ["sink"],
       "properties": {
-        "sink": { "enum": ["cloudwatch", "s3", "gcs", "bigquery"] },
+        "sink": { "enum": ["cloudwatch", "s3", "gcs", "bigquery", "azure-monitor"] },
         "retentionDays": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "deploymentKubernetes": {
+      "description": "Where a `target: kubernetes` deployment lands on a cluster. Absent unless the spec declares it, so a deployment that omits the block keeps the chart's defaults and every fixture written before 0.36 serializes byte-identically.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "namespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["host", "className"],
+          "properties": {
+            "host": { "type": "string", "minLength": 1 },
+            "className": { "type": "string", "minLength": 1 },
+            "tlsSecret": { "type": "string", "minLength": 1 }
+          }
+        }
       }
     },
     "deployment": {
@@ -1598,7 +1616,7 @@
       "required": ["id", "target", "streaming", "secrets", "env", "traits"],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
-        "target": { "enum": ["serverless", "container", "batch", "edge"] },
+        "target": { "enum": ["serverless", "container", "batch", "edge", "kubernetes"] },
         "streaming": { "type": "boolean" },
         "concurrency": { "type": "integer", "minimum": 1 },
         "autoscale": {
@@ -1614,7 +1632,7 @@
         "secrets": { "type": "array", "items": { "type": "string" } },
         "cloud": {
           "description": "The cloud this deployment is placed in. Absent when the spec names none, so the environment's `--cloud` (or `aws`) still decides and existing output is byte-identical.",
-          "enum": ["aws", "gcp"]
+          "enum": ["aws", "gcp", "azure"]
         },
         "region": {
           "description": "The region pinned by the spec. Validated against the selected cloud; it is a placement fact carried to the plan, not module content.",
@@ -1625,6 +1643,7 @@
         "identity": { "$ref": "#/$defs/deploymentIdentity" },
         "network": { "$ref": "#/$defs/deploymentNetwork" },
         "approvals": { "$ref": "#/$defs/deploymentApprovals" },
+        "kubernetes": { "$ref": "#/$defs/deploymentKubernetes" },
         "env": {
           "type": "array",
           "items": {

@@ -25,7 +25,7 @@ import type {
   Provider,
   VectorStoreKind,
 } from './shapes.js';
-import { isManagedRetriever, RUNTIME_CLOUDS } from './shapes.js';
+import { DEFAULT_KUBERNETES_NAMESPACE, isManagedRetriever, RUNTIME_CLOUDS } from './shapes.js';
 
 /**
  * Bumped when the plan's shape changes incompatibly. Independent of `irVersion`:
@@ -157,8 +157,28 @@ export interface DeployService {
   managedGuardrail?: DeployManagedGuardrail;
   /** The managed agent runtime that runs this container service, when it declares one. */
   runtime?: DeployRuntime;
+  /**
+   * Where a `target: kubernetes` service lands on a cluster, from spec 0.36. Absent on
+   * every other target, so the Helm module reads it with one presence check and every
+   * other backend sees a plan document unchanged by the key's introduction.
+   */
+  kubernetes?: DeployKubernetes;
   /** Retriever ids whose corpus must exist before this service serves traffic. */
   ingest: string[];
+}
+
+/**
+ * The cluster placement the Helm chart renders, with the defaults the spec declined to
+ * state resolved here rather than in the emitter.
+ *
+ * Resolving them once is what keeps the chart and `values.yaml` from disagreeing: the
+ * namespace is a word in three templates, and a default spelled in each is a default that
+ * drifts.
+ */
+export interface DeployKubernetes {
+  /** The namespace the release installs into; `default` when the spec named none. */
+  namespace: string;
+  ingress?: { host: string; className: string; tlsSecret?: string };
 }
 
 /** The managed policy a service's guardrail owns, spelled spec-side. */
@@ -330,7 +350,8 @@ export interface DeployPlan {
 }
 
 export interface DeployAudit {
-  sink: 'cloudwatch' | 's3' | 'gcs' | 'bigquery';
+  /** `azure-monitor` is a declared sink: no workspace or diagnostic setting is emitted. */
+  sink: 'cloudwatch' | 's3' | 'gcs' | 'bigquery' | 'azure-monitor';
   /** Omitted means the sink's own default; AID does not invent a retention policy. */
   retentionDays?: number;
 }
@@ -365,6 +386,14 @@ export function buildDeployPlan(ir: IR): DeployPlan {
       ingest,
     };
     if (deployment.pipeline !== undefined) service.pipeline = deployment.pipeline;
+    if (deployment.kubernetes !== undefined) {
+      service.kubernetes = {
+        namespace: deployment.kubernetes.namespace ?? DEFAULT_KUBERNETES_NAMESPACE,
+        ...(deployment.kubernetes.ingress !== undefined
+          ? { ingress: { ...deployment.kubernetes.ingress } }
+          : {}),
+      };
+    }
     if (deployment.runtime !== undefined) {
       service.runtime = {
         ...deployment.runtime,

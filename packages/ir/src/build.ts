@@ -60,6 +60,7 @@ import {
   type DeploymentIdentityKind,
   type DeploymentIdentityShape,
   type DeploymentImageShape,
+  type DeploymentKubernetesShape,
   type DeploymentNetworkShape,
   type DeploymentRuntimeShape,
   type DeploymentShape,
@@ -1462,6 +1463,8 @@ function buildDeployments(raw: unknown, context: BuildContext): DeploymentShape[
     if (network !== undefined) deployment.network = network;
     const approvals = buildDeploymentApprovals(entry.approvals, id, context);
     if (approvals !== undefined) deployment.approvals = approvals;
+    const kubernetes = buildDeploymentKubernetes(entry.kubernetes, id, context);
+    if (kubernetes !== undefined) deployment.kubernetes = kubernetes;
     const image: DeploymentImageShape | undefined = buildDeploymentImage(entry.image, id, context);
     if (image !== undefined) deployment.image = image;
     const runtime = buildDeploymentRuntime(entry.runtime, id, context);
@@ -1480,12 +1483,12 @@ function buildDeployments(raw: unknown, context: BuildContext): DeploymentShape[
  *
  * A value outside `SPEC_CLOUDS` is refused, because the projection would otherwise have to
  * choose a cloud for a deployment that named a different one. Which code refuses it matters
- * to the person reading it: a cloud AID knows of and does not provision (Azure, Kubernetes)
- * is `ir/cloud-unsupported` and gets the capability matrix, while a value that is not a cloud
+ * to the person reading it: a cloud AID knows of and does not provision (Kubernetes) is
+ * `ir/cloud-unsupported` and gets the capability matrix, while a value that is not a cloud
  * name at all is `ir/deploy-target-unknown` and gets the supported set as a typo fix. The
  * schema admits both shapes so that this gate, not the schema, is what a reader meets.
  *
- * Both comparisons are case-insensitive, because `Azure` and `azure` are the same decision
+ * Both comparisons are case-insensitive, because `Gcp` and `gcp` are the same decision
  * and a reader who capitalises is not making a different one. A schema that refused
  * `Azure` answered `does not match ^[a-z][a-z0-9-]{1,30}$`, which names no cloud, no
  * capability and no fix; admitting the shape here is what lets the refusal say which case
@@ -1646,6 +1649,58 @@ function buildDeploymentNetwork(
   const egress = asString(network.egress);
   if (egress !== undefined && (DEPLOYMENT_EGRESS as readonly string[]).includes(egress)) {
     shape.egress = egress as DeploymentEgress;
+  }
+  return shape;
+}
+
+/**
+ * Where a `target: kubernetes` deployment lands on a cluster.
+ *
+ * Only the shape is projected: whether the block belongs on this target, and whether an
+ * `enterprise` deployment may expose a plaintext ingress, are the `kubernetes` gate's
+ * questions, because that is where the diagnostic can name the fix. Projecting an
+ * incomplete block would have the chart emitter guess a namespace or an ingress class,
+ * which is exactly the cluster-specific assumption the schema declines to default.
+ */
+function buildDeploymentKubernetes(
+  raw: unknown,
+  id: string,
+  context: BuildContext,
+): DeploymentKubernetesShape | undefined {
+  const kubernetes = asRecord(raw);
+  if (kubernetes === undefined) return undefined;
+  const shape: DeploymentKubernetesShape = {};
+  const namespace = asString(kubernetes.namespace);
+  if (namespace !== undefined) shape.namespace = namespace;
+  const ingress = asRecord(kubernetes.ingress);
+  if (ingress !== undefined) {
+    const host = asString(ingress.host);
+    const className = asString(ingress.className);
+    // Both are schema-required on the ingress object. A missing one here means validation
+    // was bypassed, and defaulting either would emit a chart that routes the wrong host or
+    // lands on whichever controller the cluster happens to call default.
+    if (host === undefined || className === undefined) {
+      const missing = [
+        host === undefined ? '`host`' : undefined,
+        className === undefined ? '`className`' : undefined,
+      ].filter((name): name is string => name !== undefined);
+      context.diagnostics.push(
+        errorDiagnostic({
+          code: IR_DIAGNOSTIC_CODES.kubernetesIngressClass,
+          message: `deployment "${id}" declares a kubernetes ingress without ${missing.join(' and ')}`,
+          path: ['deployments', id, 'kubernetes', 'ingress'],
+          hint: 'declare `host` and `className` together; the chart will not choose an ingress controller or a hostname for you',
+        }),
+      );
+    } else {
+      const ingressShape: NonNullable<DeploymentKubernetesShape['ingress']> = {
+        host,
+        className,
+      };
+      const tlsSecret = asString(ingress.tlsSecret);
+      if (tlsSecret !== undefined) ingressShape.tlsSecret = tlsSecret;
+      shape.ingress = ingressShape;
+    }
   }
   return shape;
 }
