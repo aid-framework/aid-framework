@@ -263,6 +263,24 @@ export interface DeployTfvars {
    */
   readonly internal?: boolean;
   readonly internal_allow_from?: readonly string[];
+  /**
+   * Whether the tasks may reach only declared destinations.
+   *
+   * Absent unless a `container` deployment asked for `network.egress: declared-only`,
+   * which keeps a document that said nothing byte-identical: the module admits every
+   * destination by default, so silence means what it always meant. Environment-level for
+   * the same reason as `internal` -- the module writes one task security group for every
+   * container service in the environment.
+   */
+  readonly egress_declared_only?: boolean;
+  /**
+   * Extra destinations reachable on any port when `egress_declared_only` is set.
+   *
+   * The module derives the VPC range itself when it builds the VPC; this is for a
+   * deployment into a VPC the operator already runs, where the range the tasks must reach
+   * is not knowable from the spec.
+   */
+  readonly egress_private_cidrs?: readonly string[];
   readonly services: Readonly<
     Record<
       string,
@@ -668,10 +686,14 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
   const internalAllowFrom = [
     ...new Set(containerServices.flatMap((service) => service.network?.allowFrom ?? [])),
   ];
+  const egressDeclaredOnly = containerServices.some(
+    (service) => service.network?.egress === 'declared-only',
+  );
 
   return {
     project: { name: plan.project.name, namespace: plan.project.namespace },
     ...(internal ? { internal, internal_allow_from: internalAllowFrom } : {}),
+    ...(egressDeclaredOnly ? { egress_declared_only: egressDeclaredOnly } : {}),
     services,
     guardrails,
     model_armor_templates: modelArmorTemplates,

@@ -3,11 +3,11 @@
  * a cluster.
  *
  * What this backend is *not* is as important as what it is. The chart creates a Deployment,
- * a Service and, when the spec declares one, an Ingress. It creates no cluster, no
- * namespace, no Secret, no ConfigMap, no ingress controller and no registry entry. Every one
- * of those is a resource the customer's platform team already operates, and a generator that
- * quietly provisioned its own copy of any of them would be a second control plane -- which is
- * the one thing this framework does not have.
+ * a Service and, when the spec declares one, an Ingress and a NetworkPolicy. It creates no
+ * cluster, no namespace, no Secret, no ConfigMap, no ingress controller, no CNI and no
+ * registry entry. Every one of those is a resource the customer's platform team already
+ * operates, and a generator that quietly provisioned its own copy of any of them would be a
+ * second control plane -- which is the one thing this framework does not have.
  *
  * The consequence is deliberate: `aid infra gen --iac helm` refuses a plan it cannot render
  * whole (`cli/infra-helm-surface-unsupported`) rather than emitting a chart that silently
@@ -292,6 +292,106 @@ function ingressTemplate(service: DeployService): string | undefined {
   ].join('\n');
 }
 
+/**
+ * The NetworkPolicy for one service, or `undefined` when the spec restricted nothing.
+ *
+ * Two deliberate constraints. It is emitted only for a declaration that asked for a
+ * restriction, so a document that said nothing keeps the cluster's own default and no
+ * release silently gains an egress rule. And it states in the file what enforces it: a
+ * NetworkPolicy is a request to the CNI, so a cluster running a plugin that ignores it --
+ * flannel without Calico, for instance -- applies this and blocks nothing.
+ */
+function networkPolicyTemplate(service: DeployService): string | undefined {
+  const network = service.network;
+  // `internal` without `allowFrom` is legal on `kubernetes`: the cluster boundary is the
+  // restriction, and every namespace inside it may still call the Service.
+  const restrictedIngress = network?.ingress === 'internal';
+  const restrictedEgress = network?.egress === 'declared-only';
+  if (!restrictedIngress && !restrictedEgress) return undefined;
+  const name = dnsName(service.id);
+  const allowFrom = network?.allowFrom ?? [];
+  return [
+    HEADER,
+    '#',
+    '# A NetworkPolicy is enforced by the CNI, not by the API server: on a cluster whose',
+    '# plugin does not implement the policy API this object is accepted and blocks nothing.',
+    '# Calico, Cilium and Antrea implement it; flannel alone does not.',
+    'apiVersion: networking.k8s.io/v1',
+    'kind: NetworkPolicy',
+    'metadata:',
+    `  name: {{ .Release.Name }}-${name}`,
+    '  namespace: {{ .Release.Namespace }}',
+    '  labels:',
+    '    {{- include "aid-app.labels" . | nindent 4 }}',
+    'spec:',
+    '  podSelector:',
+    '    matchLabels:',
+    '      {{- include "aid-app.selectorLabels" . | nindent 6 }}',
+    `      aid-framework/deployment: ${quote(service.id)}`,
+    `  policyTypes: [${[
+      ...(restrictedIngress ? ['Ingress'] : []),
+      ...(restrictedEgress ? ['Egress'] : []),
+    ]
+      .map((type) => quote(type))
+      .join(', ')}]`,
+    ...(restrictedIngress
+      ? [
+          '  ingress:',
+          '    - from:',
+          ...(allowFrom.length === 0
+            ? [
+                '        # No `allowFrom` was declared, so the cluster boundary is the limit: any',
+                '        # namespace in this cluster may call it, and nothing outside can.',
+                '        - namespaceSelector: {}',
+              ]
+            : [
+                '        # The declared source ranges. A NetworkPolicy cannot name a Service, so a',
+                '        # caller in a peered VPC has to arrive from one of these.',
+                ...allowFrom.flatMap((cidr) => [
+                  '        - ipBlock:',
+                  `            cidr: ${quote(cidr)}`,
+                ]),
+              ]),
+          '      ports:',
+          '        # The pod port, not the Service port: a policy is evaluated after kube-proxy.',
+          '        - protocol: TCP',
+          '          port: 8080',
+        ]
+      : []),
+    ...(restrictedEgress
+      ? [
+          '  egress:',
+          '    # DNS. Named by namespace label rather than by address, because the cluster DNS',
+          '    # Service address is the one thing this chart cannot know.',
+          '    - to:',
+          '        - namespaceSelector:',
+          '            matchLabels:',
+          '              kubernetes.io/metadata.name: kube-system',
+          '      ports:',
+          '        - protocol: UDP',
+          '          port: 53',
+          '        - protocol: TCP',
+          '          port: 53',
+          '    # HTTPS out, and the instance metadata range excluded. A security group cannot',
+          '    # subtract a range from a wider one; a NetworkPolicy can, which is why this is',
+          '    # stronger than the same declaration on `container`.',
+          '    - to:',
+          '        - ipBlock:',
+          '            cidr: "0.0.0.0/0"',
+          '            except:',
+          '              - "169.254.0.0/16"',
+          '      ports:',
+          '        - protocol: TCP',
+          '          port: 443',
+          '    # The rest of this cluster, on any port: services, caches, a database.',
+          '    - to:',
+          '        - namespaceSelector: {}',
+        ]
+      : []),
+    '',
+  ].join('\n');
+}
+
 /** `templates/_helpers.tpl`, which names the release once so every template agrees. */
 function helpersTemplate(plan: DeployPlan): string {
   return [
@@ -455,15 +555,15 @@ function chartReadme(plan: DeployPlan, services: readonly DeployService[]): stri
     '',
     '## Workloads',
     '',
-    '| Deployment | Namespace | Ingress |',
-    '| --- | --- | --- |',
+    '| Deployment | Namespace | Ingress | Network policy |',
+    '| --- | --- | --- | --- |',
     ...services.map(
       (service) =>
         `| \`${service.id}\` | \`${service.kubernetes?.namespace ?? 'default'}\` | ${
           service.kubernetes?.ingress === undefined
             ? 'none'
             : `\`${service.kubernetes.ingress.host}\``
-        } |`,
+        } | ${networkPolicyTemplate(service) === undefined ? 'none' : 'emitted'} |`,
     ),
     '',
     '## Install',
@@ -496,6 +596,13 @@ function chartReadme(plan: DeployPlan, services: readonly DeployService[]): stri
     '- **The ingress class.** `values.yaml` carries the class each Ingress names, so the',
     '  cluster must run that controller. A class the cluster does not have leaves the Ingress',
     '  `Accepted: False` rather than falling back to a default.',
+    '- **The network policy.** A policy is emitted only for a deployment whose spec asked for',
+    '  a restriction (`network.ingress: internal` or `network.egress: declared-only`), and it',
+    '  is a request to the CNI rather than a guarantee. Calico, Cilium and Antrea enforce it;',
+    '  a flannel cluster without a policy engine accepts the object and blocks nothing. Check',
+    '  which you run before describing the placement as private. What it admits, when it is',
+    '  enforced: in-cluster namespaces on any port, DNS, and TCP 443 out with the instance',
+    '  metadata range excluded.',
     '',
     '## What is generated, and what is not',
     '',
@@ -534,6 +641,10 @@ export function emitHelmChart(plan: DeployPlan): ModuleFile[] {
     const ingress = ingressTemplate(service);
     if (ingress !== undefined) {
       files.push({ path: `${TEMPLATES_DIR}/${name}-ingress.yaml`, contents: ingress });
+    }
+    const policy = networkPolicyTemplate(service);
+    if (policy !== undefined) {
+      files.push({ path: `${TEMPLATES_DIR}/${name}-networkpolicy.yaml`, contents: policy });
     }
   }
   files.push({ path: `${TEMPLATES_DIR}/NOTES.txt`, contents: notesTemplate(plan, services) });

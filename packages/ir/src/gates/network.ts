@@ -28,13 +28,23 @@
  * security group opens exactly the CIDRs named and an empty list is a service nothing can
  * reach. A zero-length prefix (`0.0.0.0/0`, `::/0`) is refused for the same reason in the
  * other direction: it makes an `internal` load balancer reachable from the internet, so the
- * document would say private and the security group would say otherwise. Refused
- * elsewhere, because `kubernetes` emits no NetworkPolicy and `batch` emits no ingress:
- * accepting the list there would record a restriction the build does not make.
+ * document would say private and the security group would say otherwise. On `kubernetes`
+ * the same list becomes the source set of the chart's NetworkPolicy, and is optional there
+ * because a ClusterIP Service is already unreachable from outside the cluster. Refused
+ * elsewhere, because `batch` answers no requests and `serverless` and `edge` emit no
+ * ingress to restrict: accepting the list there would record a restriction the build does
+ * not make.
+ *
+ * `ir/network-egress-unsupported` — `egress: declared-only` on a target that has no
+ * workload egress to restrict. `serverless` emits no VPC, `edge` is a CloudFront function,
+ * and `batch` runs without a security group this generator writes. The declaration was
+ * inert on every target before it was emitters' business, so a document that relied on it
+ * was never protected; the refusal says so instead of leaving the belief in place.
  *
  * What this gate does not do: it does not verify that a CIDR is routable from the
- * customer's network, that a peered route exists, or that egress is actually restricted.
- * Those are properties of the account, not of the document.
+ * customer's network, or that a peered route exists. Those are properties of the account,
+ * not of the document. It also cannot promise that a NetworkPolicy is *enforced*: that is a
+ * property of the cluster's CNI, which the chart cannot observe. The emitted chart says so.
  */
 
 import { IR_DIAGNOSTIC_CODES, type IrDiagnostic } from '../diagnostics.js';
@@ -45,7 +55,25 @@ import { type GateOptions, type GateResult, NO_SUPPRESSIONS, reporter } from './
 const INCAPABLE_TARGETS: readonly string[] = ['serverless', 'edge'];
 
 /** Targets whose emitted artifact has a real ingress the `allowFrom` list applies to. */
-const ALLOW_FROM_TARGETS: readonly string[] = ['container'];
+const ALLOW_FROM_TARGETS: readonly string[] = ['container', 'kubernetes'];
+
+/**
+ * Targets where `allowFrom` is *required* for an internal placement.
+ *
+ * Only `container`, because its load balancer would be an internal listener admitting
+ * nobody. A `kubernetes` Service is `ClusterIP` with or without the list, so an omission
+ * there is a default rather than an outage.
+ */
+const ALLOW_FROM_REQUIRED: readonly string[] = ['container'];
+
+/**
+ * Targets whose emitters place a workload egress rule, so `declared-only` means something.
+ *
+ * `container` writes security-group egress rules; `kubernetes` writes a NetworkPolicy.
+ * Everywhere else the value would be a declaration no artifact applies, which is the state
+ * this gate exists to end.
+ */
+const EGRESS_TARGETS: readonly string[] = ['container', 'kubernetes'];
 
 /**
  * Whether a CIDR admits every address.
@@ -82,8 +110,24 @@ export function networkGate(ir: IR, options: GateOptions): GateResult {
     const network = deployment.network;
     if (network === undefined) continue;
 
-    const { ingress, allowFrom } = network;
+    const { ingress, allowFrom, egress } = network;
     const allowFromDeclared = allowFrom !== undefined && allowFrom.length > 0;
+
+    if (egress === 'declared-only' && !EGRESS_TARGETS.includes(deployment.target)) {
+      diagnostics.push(
+        report.error({
+          code: IR_DIAGNOSTIC_CODES.networkEgressUnsupported,
+          message: `the network gate rejected "${deployment.id}": \`egress: declared-only\` restricts a workload's outbound traffic, and target "${deployment.target}" emits no workload for it to restrict`,
+          path: ['deployments', deployment.id, 'network', 'egress'],
+          hint:
+            deployment.target === 'edge'
+              ? 'edge is a CloudFront function with no outbound network of its own; drop `egress`, or move the call that needs restricting to `container` or `kubernetes`'
+              : deployment.target === 'serverless'
+                ? "serverless emits no VPC, so it cannot be held to a declared egress; target `container` or `kubernetes`, or drop `egress` and accept that the platform's default applies"
+                : "batch emits no security group, so its egress is whatever the job's subnets allow; target `container` or `kubernetes` to have the restriction emitted",
+        }),
+      );
+    }
 
     if (ingress === 'private-link') {
       diagnostics.push(
@@ -145,7 +189,7 @@ export function networkGate(ir: IR, options: GateOptions): GateResult {
       continue;
     }
 
-    if (ALLOW_FROM_TARGETS.includes(deployment.target) && !allowFromDeclared) {
+    if (ALLOW_FROM_REQUIRED.includes(deployment.target) && !allowFromDeclared) {
       diagnostics.push(
         report.error({
           code: IR_DIAGNOSTIC_CODES.networkAllowFrom,
@@ -176,12 +220,9 @@ export function networkGate(ir: IR, options: GateOptions): GateResult {
       diagnostics.push(
         report.error({
           code: IR_DIAGNOSTIC_CODES.networkAllowFrom,
-          message: `the network gate rejected "${deployment.id}": \`allowFrom\` narrows a load balancer's security group, and target "${deployment.target}" emits no load balancer for it to narrow`,
+          message: `the network gate rejected "${deployment.id}": \`allowFrom\` narrows the source set of a load balancer or a NetworkPolicy, and target "${deployment.target}" emits neither`,
           path: ['deployments', deployment.id, 'network', 'allowFrom'],
-          hint:
-            deployment.target === 'kubernetes'
-              ? 'drop `allowFrom`; the chart emits a ClusterIP Service, and restricting which pods may call it is a NetworkPolicy you own rather than one AID generates'
-              : 'drop `allowFrom`; a batch job answers no requests, so there is no ingress to restrict',
+          hint: 'drop `allowFrom`; a batch job answers no requests, so there is no ingress to restrict',
         }),
       );
       continue;

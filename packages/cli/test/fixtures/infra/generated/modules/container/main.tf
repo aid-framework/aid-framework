@@ -57,6 +57,14 @@ locals {
   # publishing it in a public subnet would be a listener nothing can route to.
   ingress_subnet_ids = var.internal ? local.private_subnet_ids : local.public_subnet_ids
 
+  # Destinations the tasks may reach on any port when egress is declared only: the VPC
+  # the module builds, when it builds one, plus whatever the operator names. Distinct
+  # because `for_each` rejects a repeated key, and a duplicate CIDR in a list is a typo.
+  egress_private_destinations = distinct(concat(
+    var.vpc_cidr == "" || !local.create_network ? [] : [var.vpc_cidr],
+    var.egress_private_cidrs,
+  ))
+
   # IAM, ECS and ALB names allow letters, digits and hyphens only, while a namespace
   # may carry a dot; the replacement is what keeps `aid.test` a legal name. The
   # truncation matches the shortest of the limits (32, for an ALB).
@@ -260,7 +268,7 @@ resource "aws_vpc_security_group_egress_rule" "alb" {
 resource "aws_security_group" "task" {
   count       = length(local.container) > 0 ? 1 : 0
   name        = "${local.prefix}-task"
-  description = "Only the load balancer may reach a task; tasks may reach anything."
+  description = "Only the load balancer may reach a task; outbound traffic follows the environment egress policy."
   vpc_id      = local.vpc_id
   tags        = var.tags
 }
@@ -276,9 +284,55 @@ resource "aws_vpc_security_group_ingress_rule" "task_from_alb" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "task" {
-  count             = length(local.container) > 0 ? 1 : 0
+  count             = length(local.container) > 0 && !var.egress_declared_only ? 1 : 0
   security_group_id = aws_security_group.task[0].id
   cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+# An egress rule is an allow list, and an empty list admits nothing: a task with no
+# egress rule cannot resolve a name or reach a model provider. So `declared-only` is a
+# smaller list, never an empty one -- DNS, HTTPS, and the private ranges the workload
+# lives in. HTTPS and not "any port" is the point: the instance metadata service
+# answers on port 80, so a compromised prompt that convinces a tool to fetch
+# 169.254.169.254 gets a timeout rather than credentials.
+resource "aws_vpc_security_group_egress_rule" "task_https" {
+  count             = length(local.container) > 0 && var.egress_declared_only ? 1 : 0
+  security_group_id = aws_security_group.task[0].id
+  description       = "HTTPS out: the model providers, and every API this application calls."
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+}
+
+# DNS, both transports: a resolver that truncates a large answer makes the caller retry
+# over TCP, and a blocked retry looks like a provider outage rather than a rule.
+resource "aws_vpc_security_group_egress_rule" "task_dns_udp" {
+  count             = length(local.container) > 0 && var.egress_declared_only ? 1 : 0
+  security_group_id = aws_security_group.task[0].id
+  description       = "DNS over UDP."
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "udp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "task_dns_tcp" {
+  count             = length(local.container) > 0 && var.egress_declared_only ? 1 : 0
+  security_group_id = aws_security_group.task[0].id
+  description       = "DNS over TCP, for a truncated answer."
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "tcp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "task_private" {
+  for_each          = toset(var.egress_declared_only ? local.egress_private_destinations : [])
+  security_group_id = aws_security_group.task[0].id
+  description       = "A private destination this environment declared, on any port."
+  cidr_ipv4         = each.value
   ip_protocol       = "-1"
 }
 

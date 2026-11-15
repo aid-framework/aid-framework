@@ -70,6 +70,7 @@ export const IR_DIAGNOSTIC_CODES = {
   networkTargetIncapable: 'ir/network-target-incapable',
   networkAllowFrom: 'ir/network-allow-from',
   networkIngressConflict: 'ir/network-ingress-conflict',
+  networkEgressUnsupported: 'ir/network-egress-unsupported',
   identityVerifiedBy: 'ir/identity-verified-by',
   identityKind: 'ir/identity-kind',
   identityAudience: 'ir/identity-audience',
@@ -208,6 +209,9 @@ export const IR_DIAGNOSTIC_METADATA = {
   'ir/network-allow-from': {
     condition:
       '`internal` with no `allowFrom`, `allowFrom` on a `public` placement, or an entry that is not a CIDR',
+  },
+  'ir/network-egress-unsupported': {
+    condition: '`egress: declared-only` on a target whose emitters place no workload egress rule',
   },
   'ir/network-ingress': {
     condition: 'a `network.ingress` outside `public`, `internal` and `private-link`',

@@ -101,6 +101,20 @@ variable "internal_allow_from" {
   default     = []
 }
 
+# Egress. The default admits every destination, which is what every environment got
+# before the value existed. `true` admits DNS, HTTPS and the declared private ranges,
+# and nothing else.
+variable "egress_declared_only" {
+  type    = bool
+  default = false
+}
+
+variable "egress_private_cidrs" {
+  description = "Extra destinations reachable on any port when egress_declared_only is true. The module adds the VPC range itself when it builds the VPC; set this when deploying into a VPC you already run."
+  type        = list(string)
+  default     = []
+}
+
 variable "health_check_path" {
   description = "Path the target group probes. Any 2xx-4xx counts, so a 404 still proves the task answers."
   type        = string

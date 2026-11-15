@@ -684,8 +684,72 @@ balancer, that the VPC is peered to the customer's, or that the DNS name resolve
 network. `ingress: internal` selects the topology; the reachability is your platform. `aid review`
 lists the placement and the allow list among the things only you can confirm.
 
-`egress` is unchanged and still declaration-only. The container module builds its NAT gateway
-whether `egress: declared-only` is set or not; nothing in this release reads it.
+`egress` was unchanged by 0.37 and was still declaration-only there. [0.37 to 0.38](#network-egress-release)
+is the release that made it real.
+
+## 0.37 to 0.38: egress stops being a declaration {#network-egress-release}
+
+0.38 adds no grammar. It dates the release in which `deployments[].network.egress` is read by the
+emitters, having been accepted and recorded since 0.33 and applied by nothing.
+
+```yaml
+specVersion: "0.38"
+
+deployments:
+  api:
+    target: container
+    cloud: aws
+    region: eu-west-1
+    network:
+      ingress: internal
+      allowFrom: [10.0.0.0/8]
+      egress: declared-only
+```
+
+`declared-only` now means: DNS, HTTPS to the internet, and the private ranges the workload lives in --
+nothing else. On `container` the task security group stops admitting `0.0.0.0/0` on every protocol and
+gets four rules instead: 53 over UDP and over TCP, 443 to the internet, and the VPC range on every
+protocol. On `kubernetes` the chart emits a `NetworkPolicy` whose egress is 443 to the internet
+**minus** `169.254.0.0/16`, the cluster resolver, and the cluster itself.
+
+`open` -- the default -- keeps the single unrestricted rule. A document that never asked for a
+restriction is not taken off the network by a generator upgrade.
+
+### Nothing to do for a 0.37 document
+
+Leave `specVersion` at `0.37` and, if you never declared `egress`, nothing changes at all: the
+generated tfvars gain no key and the chart emits no policy. If you did declare `egress:
+declared-only` on `container` or `kubernetes`, the restriction now exists where before there was only
+a comment -- check that the workload can still reach what it actually calls. HTTPS and DNS are
+admitted; a call to a broker on 5672, a database on 5432, or a model endpoint on a non-standard port
+is not. That is the point of the key, and the first apply is where you find out whether the
+declaration was accurate.
+
+### What a 0.38 document must declare
+
+| Refusal | What it is | The fix |
+| --- | --- | --- |
+| `ir/network-egress-unsupported` | `egress: declared-only` on `serverless`, `edge` or `batch`, none of which emit a workload egress rule. | Target `container` or `kubernetes`, or drop `egress` and accept the platform default. |
+
+That refusal fires below 0.38 as well. It is not a language change -- `declared-only` meant the same
+thing before -- it is the build admitting that on those targets it never meant anything. A document
+that relied on it was never protected, and the diagnostic says so rather than leaving the belief in
+place.
+
+### What is still yours
+
+Two limits, and they are different ones:
+
+- A **security group cannot subtract a range.** So the container form admits 443 rather than allowing
+  every port except the metadata endpoint, which also means port 80 to `169.254.169.254` is not
+  reachable by accident. The `NetworkPolicy` can subtract, and does.
+- A **policy object is not enforcement.** `NetworkPolicy` is implemented by the CNI. Calico, Cilium
+  and Antrea enforce it; flannel alone accepts the object and blocks nothing. The generated chart
+  says so in the template header and in its README, because the build cannot observe your cluster's
+  CNI.
+
+Neither is a peering check. `egress: declared-only` narrows what the workload may attempt; whether the
+route exists is still your platform. `aid review` lists both among the things only you can confirm.
 
 ## 0.34 to 0.35: the verifier the build can actually generate {#generated-verifier-release}
 

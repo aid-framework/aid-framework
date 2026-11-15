@@ -2087,4 +2087,35 @@ deployments:
     expect(tfvars).not.toHaveProperty('internal');
     expect(tfvars).not.toHaveProperty('internal_allow_from');
   });
+
+  it('tells the module to restrict egress when the spec declares declared-only', () => {
+    const restricted = REACH.replace(
+      '      allowFrom: [10.0.0.0/8, 172.16.0.0/12]\n',
+      '      allowFrom: [10.0.0.0/8, 172.16.0.0/12]\n      egress: declared-only\n',
+    );
+    expect(restricted).not.toBe(REACH);
+
+    const tfvars = generated(restricted);
+    expect(tfvars.egress_declared_only).toBe(true);
+  });
+
+  it('leaves egress alone for a spec that never declared it', () => {
+    // The module's own default is the blanket rule, so an absent key is not a restriction.
+    // Taking a live deployment off the network on a generator upgrade would be a silent change.
+    const tfvars = generated(REACH);
+
+    expect(tfvars).not.toHaveProperty('egress_declared_only');
+  });
+
+  it('restricts egress without a private ingress, because the two are separate layers', () => {
+    const publicEgress = PUBLIC.replace(
+      '    secrets: [OPENAI_API_KEY]\n',
+      '    secrets: [OPENAI_API_KEY]\n    network:\n      ingress: public\n      egress: declared-only\n',
+    );
+    expect(publicEgress).not.toBe(PUBLIC);
+
+    const tfvars = generated(publicEgress);
+    expect(tfvars.egress_declared_only).toBe(true);
+    expect(tfvars).not.toHaveProperty('internal');
+  });
 });

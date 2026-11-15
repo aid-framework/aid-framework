@@ -86,6 +86,18 @@ variable "internal_allow_from" {
   default     = []
 }
 
+# Egress. `false` (the default) lets the tasks reach any destination.
+variable "egress_declared_only" {
+  type    = bool
+  default = false
+}
+
+variable "egress_private_cidrs" {
+  description = "Extra private destinations the tasks may reach on any port when egress_declared_only is true."
+  type        = list(string)
+  default     = []
+}
+
 variable "health_check_path" {
   description = "Path the target group probes. Any 2xx-4xx counts as healthy."
   type        = string

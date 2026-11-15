@@ -67,11 +67,13 @@ export const BOUNDARY_TABLE_METADATA = Object.freeze({
       'ir/network-target-incapable',
       'ir/network-allow-from',
       'ir/network-ingress-conflict',
+      'ir/network-egress-unsupported',
     ],
     generated:
-      'The container module builds a two-AZ VPC with one NAT gateway when you do not supply `vpc_id`, and an `ingress: internal` deployment gets an internal load balancer admitting only `allowFrom`; a `kubernetes` deployment is `ClusterIP` already; the agent runtime is generated with `network_mode = "PUBLIC"`',
-    provide: 'Your VPC, its two private subnet ids, the egress rules, the peering and the DNS',
-    risk: 'The placement selects the topology; that your ranges reach it, that the VPC is peered and that the name resolves are your network’s, and `egress` is still read by no module',
+      'The container module builds a two-AZ VPC with one NAT gateway when you do not supply `vpc_id`, and an `ingress: internal` deployment gets an internal load balancer admitting only `allowFrom`; a `kubernetes` deployment gets a `NetworkPolicy` admitting the same ranges. `egress: declared-only` replaces the blanket rule with DNS, HTTPS and the private ranges on `container`, and with a `NetworkPolicy` that subtracts the instance metadata range on `kubernetes`; the agent runtime is generated with `network_mode = "PUBLIC"`',
+    provide:
+      'Your VPC, its two private subnet ids, the peering, the DNS, and a CNI that enforces the policy',
+    risk: 'The placement selects the topology; that your ranges reach it, that the VPC is peered and that the name resolves are your network’s. A `NetworkPolicy` is enforced by the CNI, so on a cluster whose CNI ignores the policy API it applies and blocks nothing -- and a security group cannot subtract a range, which is why only the cluster form excludes the metadata endpoint by name',
   },
   'Input and output guardrails': {
     codes: ['ir/profile-guardrail', 'ir/security-input-guardrail'],
