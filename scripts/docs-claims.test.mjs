@@ -27,6 +27,8 @@ import {
   isProposalPage,
   MARKDOWN_ROOTS,
   proposalStatus,
+  roadmapStatus,
+  roadmapTable,
   slugifyHeading,
   sourceCodeAnnotation,
   targetTokens,
@@ -621,5 +623,92 @@ describe('source comments that cite diagnostics', () => {
     const text = `${'\n'.repeat(20)}// docs-claims-file: family; too far down\n`;
 
     expect(fileCodeAnnotation(text)).toBeUndefined();
+  });
+});
+
+describe('roadmapTable', () => {
+  const CLEAN = [
+    '## 8. What comes next',
+    '',
+    '<!-- roadmap-table: every row states its own status -->',
+    '',
+    '| Phase | Increment | Status |',
+    '| --- | --- | --- |',
+    '| **A1. Thing** | do it | **Shipped in `1.2.3`.** It landed. |',
+    '| **A2. Other** | do it | **Open.** Nothing behind it. |',
+    '',
+    'Prose after the table, which is not a row.',
+  ].join('\n');
+
+  it('reads every row and the line each is on', () => {
+    expect(roadmapTable(CLEAN)?.rows).toEqual([
+      { line: 7, status: '**Shipped in `1.2.3`.** It landed.' },
+      { line: 8, status: '**Open.** Nothing behind it.' },
+    ]);
+  });
+
+  it('records the marker line so a marker with no table can be refused', () => {
+    expect(roadmapTable(CLEAN)?.markerLine).toBe(3);
+  });
+
+  it('is undefined for a document that never opted in', () => {
+    expect(roadmapTable('| Phase | Status |\n| --- | --- |\n| A | **Open.** |\n')).toBeUndefined();
+  });
+
+  it('returns no rows for a marker with no table under it', () => {
+    expect(roadmapTable('<!-- roadmap-table: why -->\n\nJust prose.\n')).toEqual({
+      markerLine: 1,
+      rows: [],
+    });
+  });
+
+  it('stops at the first line that is not a row', () => {
+    const text = `${CLEAN}\n| **A3. Late** | do it | **Open.** |\n`;
+
+    expect(roadmapTable(text)?.rows).toHaveLength(2);
+  });
+
+  it('does not read a table that appears above the marker', () => {
+    const text = `| Phase | Status |\n| --- | --- |\n| A | **Open.** |\n\n<!-- roadmap-table: why -->\n\n`;
+    const table = roadmapTable(text);
+
+    expect(table?.rows ?? []).toEqual([]);
+  });
+});
+
+describe('roadmapStatus', () => {
+  it('reads a release claim and the version it names', () => {
+    expect(roadmapStatus('**Shipped in `0.1.78`.** It came with the adapter.')).toEqual({
+      status: 'Shipped',
+      version: '0.1.78',
+    });
+  });
+
+  it('reads a bare status with no version', () => {
+    expect(roadmapStatus('**Shipped.** It landed in PR #36.')).toEqual({ status: 'Shipped' });
+    expect(roadmapStatus('**Open.** Nothing behind it.')).toEqual({ status: 'Open' });
+    expect(roadmapStatus('**Deferred** by recorded decision.')).toEqual({ status: 'Deferred' });
+  });
+
+  it('refuses a release named outside the canonical form, so no version goes unchecked', () => {
+    expect(roadmapStatus('**Shipped in `0.1.78`** with the adapter.')).toBeUndefined();
+    expect(roadmapStatus('**Shipped in 0.1.78.** No backticks.')).toBeUndefined();
+  });
+
+  it('refuses a cell that opens with no status word', () => {
+    expect(roadmapStatus('Second question every client asks.')).toBeUndefined();
+    expect(roadmapStatus('')).toBeUndefined();
+  });
+
+  it('refuses a word that only starts like a status', () => {
+    expect(roadmapStatus('**Shipping.** Not a status.')).toBeUndefined();
+    expect(roadmapStatus('**Openness.** Not a status.')).toBeUndefined();
+  });
+
+  it('finds a status on every row of the real roadmap, so the rule cannot go vacuous', () => {
+    const table = roadmapTable(read('docs/rfcs/0010-capability-maturity.md'));
+
+    expect(table?.rows.length).toBeGreaterThan(0);
+    for (const row of table?.rows ?? []) expect(roadmapStatus(row.status)).toBeDefined();
   });
 });
