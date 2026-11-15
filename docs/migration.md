@@ -152,15 +152,18 @@ document unsatisfiable.
 | Refusal | What is missing | The fix |
 | --- | --- | --- |
 | `ir/profile-identity` | No `deployments[].identity`. | Name the issuer, the audience, and the claim that carries the subject. |
-| `ir/profile-network` | No `deployments[].network`, or `private: false`. | Declare `network: { private: true }`. |
+| `ir/profile-network` | No `deployments[].network`, `private: false`, or (from 0.37) `ingress: public`. | Declare `network: { ingress: internal, allowFrom: [10.0.0.0/8] }`. |
 | `ir/profile-approvals` | A production deployment with no `approvals`. | Declare `approvals: { environment: production, requiredApprovals: 2 }`. |
 | `ir/agents-state-store` | An agent that reaches a `write` or `destructive` tool with no store. | Add `state`, on the agent or on the document. |
 
-### Why `network.private` is required rather than defaulted
+### Why `network.private` was required rather than defaulted
 
 An omitted `private` is reported, not read as `false`. Whether traffic stays inside a VPC is a
 decision about a customer's data, and a default would make the decision for the author silently.
 Under `enterprise`, `private: false` is refused as well, because the profile promises otherwise.
+The reasoning outlived the key: from 0.37 the same refusal is expressed as
+`network.ingress: public`, and [0.36 to 0.37](#network-placement-release) explains why the flag was
+retired instead of promoted.
 
 ### The two new non-profile refusals
 
@@ -623,6 +626,66 @@ is still refused -- the chart is what serves them.
   breaks.
 - **Not a cluster.** No ingress controller, no certificate issuer and no namespace is created.
   The chart applies into a cluster you already have.
+
+## 0.36 to 0.37: the network placement gains a value the emitter reads {#network-placement-release}
+
+0.37 adds `deployments[].network.ingress` and `deployments[].network.allowFrom`, and retires
+`deployments[].network.private`. A 0.36 document builds exactly as it did, because `public` is the
+default and is the placement every earlier document actually got.
+
+```yaml
+specVersion: "0.37"
+
+deployments:
+  api:
+    target: container
+    cloud: aws
+    region: eu-west-1
+    network:
+      ingress: internal
+      allowFrom: [10.0.0.0/8, 172.16.0.0/12]
+      egress: declared-only
+```
+
+`aid infra gen` then emits an internal load balancer whose security group admits only those ranges.
+Before 0.37 the same document said `private: true` and got a public ALB: the pin was read by the
+profile gate and by nothing else, and the ingress rule opened `0.0.0.0/0` on port 80.
+
+### Nothing to do for a 0.36 document
+
+Leave `specVersion` at `0.36` and nothing changes. `private: true` is still accepted there and still
+means what it meant: a claim the profile gate checks and no module reads. The key was **retired, not
+promoted**, and that is the one deliberate break in this release:
+
+- Promoting `private: true` to mean an internal placement would take every existing
+  `enterprise` deployment off the public internet the day someone bumped `specVersion`. A version
+  bump must not change where traffic goes.
+- Refusing it below 0.37 would break enterprise documents that build today.
+- So below 0.37 it keeps its inert meaning, and at 0.37 and above it is refused with
+  `spec/not-supported` rather than silently reinterpreted.
+
+### What a 0.37 document must declare
+
+| Refusal | What it is | The fix |
+| --- | --- | --- |
+| `spec/not-supported` | `network.private` at 0.37 or above. | Write `ingress: internal` with `allowFrom`, or `ingress: public`. |
+| `schemaViolation` | A `network` block that names neither `ingress` nor `private`. | Say which placement you mean; the block must not be a budget with no decision in it. |
+| `ir/network-ingress` | An `ingress` outside `public`, `internal`, `private-link`. | Use one of the three. |
+| `ir/network-ingress-unsupported` | `private-link`, which this build does not emit. | Reach the service over `internal`, or create the endpoint yourself and record it under `aid review`. |
+| `ir/network-target-incapable` | `internal` on a target with no ingress to place: `batch`, `edge`, and anything else the capability matrix marks public-only. | Pick a target that can be placed privately, or accept `public`. |
+| `ir/network-allow-from` | `internal` with no `allowFrom`, `allowFrom` with `public`, or an entry that is not a CIDR. | Name the ranges that may reach it, on an `internal` placement. |
+| `ir/network-ingress-conflict` | Two container deployments in one document that want different placements. | One placement per environment, because the emitted environment has one load balancer. |
+| `ir/profile-network` | Under `enterprise`, a deployment with no private placement. | `ingress: internal` with `allowFrom`. |
+
+### What is still yours
+
+The gate reads the document. It cannot confirm that `10.0.0.0/8` actually routes to the load
+balancer, that the VPC is peered to the customer's, or that the DNS name resolves inside their
+network. `ingress: internal` selects the topology; the reachability is your platform. `aid review`
+lists the placement and the allow list among the things only you can confirm.
+
+`egress` is unchanged and still declaration-only. The container module builds its NAT gateway
+whether `egress: declared-only` is set or not; nothing in this release reads it.
 
 ## 0.34 to 0.35: the verifier the build can actually generate {#generated-verifier-release}
 

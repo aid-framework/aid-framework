@@ -1,0 +1,107 @@
+specVersion: "0.37"
+
+project:
+  name: claims-desk
+  namespace: acme.claims
+  description: An enterprise claims adjudicator whose load balancer is reachable only from the customer's own network range.
+  targets:
+    - py-fastapi
+
+profile: enterprise
+
+types:
+  TicketClassification:
+    kind: struct
+    fields:
+      category:
+        type: string
+        required: true
+      summary:
+        type: string
+        required: true
+  RefundReceipt:
+    kind: struct
+    fields:
+      claim:
+        type: string
+        required: true
+
+models:
+  triage:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+
+prompts:
+  classify_claim:
+    version: 1
+    model: triage
+    template: |
+      Classify the claim below.
+      Subject: {{subject}}
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: TicketClassification
+
+tools:
+  issue_refund:
+    description: Issue a refund against a claim.
+    input: RefundReceipt
+    output: RefundReceipt
+    handler:
+      kind: business
+      symbol: issue_refund
+    sideEffects: write
+    requiresConfirmation: true
+
+agents:
+  claims_adjudicator:
+    name: Claims adjudicator
+    instructions: classify_claim
+    model: triage
+    tools: [issue_refund]
+    maxSteps: 12
+    maxCostBudget: 2.5
+
+guardrails:
+  inbound:
+    stages: [input]
+    policies: [prompt-injection]
+    action: block
+    onFail:
+      message: The request was rejected by the input guardrail.
+      log: true
+  outbound:
+    stages: [output]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The response was rejected by the output guardrail.
+      log: true
+
+deployments:
+  prod:
+    target: container
+    cloud: aws
+    region: eu-central-1
+    audit:
+      sink: cloudwatch
+      retentionDays: 400
+    identity:
+      kind: oidc
+      issuer: https://login.example.com
+      audience: aid-claims
+      verifiedBy: app/business/principal.py
+    network:
+      ingress: internal
+      allowFrom: [10.0.0.0/8, 172.16.0.0/12]
+      egress: declared-only
+    approvals:
+      require: [security, platform]
+      minApprovers: 2
+    secrets: [OPENAI_API_KEY]

@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.36`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.37`.
 
 ## Deployment targets
 
@@ -304,6 +304,15 @@ A `kubernetes` deployment declares its namespace and, optionally, the ingress th
 - **Reference:** [spec](./reference/spec.md#deployment)
 - **Since:** `0.1.189`
 
+### A network placement that reaches the generator
+
+`network.ingress` says how a deployment is reached — `public`, `internal`, or `private-link` — and unlike the retired `network.private` flag it selects what the emitter builds: an `internal` container deployment gets an internal load balancer whose security group admits only the `allowFrom` ranges, and a `kubernetes` deployment is internal by default because its `Service` is `ClusterIP`. The gate refuses a placement the target cannot express, `internal` with no `allowFrom`, `allowFrom` on a public placement, and a `private-link` this build does not emit.
+
+- **Turned on by:** `deployments[].network`
+- **What exists:** a generator writes it into the tree (`packages/cli/src/infra/modules/container.ts`)
+- **Reference:** [spec](./reference/spec.md#deployment)
+- **Since:** `0.1.190`
+
 ### Eject
 
 Take ownership of a generated file: it stops being regenerated and the app keeps booting, because it never depended on a control plane.
@@ -587,11 +596,11 @@ Spec 0.35 reserves `deployments[].identity.verifiedBy: aid`, and `py-fastapi` an
 
 These constructs are in the spec language and a gate enforces them, but no generator emits the behaviour they name, so they are listed apart from the inventory above and are not counted on the homepage. The declaration is what a reviewer reads before an apply; the last bullet is the part still to write.
 
-### Durable run state, deployment identity, private network and change approval
+### Durable run state, deployment identity and change approval
 
-- **Declared by:** `state, deployments[].identity, deployments[].network, deployments[].approvals`
-- **Enforced by:** `ir/profile-identity, ir/identity-verified-by, ir/profile-network`
-- **Not yet generated:** What *is* generated: the region pin and the audit sink reach the OpenTofu, the profile gate refuses an `enterprise` deployment missing either of them or missing the `network.private` pin, `requiresApproval` reaches the generated tool step, the checkpoint is signed with the key `state.signingKeyEnv` names, a declared `state` store holds the checkpoint nonce, and a paused run is written to that store so `POST /agents/runs/{run_id}/resume` continues it after a restart. What is not: `network.private` states a requirement and selects no module -- the container module builds its two-AZ VPC with private task subnets and one NAT gateway whenever you do not supply `vpc_id`, whether the pin is set or not, and no generator branches on the key. Also not: no generator verifies a token unless the deployment writes `verifiedBy: aid`, which from spec 0.35 makes `py-fastapi` generate the check (`generated-verifier` above) -- any other value names a component and is a declaration only.
+- **Declared by:** `state, deployments[].identity, deployments[].approvals`
+- **Enforced by:** `ir/profile-identity, ir/identity-verified-by`
+- **Not yet generated:** What *is* generated: the region pin and the audit sink reach the OpenTofu, `requiresApproval` reaches the generated tool step, the checkpoint is signed with the key `state.signingKeyEnv` names, a declared `state` store holds the checkpoint nonce, and a paused run is written to that store so `POST /agents/runs/{run_id}/resume` continues it after a restart. What is not: no generator verifies a token unless the deployment writes `verifiedBy: aid`, which from spec 0.35 makes `py-fastapi` generate the check (`generated-verifier` above) -- any other value names a component and is a declaration only. The same is true of the approval policy: the build refuses an `enterprise` deployment with none and generates the pause it names, but it cannot confirm the named reviewers are real people. The network placement these controls describe is inventoried separately (`network-placement`), because from 0.37 the container and cluster modules act on it.
 - **Reference:** [spec](./reference/spec.md#top-level-keys)
 - **Since:** `0.1.143`
 

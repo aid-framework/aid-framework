@@ -86,6 +86,21 @@ variable "vpc_cidr" {
   default     = ""
 }
 
+# Placement of the shared load balancer. `false` publishes it and admits HTTP from
+# anywhere; `true` gives it no public address, puts it in the private subnets, and admits
+# only internal_allow_from. Defaults keep an environment that says nothing reachable on
+# the internet, which is what every environment got before the flag existed.
+variable "internal" {
+  type    = bool
+  default = false
+}
+
+variable "internal_allow_from" {
+  description = "Source CIDRs admitted to an internal load balancer. Required when internal is true: an internal listener that admits nobody is an outage that plans cleanly."
+  type        = list(string)
+  default     = []
+}
+
 variable "health_check_path" {
   description = "Path the target group probes. Any 2xx-4xx counts, so a 404 still proves the task answers."
   type        = string

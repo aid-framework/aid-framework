@@ -92,10 +92,17 @@ function controlsOf(deployment: DeploymentShape): UnverifiedControl[] {
   }
   if (deployment.network !== undefined) {
     controls.push({
-      control: 'private networking',
-      declared: deployment.network.private ? 'private' : 'public',
-      path: `${at}.network.private`,
+      control: 'network placement',
+      declared: deployment.network.ingress,
+      path: `${at}.network.ingress`,
     });
+    if (deployment.network.allowFrom !== undefined) {
+      controls.push({
+        control: 'network allow list',
+        declared: deployment.network.allowFrom.join(', '),
+        path: `${at}.network.allowFrom`,
+      });
+    }
     if (deployment.network.egress !== undefined) {
       controls.push({
         control: 'egress policy',

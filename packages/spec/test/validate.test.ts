@@ -2870,3 +2870,101 @@ describe('managed MCP gateways', () => {
     expect(paths(diagnostics)).toContain('gateways.tools.targets[0].openApiSchema');
   });
 });
+
+/**
+ * The reachability vocabulary, which arrived in 0.37.
+ *
+ * The rule is two-directional on purpose. Below 0.37 the document cannot write `ingress`,
+ * and above it the retired flag is refused: a version is the only thing a document carries
+ * that says which vocabulary its author was writing against, so a 0.36 spec keeps the
+ * meaning 0.36 offered and a 0.37 spec cannot silently keep a key that no longer decides
+ * anything.
+ */
+describe('the reachability vocabulary', () => {
+  function doc(
+    specVersion: string,
+    network: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      specVersion,
+      project: { name: 'p' },
+      deployments: { prod: { target: 'container', secrets: [], cloud: 'aws', network } },
+    };
+  }
+
+  it('accepts an internal ingress and its networks at 0.37', () => {
+    expect(validateSpec(doc('0.37', { ingress: 'internal', allowFrom: ['10.0.0.0/8'] }))).toEqual(
+      [],
+    );
+  });
+
+  it('accepts a public ingress with no networks named at 0.37', () => {
+    expect(validateSpec(doc('0.37', { ingress: 'public' }))).toEqual([]);
+  });
+
+  it('accepts the egress declaration alongside a placement', () => {
+    expect(validateSpec(doc('0.37', { egress: 'declared-only', ingress: 'public' }))).toEqual([]);
+  });
+
+  it('tells a 0.36 document that the ingress key needs 0.37', () => {
+    const diagnostics = validateSpec(doc('0.36', { ingress: 'internal' }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.network.ingress']);
+    expect(diagnostics[0]?.message).toContain(
+      "'deployments.prod.network.ingress' requires specVersion 0.37",
+    );
+    expect(diagnostics[0]?.hint).toContain('set specVersion: "0.37"');
+  });
+
+  it('reports the network list separately, because it is a different edit', () => {
+    const diagnostics = validateSpec(
+      doc('0.36', { ingress: 'internal', allowFrom: ['10.0.0.0/8'] }),
+    );
+
+    expect(codes(diagnostics)).toEqual([
+      DIAGNOSTIC_CODES.notSupported,
+      DIAGNOSTIC_CODES.notSupported,
+    ]);
+    expect(paths(diagnostics)).toEqual([
+      'deployments.prod.network.ingress',
+      'deployments.prod.network.allowFrom',
+    ]);
+  });
+
+  it('accepts the retired flag below 0.37, where it was the only placement key', () => {
+    expect(validateSpec(doc('0.36', { private: true, egress: 'declared-only' }))).toEqual([]);
+  });
+
+  it('refuses the retired flag at 0.37 and names the replacement', () => {
+    const diagnostics = validateSpec(doc('0.37', { private: true }));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.network.private']);
+    expect(diagnostics[0]?.message).toContain('the key was retired in 0.37');
+    expect(diagnostics[0]?.hint).toContain('ingress: internal');
+  });
+
+  it('refuses an ingress value the vocabulary does not carry', () => {
+    expect(codes(validateSpec(doc('0.37', { ingress: 'vpn' })))).toEqual([
+      DIAGNOSTIC_CODES.schemaViolation,
+    ]);
+  });
+
+  it('refuses a network block that names no placement', () => {
+    // The block exists to say how the deployment is reachable; one that names only
+    // `egress` leaves the placement to a default the author never chose.
+    expect(codes(validateSpec(doc('0.37', { egress: 'declared-only' })))).toEqual([
+      DIAGNOSTIC_CODES.schemaViolation,
+    ]);
+  });
+
+  it('refuses an address range that is not a CIDR', () => {
+    for (const cidr of ['10.0.0.0', '10.0.0.0/33', 'corp']) {
+      expect(
+        codes(validateSpec(doc('0.37', { ingress: 'internal', allowFrom: [cidr] }))),
+        cidr,
+      ).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    }
+  });
+});

@@ -70,6 +70,19 @@ variable "vpc_cidr" {
   default     = ""
 }
 
+# Placement of the shared load balancer, from the spec's `network.ingress`. Defaults keep
+# the load balancer public, which is what an environment that says nothing has always had.
+variable "internal" {
+  type    = bool
+  default = false
+}
+
+variable "internal_allow_from" {
+  description = "Source CIDRs admitted to an internal load balancer. Required when internal is true."
+  type        = list(string)
+  default     = []
+}
+
 variable "health_check_path" {
   description = "Path the target group probes. Any 2xx-4xx counts as healthy."
   type        = string

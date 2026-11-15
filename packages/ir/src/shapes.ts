@@ -1433,18 +1433,65 @@ export const DEPLOYMENT_IDENTITY_KINDS = ['oidc', 'saml'] as const;
 export type DeploymentIdentityKind = (typeof DEPLOYMENT_IDENTITY_KINDS)[number];
 
 /**
- * How a deployment is reachable and what it may reach, from spec 0.26.
+ * How a deployment is reachable, from spec 0.37, and the vocabulary that replaced the
+ * `private` boolean.
  *
- * `private` places the runtime where only the customer's network can reach it, and
- * `egress` says whether it may call anything it likes or only declared destinations.
- * Both are placement decisions: `profile: enterprise` requires `private: true`, refused
- * by `ir/profile-network` when it is missing or false, and the generated container module
- * already builds a two-AZ VPC with private task subnets and one NAT gateway. No gate
- * refuses a cloud for lacking a private-placement module, because no generator branches
- * on this key yet: the pin states a requirement rather than selecting a different module.
+ * The boolean could only say two things, and the thing it said was not what got generated:
+ * a document declaring `private: true` was emitted as an internet-facing load balancer in
+ * the public subnets, because no emitter branched on it. An enum costs the same to write
+ * and lets each value name what is actually produced.
+ *
+ * - `public` — reachable from the internet through the target's own entry point. This is
+ *   what an omitted `network` block means, and what every pre-0.37 document got.
+ * - `internal` — reachable only from the networks named in `allowFrom`, never from the
+ *   internet. The container module emits an internal load balancer in the private subnets;
+ *   on `kubernetes` it is already the chart's default, because the Service is `ClusterIP`
+ *   unless the document asks for an Ingress object.
+ * - `private-link` — declared and refused. A private endpoint is a provider resource whose
+ *   name is specific to the service behind it, and no module creates one, so
+ *   `ir/network-ingress-unsupported` refuses the value rather than approximating it.
+ */
+export const DEPLOYMENT_INGRESS = ['public', 'internal', 'private-link'] as const;
+
+export type DeploymentIngress = (typeof DEPLOYMENT_INGRESS)[number];
+
+/** What a deployment that says nothing about reachability gets, and always got. */
+export const DEFAULT_DEPLOYMENT_INGRESS: DeploymentIngress = 'public';
+
+/**
+ * How a deployment is reachable and what it may reach, from spec 0.26, reshaped in 0.37.
+ *
+ * `egress` says whether the runtime may call anything it likes or only declared
+ * destinations. `profile: enterprise` requires a non-public `ingress`, refused by
+ * `ir/profile-network`.
  */
 export interface DeploymentNetworkShape {
-  private: boolean;
+  /**
+   * @deprecated from spec 0.37, in favour of `ingress`.
+   *
+   * Still projected so a document below the version floor keeps the meaning its version
+   * offered, and so `ir/profile-network` can accept the old spelling from those documents.
+   * A 0.37 document that declares it is refused by `spec/not-supported`, whose hint names
+   * the replacement: two keys that both claim to decide placement is the ambiguity this
+   * change exists to remove.
+   */
+  private?: boolean;
+  /**
+   * The resolved reachability, always present.
+   *
+   * Resolution happens in the builder rather than in each generator, so no emitter can
+   * disagree with another about what an absent key meant, and no generator has to decide
+   * what a missing value should default to.
+   */
+  ingress: DeploymentIngress;
+  /**
+   * The CIDRs allowed to reach an `internal` ingress, required for that value.
+   *
+   * Kept out of the generator because a CIDR is a fact about the customer's network that
+   * no default can guess: `10.0.0.0/8` would be wrong for a fleet that numbers in
+   * `172.16.0.0/12`, and an empty list would emit a load balancer nothing can reach.
+   */
+  allowFrom?: string[];
   egress?: DeploymentEgress;
 }
 

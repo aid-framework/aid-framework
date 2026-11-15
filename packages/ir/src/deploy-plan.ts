@@ -14,6 +14,8 @@ import type {
   AlertAggregate,
   AlertWindow,
   BedrockGuardrailPolicy,
+  DeploymentEgress,
+  DeploymentIngress,
   DeploymentTarget,
   GatewayAuthorizerShape,
   GatewayTargetShape,
@@ -163,10 +165,29 @@ export interface DeployService {
    * other backend sees a plan document unchanged by the key's introduction.
    */
   kubernetes?: DeployKubernetes;
+  /**
+   * How the service is reachable, from spec 0.37. Present only when the deployment
+   * declared a `network` block, so a plan written before the key existed is unchanged
+   * and every emitter reads it with one presence check.
+   */
+  network?: DeployNetwork;
   /** Retriever ids whose corpus must exist before this service serves traffic. */
   ingest: string[];
 }
 
+/**
+ * The network placement an emitter acts on.
+ *
+ * `ingress` is resolved (the spec's default is applied by the IR) because an emitter that
+ * had to re-derive the default would be a second place the default can drift. `allowFrom`
+ * and `egress` stay optional: absent means "the spec said nothing", which a module must
+ * distinguish from an empty allow-list, since an empty one admits nobody.
+ */
+export interface DeployNetwork {
+  ingress: DeploymentIngress;
+  allowFrom?: string[];
+  egress?: DeploymentEgress;
+}
 /**
  * The cluster placement the Helm chart renders, with the defaults the spec declined to
  * state resolved here rather than in the emitter.
@@ -392,6 +413,15 @@ export function buildDeployPlan(ir: IR): DeployPlan {
         ...(deployment.kubernetes.ingress !== undefined
           ? { ingress: { ...deployment.kubernetes.ingress } }
           : {}),
+      };
+    }
+    if (deployment.network !== undefined) {
+      service.network = {
+        ingress: deployment.network.ingress,
+        ...(deployment.network.allowFrom === undefined
+          ? {}
+          : { allowFrom: [...deployment.network.allowFrom] }),
+        ...(deployment.network.egress === undefined ? {} : { egress: deployment.network.egress }),
       };
     }
     if (deployment.runtime !== undefined) {

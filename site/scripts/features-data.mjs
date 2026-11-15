@@ -442,6 +442,20 @@ export const SHIPPED_FEATURES = [
     since: '0.1.189',
   },
   {
+    id: 'network-placement',
+    maturity: 'emitted',
+    evidence: {
+      path: 'packages/cli/src/infra/modules/container.ts',
+      marker: 'internal           = var.internal',
+    },
+    title: 'A network placement that reaches the generator',
+    detail:
+      '`network.ingress` says how a deployment is reached — `public`, `internal`, or `private-link` — and unlike the retired `network.private` flag it selects what the emitter builds: an `internal` container deployment gets an internal load balancer whose security group admits only the `allowFrom` ranges, and a `kubernetes` deployment is internal by default because its `Service` is `ClusterIP`. The gate refuses a placement the target cannot express, `internal` with no `allowFrom`, `allowFrom` on a public placement, and a `private-link` this build does not emit.',
+    declaredBy: 'deployments[].network',
+    href: './reference/spec.md#deployment',
+    since: '0.1.190',
+  },
+  {
     id: 'eject',
     maturity: 'tooling',
     evidence: { path: 'packages/cli/src/commands/eject.ts', marker: 'eject' },
@@ -856,11 +870,11 @@ export const SHIPPED_FEATURES = [
 export const DECLARED_FEATURES = [
   {
     id: 'delivery-controls',
-    title: 'Durable run state, deployment identity, private network and change approval',
-    declares: 'state, deployments[].identity, deployments[].network, deployments[].approvals',
-    enforces: 'ir/profile-identity, ir/identity-verified-by, ir/profile-network',
+    title: 'Durable run state, deployment identity and change approval',
+    declares: 'state, deployments[].identity, deployments[].approvals',
+    enforces: 'ir/profile-identity, ir/identity-verified-by',
     missing:
-      'What *is* generated: the region pin and the audit sink reach the OpenTofu, the profile gate refuses an `enterprise` deployment missing either of them or missing the `network.private` pin, `requiresApproval` reaches the generated tool step, the checkpoint is signed with the key `state.signingKeyEnv` names, a declared `state` store holds the checkpoint nonce, and a paused run is written to that store so `POST /agents/runs/{run_id}/resume` continues it after a restart. What is not: `network.private` states a requirement and selects no module -- the container module builds its two-AZ VPC with private task subnets and one NAT gateway whenever you do not supply `vpc_id`, whether the pin is set or not, and no generator branches on the key. Also not: no generator verifies a token unless the deployment writes `verifiedBy: aid`, which from spec 0.35 makes `py-fastapi` generate the check (`generated-verifier` above) -- any other value names a component and is a declaration only.',
+      'What *is* generated: the region pin and the audit sink reach the OpenTofu, `requiresApproval` reaches the generated tool step, the checkpoint is signed with the key `state.signingKeyEnv` names, a declared `state` store holds the checkpoint nonce, and a paused run is written to that store so `POST /agents/runs/{run_id}/resume` continues it after a restart. What is not: no generator verifies a token unless the deployment writes `verifiedBy: aid`, which from spec 0.35 makes `py-fastapi` generate the check (`generated-verifier` above) -- any other value names a component and is a declaration only. The same is true of the approval policy: the build refuses an `enterprise` deployment with none and generates the pause it names, but it cannot confirm the named reviewers are real people. The network placement these controls describe is inventoried separately (`network-placement`), because from 0.37 the container and cluster modules act on it.',
     href: './reference/spec.md#top-level-keys',
     since: '0.1.143',
   },
@@ -1265,6 +1279,7 @@ export const CAPABILITY_FAMILIES = [
       'review-pack',
       'helm',
       'kubernetes-placement',
+      'network-placement',
     ],
   },
   {

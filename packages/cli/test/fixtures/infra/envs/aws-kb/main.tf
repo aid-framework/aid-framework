@@ -27,22 +27,24 @@ module "serverless" {
 module "container" {
   source = "../../generated/modules/container"
 
-  project            = var.project
-  services           = var.services
-  guardrails         = var.guardrails
-  image_uris         = var.image_uris
-  secret_arns        = var.secret_arns
-  container_sizing   = var.container_sizing
-  vpc_id             = var.vpc_id
-  public_subnet_ids  = var.public_subnet_ids
-  private_subnet_ids = var.private_subnet_ids
-  vpc_cidr           = var.vpc_cidr
-  health_check_path  = var.health_check_path
-  idle_timeout       = var.idle_timeout
-  log_retention_days = var.log_retention_days
-  bedrock_region     = var.bedrock_region
-  knowledge_bases    = module.knowledge-base.knowledge_bases
-  tags               = var.tags
+  project             = var.project
+  services            = var.services
+  guardrails          = var.guardrails
+  image_uris          = var.image_uris
+  secret_arns         = var.secret_arns
+  container_sizing    = var.container_sizing
+  vpc_id              = var.vpc_id
+  public_subnet_ids   = var.public_subnet_ids
+  private_subnet_ids  = var.private_subnet_ids
+  vpc_cidr            = var.vpc_cidr
+  internal            = var.internal
+  internal_allow_from = var.internal_allow_from
+  health_check_path   = var.health_check_path
+  idle_timeout        = var.idle_timeout
+  log_retention_days  = var.log_retention_days
+  bedrock_region      = var.bedrock_region
+  knowledge_bases     = module.knowledge-base.knowledge_bases
+  tags                = var.tags
 }
 
 module "batch" {

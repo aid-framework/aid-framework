@@ -564,16 +564,20 @@ describe('emitContainerModule', () => {
     expect(main).toContain('contains(keys(var.image_uris), each.key)');
     expect(main).toContain('contains(keys(var.secret_arns), variable.name)');
     // Networking is the other thing an empty input makes invalid rather than absent.
-    expect(main).toContain('length(local.public_subnet_ids) >= 2');
     expect(main).toContain('length(local.private_subnet_ids) >= 2');
+    expect(main).toContain('length(local.ingress_subnet_ids) >= 2');
     expect(main).toContain('var.vpc_cidr != ""');
   });
 
   it('refuses a load balancer with fewer than two subnets', () => {
     // AWS rejects a one-subnet ALB, so the refusal belongs in the plan, where the
-    // message can name the input to fix.
+    // message can name the input to fix. The subnets it checks are whichever set the
+    // placement selects: an internal load balancer is not reachable from a public one.
     const main = mainOf(emitContainerModule(planOf('container')));
-    expect(main).toContain('length(local.public_subnet_ids) >= 2');
+    expect(main).toContain('length(local.ingress_subnet_ids) >= 2');
+    expect(main).toContain(
+      'ingress_subnet_ids = var.internal ? local.private_subnet_ids : local.public_subnet_ids',
+    );
   });
 
   it('refuses to guess a network range', () => {
