@@ -89,6 +89,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.33',
   '0.34',
   '0.35',
+  '0.36',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
@@ -279,6 +280,18 @@ export const IDENTITY_GENERATED_VERIFIER = 'aid';
  * that declares one is told which version it needs.
  */
 export const IDENTITY_GENERATED_MIN_VERSION: SpecVersion = '0.35';
+
+/**
+ * The first spec version that accepts `target: kubernetes` and the `kubernetes` placement
+ * block.
+ *
+ * Both are one decision -- run this image on a cluster, with this ingress -- so they share a
+ * version. A 0.35 document that names the target was written against a vocabulary its
+ * version did not offer, and reading it as `container` would emit an ECS task definition for
+ * something the author asked to schedule on a cluster: the silent substitution this layer
+ * exists to prevent.
+ */
+export const KUBERNETES_MIN_VERSION: SpecVersion = '0.36';
 
 /**
  * The first spec version under which `enterprise` refuses a pausable agent whose deployment
@@ -771,6 +784,7 @@ function scopeDiagnostics(
   resumeSigningVersionDiagnostics(spec, diagnostics, reported);
   identityVerifiedByVersionDiagnostics(spec, diagnostics, reported);
   identityGeneratedVersionDiagnostics(spec, diagnostics, reported);
+  kubernetesVersionDiagnostics(spec, diagnostics, reported);
   batchSurfaceDiagnostics(spec, diagnostics, reported);
   stepDiagnostics(spec, diagnostics, reported);
   routeDiagnostics(spec, diagnostics, reported);
@@ -1393,6 +1407,61 @@ function identityGeneratedVersionDiagnostics(
       );
       reported.add(JSON.stringify(path));
     }
+  }
+}
+
+/**
+ * `target: kubernetes` and the `kubernetes` placement block arrived in 0.36.
+ *
+ * The section gate cannot see either: `deployments` exists from 0.2 and `target` is a scalar
+ * inside it. Left ungated, a 0.35 document naming the target would fail the schema's enum
+ * with a message that names no version and no fix. The refusal names the version, because
+ * the author's intent is clear and the only correct repair is to raise the declaration.
+ *
+ * A `kubernetes` block is reported too, and separately, because a document might carry the
+ * block without asking to run on a cluster -- which is that author's actual mistake, and
+ * `ir/kubernetes-block-misplaced` says so after the version is right.
+ */
+function kubernetesVersionDiagnostics(
+  spec: Record<string, unknown>,
+  diagnostics: Diagnostic[],
+  reported: Set<string>,
+): void {
+  const declared = typeof spec.specVersion === 'string' ? spec.specVersion : undefined;
+  const known =
+    declared !== undefined && (SUPPORTED_SPEC_VERSIONS as readonly string[]).includes(declared);
+  if (declared === undefined || !known) return;
+  if (specVersionAtLeast(declared, KUBERNETES_MIN_VERSION)) return;
+  const deployments = spec.deployments;
+  if (deployments === null || typeof deployments !== 'object' || Array.isArray(deployments)) return;
+  for (const [id, rawDeployment] of Object.entries(deployments as Record<string, unknown>)) {
+    const deployment = asRecord(rawDeployment);
+    if (deployment.target === 'kubernetes') {
+      const path = ['deployments', id, 'target'];
+      if (!reported.has(JSON.stringify(path))) {
+        diagnostics.push(
+          errorDiagnostic({
+            code: DIAGNOSTIC_CODES.notSupported,
+            message: `'deployments.${id}.target: kubernetes' requires specVersion ${KUBERNETES_MIN_VERSION}, but this specification declares version ${declared}`,
+            path,
+            hint: `set specVersion: "${KUBERNETES_MIN_VERSION}"; no earlier version has a cluster target, and reading it as \`container\` would emit a task definition for a workload the document asked to schedule on Kubernetes`,
+          }),
+        );
+        reported.add(JSON.stringify(path));
+      }
+    }
+    if (!('kubernetes' in deployment)) continue;
+    const path = ['deployments', id, 'kubernetes'];
+    if (reported.has(JSON.stringify(path))) continue;
+    diagnostics.push(
+      errorDiagnostic({
+        code: DIAGNOSTIC_CODES.notSupported,
+        message: `'deployments.${id}.kubernetes' requires specVersion ${KUBERNETES_MIN_VERSION}, but this specification declares version ${declared}`,
+        path,
+        hint: `set specVersion: "${KUBERNETES_MIN_VERSION}"; the block configures the Helm chart's placement, and no chart is emitted below that version`,
+      }),
+    );
+    reported.add(JSON.stringify(path));
   }
 }
 

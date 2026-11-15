@@ -150,7 +150,10 @@ export function emitProviderModules(plan: DeployPlan, cloud: Cloud = DEFAULT_CLO
         ...emitEdgeModule(plan),
         ...emitKnowledgeBaseModule(plan),
         ...emitGatewayModule(plan),
-        ...emitAgentRuntimeModule(plan, cloud),
+        // `azure` never reaches this branch: `aid infra` refuses it for every backend that
+        // reads this function, and the chart is the only Azure artifact. Naming `aws` rather
+        // than passing `cloud` keeps that refusal load-bearing instead of a coincidence.
+        ...emitAgentRuntimeModule(plan, 'aws'),
         ...emitCdkModules(plan, cloud),
         ...emitAuditModule(plan, cloud),
         ...emitAlertsModule(plan, cloud),

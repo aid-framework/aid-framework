@@ -1,0 +1,104 @@
+specVersion: "0.36"
+
+project:
+  name: claims-desk
+  namespace: acme.claims
+  description: An enterprise claims adjudicator that runs on the customer's own AKS cluster, behind an ingress with a certificate the cluster already holds.
+  targets:
+    - py-fastapi
+
+profile: enterprise
+
+types:
+  TicketClassification:
+    kind: struct
+    fields:
+      category:
+        type: string
+        required: true
+      summary:
+        type: string
+        required: true
+  RefundReceipt:
+    kind: struct
+    fields:
+      claim:
+        type: string
+        required: true
+
+models:
+  triage:
+    provider: openai
+    modelId: gpt-4o-mini
+    capabilities: [json-schema]
+    apiKeyEnv: OPENAI_API_KEY
+
+prompts:
+  classify_claim:
+    version: 1
+    model: triage
+    template: |
+      Classify the claim below.
+      Subject: {{subject}}
+    variables:
+      subject:
+        type: string
+        required: true
+    output:
+      kind: structured
+      schema: TicketClassification
+
+tools:
+  issue_refund:
+    description: Issue a refund against a claim.
+    input: RefundReceipt
+    output: RefundReceipt
+    handler:
+      kind: business
+      symbol: issue_refund
+    sideEffects: write
+    requiresConfirmation: true
+
+agents:
+  claims_adjudicator:
+    name: Claims adjudicator
+    instructions: classify_claim
+    model: triage
+    tools: [issue_refund]
+    maxSteps: 12
+    maxCostBudget: 2.5
+
+guardrails:
+  outbound:
+    stages: [output]
+    policies: [pii-detect]
+    action: block
+    onFail:
+      message: The response was rejected by the output guardrail.
+      log: true
+
+deployments:
+  prod:
+    target: kubernetes
+    cloud: azure
+    region: uksouth
+    audit:
+      sink: azure-monitor
+      retentionDays: 400
+    identity:
+      kind: oidc
+      issuer: https://login.example.com
+      audience: aid-claims
+    network:
+      private: true
+      egress: declared-only
+    approvals:
+      require: [security, platform]
+      minApprovers: 2
+    secrets: [OPENAI_API_KEY]
+    kubernetes:
+      namespace: claims-prod
+      ingress:
+        host: claims.example.com
+        className: nginx
+        tlsSecret: claims-tls

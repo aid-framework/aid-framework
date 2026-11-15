@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.35`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.36`.
 
 ## Deployment targets
 
@@ -14,21 +14,25 @@ A deployment names one target, and the generated infrastructure runs it on one c
 
 - **`aws`:** API Gateway + Lambda
 - **`gcp`:** Cloud Run
+- **`azure`:** refused with `cli/infra-cloud-target-unsupported` — AID emits no Azure Functions module, so there is no plan to apply. The workload AID does generate for Azure is the Helm chart: set `target: kubernetes` and install it on AKS.
 
 ### `container`
 
 - **`aws`:** ECS on Fargate
 - **`gcp`:** Cloud Run
+- **`azure`:** refused with `cli/infra-cloud-target-unsupported` — AID emits no Container Apps module. `target: container` builds the image and `target: kubernetes` places it, so an Azure deployment declares the cluster target and keeps `cloud: azure` for its registry and audit sink.
 
 ### `batch`
 
 - **`aws`:** AWS Batch
 - **`gcp`:** Cloud Run job
+- **`azure`:** refused with `cli/infra-cloud-target-unsupported` — AID emits no Azure Container Instances or Container Apps Job module, so a run-to-completion job has no resource to map to.
 
 ### `edge`
 
 - **`aws`:** Lambda@Edge on CloudFront
 - **`gcp`:** refused with `cli/infra-cloud-target-unsupported` — Cloud CDN serves static assets and cannot run the app, so there is no GCP resource to map `edge` to.
+- **`azure`:** refused with `cli/infra-cloud-target-unsupported` — Azure Front Door serves assets and cannot run the app, so there is no Azure resource to map `edge` to.
 
 ## Model providers
 
@@ -281,6 +285,24 @@ The same deployment plan can emit a CDK app instead, for a team already deployin
 - **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/commands/infra.ts`)
 - **Reference:** [cli](./reference/cli.md#infra)
 - **Since:** `0.1.57`
+
+### A Helm chart for a cluster target
+
+A `kubernetes` deployment emits a chart instead of a cloud module: a Deployment, a Service, an Ingress when one is declared, and a values file covering the image, the replicas, the resource requests and the pod security context. The chart is cloud-neutral, so the same bytes install on AKS, EKS or GKE, and `cloud` and `region` still name where the image registry and the audit sink live.
+
+- **Turned on by:** `aid infra gen --iac helm`
+- **What exists:** a generator writes it into the tree (`packages/cli/src/infra/helm.ts`)
+- **Reference:** [cli](./reference/cli.md#infra)
+- **Since:** `0.1.189`
+
+### A cluster placement with an addressable ingress
+
+A `kubernetes` deployment declares its namespace and, optionally, the ingress that publishes it. A `kubernetes` block on a deployment that is not placed on a cluster is refused rather than ignored, because it would read as a placement that never happened. An ingress must name an `ingressClassName`, and under `profile: enterprise` the TLS secret that terminates it.
+
+- **Turned on by:** `deployments[].kubernetes`
+- **What exists:** a build-time refusal holds the line; nothing is emitted for it (`packages/ir/src/gates/kubernetes.ts`)
+- **Reference:** [spec](./reference/spec.md#deployment)
+- **Since:** `0.1.189`
 
 ### Eject
 
@@ -626,6 +648,18 @@ The spec holds the *names* of the repository secrets a login reads, never the va
 Cloud CDN serves static assets and cannot run the app, so the infra planner refuses the plan instead of emitting part of a project.
 
 - **Enforced by:** `cli/infra-cloud-target-unsupported`
+
+### A `kubernetes` deployment sent through an OpenTofu or CDK backend
+
+A cluster is not a cloud module: the plan for a `kubernetes` deployment is a Helm chart, and neither OpenTofu nor CDK emits one. The refusal names the backend that does, because "run `aid infra gen --iac helm`" is a fix and "pick another cloud" is not.
+
+- **Enforced by:** `cli/infra-kubernetes-backend-required`
+
+### A `kubernetes` block on a deployment that is not placed on a cluster
+
+The block declares a namespace and an ingress, and both are meaningless unless the workload is placed on a cluster. Ignoring it would let a spec read as a cluster placement while the plan emitted a serverless function, so the `kubernetes` gate refuses the mismatch instead.
+
+- **Enforced by:** `ir/kubernetes-block-misplaced`
 
 ### An `enterprise` profile with a required control missing
 

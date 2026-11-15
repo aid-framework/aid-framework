@@ -731,11 +731,45 @@ What is refused:
   disagrees with its sibling's; and a spec that pins one cloud while the command asks for
   another.
 
-`aid eject` moves a generated file into `business/` and stops generating it. After that the
-file is yours, and the manifest says so instead of re-reporting it as drift.
+A deployment can also be placed on a cluster instead of on one cloud's managed runtime (spec
+`0.36`). `target: kubernetes` emits a Helm chart rather than an OpenTofu module, because a
+cluster is not a vendor resource: the same bytes install on AKS, EKS or GKE, and `cloud` and
+`region` stay meaningful as the home of the image registry and the audit sink.
 
-`aid review` prints the split a reviewer has to work from. It runs the same pipeline as
-`validate` and adds no gate, so a spec the build refuses is refused rather than itemised.
+```yaml
+deployments:
+  claims:
+    target: kubernetes
+    cloud: azure
+    region: uksouth
+    audit:
+      sink: azure-monitor
+      retentionDays: 400
+    kubernetes:
+      namespace: claims-prod
+      ingress:
+        host: claims.example.com
+        className: nginx
+        tlsSecret: claims-tls
+```
+
+```sh
+aid infra gen --iac helm
+```
+
+The chart is a `Deployment`, a `Service`, an `Ingress` when one is declared, and a `values.yaml`
+that carries the image, the replicas, the resource requests and the pod security context.
+`readOnlyRootFilesystem` defaults off, because AID has not run your app on a pod: a setting
+asserted rather than observed is the "installs cleanly, then fails at request time" failure the
+emitted chart's README warns about.
+
+A `kubernetes` block on a deployment that is not placed on a cluster is refused, because it
+would read as a placement that never happened. So is an ingress with no `ingressClassName`, a
+namespace that is not a DNS label, and — under `profile: enterprise` — an ingress with no
+`tlsSecret`, since an enterprise placement terminating plaintext HTTP is a mistake with a fix.
+
+`aid eject` moves a generated file into `business/` and stops generating it. After that the
+file is yours, and the manifest says so instead of re-reporting it as drift.`aid review` prints the split a reviewer has to work from. It runs the same pipeline as`validate` and adds no gate, so a spec the build refuses is refused rather than itemised.
 
 ```sh
 aid review
@@ -757,6 +791,8 @@ Covers:
 - **Vertex AI from the GCP modules**
 - **Generated project CI**
 - **A Dockerfile and an image**
+- **A Helm chart for a cluster target**
+- **A cluster placement with an addressable ingress**
 - **Delivery profiles with a pinned placement and audit sink**
 - **Durable run state, deployment identity, private network and change approval** *(declared
   and gated; the private-network pin and the component-name form of `identity.verifiedBy` stay

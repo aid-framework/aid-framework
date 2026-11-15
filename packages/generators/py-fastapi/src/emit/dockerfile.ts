@@ -42,10 +42,21 @@ const PYTHON_IMAGE = 'python:3.11-slim';
 /** The port the image listens on when the platform does not set `PORT`. */
 const DEFAULT_PORT = 8080;
 
-/** Whether any deployment runs an image: a `container` server or a `batch` job. */
+/**
+ * Whether any deployment runs an image: a `container` server, a `batch` job, or a
+ * `kubernetes` workload.
+ *
+ * `kubernetes` joined in spec 0.36 and behaves like `container` here, because both ask the
+ * cluster for the same thing: a long-running process answering the app's HTTP routes on
+ * `PORT`. What differs is who owns the placement, which is the chart's business and not the
+ * image's.
+ */
 export function hasImageDeployment(ir: IR): boolean {
   return ir.deployments.some(
-    (deployment) => deployment.target === 'container' || deployment.target === 'batch',
+    (deployment) =>
+      deployment.target === 'container' ||
+      deployment.target === 'batch' ||
+      deployment.target === 'kubernetes',
   );
 }
 
@@ -62,6 +73,7 @@ function imageIds(ir: IR): { id: string; target: string }[] {
     .filter(
       (deployment) =>
         deployment.target === 'container' ||
+        deployment.target === 'kubernetes' ||
         (deployment.target === 'batch' && deployment.pipeline !== undefined),
     )
     .map((deployment) => ({ id: deployment.id, target: deployment.target }))
@@ -72,7 +84,13 @@ function imageIds(ir: IR): { id: string; target: string }[] {
 function declaredSecrets(ir: IR): string[] {
   const names = new Set<string>();
   for (const deployment of ir.deployments) {
-    if (deployment.target !== 'container' && deployment.target !== 'batch') continue;
+    if (
+      deployment.target !== 'container' &&
+      deployment.target !== 'batch' &&
+      deployment.target !== 'kubernetes'
+    ) {
+      continue;
+    }
     for (const name of deployment.secrets) names.add(name);
   }
   return [...names].sort(compareIds);
@@ -130,7 +148,7 @@ export function emitDockerfile(ir: IR): EmittedFile {
     : `# The image for ${ids
         .map((entry) => `deployments.${entry.id} (\`target: ${entry.target}\`)`)
         .join(', ')}.`;
-  const serves = ids.some((entry) => entry.target === 'container');
+  const serves = ids.some((entry) => entry.target === 'container' || entry.target === 'kubernetes');
   const jobs = ids.some((entry) => entry.target === 'batch');
   // A managed runtime hands the container to the platform, which calls `/ping` and its own
   // invocation route. Both exist only on the generated adapter, and only the adapter.

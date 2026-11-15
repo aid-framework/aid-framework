@@ -339,12 +339,21 @@ name attached before it can land. Full workflow: [`docs/guide/delivery.md`](../.
 
 ```bash
 npx @aid-framework/cli infra gen
+npx @aid-framework/cli infra gen --iac helm
 npx @aid-framework/cli infra plan --env dev
 ```
 
 `infra gen` derives OpenTofu or CDK wiring from the spec; `infra plan` and `infra apply` drive the
-backend. `--cloud aws|gcp` and `--iac tofu|cdk` select the module set, and `--confirm-prod` is
-required before an apply can touch production.
+backend. `--cloud aws|gcp|azure` and `--iac tofu|cdk|helm` select the module set, and
+`--confirm-prod` is required before an apply can touch production.
+
+`azure` is served through the chart and nothing else: AID emits no Azure compute module, so an
+Azure deployment sets `target: kubernetes`, pins `cloud: azure` and a region for the registry and
+the `azure-monitor` audit sink, and installs the emitted chart on AKS. `--iac helm` is the backend
+for `target: kubernetes` on any cloud; asking for `tofu` or `cdk` there is refused
+(`cli/infra-kubernetes-backend-required`) because neither emits a chart. The chart ships no cluster,
+ingress controller or certificate, and `readOnlyRootFilesystem` defaults off until you have run your
+app against one.
 
 Applying is an operator action with credentials. Do not run `infra apply` to answer a question — use
 `infra gen` plus `--dry-run`, or `gen --check`, which need no account.

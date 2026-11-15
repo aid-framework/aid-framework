@@ -28,7 +28,7 @@ import {
   serializeAidManifest,
 } from '@aid-framework/generator-sdk';
 import type { IR } from '@aid-framework/ir';
-import { buildDeployPlan, DEPLOY_PLAN_VERSION } from '@aid-framework/ir';
+import { buildDeployPlan, DEPLOY_PLAN_VERSION, type DeployPlan } from '@aid-framework/ir';
 import { hasErrors, sortDiagnostics } from '@aid-framework/spec';
 
 import type { CliContext, SpawnResult } from '../context.js';
@@ -37,8 +37,13 @@ import { CLI_DIAGNOSTIC_CODES, cliError, cliWarning } from '../diagnostics.js';
 import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE } from '../exit.js';
 import { cdkRoot, classifyCdk, runCdk } from '../infra/cdk.js';
 import {
+  BACKEND_CLOUDS,
+  CLOUD_TARGETS,
   CLOUDS,
   type Cloud,
+  HELM_TARGETS,
+  IAC_BACKENDS,
+  type IacBackend,
   isCloud,
   KNOWLEDGE_BASE_CLOUDS,
   pinnedCloud,
@@ -87,10 +92,31 @@ const GUARDRAIL_HOMES: Record<
   'model-armor': { cloud: 'gcp', product: 'Model Armor', names: 'a Model Armor template' },
 };
 
-/** The backends a bare action can drive. `tofu` stays the default, so nothing shipped moves. */
-const IAC_BACKENDS = ['tofu', 'cdk'] as const;
+export type { IacBackend };
+/**
+ * The backends `aid infra` can emit.
+ *
+ * Declared in `infra/cloud.ts` beside `BACKEND_CLOUDS`, so the list of backends and the
+ * clouds each one serves cannot drift apart, and re-exported here because this is where the
+ * dispatcher's refusals and the site's support page look for it.
+ *
+ * `tofu` stays the default, so nothing shipped moves. `helm` joined in 0.36: it renders a
+ * chart from `target: kubernetes`, and unlike the other two it creates no managed resource
+ * -- the cluster, namespace and secrets belong to the operator, so the chart only describes
+ * what to run inside them. That is why the backend is separate from the cloud rather than
+ * another entry in `CLOUD_TARGETS`.
+ */
+export { IAC_BACKENDS };
 
-type IacBackend = (typeof IAC_BACKENDS)[number];
+/**
+ * Every served pair, spelled for a refusal to quote.
+ *
+ * Derived from {@link BACKEND_CLOUDS} rather than written out, so a pair that stops being
+ * served stops being advertised in the same commit that removes it.
+ */
+const SERVED_PAIRS = Object.entries(BACKEND_CLOUDS)
+  .flatMap(([backend, clouds]) => clouds.map((cloud) => `${cloud}+${backend}`))
+  .join(', ');
 
 /** The env root a bare action runs in. */
 const DEFAULT_ENV = 'dev';
@@ -184,7 +210,7 @@ export function infra(context: CliContext, options: InfraOptions): CommandOutcom
   // subcommand: `gen` writes `infra/envs/gcp-<env>` for a GCP pin, and `plan`/`apply`/
   // `drift` have to look for it in the same place. A spec that cannot be read or lowered
   // pins nothing, which leaves the flag and the `aws` default exactly as they were.
-  const resolved = resolveCloud(pinnedFromSpec(context, options.spec), options.cloud);
+  const resolved = resolveCloud(pinnedFromSpec(context, options.spec).cloud, options.cloud);
   if (!resolved.ok) {
     return outcome({
       command: 'infra',
@@ -200,16 +226,43 @@ export function infra(context: CliContext, options: InfraOptions): CommandOutcom
   }
   const cloud = resolved.cloud;
 
-  // An empty CDK app is worse than a refusal: it would synth cleanly and deploy nothing.
-  if (cloud === 'gcp' && options.iac === 'cdk') {
+  // A backend emits infrastructure for the clouds it has a module for. Asking for one it
+  // does not is refused here rather than deeper down, because the alternative is an empty
+  // root or an empty CDK app: it synths cleanly, deploys nothing, and reports success.
+  // Azure reaches this point only when `--iac helm` was passed, since the chart is the only
+  // Azure artifact and a chart is cloud-neutral.
+  const iac = (options.iac ?? 'tofu') as IacBackend;
+  const served = BACKEND_CLOUDS[iac];
+  if (!served.includes(cloud)) {
+    // A `kubernetes` target is the more specific fault when both are true: the backend has
+    // no module for the cloud *and* the workload belongs in a chart. Naming the chart sends
+    // the operator to the command that works; naming the cloud does not.
+    if (iac !== 'helm' && pinnedFromSpec(context, options.spec).kubernetes) {
+      return outcome({
+        command: 'infra',
+        exitCode: EXIT_USAGE,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.infraKubernetesBackendRequired,
+            message: `The spec targets \`kubernetes\`, which the "${iac}" backend has no module for.`,
+            hint: 'Run `aid infra gen --iac helm` to render the chart, or change the deployment target if it should run on a managed platform.',
+          }),
+        ],
+      });
+    }
     return outcome({
       command: 'infra',
       exitCode: EXIT_USAGE,
       diagnostics: [
         cliError({
           code: CLI_DIAGNOSTIC_CODES.infraCloudBackendUnsupported,
-          message: 'CDK constructs are emitted for AWS only.',
-          hint: 'Use --iac tofu, which emits the Cloud Run module, or deploy this environment with --cloud aws.',
+          message: `The "${iac}" backend emits no infrastructure for ${cloud}.`,
+          hint:
+            iac === 'helm'
+              ? 'A Helm chart is a Kubernetes object graph; it renders for a plan whose deployments target `kubernetes`, whatever cloud they pin.'
+              : cloud === 'azure'
+                ? 'Azure is served through Kubernetes: target the deployment at `kubernetes` in the spec and run `aid infra gen --iac helm`.'
+                : `Supported pairs are ${SERVED_PAIRS}.`,
         }),
       ],
     });
@@ -228,13 +281,21 @@ export function infra(context: CliContext, options: InfraOptions): CommandOutcom
  * failure here therefore means "no pin", never a diagnostic -- otherwise `infra apply`
  * would start refusing documents it used to ignore.
  */
-function pinnedFromSpec(context: CliContext, spec: string | undefined): Cloud | undefined {
+function pinnedFromSpec(
+  context: CliContext,
+  spec: string | undefined,
+): { readonly cloud: Cloud | undefined; readonly kubernetes: boolean } {
   const specPath = spec ?? DEFAULT_SPEC_PATH;
   const read = readSpec(context, specPath);
-  if (!read.ok) return undefined;
+  if (!read.ok) return { cloud: undefined, kubernetes: false };
   const lowered = lowerSpec(read.text, specPath);
-  if (!lowered.ok) return undefined;
-  return pinnedCloud(lowered.ir.deployments);
+  if (!lowered.ok) return { cloud: undefined, kubernetes: false };
+  return {
+    cloud: pinnedCloud(lowered.ir.deployments),
+    kubernetes: lowered.ir.deployments.some((deployment) =>
+      (HELM_TARGETS as readonly string[]).includes(deployment.target),
+    ),
+  };
 }
 
 function generate(context: CliContext, options: InfraOptions, cloud: Cloud): CommandOutcome {
@@ -253,6 +314,74 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
   }
 
   const deployPlan = buildDeployPlan(lowered.ir);
+
+  // The chart renders Deployments, Services and Ingresses, and nothing else. Both refusals
+  // below exist because the alternative is a chart that installs cleanly while omitting
+  // part of what the document declared: a knowledge base, a managed guardrail or a gateway
+  // is a provider resource the cluster cannot describe, and a plan with no `kubernetes`
+  // deployment would render a chart with no workload in it at all.
+  if (options.iac === 'helm') {
+    const rendered = deployPlan.services.filter((service) =>
+      (HELM_TARGETS as readonly string[]).includes(service.target),
+    );
+    if (rendered.length === 0) {
+      return outcome({
+        command,
+        exitCode: EXIT_USAGE,
+        fields,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.infraHelmTargetRequired,
+            message:
+              'The plan has no deployment targeting `kubernetes`, so the chart would be empty.',
+            hint: "Set the deployment's `target: kubernetes` if it should install on a cluster, or emit this environment with --iac tofu or --iac cdk.",
+          }),
+        ],
+      });
+    }
+    const obstacles = helmObstacles(deployPlan);
+    if (obstacles.length > 0) {
+      return outcome({
+        command,
+        exitCode: EXIT_USAGE,
+        fields,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.infraHelmSurfaceUnsupported,
+            message: `The chart cannot render ${obstacles.map((obstacle) => obstacle.what).join(', ')}: it emits Deployments, Services and Ingresses only.`,
+            hint: 'Drop the construct or retarget the service at `kubernetes`, and emit this environment with --iac tofu or --iac cdk if the plan genuinely needs a provider resource.',
+          }),
+        ],
+      });
+    }
+  } else {
+    // A `kubernetes` deployment has no OpenTofu or CDK module: a cluster is not something
+    // these backends provision. Emitting the plan without it would deploy part of the
+    // project and report success.
+    const unrendered = deployPlan.services.filter(
+      (service) => !(CLOUD_TARGETS[cloud] as readonly string[]).includes(service.target),
+    );
+    if (
+      unrendered.some((service) => (HELM_TARGETS as readonly string[]).includes(service.target))
+    ) {
+      const ids = unrendered
+        .filter((service) => (HELM_TARGETS as readonly string[]).includes(service.target))
+        .map((service) => `"${service.id}"`)
+        .join(', ');
+      return outcome({
+        command,
+        exitCode: EXIT_USAGE,
+        fields,
+        diagnostics: [
+          cliError({
+            code: CLI_DIAGNOSTIC_CODES.infraKubernetesBackendRequired,
+            message: `${ids} target${ids.includes(',') ? '' : 's'} \`kubernetes\`, which the "${options.iac ?? 'tofu'}" backend has no module for.`,
+            hint: 'Run `aid infra gen --iac helm` to render the chart, or change the deployment target if it should run on a managed platform.',
+          }),
+        ],
+      });
+    }
+  }
 
   // On GCP `edge` has no counterpart at all, and a plan that named it would otherwise
   // emit *no* module for it and look successful. Refuse instead of deploying part of a
@@ -416,7 +545,10 @@ function generate(context: CliContext, options: InfraOptions, cloud: Cloud): Com
     });
   }
 
-  const files: InfraFile[] = emitInfra(deployPlan, { cloud });
+  const files: InfraFile[] = emitInfra(deployPlan, {
+    cloud,
+    iac: options.iac as IacBackend | undefined,
+  });
   const plan: Plan = {
     files: files.map((file) => ({ path: file.path, content: file.contents, owner: 'generated' })),
   };
@@ -612,6 +744,50 @@ interface SavedPlanService {
   readonly runtime?: unknown;
 }
 
+/** A piece of a plan the Helm chart has no object to describe. */
+interface HelmObstacle {
+  /** Spelled for the refusal: names the id and what it is. */
+  readonly what: string;
+}
+
+/**
+ * Everything in the plan the chart would silently omit.
+ *
+ * A chart describes Kubernetes objects. A managed knowledge base, a managed guardrail and
+ * an agent gateway are provider resources -- a Bedrock knowledge base is not a Deployment,
+ * and a Model Armor template is not a ConfigMap -- so a chart that rendered the workload
+ * and skipped them would install cleanly and then fail on first use, which is the least
+ * debuggable outcome available. A service on any other target is the same omission one
+ * layer up: the chart would carry no workload for it.
+ *
+ * Every field is read from the plan rather than the spec, so a plan saved by an earlier
+ * `gen` cannot slip past this by describing a spec shape that has since changed.
+ */
+function helmObstacles(plan: DeployPlan): HelmObstacle[] {
+  const obstacles: HelmObstacle[] = [];
+  for (const service of plan.services) {
+    if (!(HELM_TARGETS as readonly string[]).includes(service.target)) {
+      obstacles.push({ what: `"${service.id}" (a ${service.target} deployment)` });
+    }
+    for (const engine of service.guardrailEngines) {
+      obstacles.push({ what: `"${service.id}"'s ${engine} guardrail` });
+    }
+    if (service.runtime !== undefined) {
+      obstacles.push({ what: `"${service.id}"'s ${service.runtime.platform} runtime` });
+    }
+  }
+  for (const base of plan.knowledgeBases) {
+    obstacles.push({ what: `"${base.id}" (a ${base.engine} knowledge base)` });
+  }
+  for (const gateway of plan.gateways) {
+    obstacles.push({ what: `"${gateway.id}" (an agent gateway)` });
+  }
+  for (const task of plan.tasks) {
+    obstacles.push({ what: `"${task.id}" (a task, which the chart renders no job for)` });
+  }
+  return obstacles;
+}
+
 /** The part of a saved task this check needs: whether it asks to be scheduled. */
 interface SavedPlanTask {
   readonly id: string;
@@ -730,7 +906,27 @@ function action(
   cloud: Cloud,
 ): CommandOutcome {
   const command = 'infra';
-  const iac: IacBackend = options.iac === 'cdk' ? 'cdk' : 'tofu';
+  const iac: IacBackend = options.iac === 'cdk' || options.iac === 'helm' ? options.iac : 'tofu';
+
+  // A chart is not a state file: there is no plan to review, no apply to confirm and no
+  // drift to compare. Refusing here keeps the three commands from reporting on a backend
+  // they cannot drive, rather than shelling out to a binary that will not understand the
+  // tree.
+  if (iac === 'helm') {
+    return outcome({
+      command,
+      exitCode: EXIT_USAGE,
+      fields: { action, env: options.env ?? DEFAULT_ENV, tool: iac, cloud },
+      diagnostics: [
+        cliError({
+          code: CLI_DIAGNOSTIC_CODES.infraHelmNotDriven,
+          message: `\`aid infra ${action}\` does not drive Helm, which has no plan file to review.`,
+          hint: 'Run `aid infra gen --iac helm` to render the chart, review the rendered templates with `helm template`, and install it with `helm upgrade --install`.',
+        }),
+      ],
+    });
+  }
+
   const env = options.env ?? DEFAULT_ENV;
   const fields = { action, env, tool: iac, cloud };
   const backend = backendFor(context, iac, action, env, cloud);

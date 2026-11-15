@@ -37,6 +37,7 @@ export const BOUNDARY_CONCERNS = Object.freeze([
   'Observability export',
   'Promotion and self-improvement',
   'Deployment',
+  'Cluster placement',
 ]);
 
 export const BOUNDARY_TABLE_METADATA = Object.freeze({
@@ -83,6 +84,18 @@ export const BOUNDARY_TABLE_METADATA = Object.freeze({
     generated: 'The pause, the signed checkpoint and the resume route',
     provide: 'Someone to approve, and authentication in front of `/agents/resume`',
     risk: 'A checkpoint proves the app issued it, not that the holder should have it',
+  },
+  'Cluster placement': {
+    codes: [
+      'ir/kubernetes-block-misplaced',
+      'ir/kubernetes-ingress-class',
+      'ir/kubernetes-ingress-tls',
+    ],
+    generated:
+      'The chart -- a `Deployment`, a `Service` matching its pod labels, and an `Ingress` when one is declared -- with the namespace on every namespaced object',
+    provide:
+      'The cluster: an ingress controller that honours the `ingressClassName`, and a TLS secret that exists in that namespace',
+    risk: 'The gate proves the ingress is addressable on paper. Nothing checks the controller is installed or the certificate is issued, so a chart that applies cleanly can still serve a 404 or an expired cert',
   },
   'Identity and token verification': {
     codes: [

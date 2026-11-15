@@ -601,12 +601,12 @@ describe('deployments', () => {
   });
 
   it('names a cloud it does not provision, and lists the ones it does', () => {
-    const { diagnostics } = buildIR(spec({ target: 'container', secrets: [], cloud: 'azure' }));
+    const { diagnostics } = buildIR(spec({ target: 'container', secrets: [], cloud: 'openshift' }));
     const refusal = diagnostics.find(
       (diagnostic) => diagnostic.code === IR_DIAGNOSTIC_CODES.cloudUnsupported,
     );
-    expect(refusal?.message).toContain('"azure"');
-    expect(refusal?.message).toContain('the supported clouds are aws, gcp');
+    expect(refusal?.message).toContain('"openshift"');
+    expect(refusal?.message).toContain('the supported clouds are aws, gcp, azure');
     expect(refusal?.path).toEqual(['deployments', 'api', 'cloud']);
   });
 
@@ -627,7 +627,7 @@ describe('deployments', () => {
   });
 
   it('matches a deferred cloud case-insensitively, because a capital is not a decision', () => {
-    for (const cloud of ['Azure', 'AZURE', 'Kubernetes', 'K8S']) {
+    for (const cloud of ['Kubernetes', 'K8S', 'OpenShift']) {
       const { diagnostics } = buildIR(spec({ target: 'container', secrets: [], cloud }));
       const refusal = diagnostics.find(
         (diagnostic) => diagnostic.code === IR_DIAGNOSTIC_CODES.cloudUnsupported,
@@ -643,6 +643,7 @@ describe('deployments', () => {
     for (const [cloud, fix] of [
       ['AWS', 'aws'],
       ['Gcp', 'gcp'],
+      ['Azure', 'azure'],
     ] as const) {
       const { diagnostics } = buildIR(spec({ target: 'container', secrets: [], cloud }));
       const refusal = diagnostics.find(

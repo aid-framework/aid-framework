@@ -567,6 +567,63 @@ It still parses and still builds. `aid validate` reports nothing new from `ir/re
 the runtime changes above apply as soon as the app is regenerated and redeployed. A client that read
 `detail.reason` must stop: it no longer exists at any version.
 
+## 0.35 to 0.36: a deployment can be placed on your own cluster {#kubernetes-release}
+
+0.36 adds one value to `deployments[].target` -- `kubernetes` -- and the block that goes with it,
+`deployments[].kubernetes`. Nothing that exists changes shape, and a 0.35 document builds exactly
+as it did, so this section is short: the work is the placement, and the placement is new.
+
+```yaml
+specVersion: "0.36"
+
+deployments:
+  claims:
+    target: kubernetes
+    cloud: azure
+    region: uksouth
+    audit:
+      sink: azure-monitor
+      retentionDays: 400
+    kubernetes:
+      namespace: claims-prod
+      ingress:
+        host: claims.example.com
+        className: nginx
+        tlsSecret: claims-tls
+```
+
+`aid infra gen --iac helm` emits the chart. A cluster is not a vendor resource, so there is no
+cloud module to emit: the same bytes install on AKS, EKS or GKE, and `cloud` and `region` keep
+naming where the image registry and the audit sink live. That is also why `cloud: azure` and the
+`azure-monitor` audit sink became spec values in this release while every non-cluster Azure target
+is still refused -- the chart is what serves them.
+
+### What refuses a placement rather than approximating one
+
+- **`ir/kubernetes-block-misplaced`** -- a `kubernetes` block on a deployment whose `target` is
+  not `kubernetes`. Ignoring the block would let the document read as a placement that never
+  happened.
+- **`ir/kubernetes-ingress-class`** -- an `ingress` with no `className`. An unclassed ingress is
+  served by whichever controller the cluster happens to mark default, which is a property of the
+  cluster rather than of the spec.
+- **`ir/kubernetes-ingress-tls`** -- under `profile: enterprise`, an `ingress` with no `tlsSecret`.
+  The `standard` profile may terminate plaintext; a regulated placement may not.
+- **`cli/infra-kubernetes-backend-required`** -- `aid infra gen --iac tofu` (or `cdk`) on a
+  document placed on a cluster. Neither backend emits a chart, and the diagnostic names the one
+  that does.
+
+### Three things this does not give you
+
+- **Not a verified chart.** The tests assert the invariants a broken template breaks -- that the
+  Service selector is a subset of the pod labels, that names are DNS-1123, that the chart renders
+  no secret value -- rather than golden output, because Helm is not a build dependency. Run
+  `helm template` in your own pipeline before you install.
+- **Not a hardened pod.** `readOnlyRootFilesystem` defaults to `false` in `values.yaml`, because
+  AID has not run your app against a read-only root. Turn it on once you have, and fix what
+  breaks.
+- **Not a cluster.** No ingress controller, no certificate issuer and no namespace is created.
+  The chart applies into a cluster you already have.
+
 ## 0.34 to 0.35: the verifier the build can actually generate {#generated-verifier-release}
 
 0.35 adds two keys under `deployments[].identity` -- `jwksUri` and `subjectClaim` -- and reserves one

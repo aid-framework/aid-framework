@@ -1756,6 +1756,118 @@ describe('the delivery placement', () => {
 });
 
 /**
+ * The cluster placement, which arrived in 0.36.
+ *
+ * Two things are asserted here that no other test can see: the version rule names both
+ * the target and the block separately (they are two different edits for the author), and
+ * an Azure region name is admitted by the schema, whose `region` pattern is a shape check
+ * only -- membership is `ir/region-target`'s job, against the regions each cloud actually
+ * has.
+ */
+describe('the kubernetes placement', () => {
+  function doc(
+    specVersion: string,
+    deployment: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      specVersion,
+      project: { name: 'p' },
+      deployments: { prod: { target: 'kubernetes', secrets: [], ...deployment } },
+    };
+  }
+
+  it('accepts a cluster workload with its placement at 0.36', () => {
+    expect(
+      validateSpec(
+        doc('0.36', {
+          cloud: 'azure',
+          region: 'uksouth',
+          kubernetes: {
+            namespace: 'claims-prod',
+            ingress: { host: 'claims.example.com', className: 'nginx', tlsSecret: 'claims-tls' },
+          },
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('accepts the placement block alone, which is where the chart defaults come from', () => {
+    expect(validateSpec(doc('0.36', { kubernetes: {} }))).toEqual([]);
+  });
+
+  it('accepts an Azure region spelling, leaving membership to the region gate', () => {
+    // `uksouth` and `eastus2` are Azure's spellings; the AWS/GCP shape rejected both,
+    // which meant an Azure customer could not pin the region the profile gate demands.
+    expect(validateSpec(doc('0.36', { cloud: 'azure', region: 'uksouth' }))).toEqual([]);
+    expect(validateSpec(doc('0.36', { cloud: 'azure', region: 'eastus2' }))).toEqual([]);
+    expect(validateSpec(doc('0.36', { cloud: 'aws', region: 'eu-central-1' }))).toEqual([]);
+  });
+
+  it('accepts an Azure audit sink at 0.36', () => {
+    expect(validateSpec(doc('0.36', { cloud: 'azure', audit: { sink: 'azure-monitor' } }))).toEqual(
+      [],
+    );
+  });
+
+  it('tells a 0.35 document that a cluster target needs 0.36', () => {
+    const diagnostics = validateSpec(doc('0.35'));
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.notSupported]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.target']);
+    expect(diagnostics[0]?.message).toContain(
+      "'deployments.prod.target: kubernetes' requires specVersion 0.36",
+    );
+    expect(diagnostics[0]?.hint).toContain('set specVersion: "0.36"');
+  });
+
+  it('reports the placement block separately, because it is a different edit', () => {
+    const diagnostics = validateSpec(doc('0.35', { kubernetes: { namespace: 'claims' } }));
+
+    expect(codes(diagnostics)).toEqual([
+      DIAGNOSTIC_CODES.notSupported,
+      DIAGNOSTIC_CODES.notSupported,
+    ]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.target', 'deployments.prod.kubernetes']);
+    expect(diagnostics[1]?.message).toContain("'deployments.prod.kubernetes' requires specVersion");
+  });
+
+  it('leaves a 0.35 document with no cluster target alone', () => {
+    expect(
+      validateSpec({
+        specVersion: '0.35',
+        project: { name: 'p' },
+        deployments: { prod: { target: 'container', secrets: [], cloud: 'aws' } },
+      }),
+    ).toEqual([]);
+  });
+
+  it('refuses an ingress with no class, which would route to a controller nobody named', () => {
+    const diagnostics = validateSpec(
+      doc('0.36', { kubernetes: { ingress: { host: 'claims.example.com' } } }),
+    );
+
+    expect(codes(diagnostics)).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+    expect(paths(diagnostics)).toEqual(['deployments.prod.kubernetes.ingress.className']);
+  });
+
+  it('refuses a namespace that is not a DNS label', () => {
+    expect(codes(validateSpec(doc('0.36', { kubernetes: { namespace: 'Claims_Prod' } })))).toEqual([
+      DIAGNOSTIC_CODES.schemaViolation,
+    ]);
+  });
+
+  it('refuses an ingress host that is not a hostname', () => {
+    expect(
+      codes(
+        validateSpec(
+          doc('0.36', { kubernetes: { ingress: { host: 'claims', className: 'nginx' } } }),
+        ),
+      ),
+    ).toEqual([DIAGNOSTIC_CODES.schemaViolation]);
+  });
+});
+
+/**
  * The delivery controls: the top-level `state` store, its `agents[].state` override, a
  * deployment's `identity`/`network`/`approvals` and a step's `requiresApproval`, all of
  * which arrived together in 0.26.

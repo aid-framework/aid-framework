@@ -13,7 +13,7 @@
  * would deploy into an environment the caller or the reviewer did not ask for.
  */
 
-export const CLOUDS = ['aws', 'gcp'] as const;
+export const CLOUDS = ['aws', 'gcp', 'azure'] as const;
 
 export type Cloud = (typeof CLOUDS)[number];
 
@@ -73,10 +73,38 @@ export function resolveCloud(pinned: Cloud | undefined, flag: string | undefined
  * same run-to-completion model on the provider the rest of the GCP tree already uses.
  * Naming a target here lets the command refuse a plan instead of emitting nothing for a
  * target the operator believes is deployed.
+ *
+ * `azure` has no OpenTofu or CDK module at all: this map describes those two backends
+ * only, and the artifact AID produces for Azure is the Helm chart `--iac helm` renders for
+ * AKS. Its entry is therefore empty, and `infra gen --iac tofu --cloud azure` is refused by
+ * `infraCloudBackendUnsupported` rather than emitting an empty root -- the same reason a
+ * GCP CDK app is refused.
+ *
+ * No cloud lists `kubernetes`: a cluster is not something these modules provision, so a
+ * plan that targets one is served by the `helm` backend and refused by the others with
+ * `infraKubernetesBackendRequired`.
  */
 export const CLOUD_TARGETS: Readonly<Record<Cloud, readonly string[]>> = {
   aws: ['serverless', 'container', 'batch', 'edge'],
   gcp: ['serverless', 'container', 'batch'],
+  azure: [],
+};
+
+/** The targets the `helm` backend renders: one Deployment and Service per release. */
+export const HELM_TARGETS = ['kubernetes'] as const;
+
+/** The backends `aid infra` can emit. */
+export const IAC_BACKENDS = ['tofu', 'cdk', 'helm'] as const;
+
+export type IacBackend = (typeof IAC_BACKENDS)[number];
+
+/** The clouds whose infrastructure a backend can emit. */
+export const BACKEND_CLOUDS: Readonly<Record<IacBackend, readonly Cloud[]>> = {
+  tofu: ['aws', 'gcp'],
+  cdk: ['aws'],
+  // A chart is a Kubernetes object graph, not a provider module: it installs on EKS, GKE
+  // and AKS alike, so the cloud a deployment pins only decides its region and audit sink.
+  helm: ['aws', 'gcp', 'azure'],
 };
 
 /** The targets in the plan this cloud has no module for, in plan order. */
