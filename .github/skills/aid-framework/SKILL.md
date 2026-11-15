@@ -411,11 +411,17 @@ the agents it calls, a deployment to its cloud and region. A reference to someth
 declared has no node to land on, which is what the picture is for. Save the spec and the graph
 redraws in place over server-sent events.
 
+Above those columns sits the process band: one lane per pipeline, its steps left to right in the
+order the list declares them, the arms of a branch stacked under the step that chooses between them,
+and a header naming the deployments that serve the pipeline - or saying that none does. Run order is
+drawn only where the declaration states it (list adjacency, arm membership), never inferred from
+which node happens to sit where.
+
 The page comes out of the CLI binary: no hosted backend, no CDN, no install. Click a node for its
-facts, click a legend row to hide that edge kind, `f` or `0` to refit, wheel to zoom. A spec that a
-gate refuses renders the diagnostics with their codes, paths and hints instead of a graph - the
-picture and the build read the same document, so a picture of a spec that does not build would be
-misleading.
+facts and to light up the edges that touch it, click a legend row to hide that edge kind, `f` or `0`
+to refit, drag to pan, wheel to zoom. A spec that a gate refuses renders the diagnostics with their
+codes, paths and hints instead of a graph - the picture and the build read the same document, so a
+picture of a spec that does not build would be misleading.
 
 `--json` emits the same graph and layout document the page fetches, so a scene can be asserted in
 CI. Treat this as a view of the declaration, not of a running service: it draws what the spec says,

@@ -1086,10 +1086,14 @@ aid visualize --port 4400
 aid visualize --json                         # the graph and layout, no listener
 ```
 
-One column per construct group -- document, contract, service, agents, prompts, models, tools,
-retrieval, guardrails, evals, infra -- one node per declaration, and one edge per reference the
-document makes. The layout is a pure function of the IR, so the same spec draws the same picture and
-the picture can be asserted rather than eyeballed.
+Two bands. The upper is the process: one lane per pipeline, its steps left to right in the order the
+list declares them, the arms of a branch, route, parallel or map step stacked under the step that
+chooses between them, and a lane header naming the deployments that serve it. The lower is the
+inventory: one column per construct group -- document, contract, service, agents, prompts, models,
+tools, retrieval, guardrails, evals, infra -- one node per declaration, and one edge per reference
+the document makes. Run order is drawn only where the declaration states it, never inferred: list
+adjacency and arm membership. The layout is a pure function of the IR, so the same spec draws the
+same picture and the picture can be asserted rather than eyeballed.
 
 The page is served by the CLI process itself: no hosted backend, no CDN, no bundle, and no spec text
 in the HTML. The client fetches `/api/graph` and writes every string with `textContent`, so what the
@@ -1100,8 +1104,10 @@ What comes out:
 
 - A listener on `127.0.0.1` serving the page, the graph, and an event stream.
 - A graph document per construct group, with the project, profile, pinned targets and counts.
-- A deterministic layout: one column per non-empty group, node boxes and edge paths with no
-  overlap, computed without font metrics.
+- A deterministic layout: a lane per pipeline with its steps in run order, then one column per
+  non-empty group, node boxes and edge paths with no overlap, computed without font metrics.
+- A lane whose header names no deployment: the pipeline is drawn and labelled as served by nothing,
+  because dropping it would hide a pipeline the spec declares.
 - `--json`, which prints the same graph and layout and binds no port, so a scene can be asserted in
   CI.
 

@@ -38,6 +38,7 @@ const GROUP_COLORS: Record<string, string> = {
 };
 
 const EDGE_COLORS: Record<string, string> = {
+  flow: '#e2e8f0',
   data: '#22d3ee',
   uses: '#8b5cf6',
   guards: '#f59e0b',
@@ -49,6 +50,7 @@ const EDGE_COLORS: Record<string, string> = {
 };
 
 const EDGE_MEANING: Record<string, string> = {
+  flow: 'the step that runs after this one, in the order the spec declares',
   data: 'one step feeds the next inside a pipeline',
   uses: 'a shape names another shape',
   guards: 'a guardrail inspects a prompt, a stage or a tool call',
@@ -332,6 +334,36 @@ const SCRIPT = `
     }
     scene.appendChild(defs);
 
+    var laneLayer = mk('g');
+    for (var l = 0; l < layout.lanes.length; l++) {
+      var lane = layout.lanes[l];
+      laneLayer.appendChild(
+        mk('rect', {
+          x: lane.x,
+          y: lane.y,
+          width: lane.width,
+          height: lane.height,
+          rx: 14,
+          fill: lane.undeployed ? '#180f14' : '#0a1322',
+          stroke: lane.undeployed ? '#7f1d1d' : '#1e3a5f',
+          'stroke-dasharray': lane.undeployed ? '6 5' : '0'
+        })
+      );
+      var where = mk('text', {
+        x: lane.x + 20,
+        y: lane.y + 20,
+        fill: lane.undeployed ? '#fca5a5' : '#7dd3fc',
+        'font-size': 11,
+        'font-weight': 650,
+        class: 'lane-where'
+      });
+      where.textContent = lane.undeployed
+        ? 'runs nowhere: no deployment serves this pipeline'
+        : 'runs on ' + lane.placements.join('  +  ');
+      laneLayer.appendChild(where);
+    }
+    scene.appendChild(laneLayer);
+
     var columns = mk('g');
     for (var c = 0; c < layout.columns.length; c++) {
       var column = layout.columns[c];
@@ -368,8 +400,8 @@ const SCRIPT = `
       var path = mk('path', {
         d: edge.d,
         stroke: EDGE_COLORS[edge.kind] || '#64748b',
-        'stroke-width': 1.4,
-        'stroke-opacity': 0.72,
+        'stroke-width': edge.kind === 'flow' ? 2.2 : 1.4,
+        'stroke-opacity': edge.kind === 'flow' ? 0.95 : 0.72,
         'marker-end': 'url(#arrow-' + edge.kind + ')',
         'data-kind': edge.kind,
         class: 'edge'
@@ -379,7 +411,7 @@ const SCRIPT = `
       path.appendChild(tip);
       if (state.hidden[edge.kind]) path.style.display = 'none';
       edgeLayer.appendChild(path);
-      state.paths.push({ el: path, kind: edge.kind });
+      state.paths.push({ el: path, kind: edge.kind, from: edge.from, to: edge.to });
     }
     scene.appendChild(edgeLayer);
 
@@ -476,8 +508,11 @@ const SCRIPT = `
     for (var p = 0; p < state.paths.length; p++) {
       var edge = state.paths[p];
       var touches = edge.from === state.selected || edge.to === state.selected;
-      edge.el.setAttribute('stroke-opacity', touches ? 1 : state.selected === null ? 0.72 : 0.08);
-      edge.el.setAttribute('stroke-width', touches ? 2.2 : 1.4);
+      // Run-order edges carry the picture, so they stay heavier than a reference at rest.
+      var rest = edge.kind === 'flow' ? 0.95 : 0.72;
+      var width = edge.kind === 'flow' ? 2.2 : 1.4;
+      edge.el.setAttribute('stroke-opacity', touches ? 1 : state.selected === null ? rest : 0.08);
+      edge.el.setAttribute('stroke-width', touches ? 2.2 : width);
     }
   }
 
@@ -586,8 +621,11 @@ const SCRIPT = `
 
   canvas.addEventListener('pointerdown', function (event) {
     if (event.button !== 0) return;
-    canvas.setPointerCapture(event.pointerId);
-    canvas.className = 'dragging';
+    // #canvas is an <svg>, so className is a read-only SVGAnimatedString and assigning to
+    // it throws; use classList. The drag is committed first so no cosmetic write can abort it.
+    // Pointer capture is deliberately NOT taken here: capturing on pointerdown retargets the
+    // following click to this svg, so a click on a node would stop selecting it. It is taken
+    // in pointermove, once the gesture has proven to be a drag.
     state.drag = {
       x: event.clientX,
       y: event.clientY,
@@ -601,7 +639,12 @@ const SCRIPT = `
     if (!state.drag) return;
     var dx = event.clientX - state.drag.x;
     var dy = event.clientY - state.drag.y;
-    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) state.drag.moved = true;
+    if (!state.drag.moved) {
+      if (Math.abs(dx) <= 3 && Math.abs(dy) <= 3) return;
+      state.drag.moved = true;
+      canvas.classList.add('dragging');
+      try { canvas.setPointerCapture(event.pointerId); } catch (error) {}
+    }
     state.view.tx = state.drag.tx + dx;
     state.view.ty = state.drag.ty + dy;
     applyView();
@@ -609,7 +652,7 @@ const SCRIPT = `
 
   function endDrag(event) {
     if (!state.drag) return;
-    canvas.className = '';
+    canvas.classList.remove('dragging');
     try { canvas.releasePointerCapture(event.pointerId); } catch (error) {}
     // Cleared on the next task so the click handler that follows a real click still sees it.
     setTimeout(function () { state.drag = null; }, 0);
@@ -618,6 +661,8 @@ const SCRIPT = `
   canvas.addEventListener('pointercancel', endDrag);
 
   canvas.addEventListener('click', function () {
+    // A drag ends in a click too; it must not clear the selection it just panned.
+    if (state.drag && state.drag.moved) return;
     if (state.selected !== null) select(state.selected);
   });
 
@@ -713,8 +758,8 @@ export function renderPage(): string {
       <div class="hint" style="margin-top:10px">Click a kind to hide it.</div>
     </section>
     <section>
-      <h2>Columns, left to right</h2>
-      <div class="hint" style="white-space:pre-wrap">${groups}</div>
+      <h2>Two bands</h2>
+      <div class="hint" style="white-space:pre-wrap">The top band is the process. One lane per pipeline, its steps left to right in the order they run, headed by the deployments that serve it. The bottom band is what that process is built from, in a fixed group order:${'\n\n'}${groups}</div>
     </section>
   </aside>
 </main>

@@ -116,6 +116,7 @@ export type VisualGroupId = (typeof VISUAL_GROUPS)[number]['id'];
  * a free string.
  */
 export const VISUAL_EDGE_KINDS = [
+  'flow',
   'data',
   'uses',
   'guards',
@@ -656,7 +657,12 @@ function pipelineNode(pipeline: PipelineShape): VisualNode {
 }
 
 /**
- * Walks a pipeline's steps, drawing each one and the data it consumes.
+ * Walks a pipeline's steps, drawing each one, the one that runs after it, and the data it
+ * consumes.
+ *
+ * A `flow` edge is the run order: consecutive steps in one list, the container into the
+ * first step of each arm, and every arm that can finish back out to the step that follows.
+ * That is what turns a column of boxes into a process a reviewer can follow.
  *
  * The binding map is what makes a data edge possible: `step.as` names what a step
  * produced, and a `reference` input or an `over` field names a binding something earlier
@@ -677,8 +683,11 @@ function walkSteps(
     steps: readonly StepShape[],
     parentPath: string,
     bindings: ReadonlyMap<string, string>,
-  ): void => {
+  ): { first: string | undefined; exits: string[] } => {
     const scope = new Map(bindings);
+    let first: string | undefined;
+    let previousExits: string[] = [];
+
     steps.forEach((step, index) => {
       const path = `${parentPath}${index}`;
       const id = `step:${pipeline.id}/${path}`;
@@ -691,12 +700,25 @@ function walkSteps(
         path: `pipelines.${pipeline.id}.steps.${path}`,
         facts: stepFacts(step),
       });
-      link(`pipeline:${pipeline.id}`, id, 'uses', 'step');
 
       const produced = 'as' in step && typeof step.as === 'string' ? step.as : undefined;
       const source = (name: string): void => {
         const from = scope.get(name);
         if (from !== undefined) link(from, id, 'data', name);
+      };
+
+      // A container step leaves through its arms, not through itself, so the step after it
+      // is drawn with one way in per arm that can reach it. An arm that holds no step never
+      // takes control, which is why the container then stays its own exit.
+      let exits: string[] = [id];
+      const arms: { first: string | undefined; exits: string[] }[] = [];
+      const enterArms = (): void => {
+        const armExits: string[] = [];
+        for (const arm of arms) {
+          if (arm.first !== undefined) link(id, arm.first, 'flow', 'arm');
+          armExits.push(...arm.exits);
+        }
+        if (armExits.length > 0) exits = armExits;
       };
 
       switch (step.kind) {
@@ -730,23 +752,27 @@ function walkSteps(
         case 'route': {
           link(id, `decision:${step.decision}`, 'uses', 'decision');
           for (const label of Object.keys(step.on)) {
-            visit(step.on[label] ?? [], `${path}.on.${label}.`, scope);
+            arms.push(visit(step.on[label] ?? [], `${path}.on.${label}.`, scope));
           }
-          if (step.default !== undefined) visit(step.default, `${path}.default.`, scope);
+          if (step.default !== undefined) arms.push(visit(step.default, `${path}.default.`, scope));
+          enterArms();
           break;
         }
         case 'branch':
-          visit(step.then, `${path}.then.`, scope);
-          visit(step.else, `${path}.else.`, scope);
+          arms.push(visit(step.then, `${path}.then.`, scope));
+          arms.push(visit(step.else, `${path}.else.`, scope));
+          enterArms();
           break;
         case 'parallel':
           step.branches.forEach((branch, arm) => {
-            visit(branch, `${path}.arm${arm}.`, scope);
+            arms.push(visit(branch, `${path}.arm${arm}.`, scope));
           });
+          enterArms();
           break;
         case 'map':
           source(step.over);
-          visit([step.step], `${path}.step.`, scope);
+          arms.push(visit([step.step], `${path}.step.`, scope));
+          enterArms();
           break;
         case 'reduce':
           source(step.over);
@@ -756,8 +782,18 @@ function walkSteps(
           break;
       }
 
+      // The declared order is the run order: two steps are adjacent because the list says
+      // they are adjacent, never because of a guess about which shape names which.
+      if (first === undefined) first = id;
+      previousExits.forEach((from) => {
+        link(from, id, 'flow');
+      });
+      previousExits = exits;
+
       if (produced !== undefined) scope.set(produced, id);
     });
+
+    return { first, exits: previousExits };
   };
 
   visit(pipeline.steps, '', new Map());
