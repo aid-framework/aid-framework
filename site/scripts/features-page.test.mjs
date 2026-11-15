@@ -8,7 +8,7 @@
  * so each is asserted here against the declaration that would have to change with it.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -278,6 +278,97 @@ describe('the features page data', () => {
       );
       expect(page.slice(at, at + 1200)).toContain('**Not yet generated:**');
       expect(page.slice(at, at + 1200)).toContain(entry.enforces.split(',')[0]?.trim() ?? '');
+    }
+  });
+});
+
+/**
+ * What a shipped row says about its own existence.
+ *
+ * The page counts every row in `SHIPPED_FEATURES` as something that ships, and a reader
+ * takes that as code they will find in the tree. `maturity` is the only field that
+ * distinguishes "a generator writes this" from "the build refuses a document that gets it
+ * wrong" from "a command does it when you run it", and until this existed the distinction
+ * was prose: a row could be counted under "Out of the box" while its own `detail` said
+ * nothing was generated. So every value is checked against the claim it makes, and the
+ * evidence is a file that has to mention the symbol the row cites -- not a directory that
+ * happens to exist.
+ */
+describe('what a shipped row says exists', () => {
+  const MATURITY = new Set(['emitted', 'enforced', 'runtime', 'tooling']);
+  const EMITTING_ROOTS = [
+    'packages/generators/',
+    'packages/generator-sdk/',
+    'packages/cli/src/infra/',
+  ];
+
+  it('says which of the four kinds of existence every row has', () => {
+    for (const entry of SHIPPED_FEATURES) {
+      expect(
+        MATURITY.has(entry.maturity),
+        `"${entry.id}" has no maturity; say whether it is emitted, enforced, runtime or tooling`,
+      ).toBe(true);
+    }
+  });
+
+  it('points every row at a file that exists and mentions the symbol it cites', () => {
+    for (const entry of SHIPPED_FEATURES) {
+      const cited = entry.evidence.path;
+      expect(
+        existsSync(join(repoRoot, ...cited.split('/'))),
+        `"${entry.id}" cites ${cited}, which is not in the tree`,
+      ).toBe(true);
+      expect(
+        read(cited),
+        `"${entry.id}" cites ${entry.evidence.marker} in ${cited}, which does not mention it`,
+      ).toContain(entry.evidence.marker);
+    }
+  });
+
+  it('does not let two rows cite one piece of evidence', () => {
+    const claimed = new Map();
+    for (const entry of SHIPPED_FEATURES) {
+      const key = `${entry.evidence.path}#${entry.evidence.marker}`;
+      const other = claimed.get(key);
+      expect(
+        other,
+        `"${entry.id}" and "${other}" cite the same ${key}, so one row is describing the other's code`,
+      ).toBeUndefined();
+      claimed.set(key, entry.id);
+    }
+  });
+
+  it('calls a row emitted only when a generator is what writes it', () => {
+    for (const entry of SHIPPED_FEATURES) {
+      if (entry.maturity === 'emitted') {
+        expect(
+          EMITTING_ROOTS.some((root) => entry.evidence.path.startsWith(root)),
+          `"${entry.id}" is labelled emitted, but ${entry.evidence.path} is not a generator's to write from`,
+        ).toBe(true);
+      }
+      if (entry.maturity === 'runtime') {
+        expect(
+          entry.evidence.path.startsWith('runtimes/'),
+          `"${entry.id}" is labelled runtime, but ${entry.evidence.path} is not the runtime`,
+        ).toBe(true);
+      }
+      if (entry.maturity === 'tooling') {
+        expect(
+          entry.evidence.path.startsWith('packages/cli/'),
+          `"${entry.id}" is labelled tooling, but ${entry.evidence.path} is not a command`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('claims no generated artefact on a row that is declared and gated only', () => {
+    for (const entry of DECLARED_FEATURES) {
+      // A row here is the page's admission that nothing is generated, so it may carry
+      // `enforces` (a diagnostic) and must not carry a maturity or an emitter.
+      expect(
+        [entry.maturity, entry.evidence].filter((field) => field !== undefined),
+        `"${entry.id}" is declared-only; it cannot also claim a maturity or a generator`,
+      ).toEqual([]);
     }
   });
 });

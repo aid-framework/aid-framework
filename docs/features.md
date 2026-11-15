@@ -127,13 +127,14 @@ The generated infrastructure does not only run the service; it grants the servic
 
 ## Out of the box
 
-Each section is behaviour the generator writes for you, the spec key or command that turns it on, and the release that first shipped it. A construct that needs a later spec version is refused by name rather than ignored.
+Each row is behaviour that exists in the tree as well as in the spec, and each names the file that backs it — a test refuses a row whose file is gone or no longer mentions the symbol the row cites. What `maturity` adds is the shape of that existence: `emitted` is written into your tree by a generator, `runtime` is implemented on the request path, `enforced` is a build-time refusal with nothing emitted beside it, and `tooling` is a command that does the work when you run it. A construct that needs a later spec version is refused by name rather than ignored.
 
 ### Versioned spec language
 
 A construct that needs a later version is refused by name instead of being ignored, so a spec never silently means less than it says.
 
 - **Turned on by:** `specVersion`
+- **What exists:** a build-time refusal holds the line; nothing is emitted for it (`packages/spec/src/validate.ts`)
 - **Reference:** [spec](./reference/spec.md#top-level-keys)
 - **Since:** `0.1.0`
 
@@ -142,6 +143,7 @@ A construct that needs a later version is refused by name instead of being ignor
 A model alias is what the rest of the spec refers to; the vendor id is pinned in one place and never floats to a vendor default.
 
 - **Turned on by:** `models[].modelId`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/gateway.ts`)
 - **Reference:** [spec](./reference/spec.md#model)
 - **Since:** `0.1.0`
 
@@ -150,6 +152,7 @@ A model alias is what the rest of the spec refers to; the vendor id is pinned in
 A committed cost profile prices every call. An unpriced model is reported as unknown, never as free.
 
 - **Turned on by:** `models[].costProfile`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/gateway.ts`)
 - **Reference:** [spec](./reference/spec.md#model)
 - **Since:** `0.1.0`
 
@@ -158,6 +161,7 @@ A committed cost profile prices every call. An unpriced model is reported as unk
 A spec that asks a target for something it cannot serve is refused at plan time with a named diagnostic, not shipped and debugged in production.
 
 - **Turned on by:** `deployments[].target`
+- **What exists:** a build-time refusal holds the line; nothing is emitted for it (`packages/ir/src/gates/capability.ts`)
 - **Reference:** [targets](./reference/targets.md#capability-matrix)
 - **Since:** `0.1.2`
 
@@ -166,6 +170,7 @@ A spec that asks a target for something it cannot serve is refused at plan time 
 An HTTP pipeline with no CI eval claiming it is a build error, so a prompt edit cannot ship unmeasured.
 
 - **Turned on by:** `evals[].gate.ci`
+- **What exists:** a build-time refusal holds the line; nothing is emitted for it (`packages/ir/src/gates/eval-coverage.ts`)
 - **Reference:** [spec](./reference/spec.md#eval)
 - **Since:** `0.1.2`
 
@@ -174,6 +179,7 @@ An HTTP pipeline with no CI eval claiming it is a build error, so a prompt edit 
 A retriever can require that retrieved items carry the source path and offsets a generated answer cites.
 
 - **Turned on by:** `retrievers[].traits`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/retrieval.ts`)
 - **Reference:** [spec](./reference/spec.md#retriever)
 - **Since:** `0.1.6`
 
@@ -182,6 +188,7 @@ A retriever can require that retrieved items carry the source path and offsets a
 A pinned embedding is routed by its provider, so Titan on Bedrock is signed with SigV4, `google` on Vertex AI is sent under the project and bearer token, and `gemini` is sent to the AI Studio `:batchEmbedContents` endpoint with `x-goog-api-key` — each instead of the OpenAI-compatible shape.
 
 - **Turned on by:** `models[].capabilities`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/retrieval.ts`)
 - **Reference:** [spec](./reference/spec.md#model)
 - **Since:** `0.1.109`
 
@@ -190,6 +197,7 @@ A pinned embedding is routed by its provider, so Titan on Bedrock is signed with
 Policies are evaluated at declared stages, and a failing policy has a declared action rather than a default.
 
 - **Turned on by:** `guardrails[]`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/guardrails.ts`)
 - **Reference:** [spec](./reference/spec.md#guardrail)
 - **Since:** `0.1.18`
 
@@ -198,6 +206,7 @@ Policies are evaluated at declared stages, and a failing policy has a declared a
 An HTTP route that passes caller text to a prompt with no input guardrail fails the build before it can be exposed.
 
 - **Turned on by:** `guardrails[].stages`
+- **What exists:** a build-time refusal holds the line; nothing is emitted for it (`packages/ir/src/gates/security.ts`)
 - **Reference:** [spec](./reference/spec.md#guardrail)
 - **Since:** `0.1.18`
 
@@ -206,6 +215,7 @@ An HTTP route that passes caller text to a prompt with no input guardrail fails 
 An agent declares its model, instructions, tools, retrievers and budget; a handoff cycle and an exhausted budget are plan-time errors.
 
 - **Turned on by:** `agents[]`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/agents.ts`)
 - **Reference:** [spec](./reference/spec.md#agent)
 - **Since:** `0.1.19`
 
@@ -214,6 +224,7 @@ An agent declares its model, instructions, tools, retrievers and budget; a hando
 A tool that writes something pauses the run for a person, and the approved run continues from the same step instead of starting over; a side-effecting tool with no approval policy is refused under the enterprise profile.
 
 - **Turned on by:** `agents[].humanInTheLoop, tools[].requiresConfirmation`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/agents.ts`)
 - **Reference:** [spec](./reference/spec.md#agent-humanintheloop)
 - **Since:** `0.1.27`
 
@@ -222,6 +233,7 @@ A tool that writes something pauses the run for a person, and the approved run c
 What is remembered, for how long, within what token budget, and where it lives.
 
 - **Turned on by:** `memory[]`
+- **What exists:** a build-time refusal holds the line; nothing is emitted for it (`packages/generators/py-fastapi/src/validate.ts`)
 - **Reference:** [spec](./reference/spec.md#memory)
 - **Since:** `0.1.19`
 
@@ -230,6 +242,7 @@ What is remembered, for how long, within what token budget, and where it lives.
 The opt-in fuzzy layer beside exact-match caching, carrying its own similarity threshold rather than a global default.
 
 - **Turned on by:** `models[].cache.semantic`
+- **What exists:** the Python runtime implements it on the request path (`runtimes/python/src/aid_runtime/gateway.py`)
 - **Reference:** [spec](./reference/spec.md#semanticcache)
 - **Since:** `0.1.25`
 
@@ -238,6 +251,7 @@ The opt-in fuzzy layer beside exact-match caching, carrying its own similarity t
 A run writes JSONL spans to a directory you name, and `aid trace` prints the span tree from them. No collector to stand up.
 
 - **Turned on by:** `aid trace`
+- **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/commands/trace.ts`)
 - **Reference:** [cli](./reference/cli.md#trace)
 - **Since:** `0.1.56`
 
@@ -246,6 +260,7 @@ A run writes JSONL spans to a directory you name, and `aid trace` prints the spa
 A deployment plan derives OpenTofu modules for the chosen cloud, byte-asserted against fixtures and validated with `tofu` in CI.
 
 - **Turned on by:** `deployments[]`
+- **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/commands/infra.ts`)
 - **Reference:** [spec](./reference/spec.md#deployment)
 - **Since:** `0.1.54`
 
@@ -254,6 +269,7 @@ A deployment plan derives OpenTofu modules for the chosen cloud, byte-asserted a
 The same deployment plan can emit a CDK app instead, for a team already deploying with it.
 
 - **Turned on by:** `aid infra --iac cdk`
+- **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/commands/infra.ts`)
 - **Reference:** [cli](./reference/cli.md#infra)
 - **Since:** `0.1.57`
 
@@ -262,6 +278,7 @@ The same deployment plan can emit a CDK app instead, for a team already deployin
 Take ownership of a generated file: it stops being regenerated and the app keeps booting, because it never depended on a control plane.
 
 - **Turned on by:** `aid eject`
+- **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/commands/eject.ts`)
 - **Reference:** [cli](./reference/cli.md#eject)
 - **Since:** `0.1.58`
 
@@ -270,6 +287,7 @@ Take ownership of a generated file: it stops being regenerated and the app keeps
 Every generated project ships the workflow that runs its evals, so the gate travels with the code it gates.
 
 - **Turned on by:** `aid gen`
+- **What exists:** a generator writes it into the tree (`packages/generator-sdk/src/scaffold.ts`)
 - **Reference:** [cli](./reference/cli.md#gen)
 - **Since:** `0.1.59`
 
@@ -278,6 +296,7 @@ Every generated project ships the workflow that runs its evals, so the gate trav
 A cost or latency budget is an eval metric the harness measures around every case, so the generated workflow exits non-zero when a run spends or takes more than the spec allowed.
 
 - **Turned on by:** `evals[].metrics[].kind: cost`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/evals.ts`)
 - **Reference:** [spec](./reference/spec.md#kind-cost)
 - **Since:** `0.1.153`
 
@@ -286,6 +305,7 @@ A cost or latency budget is an eval metric the harness measures around every cas
 A container deployment emits the Dockerfile and the release workflow that builds and pushes the image it deploys.
 
 - **Turned on by:** `deployments[].image`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/dockerfile.ts`)
 - **Reference:** [spec](./reference/spec.md#image)
 - **Since:** `0.1.70`
 
@@ -294,6 +314,7 @@ A container deployment emits the Dockerfile and the release workflow that builds
 A named question with its own reply shape, answered by TypeSafe AI Jev, and referenced by guardrails, routers and evals.
 
 - **Turned on by:** `decisions[]`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/guardrails.ts`)
 - **Reference:** [spec](./reference/spec.md#decision)
 - **Since:** `0.1.88`
 
@@ -302,6 +323,7 @@ A named question with its own reply shape, answered by TypeSafe AI Jev, and refe
 An input guardrail asks a declared decision and enforces a minimum confidence, so the check is a typed answer rather than free text.
 
 - **Turned on by:** `guardrails[].decision`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/guardrails.ts`)
 - **Reference:** [spec](./reference/spec.md#guardrail)
 - **Since:** `0.1.90`
 
@@ -310,6 +332,7 @@ An input guardrail asks a declared decision and enforces a minimum confidence, s
 An eval scores a decision on its own reply shape, so a guardrail change is measured like any other behaviour.
 
 - **Turned on by:** `evals[].metrics[].kind: decision`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/evals.ts`)
 - **Reference:** [spec](./reference/spec.md#kind-decision)
 - **Since:** `0.1.91`
 
@@ -318,6 +341,7 @@ An eval scores a decision on its own reply shape, so a guardrail change is measu
 A retriever indexes an `s3://` prefix or one `http(s)://` document instead of a local directory, under the same glob grammar, with document ids relative to the prefix.
 
 - **Turned on by:** `retrievers[].source.kind`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/retrieval.ts`)
 - **Reference:** [spec](./reference/spec.md#retriever)
 - **Since:** `0.1.134`
 
@@ -326,6 +350,7 @@ A retriever indexes an `s3://` prefix or one `http(s)://` document instead of a 
 A retriever cuts a document where the cosine similarity between adjacent units dips, so a boundary follows the topic rather than a character count; the units are embedded before the chunks are, and that boundary pass is priced into the ingest report.
 
 - **Turned on by:** `retrievers[].chunking.strategy: semantic`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/retrievalIngest.ts`)
 - **Reference:** [spec](./reference/spec.md#retriever)
 - **Since:** `0.1.135`
 
@@ -334,6 +359,7 @@ A retriever cuts a document where the cosine similarity between adjacent units d
 A retriever the application ingests itself declares a five-field cron read as UTC, and the generated module emits a cloud scheduler that submits the job running that retriever's ingest.
 
 - **Turned on by:** `retrievers[].refresh.schedule`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/retrievalSync.ts`)
 - **Reference:** [spec](./reference/spec.md#retriever)
 - **Since:** `0.1.136`
 
@@ -342,6 +368,7 @@ A retriever the application ingests itself declares a five-field cron read as UT
 A `gateways` entry names an Amazon Bedrock AgentCore Gateway, its authorizer and the OpenAPI or MCP-server targets behind it, so a runtime reaches federated tools over one MCP endpoint instead of bundling every tool; an `aws-agentcore` runtime that names a gateway is handed its URL and the permission to invoke it.
 
 - **Turned on by:** `gateways[], deployments[].runtime.gateway`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/gateway.ts`)
 - **Reference:** [spec](./reference/spec.md#gateway)
 - **Since:** `0.1.139`
 
@@ -350,6 +377,7 @@ A `gateways` entry names an Amazon Bedrock AgentCore Gateway, its authorizer and
 A top-level `profile` names a bundle of required controls -- `standard` is the default and `enterprise` is the regulated one -- and a deployment can pin the `cloud`, `region` and `audit` sink it lands in, so the placement and the audit record are properties of the customer rather than of whoever ran the apply. The `profile` gate refuses an `enterprise` spec that omits a region pin, an audit sink, or a guardrail that runs on output.
 
 - **Turned on by:** `profile, deployments[].cloud, deployments[].region, deployments[].audit`
+- **What exists:** a build-time refusal holds the line; nothing is emitted for it (`packages/ir/src/gates/profile.ts`)
 - **Reference:** [spec](./reference/spec.md#top-level-keys)
 - **Since:** `0.1.142`
 
@@ -358,6 +386,7 @@ A top-level `profile` names a bundle of required controls -- `standard` is the d
 Spec 0.27 gives a document an `observability` block: whether to record spans, what to redact, and whether they belong somewhere other than the process (`export: otlp`, with `endpointEnv` naming the variable that holds the collector address). The `observability/export` gate refuses an `otlp` export beside `trace: false`, and an `enterprise` profile that exports nothing, because an audit trail whose spans stay in the process is not one. Generating with py-fastapi emits `tracing_export_status()` into `app/generated/observability.py`, which the app calls at startup to install an OTLP/HTTP exporter over a batched processor from `aid-runtime-python[otlp]`; nothing is installed on import, so embedding AID does not decide telemetry for you. A target that installs no exporter refuses `export: otlp` rather than accept a destination nothing is sent to.
 
 - **Turned on by:** `observability`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/observability.ts`)
 - **Reference:** [spec](./reference/spec.md#observability)
 - **Since:** `0.1.150`
 
@@ -366,6 +395,7 @@ Spec 0.27 gives a document an `observability` block: whether to record spans, wh
 `observability.redact` stopped being a declaration. A pipeline renders a prompt from named bindings, so the generated app knows which value went where and replaces the value of each named field in the text it records with `[redacted:&lt;name&gt;]`: the provider still receives the original, and the copy that outlives the request does not. An omitted list defaults to the field names the security gate already derives as sensitive, so a document that declares nothing is still covered. An agent run has no render -- it binds the same names somewhere else as of 0.1.165: every tool call arrives as a mapping keyed by declared argument names, the runner learns `name -&gt; value` from them, and the gateway -- the only code that writes model text to a span -- redacts both the prompt it records and the answer it records with those bindings. `aid trace export` withholds the same union, reports it as `withheld`, and under `profile: enterprise` refuses a document that withholds nothing. The limit is stated rather than papered over: a value that enters only through the free text of a run request, never passed as a tool argument under its declared name, has no field name to match and is recorded as written. A document that runs an agent and declares no tool at all is refused by name, because its run has no structured record to bind.
 
 - **Turned on by:** `observability.redact`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/observability.ts`)
 - **Reference:** [spec](./reference/spec.md#observability)
 - **Since:** `0.1.161`
 
@@ -374,6 +404,7 @@ Spec 0.27 gives a document an `observability` block: whether to record spans, wh
 Four series -- `agent.cost`, `agent.tokens`, `eval.cost` and `eval.latency.p95` -- are recorded by `aid-runtime-python` and leave by the same opt-in export as the spans: `configure_metrics()` installs an OTLP/HTTP reader and the generated `metrics_export_status()` reports where it went. A run stopped by a guardrail or an exhausted ceiling publishes what it spent before the refusal propagates, and an eval suite publishes one `eval.cost` and one `eval.latency.p95` sample per case per run under the declared eval id, so the series an alarm filters on is the eval the spec declares. An alert over a series the target does not record is refused by `ir/alerts-unproduced` rather than shipped as an alarm that would never fire; ts-vercel records none and refuses all four.
 
 - **Turned on by:** `observability`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/metrics.ts`)
 - **Reference:** [spec](./reference/spec.md#observability)
 - **Since:** `0.1.152`
 
@@ -382,22 +413,16 @@ Four series -- `agent.cost`, `agent.tokens`, `eval.cost` and `eval.latency.p95` 
 `aid report &lt;dir&gt;` reads one directory of deployments -- each holding the `*.jsonl` files that deployment's trace sink wrote and any `*.baseline.json` it committed -- and prints spans, traces, measured cost, p95 latency, errors and baseline scores side by side, then a fleet total. A deployment with no trace files shows a dash rather than `$0.000000`, because "nothing was measured" and "measured zero" are different answers. Nothing is uploaded and nothing is joined to the repository, so the same command runs on a CI artifact download; `--budget` turns the total into a ceiling that fails the job.
 
 - **Turned on by:** `aid report`
+- **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/commands/report.ts`)
 - **Reference:** [cli](./reference/cli.md#report)
 - **Since:** `0.1.148`
-
-### Declared feedback signals
-
-Spec 0.28 lets a document say which feedback it collects (thumbs, corrections, escalations) and which fields may ride along. The `feedback` gate refuses a persistent store with no retention window, and refuses a correction store whose redaction list misses a field the spec already marks sensitive -- so a signal that could carry a customer name cannot be collected without a rule about it. AID routes and stores nothing; the declaration and its refusal are what exist.
-
-- **Turned on by:** `observability.feedback`
-- **Reference:** [spec](./reference/spec.md#observability)
-- **Since:** `0.1.146`
 
 ### Promotion policy for a candidate
 
 Spec 0.28 states what a candidate is allowed to cost in quality and in spend: `evals[].gate.promotion` names the baseline prompt version, the quality drop and cost increase it may not exceed, and -- under `enterprise` -- who records the approval. `aid eval --compare` judges a recorded candidate baseline against a recorded accepted one and exits non-zero on a regression. Nothing auto-deploys: promotion is a gate pass plus a file in the tree.
 
 - **Turned on by:** `evals[].gate.promotion`
+- **What exists:** a build-time refusal holds the line; nothing is emitted for it (`packages/ir/src/gates/promotion.ts`)
 - **Reference:** [spec](./reference/spec.md#eval)
 - **Since:** `0.1.146`
 
@@ -406,6 +431,7 @@ Spec 0.28 states what a candidate is allowed to cost in quality and in spend: `e
 A recorded baseline carries the model spend and wall-clock time of the run that produced it, next to its metric means. `aid eval --compare` computes the relative increase in spend between the accepted and candidate baselines and refuses a candidate above `gate.promotion.allowedCostIncrease`, printing both dollar figures and the move between them. The block is written only when the run metered it, so "spent nothing" and "did not measure" stay distinguishable: a baseline without spend is refused as unjudged rather than read as a zero.
 
 - **Turned on by:** `aid eval --compare, evals[].gate.promotion.allowedCostIncrease`
+- **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/commands/eval-compare.ts`)
 - **Reference:** [cli](./reference/cli.md#eval)
 - **Since:** `0.1.162`
 
@@ -414,6 +440,7 @@ A recorded baseline carries the model spend and wall-clock time of the run that 
 Spec 0.29 adds `overridable`: the base spec names every path an overlay may set and the bound each may move within -- a closed set of values (`from`) or a ceiling (`max`). A path that is not listed is not overridable, so "what may differ per customer" is a reviewable line in the base repo rather than a convention nobody wrote down. Listing a path does not open its children, and `allowWeaken` is a separate permission the base author grants per path.
 
 - **Turned on by:** `overridable`
+- **What exists:** a build-time refusal holds the line; nothing is emitted for it (`packages/spec/src/overlay.ts`)
 - **Reference:** [spec](./reference/spec.md#overridablerule)
 - **Since:** `0.1.147`
 
@@ -422,6 +449,7 @@ Spec 0.29 adds `overridable`: the base spec names every path an overlay may set 
 A per-customer overlay names its base and the paths it changes; `aid resolve` writes the concrete spec beside it, so the document that actually deploys is reviewed in the pull request like any other file. Six refusals stand between a customer file and a weakened control: an unlisted path, a relaxed guardrail action, a value outside its bound, a removed CI-gating eval, a profile that disagrees with the base, and a base that is not there. `aid resolve --check` fails in CI when the resolved artifact has drifted from its overlay.
 
 - **Turned on by:** `aid resolve`
+- **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/commands/resolve.ts`)
 - **Reference:** [cli](./reference/cli.md#resolve)
 - **Since:** `0.1.147`
 
@@ -430,6 +458,7 @@ A per-customer overlay names its base and the paths it changes; `aid resolve` wr
 `aid fleet` discovers every overlay in the repository and reports one row per customer -- profile, pinned models, region, cost ceiling and whether the resolved document still passes every gate today -- with `--json` for a script. Discovery is by content rather than by a directory convention, and the gates are re-run rather than trusted, so `ok` means "passes now" and not "passed once". There is no service to keep warm and no state to drift.
 
 - **Turned on by:** `aid fleet`
+- **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/commands/fleet.ts`)
 - **Reference:** [cli](./reference/cli.md#fleet)
 - **Since:** `0.1.147`
 
@@ -438,6 +467,7 @@ A per-customer overlay names its base and the paths it changes; `aid resolve` wr
 `aid init --template` scaffolds a spec that already passes the gates instead of an empty one: `support-copilot` is the mid-size path (standard profile, managed services, default budgets) and `enterprise-approvals` is the regulated one (identity, private network, audit sink, and a pause for a human before the write tool). The test suite scaffolds and compiles both, so a template that stops passing a gate breaks the build rather than onboarding someone into a broken spec.
 
 - **Turned on by:** `aid init`
+- **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/commands/init.ts`)
 - **Reference:** [cli](./reference/cli.md#init)
 - **Since:** `0.1.147`
 
@@ -446,6 +476,7 @@ A per-customer overlay names its base and the paths it changes; `aid resolve` wr
 Spec 0.30 lets a document declare `observability.alerts`: a metric, a window, a reduction and a threshold, optionally scoped to one agent or eval. The infra planner turns each one into a real alarm -- a CloudWatch alarm in the Terraform env root, a Cloud Monitoring policy on GCP, a `CfnAlarm` in the CDK app -- that pages `alert_channel_ids` and treats missing data as `missing` rather than healthy. The metric list is closed to the four series the deploy plan already derives (`agent.cost`, `agent.tokens`, `eval.cost`, `eval.latency.p95`), so an alarm cannot watch a number nothing produces. The unit comes from the metric rather than the author, so the description and the threshold cannot disagree.
 
 - **Turned on by:** `observability.alerts`
+- **What exists:** a generator writes it into the tree (`packages/cli/src/infra/modules/alerts.ts`)
 - **Reference:** [spec](./reference/spec.md#observability)
 - **Since:** `0.1.149`
 
@@ -454,6 +485,7 @@ Spec 0.30 lets a document declare `observability.alerts`: a metric, a window, a 
 `aid trace export --dataset &lt;name&gt;` turns a directory of traced runs into an eval dataset, so the first cases for a new agent come from production traffic instead of from someone guessing what people will ask. One run is one case: the prompt it was first given, the answer it last produced, and the calls, cost, wall time, model and tools beside it. The file is written in the same canonical form the Python `Dataset` writes, so a regenerated dataset diffs cleanly. The exit code separates the two failures that matter -- a run that recorded no payloads (the sink keeps text only when the application ran with `AID_TRACE_CONTENT=1`, and the refusal names that variable) and a file that already exists (refused without `--force`, because it may have been curated by hand since). Every case is tagged `unreviewed`, because `expected` is what the run happened to output: it is a record of behaviour, not a judgement about a good answer, and the honest next step is a person editing the file. The export reads the spec first and applies the policy it finds: it withholds the union of `observability.redact` and `observability.feedback.pii.redact`, reports that set as `withheld` in its JSON output, and under `profile: enterprise` refuses a document that withholds nothing, because nothing would have removed a value before the trace was written.
 
 - **Turned on by:** `aid trace export`
+- **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/commands/trace-export.ts`)
 - **Reference:** [cli](./reference/cli.md#trace)
 - **Since:** `0.1.154`
 
@@ -462,6 +494,7 @@ Spec 0.30 lets a document declare `observability.alerts`: a metric, a window, a 
 `expected` in an exported case is what a run happened to output, so every case is tagged `unreviewed` and the tag is operative rather than advisory: a `gate.ci: true` eval refuses a dataset that still carries it, naming up to five of the cases and the two ways forward -- review each case and drop the tag, or take the eval out of the gate. A hand-curated dataset is unaffected, and so is an exported one until it is wired into a gate, which is exactly the moment an unexamined expectation would otherwise start deciding whether a change ships. The refusal lives in the runtime `Dataset` layer rather than in generated code, so a module edited by hand keeps it.
 
 - **Turned on by:** `evals[].gate.ci`
+- **What exists:** the Python runtime implements it on the request path (`runtimes/python/src/aid_runtime/evals/dataset.py`)
 - **Reference:** [cli](./reference/cli.md#trace)
 - **Since:** `0.1.160`
 
@@ -470,6 +503,7 @@ Spec 0.30 lets a document declare `observability.alerts`: a metric, a window, a 
 An eval can name an agent (`target: agent:&lt;id&gt;`) instead of a pipeline, and the `py-fastapi` target -- which declares `agent-evals` -- emits an offline evaluator that runs the agent against each case and scores the calls it made with `tool-trace`, beside the response metrics, within the step and cost ceiling the agent declares. The evaluator drives the agent with a scripted or recorded model, so a case verifies the policy and plumbing of a run -- which tools were reachable, in what order they were called, whether an approval was respected -- and not the quality of a model answer; model quality is what the prompt and pipeline evals measure. A target that does not declare the capability is refused by `ir/eval-trajectory` rather than shipping an eval nothing runs.
 
 - **Turned on by:** `evals[].target`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/emit/evals.ts`)
 - **Reference:** [spec](./reference/spec.md#eval)
 - **Since:** `0.1.158`
 
@@ -478,6 +512,7 @@ An eval can name an agent (`target: agent:&lt;id&gt;`) instead of a pipeline, an
 `aid eval --record &lt;path&gt;` makes the recording `AID_EVAL_TRANSCRIPT` replays: it runs the agent against the provider the spec pins and writes each request and response to `&lt;path&gt;` in the same shape replay reads, so a trajectory can be captured once against a real model and then re-run offline. Every agent eval prints a `provenance:` line after its summary -- `scripted` when the agent is declared on the `fake` provider, `recorded` when the turns came from a transcript, `live` otherwise, with the capture path appended when one was written -- because a green gate means something different in each mode. Recording is never automatic: only a run that asked for it writes a transcript, and the combinations that would produce a misleading one are refused instead. The command refuses `--record` beside `--compare`, `--record` unless exactly one suite runs, and `--record` on a target that is not an `agent:`, all as `cli/eval-record-unsupported`; the generated evaluator refuses a capture while `AID_EVAL_TRANSCRIPT` is also set, a capture of a scripted agent, a path that already exists, and a run that made no model call. A captured run is still a check on policy and plumbing rather than on model quality: it describes what the model did when the capture was taken, so a stale recording is a statement about the model that was pinned then.
 
 - **Turned on by:** `aid eval --record`
+- **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/commands/eval.ts`)
 - **Reference:** [cli](./reference/cli.md#eval)
 - **Since:** `0.1.166`
 
@@ -486,6 +521,7 @@ An eval can name an agent (`target: agent:&lt;id&gt;`) instead of a pipeline, an
 Spec 0.31 adds three metrics for an agent run: `step-count` (how many model calls a case took, against a ceiling the case sets), `forbidden-tool` (whether the run reached for a tool it was told never to call) and `approval-respected` (whether it stopped at the pauses it was given and honoured the decision it was handed). Each reads the trajectory the offline agent evaluator already produces, so all three need an `agent:` target and a spec naming one elsewhere is refused. The `evals/metrics` gate then refuses a metric that could only ever pass: a `step-count` ceiling at or above the agent's own `maxSteps` is reached by the agent's budget first, and an `approval-respected` metric on an agent with no `humanInTheLoop` and no tool declaring `requiresConfirmation` has no decision to score.
 
 - **Turned on by:** `evals[].metrics`
+- **What exists:** a generator writes it into the tree (`packages/generators/py-fastapi/src/metrics.ts`)
 - **Reference:** [spec](./reference/spec.md#eval)
 - **Since:** `0.1.159`
 
@@ -494,6 +530,7 @@ Spec 0.31 adds three metrics for an agent run: `step-count` (how many model call
 The coverage rule has always named the HTTP pipelines no CI-gating eval claims; from spec 0.31 an `enterprise` document is refused for one instead of warned about, and the same escalation covers a retrieval surface no eval measures. The rule and its diagnostic are unchanged -- what changes is the consequence, keyed to the profile rather than to a flag, so a document cannot claim the change control `enterprise` promises and still ship an unmeasured route. The escalation is version-gated, so a 0.30 document keeps the warning it was written against.
 
 - **Turned on by:** `profile: enterprise`
+- **What exists:** a build-time refusal holds the line; nothing is emitted for it (`packages/ir/src/gates/eval-coverage.ts`)
 - **Reference:** [spec](./reference/spec.md#top-level-keys)
 - **Since:** `0.1.159`
 
@@ -516,6 +553,14 @@ These constructs are in the spec language and a gate enforces them, but no gener
 - **Not yet generated:** What *is* generated: the region pin and the audit sink reach the OpenTofu, the profile gate refuses an `enterprise` deployment missing either of them or missing the `network.private` pin, `requiresApproval` reaches the generated tool step, the checkpoint is signed with the key `resume.signingKeyEnv` names, and a declared `state` store holds the checkpoint nonce. What is not: `network.private` states a requirement and selects no module -- the container module builds its two-AZ VPC with private task subnets and one NAT gateway whenever you do not supply `vpc_id`, whether the pin is set or not, and no generator branches on the key. Also not: no generator verifies a token (`identity.verifiedBy` names who does), and no generated code persists the paused run itself, so the checkpoint still returns to the caller.
 - **Reference:** [spec](./reference/spec.md#top-level-keys)
 - **Since:** `0.1.143`
+
+### Declared feedback signals
+
+- **Declared by:** `observability.feedback`
+- **Enforced by:** `ir/feedback-pii`
+- **Not yet generated:** A document can say which feedback it collects (thumbs, corrections, escalations) and which fields may ride along, and the `feedback` gate refuses a persistent store with no retention window or a correction store whose redaction list misses a field the spec already marks sensitive -- so a signal that could carry a customer name cannot be declared without a rule about it. Nothing is routed or stored: no endpoint is generated and no signal is captured. The one place the declaration has an effect is `aid trace export`, which withholds `observability.feedback.pii.redact` along with `observability.redact` before an export is written.
+- **Reference:** [spec](./reference/spec.md#observability)
+- **Since:** `0.1.146`
 
 ## Refused, on purpose
 

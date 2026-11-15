@@ -1046,6 +1046,19 @@ function supportPage() {
 }
 
 /**
+ * What each `maturity` value means in the row, phrased as the thing a reader will look for.
+ *
+ * The registry's docstring carries the rule; this map carries the sentence the page prints
+ * beside the file that backs it, so a reader of the page does not have to hold both.
+ */
+const MATURITY_RENDERED = {
+  emitted: 'a generator writes it into the tree',
+  runtime: 'the Python runtime implements it on the request path',
+  enforced: 'a build-time refusal holds the line; nothing is emitted for it',
+  tooling: 'a command does it when you run it; no generated file changes',
+};
+
+/**
  * The marketing surface: what ships, which cloud runs it, and what is refused.
  *
  * The provider and cloud lists come from `loadSupportData()`, so they cannot
@@ -1158,7 +1171,7 @@ function featuresPage() {
   lines.push('## Out of the box');
   lines.push('');
   lines.push(
-    'Each section is behaviour the generator writes for you, the spec key or command that turns it on, and the release that first shipped it. A construct that needs a later spec version is refused by name rather than ignored.',
+    'Each row is behaviour that exists in the tree as well as in the spec, and each names the file that backs it — a test refuses a row whose file is gone or no longer mentions the symbol the row cites. What `maturity` adds is the shape of that existence: `emitted` is written into your tree by a generator, `runtime` is implemented on the request path, `enforced` is a build-time refusal with nothing emitted beside it, and `tooling` is a command that does the work when you run it. A construct that needs a later spec version is refused by name rather than ignored.',
   );
   lines.push('');
   for (const feature of SHIPPED_FEATURES) {
@@ -1169,6 +1182,9 @@ function featuresPage() {
     lines.push(cell(feature.detail));
     lines.push('');
     lines.push(`- **Turned on by:** \`${feature.declaredBy}\``);
+    lines.push(
+      `- **What exists:** ${MATURITY_RENDERED[feature.maturity]} (\`${feature.evidence.path}\`)`,
+    );
     lines.push(`- **Reference:** [${section}](${feature.href})`);
     lines.push(`- **Since:** \`${feature.since}\``);
     lines.push('');
