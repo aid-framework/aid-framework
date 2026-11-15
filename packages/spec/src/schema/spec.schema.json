@@ -47,7 +47,8 @@
         "0.34",
         "0.35",
         "0.36",
-        "0.37"
+        "0.37",
+        "0.38"
       ]
     },
     "profile": {
@@ -1953,7 +1954,7 @@
           "$ref": "#/$defs/identity"
         },
         "network": {
-          "description": "Where this deployment's compute sits on the network. Spec 0.26. `ingress` is the placement: `public` (the default, and what every document written before 0.37 actually got), `internal`, or `private-link`. `internal` is generated -- a `container` deployment gets an internal load balancer whose security group admits only the `allowFrom` ranges, and a `kubernetes` deployment already has a `ClusterIP` Service -- while `private-link` is declared and refused with `ir/network-ingress-unsupported`, because naming a private endpoint AID does not create would be a declaration pretending to be a placement. `enterprise` requires a private placement and refuses a missing or `public` one with `ir/profile-network`. The retired `private: true` flag is still parsed below 0.37 so an existing document keeps building, and is refused at 0.37 rather than reinterpreted: promoting it would take every existing `enterprise` deployment off the public internet on a version bump. `egress` remains declaration-only -- no module reads it.",
+          "description": "Where this deployment's compute sits on the network. Spec 0.26. `ingress` is the placement: `public` (the default, and what every document written before 0.37 actually got), `internal`, or `private-link`. `internal` is generated -- a `container` deployment gets an internal load balancer whose security group admits only the `allowFrom` ranges, and a `kubernetes` deployment gets a `NetworkPolicy` admitting only those ranges -- while `private-link` is declared and refused with `ir/network-ingress-unsupported`, because naming a private endpoint AID does not create would be a declaration pretending to be a placement. `enterprise` requires a private placement and refuses a missing or `public` one with `ir/profile-network`. The retired `private: true` flag is still parsed below 0.37 so an existing document keeps building, and is refused at 0.37 rather than reinterpreted: promoting it would take every existing `enterprise` deployment off the public internet on a version bump. `egress` restricts outbound traffic and is read by the `container` and `kubernetes` modules; a target that emits no workload egress refuses it with `ir/network-egress-unsupported`.",
           "$ref": "#/$defs/network"
         },
         "approvals": {
@@ -2119,7 +2120,7 @@
           "type": "boolean"
         },
         "egress": {
-          "description": "What the workload may reach outbound. Accepted and recorded; no generated module changes its egress rules from it yet, so treat it as declared rather than enforced. `open` is documented as the weaker placement.",
+          "description": "What the workload may reach outbound. Spec 0.33 as a declaration, generated from 0.38. `declared-only` is generated on the two targets that own a workload's traffic: a `container` deployment's task security group stops admitting 0.0.0.0/0 on every protocol and instead admits DNS, HTTPS and the private ranges the workload lives in, and a `kubernetes` deployment gets a `NetworkPolicy` whose egress rule is 443 to the internet minus the instance metadata range (`169.254.0.0/16`), the cluster DNS resolver, and the cluster itself. `open` (the default) keeps the unrestricted rule, so a document that never asked for a restriction is not taken off the network by a generator upgrade. Targets that emit no workload egress -- `serverless`, `edge`, `batch` -- refuse `declared-only` with `ir/network-egress-unsupported` rather than emitting a stub. One honest limit: a `NetworkPolicy` is enforced by the cluster's CNI, so on a cluster whose CNI ignores the policy API (flannel alone) the object applies and blocks nothing. The generated chart says so in the file and the README.",
           "enum": ["declared-only", "open"]
         }
       }

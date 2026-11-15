@@ -4,7 +4,7 @@ description: "What ships out of the box, which cloud runs each deployment target
 
 # Features
 
-The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.37`.
+The provider and cloud lists are read from the declarations the compiler enforces, not maintained by hand. Everything else is a registry that a test holds to those declarations and to the release that first shipped each entry. The spec language is at `0.38`.
 
 ## Deployment targets
 
@@ -304,14 +304,14 @@ A `kubernetes` deployment declares its namespace and, optionally, the ingress th
 - **Reference:** [spec](./reference/spec.md#deployment)
 - **Since:** `0.1.189`
 
-### A network placement that reaches the generator
+### A network placement and an egress rule that reach the generator
 
-`network.ingress` says how a deployment is reached — `public`, `internal`, or `private-link` — and unlike the retired `network.private` flag it selects what the emitter builds: an `internal` container deployment gets an internal load balancer whose security group admits only the `allowFrom` ranges, and a `kubernetes` deployment is internal by default because its `Service` is `ClusterIP`. The gate refuses a placement the target cannot express, `internal` with no `allowFrom`, `allowFrom` on a public placement, and a `private-link` this build does not emit.
+`network.ingress` says how a deployment is reached — `public`, `internal`, or `private-link` — and unlike the retired `network.private` flag it selects what the emitter builds: an `internal` container deployment gets an internal load balancer whose security group admits only the `allowFrom` ranges, and a `kubernetes` deployment gets a `NetworkPolicy` admitting the same set. `network.egress: declared-only` is read the same way: the container task security group stops admitting `0.0.0.0/0` on every protocol and admits DNS, HTTPS and the private ranges instead, and the Helm chart emits an egress `NetworkPolicy` whose internet rule subtracts `169.254.0.0/16` — a subtraction a security group cannot make, which is why the two forms do not match exactly. The gate refuses a placement the target cannot express, `internal` with no `allowFrom`, `allowFrom` on a public placement, `private-link` this build does not emit, and `declared-only` on a target whose emitters place no workload egress rule. A `NetworkPolicy` is enforced by the cluster CNI, not by the build, and the generated chart says so where it is emitted.
 
 - **Turned on by:** `deployments[].network`
 - **What exists:** a generator writes it into the tree (`packages/cli/src/infra/modules/container.ts`)
 - **Reference:** [spec](./reference/spec.md#deployment)
-- **Since:** `0.1.190`
+- **Since:** `0.1.191`
 
 ### Eject
 

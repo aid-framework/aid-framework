@@ -446,14 +446,14 @@ export const SHIPPED_FEATURES = [
     maturity: 'emitted',
     evidence: {
       path: 'packages/cli/src/infra/modules/container.ts',
-      marker: 'internal           = var.internal',
+      marker: 'for_each          = toset(var.egress_declared_only ?',
     },
-    title: 'A network placement that reaches the generator',
+    title: 'A network placement and an egress rule that reach the generator',
     detail:
-      '`network.ingress` says how a deployment is reached — `public`, `internal`, or `private-link` — and unlike the retired `network.private` flag it selects what the emitter builds: an `internal` container deployment gets an internal load balancer whose security group admits only the `allowFrom` ranges, and a `kubernetes` deployment is internal by default because its `Service` is `ClusterIP`. The gate refuses a placement the target cannot express, `internal` with no `allowFrom`, `allowFrom` on a public placement, and a `private-link` this build does not emit.',
+      '`network.ingress` says how a deployment is reached — `public`, `internal`, or `private-link` — and unlike the retired `network.private` flag it selects what the emitter builds: an `internal` container deployment gets an internal load balancer whose security group admits only the `allowFrom` ranges, and a `kubernetes` deployment gets a `NetworkPolicy` admitting the same set. `network.egress: declared-only` is read the same way: the container task security group stops admitting `0.0.0.0/0` on every protocol and admits DNS, HTTPS and the private ranges instead, and the Helm chart emits an egress `NetworkPolicy` whose internet rule subtracts `169.254.0.0/16` — a subtraction a security group cannot make, which is why the two forms do not match exactly. The gate refuses a placement the target cannot express, `internal` with no `allowFrom`, `allowFrom` on a public placement, `private-link` this build does not emit, and `declared-only` on a target whose emitters place no workload egress rule. A `NetworkPolicy` is enforced by the cluster CNI, not by the build, and the generated chart says so where it is emitted.',
     declaredBy: 'deployments[].network',
     href: './reference/spec.md#deployment',
-    since: '0.1.190',
+    since: '0.1.191',
   },
   {
     id: 'eject',

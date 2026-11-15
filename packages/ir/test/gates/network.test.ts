@@ -132,18 +132,39 @@ describe('network', () => {
     }
   });
 
-  it('refuses allowed networks on a target that emits no rule to narrow', () => {
+  it('refuses `allowFrom` on a target that emits no rule to narrow', () => {
     const ir = mutateIR(NETWORK);
     const deployment = first(ir.deployments);
-    deployment.target = 'kubernetes';
+    deployment.target = 'batch';
     deployment.network = { ingress: 'internal', allowFrom: ['10.0.0.0/8'] };
 
     const diagnostic = onlyDiagnosticWith(
       gate(ir).diagnostics,
       IR_DIAGNOSTIC_CODES.networkAllowFrom,
     );
-    expect(diagnostic.message).toContain('emits no load balancer');
-    expect(diagnostic.hint).toContain('NetworkPolicy you own');
+    expect(diagnostic.message).toContain('emits neither');
+    expect(diagnostic.hint).toContain('batch job answers no requests');
+  });
+
+  it('accepts `allowFrom` on kubernetes, where it becomes the policy source set', () => {
+    const ir = mutateIR(NETWORK);
+    const deployment = first(ir.deployments);
+    deployment.target = 'kubernetes';
+    deployment.network = { ingress: 'internal', allowFrom: ['10.0.0.0/8'] };
+
+    expect(gate(ir).diagnostics).toEqual([]);
+  });
+
+  it('accepts `internal` on kubernetes without `allowFrom`, because ClusterIP is the bound', () => {
+    // The container module's load balancer would be an internal listener admitting nobody;
+    // a ClusterIP Service is already unreachable from outside the cluster, so an omitted
+    // list is the policy's default rather than an outage.
+    const ir = mutateIR(NETWORK);
+    const deployment = first(ir.deployments);
+    deployment.target = 'kubernetes';
+    deployment.network = { ingress: 'internal' };
+
+    expect(gate(ir).diagnostics).toEqual([]);
   });
 
   it('refuses container deployments that disagree, because they share one load balancer', () => {
@@ -171,5 +192,64 @@ describe('network', () => {
     delete first(ir.deployments).network;
 
     expect(codesOf(gate(ir).diagnostics)).toEqual([]);
+  });
+
+  it('refuses declared-only egress on a target that emits no workload egress', () => {
+    for (const target of ['serverless', 'edge', 'batch'] as const) {
+      const ir = mutateIR(NETWORK);
+      const deployment = first(ir.deployments);
+      deployment.target = target;
+      deployment.network = { ingress: 'public', egress: 'declared-only' };
+
+      const diagnostic = onlyDiagnosticWith(
+        gate(ir).diagnostics,
+        IR_DIAGNOSTIC_CODES.networkEgressUnsupported,
+      );
+      expect(diagnostic.path).toEqual(['deployments', 'prod', 'network', 'egress']);
+      expect(diagnostic.message).toContain(`target "${target}"`);
+      expect(diagnostic.message).toContain('emits no workload');
+    }
+  });
+
+  it('names the target swap each egress refusal is asking for', () => {
+    const hints = (['serverless', 'edge', 'batch'] as const).map((target) => {
+      const ir = mutateIR(NETWORK);
+      const deployment = first(ir.deployments);
+      deployment.target = target;
+      deployment.network = { ingress: 'public', egress: 'declared-only' };
+      const diagnostic = onlyDiagnosticWith(
+        gate(ir).diagnostics,
+        IR_DIAGNOSTIC_CODES.networkEgressUnsupported,
+      );
+      // Every hint names the two targets that do emit the restriction.
+      expect(diagnostic.hint).toMatch(/container|kubernetes/);
+      return diagnostic.hint;
+    });
+    expect(new Set(hints).size).toBe(3);
+  });
+
+  it('accepts declared-only egress on the two targets that emit it', () => {
+    for (const target of ['container', 'kubernetes'] as const) {
+      const ir = mutateIR(NETWORK);
+      const deployment = first(ir.deployments);
+      deployment.target = target;
+      deployment.network = { ingress: 'public', egress: 'declared-only' };
+
+      expect(codesOf(gate(ir).diagnostics)).toEqual([]);
+    }
+  });
+
+  it('reports the egress refusal alongside an ingress mistake, not instead of it', () => {
+    // Two independent declarations, two independent fixes: suppressing one because the
+    // other failed would hide a line the reader still has to change.
+    const ir = mutateIR(NETWORK);
+    const deployment = first(ir.deployments);
+    deployment.target = 'serverless';
+    deployment.network = { ingress: 'internal', egress: 'declared-only' };
+
+    expect(codesOf(gate(ir).diagnostics).sort()).toEqual([
+      IR_DIAGNOSTIC_CODES.networkEgressUnsupported,
+      IR_DIAGNOSTIC_CODES.networkTargetIncapable,
+    ]);
   });
 });

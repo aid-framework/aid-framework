@@ -82,6 +82,39 @@ deployments:
     secrets: [OPENAI_API_KEY]
 `;
 
+/**
+ * Two restricted placements. One declares both halves; one declares egress only, because a
+ * policy that names one `policyTypes` entry must not quietly imply the other. `ingress: public`
+ * is spelled out rather than omitted: a `network` block has to say where the workload sits.
+ */
+const POLICY_SPEC = `specVersion: "0.37"
+
+project:
+  name: claims-desk
+  targets:
+    - py-fastapi
+
+deployments:
+  claims_prod:
+    target: kubernetes
+    cloud: azure
+    region: uksouth
+    secrets: [OPENAI_API_KEY]
+    network:
+      ingress: internal
+      allowFrom: [10.0.0.0/8]
+      egress: declared-only
+
+  claims_staging:
+    target: kubernetes
+    cloud: azure
+    region: uksouth
+    secrets: [OPENAI_API_KEY]
+    network:
+      ingress: public
+      egress: declared-only
+`;
+
 /** A deployment the chart does not describe, so `--iac helm` has nothing to render. */
 const CONTAINER_SPEC = `specVersion: "0.36"
 
@@ -253,6 +286,103 @@ describe('what the chart refuses to hold', () => {
     expect(aid(made, ['infra', 'gen', '--iac', 'helm']).code).toBe(0);
     // The template holds the block, guarded; the default values file leaves it empty.
     expect(made.read(`${CHART}/values.yaml`)).toContain('path: ""');
+  });
+});
+
+describe('the network policy a restricted placement derives', () => {
+  it('emits one policy per restricted workload, and none for the unrestricted chart', () => {
+    const restricted = scratch(POLICY_SPEC);
+    expect(aid(restricted, ['infra', 'gen', '--iac', 'helm']).code).toBe(0);
+    const policies = restricted
+      .walk()
+      .filter((path) => path.startsWith(CHART) && path.endsWith('-networkpolicy.yaml'));
+    expect(policies).toEqual([
+      `${CHART}/templates/claims-prod-networkpolicy.yaml`,
+      `${CHART}/templates/claims-staging-networkpolicy.yaml`,
+    ]);
+
+    // The 0.36 spec declares no `network` block, so a chart that emitted a default-deny
+    // policy would be changing a live release's reachability on a generator upgrade.
+    const open = scratch(KUBERNETES_SPEC);
+    expect(aid(open, ['infra', 'gen', '--iac', 'helm']).code).toBe(0);
+    expect(open.walk().filter((path) => path.endsWith('-networkpolicy.yaml'))).toEqual([]);
+  });
+
+  it('declares only the policy types the spec asked for', () => {
+    const made = scratch(POLICY_SPEC);
+    expect(aid(made, ['infra', 'gen', '--iac', 'helm']).code).toBe(0);
+
+    const both = made.read(`${CHART}/templates/claims-prod-networkpolicy.yaml`);
+    expect(both).toContain('policyTypes: ["Ingress", "Egress"]');
+    expect(both).toContain('  ingress:');
+    expect(both).toContain('  egress:');
+
+    // Egress only: naming `Ingress` would deny every caller, which the spec did not ask.
+    const egressOnly = made.read(`${CHART}/templates/claims-staging-networkpolicy.yaml`);
+    expect(egressOnly).toContain('policyTypes: ["Egress"]');
+    expect(egressOnly).not.toContain('  ingress:');
+  });
+
+  it('excludes the instance metadata range, which a security group cannot subtract', () => {
+    const made = scratch(POLICY_SPEC);
+    expect(aid(made, ['infra', 'gen', '--iac', 'helm']).code).toBe(0);
+    const policy = made.read(`${CHART}/templates/claims-prod-networkpolicy.yaml`);
+
+    expect(policy).toContain('kind: NetworkPolicy');
+    expect(policy).toContain('cidr: "0.0.0.0/0"');
+    expect(policy).toContain('except:');
+    expect(policy).toContain('- "169.254.0.0/16"');
+    // DNS and HTTPS, and the cluster itself. Nothing is a blanket allow.
+    expect(policy).toContain('port: 53');
+    expect(policy).toContain('port: 443');
+    expect(policy).toContain('namespaceSelector: {}');
+  });
+
+  it('narrows ingress to the declared ranges, and to the cluster when none are', () => {
+    const made = scratch(POLICY_SPEC);
+    expect(aid(made, ['infra', 'gen', '--iac', 'helm']).code).toBe(0);
+
+    const declared = made.read(`${CHART}/templates/claims-prod-networkpolicy.yaml`);
+    expect(declared).toContain('cidr: "10.0.0.0/8"');
+    expect(declared).toContain('port: 8080');
+    // The pod port, not the Service port: a policy is evaluated after kube-proxy.
+    expect(declared).not.toContain('port: 80\n');
+  });
+
+  it('selects exactly the pods its own Service selects', () => {
+    const made = scratch(POLICY_SPEC);
+    expect(aid(made, ['infra', 'gen', '--iac', 'helm']).code).toBe(0);
+    const policy = made.read(`${CHART}/templates/claims-prod-networkpolicy.yaml`);
+    const service = made.read(`${CHART}/templates/claims-prod-service.yaml`);
+
+    // A policy whose selector misses the pods it names is a policy on nothing.
+    expect(policy).toContain('podSelector:');
+    expect(policy).toContain('{{- include "aid-app.selectorLabels" . | nindent 6 }}');
+    expect(policy).toContain('aid-framework/deployment: "claims_prod"');
+    expect(service).toContain('aid-framework/deployment: "claims_prod"');
+  });
+
+  it('says in the file and the readme that the CNI is what enforces it', () => {
+    const made = scratch(POLICY_SPEC);
+    expect(aid(made, ['infra', 'gen', '--iac', 'helm']).code).toBe(0);
+
+    const policy = made.read(`${CHART}/templates/claims-prod-networkpolicy.yaml`);
+    expect(policy).toContain('enforced by the CNI');
+    expect(policy).toContain('flannel');
+
+    const readme = made.read(`${CHART}/README.md`);
+    expect(readme).toContain('Calico');
+    expect(readme).toContain('blocks nothing');
+  });
+
+  it('reports the policy in the readme table, so an operator sees it before installing', () => {
+    const made = scratch(POLICY_SPEC);
+    expect(aid(made, ['infra', 'gen', '--iac', 'helm']).code).toBe(0);
+
+    const readme = made.read(`${CHART}/README.md`);
+    expect(readme).toContain('| Network policy |');
+    expect(readme).toMatch(/\| `claims_prod` \|.*\| emitted \|/);
+    expect(readme).not.toContain('| none | none |');
   });
 });
 

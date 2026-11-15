@@ -786,9 +786,18 @@ deployments:
 
 `public` is the default and is what every document written before `0.37` actually got, so
 nothing moves on a version bump. `internal` reaches the emitter: the container module builds an
-internal load balancer and admits the `allowFrom` ranges to it, and a `kubernetes` deployment is
-internal already because its `Service` is `ClusterIP`. `private-link` is refused, because naming
+internal load balancer and admits the `allowFrom` ranges to it, and a `kubernetes` deployment gets
+a `NetworkPolicy` admitting the same set to the pod. `private-link` is refused, because naming
 a private endpoint AID does not create would be a declaration pretending to be a placement.
+
+`egress` is the third layer and, from spec `0.38`, it is generated too. `declared-only` means DNS,
+HTTPS to the internet, and the private ranges the workload lives in — nothing else. On `container`
+the task security group stops admitting `0.0.0.0/0` on every protocol and gets four rules instead;
+on `kubernetes` the chart emits an egress `NetworkPolicy` whose internet rule subtracts
+`169.254.0.0/16`, so the instance metadata endpoint is excluded by name. That subtraction is why the
+two forms differ: a security group can allow a set, it cannot allow "everything except". `open` is
+the default and keeps the single unrestricted rule, so a document that never asked for a restriction
+is not taken off the network by a generator upgrade.
 
 What is refused:
 
@@ -799,9 +808,16 @@ What is refused:
   CloudFront function that is public by definition.
 - Two container deployments in one document that want different placements, because the emitted
   environment has one load balancer and the second declaration would never be read.
+- `egress: declared-only` on a target that emits no workload egress rule — `serverless`, `edge` and
+  `batch` — rather than accepting a declaration no artifact applies.
 - `network.private`, at `0.37` and above. It never selected a placement in any generated module,
   so it is retired rather than promoted; declaring it below `0.37` is still accepted and still
   behaves exactly as it did.
+
+One limit belongs beside the rest: a `NetworkPolicy` is enforced by the cluster's CNI. Calico,
+Cilium and Antrea implement the API; flannel alone accepts the object and blocks nothing. The
+generated chart says so in the template header and its README, because a build cannot observe your
+cluster.
 
 `aid eject` moves a generated file into `business/` and stops generating it. After that the
 file is yours, and the manifest says so instead of re-reporting it as drift.`aid review` prints the split a reviewer has to work from. It runs the same pipeline as`validate` and adds no gate, so a spec the build refuses is refused rather than itemised.
@@ -828,7 +844,7 @@ Covers:
 - **A Dockerfile and an image**
 - **A Helm chart for a cluster target**
 - **A cluster placement with an addressable ingress**
-- **A network placement that reaches the generator**
+- **A network placement and an egress rule that reach the generator**
 - **Delivery profiles with a pinned placement and audit sink**
 - **Durable run state, deployment identity and change approval** *(declared
   and gated; the approver names and the component-name form of `identity.verifiedBy` stay

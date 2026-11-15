@@ -276,6 +276,21 @@ what a build can check without an account or a network call. It does not verify 
 issuer exists, that the private network is peered, or that the named reviewers are real people. Those
 are properties of your platform. State them as declared, not as verified.
 
+The network controls have a second limit that is worth saying out loud. `network.ingress: internal`
+and `network.egress: declared-only` are generated from spec 0.37 and 0.38 respectively, but what they
+generate differs by target and by what the provider can express:
+
+- A `container` deployment gets security-group rules. A group can *allow a set*, so `declared-only`
+  admits DNS, HTTPS and the private ranges the workload lives in. It cannot say "everything except".
+- A `kubernetes` deployment gets a `NetworkPolicy`, which *can* subtract: the internet rule carries
+  `except: 169.254.0.0/16`, so the instance metadata endpoint is excluded by name.
+- A `NetworkPolicy` object is not enforcement. Calico, Cilium and Antrea implement the policy API;
+  flannel alone accepts the object and blocks nothing. The generated chart says so in the template
+  header and its README, and no build can observe which CNI your cluster runs.
+- `egress: declared-only` on `serverless`, `edge` or `batch` is refused with
+  `ir/network-egress-unsupported`. Targets that emit no workload egress rule do not get a declaration
+  that looks like a control.
+
 The one identity control the build *does* generate is the token check, and only when you ask for it by
 name. `verifiedBy` has two meanings, and the difference is the whole point:
 

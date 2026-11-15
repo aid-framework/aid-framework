@@ -47,6 +47,8 @@ module "container" {
   vpc_cidr            = var.vpc_cidr
   internal            = var.internal
   internal_allow_from = var.internal_allow_from
+  egress_declared_only = var.egress_declared_only
+  egress_private_cidrs = var.egress_private_cidrs
   health_check_path   = var.health_check_path
   idle_timeout        = var.idle_timeout
   log_retention_days  = var.log_retention_days

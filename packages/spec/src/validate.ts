@@ -91,6 +91,7 @@ export const SUPPORTED_SPEC_VERSIONS = [
   '0.35',
   '0.36',
   '0.37',
+  '0.38',
 ] as const;
 
 export type SpecVersion = (typeof SUPPORTED_SPEC_VERSIONS)[number];
