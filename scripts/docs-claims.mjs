@@ -433,3 +433,75 @@ const STATUS_ROW = /^\|\s*Status\s*\|\s*(.+?)\s*\|\s*$/m;
 export function proposalStatus(text) {
   return text.match(STATUS_ROW)?.[1];
 }
+
+/** A table opts in as a roadmap with this marker on the line above it. */
+const ROADMAP_MARKER = /^<!--\s*roadmap-table:[^>]*-->\s*$/;
+
+/** The separator row (`| --- | --- |`) is structure, not a claim. */
+const TABLE_SEPARATOR = /^\|[\s:|-]+\|$/;
+
+/** The word a roadmap row's status cell opens with. */
+const ROADMAP_STATUS = /^\*\*(Shipped|Open|Deferred)\b/;
+
+/** The canonical way to claim a release, which is the only form whose version is checked. */
+const ROADMAP_VERSION = /^\*\*Shipped in `(\d+\.\d+\.\d+)`\.\*\*/;
+
+/**
+ * The roadmap table a document opts into, or `undefined` when it has none.
+ *
+ * A roadmap is the prose a reader plans against, so it is the prose that ages worst: a row still
+ * saying "not built yet" in the release where the work shipped reads as a reason to start
+ * something already done. This extracts the rows so the caller can hold them to a vocabulary; it
+ * decides nothing about whether a status is *right*, which takes a reviewer reading the tree.
+ *
+ * The marker rather than a file path is what keeps the rule honest: a document that is not a
+ * roadmap is never held to it, and a new roadmap is covered by adding one comment.
+ *
+ * @param {string} text
+ * @returns {{ markerLine: number, rows: { line: number, status: string }[] } | undefined}
+ */
+export function roadmapTable(text) {
+  const lines = text.split('\n');
+  const marker = lines.findIndex((line) => ROADMAP_MARKER.test(line.trim()));
+  if (marker === -1) return undefined;
+
+  const header = lines.findIndex((line, index) => index > marker && line.trim().startsWith('|'));
+  if (header === -1) return { markerLine: marker + 1, rows: [] };
+
+  /** @type {{ line: number, status: string }[]} */
+  const rows = [];
+  for (let index = header + 1; index < lines.length; index += 1) {
+    const line = (lines[index] ?? '').trim();
+    if (!line.startsWith('|')) break;
+    if (TABLE_SEPARATOR.test(line)) continue;
+    rows.push({ line: index + 1, status: (line.split('|').slice(1, -1).at(-1) ?? '').trim() });
+  }
+  return { markerLine: marker + 1, rows };
+}
+
+/**
+ * The status a roadmap row declares, or `undefined` when its cell opens with no word we accept.
+ *
+ * A version is returned only from the canonical `**Shipped in `X.Y.Z`.**` form, and a cell that
+ * starts to name a release without finishing that form is refused rather than read as a bare
+ * `Shipped`. The point is that a version is either written where the caller can check it against
+ * the repository's own, or not written at all — a half-written one is the version nobody checks.
+ *
+ * `**Shipped.**` with no version is accepted, because work that landed before the project tagged a
+ * release has none to cite, and inventing one is the same overclaim in the other direction.
+ *
+ * @param {string} cell
+ * @returns {{ status: 'Shipped' | 'Open' | 'Deferred', version?: string } | undefined}
+ */
+export function roadmapStatus(cell) {
+  const version = cell.match(ROADMAP_VERSION);
+  if (version !== null) return { status: 'Shipped', version: version[1] };
+  // Any other way of naming a release -- `in `1.2.3`**`, `in 1.2.3.`, `in the last release` -- is
+  // refused rather than read as a bare `Shipped`, because none of those versions can be checked
+  // against anything, and a version that cannot be checked is the one that goes stale.
+  if (cell.startsWith('**Shipped in ')) return undefined;
+
+  const word = cell.match(ROADMAP_STATUS);
+  if (word === null) return undefined;
+  return { status: /** @type {'Shipped' | 'Open' | 'Deferred'} */ (word[1]) };
+}

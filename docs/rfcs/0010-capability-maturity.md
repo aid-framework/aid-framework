@@ -186,17 +186,30 @@ The version bump is a patch: `site/**` is a releasable path, and the release wor
 This phase exists because the plan's later phases all rest on counting what ships. The ordering
 below is the delivery plan this round is the first increment of.
 
-| Phase | Smallest shippable increment | Why here |
-| --- | --- | --- |
-| **B. Delivery method** | `aid review [spec]`: one readiness pack per customer (what the build proved, then every declaration it only accepted as declared, each with the path that made it), plus a section in `docs/guide/delivery.md` | A consultancy sells a method before it sells a feature. Costs no spec change. **Shipped in `0.1.185`.** |
-| **A1. Durable run state** | Actually persist a paused run: generated checkpoint table, `POST /agents/resume` reading from it | The largest honest gap in `DECLARED_FEATURES`. A client whose agent dies mid-run does not care which cloud it cannot survive on. **Shipped in `0.1.186`.** |
-| **A2. Cost at runtime** | Meter spend per run against `maxCostBudget`, refuse the next step when exhausted | Second question every client asks; today cost is priced at build time only. |
-| **A3. Identity verification** | Verify a token against the declared `identity.issuer` instead of naming who does | Moves `ir/identity-verified-by` from declared to enforced with code. |
-| **A4. Azure / Kubernetes** | One target through the capability matrix, with refusals for unsupported pairs | Only after A1–A3: portability of a service that cannot survive a restart is a demo. |
-| **A5. Bedrock streaming** | The refusal in `CLOUD_REFUSALS` replaced by an emitter | Small, visible, closes a named gap. |
-| **A6. Composed pipelines** | `pipelines[].steps` referencing agents, with step budgets | Last: it multiplies every earlier decision. |
+Every row states its own status, and the status leads the cell so a script can read it as well as a
+person. `scripts/check-docs-claims.mjs` requires each row below to begin with `Shipped`, `Open` or
+`Deferred`, and refuses a `Shipped in X.Y.Z` that names a version later than this repository's. A
+roadmap row is the most expensive kind of prose to keep honest, because it is the one a reader
+plans against.
 
-Each phase follows the rule this one was built to enforce: **a row moves from `DECLARED_FEATURES`
+<!-- roadmap-table: every row states its own status; checked by scripts/check-docs-claims.mjs -->
+
+| Phase | Smallest shippable increment | Status, and why there |
+| --- | --- | --- |
+| **B. Delivery method** | `aid review [spec]`: one readiness pack per customer (what the build proved, then every declaration it only accepted as declared, each with the path that made it), plus a section in `docs/guide/delivery.md` | **Shipped in `0.1.185`.** A consultancy sells a method before it sells a feature, and this one costs no spec change. |
+| **A1. Durable run state** | Actually persist a paused run: generated checkpoint table, `POST /agents/runs/{run_id}/resume` reading from it | **Shipped in `0.1.186`.** It was the largest honest gap in `DECLARED_FEATURES`: a client whose agent dies mid-run does not care which cloud it cannot survive on. |
+| **A2. Cost at runtime** | Meter spend per run against `maxCostBudget`, refuse the next step when exhausted | **Shipped.** It arrived with the native runtime (PR #25), earlier than this table, which is why the table said otherwise. `agents/loop.py::_budget` anchors each agent's ceiling on the one shared `CostLedger` and hands it to the gateway, so a breach is the gateway's own `BudgetExceededError` rather than a second accounting path. `tests/test_agents_budget.py` holds the six refusal tests. |
+| **A3. Identity verification** | Verify a token against the declared `identity.issuer` instead of naming who does | **Open.** The one row here with no code behind it: nothing in the runtime or the generators fetches a JWKS document, verifies a signature, or compares `iss`. `ir/identity-verified-by` therefore proves a verifier is *named*, not that one runs. |
+| **A4. Azure / Kubernetes** | One target through the capability matrix, with refusals for unsupported pairs | **Deferred** by recorded decision, not by omission: RFC 0004 §6 lists the unsupported clouds, explains why naming one is `ir/cloud-unsupported` (a decision) rather than `ir/deploy-target-unknown` (a typo), and sets the reopening trigger at the first customer requirement that cannot be served on `aws` or `gcp`. |
+| **A5. Bedrock streaming** | The refusal in `CLOUD_REFUSALS` replaced by an emitter | **Shipped in `0.1.78`.** It came with the Bedrock Converse adapter, which decodes `/converse-stream` and merges the frames. The remaining difference between targets is an adapter capability flag, not a missing emitter. |
+| **A6. Composed pipelines** | `pipelines[].steps` referencing agents, with step budgets | **Shipped.** It landed in PR #36, which wired the rerank, guard and agent step kinds and retired the human step. An agent step is a step kind, so a pipeline can already call one. |
+
+An audit of this table against the code found four of its seven rows already shipped and one
+deferred by decision. That is worth saying rather than quietly editing: a roadmap written from a
+plan instead of from the tree will overcount what is left, and the overcount reads as a promise to
+whoever plans against it.
+
+Each phase follows the rule this round was built to enforce: **a row moves from `DECLARED_FEATURES`
 to `SHIPPED_FEATURES` in the release that starts emitting it, and not before.** A1 was the first
 test of it. The row said declared while the run lived only in the response, and it moved in
 `0.1.186` — in the release that generated the store, not in the one that described it, and with the
@@ -217,6 +230,12 @@ way to obtain a partial verdict.
 - **That no other prose overclaims.** This audit found three claims by reading. Nothing scans prose
   for the phrase "the generator writes". A follow-up could extend `scripts/docs-claims.mjs` in that
   direction; it is not done here.
+- **That a roadmap row is true.** The roadmap check proves each row *states* a status, not that the
+  status is right: no scan can tell that A3's `Open` matches an absence of code, and a row can be
+  marked `Shipped` by someone who believes it. What the check does prove is narrower and still
+  worth having — that no row is silent about where it stands, and that no row claims a release that
+  has not been cut. Marking a row shipped remains a reviewer reading the tree, which is how this
+  audit found four rows wrong.
 - **That a review pack is a control.** `aid review` lists what the spec declares and what the build
   checked. It cannot see that the account already enforces a region policy regardless of the
   document, and it cannot see whether anyone reads the pack before approving. It replaces an

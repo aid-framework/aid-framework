@@ -32,6 +32,8 @@ import {
   isProposalPage,
   MARKDOWN_ROOTS,
   proposalStatus,
+  roadmapStatus,
+  roadmapTable,
   sourceCodeAnnotation,
   targetTokens,
   withoutSourceAnnotations,
@@ -1741,6 +1743,57 @@ function checkSourceDiagnosticCodes(registered) {
   }
 
   return { citations, exemptions };
+}
+
+/**
+ * Every roadmap row states where it stands, and no row claims a release that has not been cut.
+ *
+ * The vocabulary and the version rule live here rather than in `scripts/docs-claims.mjs` because
+ * they are policy: what a roadmap must say, and against which version a claim is measured. That
+ * module parses, this one refuses.
+ *
+ * @param {string} file repository-relative path
+ * @param {string} text
+ */
+function checkRoadmapRows(file, text) {
+  const table = roadmapTable(text);
+  if (table === undefined) return;
+
+  if (table.rows.length === 0) {
+    fail(
+      file,
+      table.markerLine,
+      'carries a `<!-- roadmap-table -->` marker but no table follows it',
+    );
+    return;
+  }
+
+  for (const row of table.rows) {
+    claimsChecked += 1;
+    const declared = roadmapStatus(row.status);
+    if (declared === undefined) {
+      fail(
+        file,
+        row.line,
+        'has a roadmap row whose status cell does not open with `**Shipped`, `**Open.` or `**Deferred`',
+      );
+      continue;
+    }
+    if (declared.version === undefined || CURRENT_VERSION === undefined) continue;
+    if (compareVersions(declared.version, CURRENT_VERSION) > 0) {
+      fail(
+        file,
+        row.line,
+        `claims \`Shipped in ${declared.version}\`, which is later than the current version ${CURRENT_VERSION}`,
+      );
+    }
+  }
+}
+
+for (const file of documents) {
+  const text = read(file);
+  if (text === undefined) continue;
+  checkRoadmapRows(file, text);
 }
 
 const registeredDiagnostics = registeredDiagnosticCodes();
