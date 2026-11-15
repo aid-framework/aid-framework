@@ -843,6 +843,17 @@ export const SHIPPED_FEATURES = [
     href: './reference/spec.md#top-level-keys',
     since: '0.1.188',
   },
+  {
+    id: 'spec-visualizer',
+    maturity: 'tooling',
+    evidence: { path: 'packages/cli/src/visualize/graph.ts', marker: 'buildVisualGraph' },
+    title: 'The whole spec as one picture, live',
+    detail:
+      '`aid visualize` reads the spec through the same parser and IR build the generators use, then draws what it found: the project, every model, prompt, tool, retriever, guardrail, eval, agent step, pipeline and deployment, with an edge for each reference the spec actually makes, so a prompt naming a model the spec never declared shows up as a dangling fact instead of staying invisible. The layout is computed as a pure function of the IR, which is why it can be asserted in a test rather than eyeballed, and why the same spec always draws the same picture. The server is a `node:http` listener bound to `127.0.0.1` that ships its own page: no hosted backend, no CDN, no bundle, and no spec text in the HTML -- the client fetches the graph from `/api/graph` and writes every string with `textContent`, so `--json` and the browser are looking at one document. Saving the spec redraws in place over server-sent events rather than reloading, and a spec a gate refuses renders the diagnostics as an overlay with their codes, paths and hints, because a picture of a spec that does not build would be a lie.',
+    declaredBy: 'aid visualize',
+    href: './reference/cli.md#visualize',
+    since: '0.1.196',
+  },
 ];
 
 /**
@@ -1312,5 +1323,14 @@ export const CAPABILITY_FAMILIES = [
       'fleet-summary',
       'golden-path-templates',
     ],
+  },
+  {
+    id: 'authoring',
+    title: 'Authoring and inspection',
+    pitch:
+      'The spec is the artifact, so it can be drawn: every reference it makes is a line you can see, and the picture is the same document the gates read.',
+    declaredBy: 'aid visualize',
+    href: './reference/cli.md#visualize',
+    featureIds: ['spec-visualizer'],
   },
 ];

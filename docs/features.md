@@ -592,6 +592,15 @@ Spec 0.35 reserves `deployments[].identity.verifiedBy: aid`, and `py-fastapi` an
 - **Reference:** [spec](./reference/spec.md#top-level-keys)
 - **Since:** `0.1.188`
 
+### The whole spec as one picture, live
+
+`aid visualize` reads the spec through the same parser and IR build the generators use, then draws what it found: the project, every model, prompt, tool, retriever, guardrail, eval, agent step, pipeline and deployment, with an edge for each reference the spec actually makes, so a prompt naming a model the spec never declared shows up as a dangling fact instead of staying invisible. The layout is computed as a pure function of the IR, which is why it can be asserted in a test rather than eyeballed, and why the same spec always draws the same picture. The server is a `node:http` listener bound to `127.0.0.1` that ships its own page: no hosted backend, no CDN, no bundle, and no spec text in the HTML -- the client fetches the graph from `/api/graph` and writes every string with `textContent`, so `--json` and the browser are looking at one document. Saving the spec redraws in place over server-sent events rather than reloading, and a spec a gate refuses renders the diagnostics as an overlay with their codes, paths and hints, because a picture of a spec that does not build would be a lie.
+
+- **Turned on by:** `aid visualize`
+- **What exists:** a command does it when you run it; no generated file changes (`packages/cli/src/visualize/graph.ts`)
+- **Reference:** [cli](./reference/cli.md#visualize)
+- **Since:** `0.1.196`
+
 ## Declared and gated, not generated
 
 These constructs are in the spec language and a gate enforces them, but no generator emits the behaviour they name, so they are listed apart from the inventory above and are not counted on the homepage. The declaration is what a reviewer reads before an apply; the last bullet is the part still to write.

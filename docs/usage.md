@@ -1068,6 +1068,57 @@ Covers:
 - **A fleet inventory computed from the tree**
 - **Two shipped golden paths**
 
+## Authoring and inspection
+
+<!-- capability-family: authoring -->
+
+A spec is already a graph: a prompt names its model, an agent step names a tool, a pipeline names the
+agents it calls, a deployment names a cloud and a region. The parser checks the shapes; the gates
+check the policy. What neither shows is the shape of the whole document at once, and a name that
+points at nothing is the defect a wall of YAML hides best.
+
+`aid visualize` draws that graph:
+
+```sh
+aid visualize                                # app/app.spec.yaml on 127.0.0.1:4321
+aid visualize customers/acme.spec.yaml        # a resolved customer spec
+aid visualize --port 4400
+aid visualize --json                         # the graph and layout, no listener
+```
+
+One column per construct group -- document, contract, service, agents, prompts, models, tools,
+retrieval, guardrails, evals, infra -- one node per declaration, and one edge per reference the
+document makes. The layout is a pure function of the IR, so the same spec draws the same picture and
+the picture can be asserted rather than eyeballed.
+
+The page is served by the CLI process itself: no hosted backend, no CDN, no bundle, and no spec text
+in the HTML. The client fetches `/api/graph` and writes every string with `textContent`, so what the
+browser shows and what `--json` prints come from one document. Saving the spec redraws in place over
+server-sent events instead of reloading.
+
+What comes out:
+
+- A listener on `127.0.0.1` serving the page, the graph, and an event stream.
+- A graph document per construct group, with the project, profile, pinned targets and counts.
+- A deterministic layout: one column per non-empty group, node boxes and edge paths with no
+  overlap, computed without font metrics.
+- `--json`, which prints the same graph and layout and binds no port, so a scene can be asserted in
+  CI.
+
+What is refused:
+
+- A port that is not a whole number in range, before the spec is read at all.
+- A port another process already holds, reported as a failure rather than a silent fallback.
+- A spec a gate rejects: the page shows the diagnostics with their codes, paths and hints instead of
+  drawing a shape that build would never produce.
+
+Treat the picture as a view of the declaration, not of a running service. It draws what the gates
+judge, which is the document, and it proves nothing about a deployment.
+
+Covers:
+
+- **The whole spec as one picture, live**
+
 ---
 
 Each section above is a family on the [capability band](index.md#what-the-compiler-writes-for-you).

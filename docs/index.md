@@ -182,6 +182,7 @@ behind these counts.
 | **[Deployment and infrastructure](./reference/targets.md#capability-matrix)** | `deployments[], aid infra` | The Dockerfile, OpenTofu or CDK and CI your cloud needs, plus the profile, region, audit sink and approvals an enterprise review asks for. | 13 |
 | **[Observability and cost](./reference/cli.md#trace)** | `traces[], observability, aid cost, aid report` | Traces and costs leave only for the collector your policy names, alarms are generated infrastructure, and one report compares every customer. | 7 |
 | **[Fleet repeatability](./reference/cli.md#fleet)** | `overridable, aid resolve, aid fleet` | One reviewed base spec, one small overlay per customer: only paths the base opened can move, and the fleet is one command over git. | 4 |
+| **[Authoring and inspection](./reference/cli.md#visualize)** | `aid visualize` | The spec is the artifact, so it can be drawn: every reference it makes is a line you can see, and the picture is the same document the gates read. | 1 |
 
 <!-- capability-band:end -->
 

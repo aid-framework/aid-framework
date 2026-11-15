@@ -29,6 +29,7 @@ Three things decide how you work with it:
 | Bringing an existing spec | `aid init <dir> --from <spec>` | [3](#3-adopt-an-existing-spec) |
 | Needing a TypeScript/Next.js service | `--target ts-vercel` | [4](#4-compile-the-typescript-target) |
 | Serving it locally | `aid dev` | [5](#5-run-it-locally) |
+| Seeing what a spec declares | `aid visualize` | [11](#11-see-what-the-spec-declares) |
 | Delivering to many customers | `overridable`, `customers/`, `aid fleet` | [6](#6-deliver-one-spec-to-many-customers) |
 | Passing an enterprise review | `profile: enterprise`, `aid review` | [7](#7-meet-an-enterprise-review) |
 | Improving a live agent | `aid trace export`, `aid eval --compare` | [8](#8-improve-an-agent-without-auto-deploying) |
@@ -394,6 +395,31 @@ npx @aid-framework/cli eject app/generated/tools/lookup_customer.py --dry-run
 `eject` moves the file into `app/business/` and stops generating it. The business tree is never
 overwritten and never diffed by `gen --check`. Prefer changing the spec; eject is for the residue, and
 each ejection is a piece of plumbing you now maintain.
+
+## 11. See what the spec declares
+
+```bash
+npx @aid-framework/cli visualize                       # serve app/app.spec.yaml on 127.0.0.1:4321
+npx @aid-framework/cli visualize --port 4400
+npx @aid-framework/cli visualize --json                # print the graph, bind nothing
+```
+
+One column per construct group - document, contract, service, agents, prompts, models, tools,
+retrieval, guardrails, evals, infra - one node per declaration, and one edge per reference the
+document actually makes: a prompt to its model, an agent step to the tool it names, a pipeline to
+the agents it calls, a deployment to its cloud and region. A reference to something the spec never
+declared has no node to land on, which is what the picture is for. Save the spec and the graph
+redraws in place over server-sent events.
+
+The page comes out of the CLI binary: no hosted backend, no CDN, no install. Click a node for its
+facts, click a legend row to hide that edge kind, `f` or `0` to refit, wheel to zoom. A spec that a
+gate refuses renders the diagnostics with their codes, paths and hints instead of a graph - the
+picture and the build read the same document, so a picture of a spec that does not build would be
+misleading.
+
+`--json` emits the same graph and layout document the page fetches, so a scene can be asserted in
+CI. Treat this as a view of the declaration, not of a running service: it draws what the spec says,
+which is exactly what the gates judge.
 
 ## Reading a refusal
 

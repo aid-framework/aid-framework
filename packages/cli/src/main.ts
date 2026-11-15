@@ -33,6 +33,7 @@ import { resolve } from './commands/resolve.js';
 import { review } from './commands/review.js';
 import { trace } from './commands/trace.js';
 import { validate } from './commands/validate.js';
+import { visualize } from './commands/visualize.js';
 import type { CliContext } from './context.js';
 import type { ExitCode } from './exit.js';
 import { EXIT_OK, EXIT_USAGE } from './exit.js';
@@ -342,6 +343,22 @@ export const COMMANDS: readonly Command[] = [
       report(context, {
         dir: args.positionals[0],
         budget: args.values.get('budget'),
+      }),
+  },
+  {
+    name: 'visualize',
+    summary: 'draw the spec as a graph and serve it locally, redrawing when the file changes',
+    usage: 'visualize [spec] [--port <n>]',
+    maxPositionals: 1,
+    flags: [
+      valueFlag('port', 'n', 'port to serve on; defaults to 4321'),
+      booleanFlag('json', 'print the graph and layout document, and bind no port'),
+    ],
+    run: (context, args) =>
+      visualize(context, {
+        spec: args.positionals[0],
+        port: args.values.get('port'),
+        json: args.booleans.has('json'),
       }),
   },
   {

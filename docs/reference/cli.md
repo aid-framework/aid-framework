@@ -31,6 +31,7 @@ Every command accepts `-h` / `--help` for its own usage. All except `dev` accept
 | [`cost`](#cost) | report cost and latency from the local trace sink |
 | [`trace`](#trace) | inspect a traced run, or export runs as a dataset an eval can read |
 | [`report`](#report) | compare many deployments from their trace sinks and recorded eval baselines |
+| [`visualize`](#visualize) | draw the spec as a graph and serve it locally, redrawing when the file changes |
 | [`doctor`](#doctor) | diagnose the tree against the spec: drift, versions, missing files |
 | [`eject`](#eject) | take ownership of a generated file: move it to business/ and stop generating it |
 | [`infra`](#infra) | derive the deployment wiring from the spec (OpenTofu, AWS CDK, or a Helm chart) and drive a backend |
@@ -274,6 +275,20 @@ aid report <dir> [--budget <usd>]
 | --- | --- |
 | `--budget <usd>` | fail when the fleet total exceeds this ceiling |
 | `--json` | print one JSON document on stdout |
+| `-h`, `--help` | print this command's usage |
+
+## `visualize`
+
+draw the spec as a graph and serve it locally, redrawing when the file changes
+
+```sh
+aid visualize [spec] [--port <n>]
+```
+
+| Option | Description |
+| --- | --- |
+| `--port <n>` | port to serve on; defaults to 4321 |
+| `--json` | print the graph and layout document, and bind no port |
 | `-h`, `--help` | print this command's usage |
 
 ## `doctor`

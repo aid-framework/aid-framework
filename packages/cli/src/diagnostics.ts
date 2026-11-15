@@ -214,6 +214,13 @@ export const CLI_DIAGNOSTIC_CODES = {
   reportDirUnreadable: 'cli/report-dir-unreadable',
   reportNoDeployments: 'cli/report-no-deployments',
   reportBaselineInvalid: 'cli/report-baseline-invalid',
+  // `aid visualize` draws what the build already accepted, so it originates no verdict on a
+  // spec: a refused spec is refused through the codes the gates produced, and the page
+  // renders exactly those. What is left is the environment -- an address it was handed and
+  // a document that could not be rebuilt while the server was already serving.
+  visualizePortInvalid: 'cli/visualize-port-invalid',
+  visualizePortUnavailable: 'cli/visualize-port-unavailable',
+  visualizeDocumentFailed: 'cli/visualize-document-failed',
 } as const;
 
 /**
