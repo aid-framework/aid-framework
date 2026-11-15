@@ -199,7 +199,7 @@ plans against.
 | **B. Delivery method** | `aid review [spec]`: one readiness pack per customer (what the build proved, then every declaration it only accepted as declared, each with the path that made it), plus a section in `docs/guide/delivery.md` | **Shipped in `0.1.185`.** A consultancy sells a method before it sells a feature, and this one costs no spec change. |
 | **A1. Durable run state** | Actually persist a paused run: generated checkpoint table, `POST /agents/runs/{run_id}/resume` reading from it | **Shipped in `0.1.186`.** It was the largest honest gap in `DECLARED_FEATURES`: a client whose agent dies mid-run does not care which cloud it cannot survive on. |
 | **A2. Cost at runtime** | Meter spend per run against `maxCostBudget`, refuse the next step when exhausted | **Shipped.** It arrived with the native runtime (PR #25), earlier than this table, which is why the table said otherwise. `agents/loop.py::_budget` anchors each agent's ceiling on the one shared `CostLedger` and hands it to the gateway, so a breach is the gateway's own `BudgetExceededError` rather than a second accounting path. `tests/test_agents_budget.py` holds the six refusal tests. |
-| **A3. Identity verification** | Verify a token against the declared `identity.issuer` instead of naming who does | **Open.** The one row here with no code behind it: nothing in the runtime or the generators fetches a JWKS document, verifies a signature, or compares `iss`. `ir/identity-verified-by` therefore proves a verifier is *named*, not that one runs. |
+| **A3. Identity verification** | Verify a token against the declared `identity.issuer` instead of naming who does | **Shipped in `0.1.188`.** `verifiedBy` now has two readings, and the difference is the point. A component name is still a declaration: the build proves a verifier is *named*, not that one runs. The reserved literal `verifiedBy: aid` is different — it makes `py-fastapi` emit `JwksVerifier` (`runtimes/python/src/aid_runtime/identity.py`), which fetches `identity.jwksUri`, checks the signature against `OIDC_ALGORITHMS` (RS/PS/ES 256/384/512 only, so no `none` and no key-confusion class), then compares `iss`, `aud` and `exp`, and `current_principal` returns a principal instead of the anonymous one. Four `ir/identity-*` refusals sit under it: `identity-kind` (SAML cannot be generated), `identity-audience`, `identity-keys` (no `jwksUri`), `identity-conflict` (two deployments that disagree, or one that declares an identity and does not ask for the generated check). `generatedVerifierIdentity` reads the literal only at `specVersion >= 0.35`, because `aid` was not reserved before that. |
 | **A4. Azure / Kubernetes** | One target through the capability matrix, with refusals for unsupported pairs | **Deferred** by recorded decision, not by omission: RFC 0004 §6 lists the unsupported clouds, explains why naming one is `ir/cloud-unsupported` (a decision) rather than `ir/deploy-target-unknown` (a typo), and sets the reopening trigger at the first customer requirement that cannot be served on `aws` or `gcp`. |
 | **A5. Bedrock streaming** | The refusal in `CLOUD_REFUSALS` replaced by an emitter | **Shipped in `0.1.78`.** It came with the Bedrock Converse adapter, which decodes `/converse-stream` and merges the frames. The remaining difference between targets is an adapter capability flag, not a missing emitter. |
 | **A6. Composed pipelines** | `pipelines[].steps` referencing agents, with step budgets | **Shipped.** It landed in PR #36, which wired the rerank, guard and agent step kinds and retired the human step. An agent step is a step kind, so a pipeline can already call one. |
@@ -231,11 +231,24 @@ way to obtain a partial verdict.
   for the phrase "the generator writes". A follow-up could extend `scripts/docs-claims.mjs` in that
   direction; it is not done here.
 - **That a roadmap row is true.** The roadmap check proves each row *states* a status, not that the
-  status is right: no scan can tell that A3's `Open` matches an absence of code, and a row can be
+  status is right: no scan can tell that A3's `Shipped` matches generated code, and a row can be
   marked `Shipped` by someone who believes it. What the check does prove is narrower and still
   worth having — that no row is silent about where it stands, and that no row claims a release that
   has not been cut. Marking a row shipped remains a reviewer reading the tree, which is how this
   audit found four rows wrong.
+- **That a generated verifier verifies the issuer.** A3 is the row that got closest to this line and
+  stops just short of it. The generated `JwksVerifier` proves a token was signed by a key that
+  `identity.jwksUri` published under the declared `issuer`. It does not prove the issuer is the one
+  the customer meant: the gate checks that a URI is declared and is `https`, not that it resolves to
+  the tenant the reviewers believe they are trusting. A customer who points `jwksUri` at an attacker's
+  identity provider built a correctly-verifying app. Trusting the URI is a review of the document.
+  Two smaller limits sit beside it: `kind: saml` is still declared-only (`ir/identity-kind` refuses
+  it *with* `verifiedBy: aid`, because AID generates no SAML verification), and the generated check
+  is app-wide — `current_principal` is one dependency for the whole tree, so a deployment that
+  declares no identity gets the check too. That is the stricter of the two readings and never weaker
+  than what was declared, and a deployment that names a *different* verifier is refused rather than
+  silently overridden, but it means `profile: standard` with one verifying deployment is served by a
+  generated verifier it did not ask for.
 - **That a review pack is a control.** `aid review` lists what the spec declares and what the build
   checked. It cannot see that the account already enforces a region policy regardless of the
   document, and it cannot see whether anyone reads the pack before approving. It replaces an

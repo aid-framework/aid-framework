@@ -275,6 +275,31 @@ what a build can check without an account or a network call. It does not verify 
 issuer exists, that the private network is peered, or that the named reviewers are real people. Those
 are properties of your platform. State them as declared, not as verified.
 
+The one identity control the build *does* generate is the token check, and only when you ask for it by
+name. `verifiedBy` has two meanings, and the difference is the whole point:
+
+```yaml
+identity:
+  kind: oidc
+  issuer: https://login.example.com
+  audience: aid-claims
+  verifiedBy: aid              # reserved literal: AID generates the verifier
+  jwksUri: https://login.example.com/.well-known/jwks.json
+  subjectClaim: sub
+```
+
+- `verifiedBy: <component>` is a *name*. It says your gateway or sidecar checks the token. AID
+  generates nothing and cannot confirm the component does what the name suggests. This is the
+  declared form and it is unchanged since spec 0.33.
+- `verifiedBy: aid` is reserved from spec **0.35**. It makes the generated `current_principal`
+  dependency call a `JwksVerifier` over the declared `jwksUri`, using the OIDC asymmetric algorithms
+  only, with `iss`/`aud`/`exp` checked and a fail-closed `401`. `ir/identity-keys` refuses the literal
+  without `jwksUri`, so the build cannot emit a verifier with nothing to check against.
+
+It checks a bearer token's signature and claims. It does not prove the issuer is the one you meant —
+the verifier trusts the `jwksUri` you declared — and SAML stays declared-only, because only the OIDC
+key set is fetched. Say "the build generates the token check" when it does, and never more than that.
+
 Print the split rather than restating it, so the reviewer gets a list and not a claim:
 
 ```bash
@@ -363,9 +388,13 @@ Keep these apart in anything you write or tell a user:
 
 - **Gated.** Spec version support, target capabilities, region and cloud consistency, audit sink
   validity, enterprise delivery controls, guardrail presence and stages, agent bounds, eval coverage
-  and regression ceilings, cost profiles for every priced model, deploy plan validity.
-- **Declared, not verified.** Identity issuers, network peering, reviewer identities, and secret
-  values. The build refuses a spec that omits them; it cannot confirm they exist.
+  and regression ceilings, cost profiles for every priced model, deploy plan validity, and the shape
+  of a generated verifier (`verifiedBy: aid` needs `jwksUri`, an OIDC issuer, and one verifier per app).
+- **Declared, not verified.** Identity issuers and their key sets, network peering, reviewer
+  identities, and secret values. The build refuses a spec that omits them; it cannot confirm they
+  exist. The generated verifier (`verifiedBy: aid`) narrows this to the token itself: it checks the
+  signature and the claims against the `jwksUri` you declared, so it proves the token was signed by
+  *that* key set — not that the key set belongs to the issuer you had in mind.
 - **Generated but not yet protected.** An agent that can pause gets a `POST /agents/resume` route
   alongside `POST /agents/{agent_id}/run`, and the checkpoint it accepts replays the conversation and
   the pending tool calls, so whoever holds it can continue that run. The checkpoint itself is

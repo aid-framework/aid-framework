@@ -66,6 +66,10 @@ export const IR_DIAGNOSTIC_CODES = {
   profileIdentity: 'ir/profile-identity',
   profileNetwork: 'ir/profile-network',
   identityVerifiedBy: 'ir/identity-verified-by',
+  identityKind: 'ir/identity-kind',
+  identityAudience: 'ir/identity-audience',
+  identityKeys: 'ir/identity-keys',
+  identityConflict: 'ir/identity-conflict',
   profileApprovals: 'ir/profile-approvals',
   agentsStateStore: 'ir/agents-state-store',
   resumeUnsigned: 'ir/resume-unsigned',
@@ -174,6 +178,16 @@ export const IR_DIAGNOSTIC_METADATA = {
   },
   'ir/hitl-side-effect': { condition: 'a side-effecting tool with no approval policy' },
   'ir/identity-verified-by': { condition: 'enterprise with an identity and no named verifier' },
+  'ir/identity-kind': {
+    condition: 'a generated verifier asked for a token protocol it cannot check',
+  },
+  'ir/identity-audience': {
+    condition: 'a generated verifier with no audience pinned, or one it cannot compare',
+  },
+  'ir/identity-keys': { condition: 'a generated verifier with no named signing-key source' },
+  'ir/identity-conflict': {
+    condition: 'deployments that ask for a generated verifier and disagree about the provider',
+  },
   'ir/observability-export': {
     condition: 'activity exported with `trace` off, or enterprise with no export',
   },

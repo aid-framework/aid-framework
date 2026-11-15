@@ -146,7 +146,7 @@ def _response(result: RunResult) -> AgentRunResponse:
 agent_router = APIRouter()
 
 #: The caller a generated route seeds: anonymous and unauthenticated on purpose, because
-#: nothing a generated app emits verifies a token.
+#: this app declares no generated verifier.
 ANONYMOUS_PRINCIPAL = Principal.unauthenticated()
 
 
@@ -156,7 +156,7 @@ def current_principal() -> Principal:
     `isAuthenticated()` refuses the call instead of admitting every caller. The application that
     mounts this router replaces it -- `app.dependency_overrides[current_principal] = your_verifier`
     -- and names that verifier in `deployments.<id>.identity.verifiedBy`, which `enterprise`
-    requires from spec 0.33.
+    requires from spec 0.33. Write `verifiedBy: aid` instead to have AID emit the verifier for you.
     """
 
     return ANONYMOUS_PRINCIPAL

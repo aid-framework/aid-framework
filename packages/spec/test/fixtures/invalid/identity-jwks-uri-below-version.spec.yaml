@@ -1,0 +1,18 @@
+specVersion: "0.34"
+
+project:
+  name: claims-desk
+
+deployments:
+  prod:
+    target: container
+    cloud: aws
+    region: eu-central-1
+    secrets: [OPENAI_API_KEY]
+    identity:
+      kind: oidc
+      issuer: https://login.example.com
+      audience: aid-claims
+      # A key source with nothing to read it: no version before 0.35 generates a verifier,
+      # so this line would parse, be accepted, and change nothing about the running app.
+      jwksUri: https://login.example.com/.well-known/jwks.json

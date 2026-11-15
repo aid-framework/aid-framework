@@ -433,6 +433,18 @@ const EXPECTED: Record<string, { code: string; path: PathSegment[] }> = {
     code: DIAGNOSTIC_CODES.notSupported,
     path: ['observability', 'feedback'],
   },
+  'identity-generated-below-version.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['deployments', 'prod', 'identity', 'verifiedBy'],
+  },
+  'identity-jwks-uri-below-version.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['deployments', 'prod', 'identity', 'jwksUri'],
+  },
+  'identity-subject-claim-below-version.spec.yaml': {
+    code: DIAGNOSTIC_CODES.notSupported,
+    path: ['deployments', 'prod', 'identity', 'subjectClaim'],
+  },
   'promotion-below-version.spec.yaml': {
     code: DIAGNOSTIC_CODES.notSupported,
     path: ['evals', 'quality', 'gate', 'promotion'],

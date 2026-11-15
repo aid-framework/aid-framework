@@ -74,12 +74,15 @@
 import type {
   AgentShape,
   AgentStateShape,
+  DeploymentIdentityShape,
   GuardrailShape,
   IR,
   MemoryShape,
   ModelShape,
   ToolShape,
 } from '@aid-framework/ir';
+import { generatesVerifier, IDENTITY_GENERATED_MIN_VERSION } from '@aid-framework/ir';
+import { specVersionAtLeast } from '@aid-framework/spec';
 
 import { INDENT, MAX_LINE, pythonStatement, pythonString } from '../python.js';
 import { assemble, HEADER, importBlock, importFrom, tupleLiteral } from '../template.js';
@@ -123,6 +126,23 @@ export function hasResumeRoute(ir: IR): boolean {
  */
 export function hasRunStore(ir: IR): boolean {
   return resumeState(ir) !== undefined;
+}
+
+/**
+ * The identity configuration the generated verifier is compiled from, if any.
+ *
+ * `ir/identity-conflict` refuses two deployments that disagree about the provider, so the
+ * first deployment naming `verifiedBy: aid` is the whole configuration: there is nothing to
+ * merge and no choice for the generator to make. Reading it here rather than in the emitter
+ * keeps the predicate assertable on an IR, so a test can ask whether an app verifies tokens
+ * without diffing a file.
+ */
+export function generatedVerifierIdentity(ir: IR): DeploymentIdentityShape | undefined {
+  // The literal is only reserved from `IDENTITY_GENERATED_MIN_VERSION`: an earlier document
+  // naming a component that happens to be called `aid` named a component, and emitting a
+  // verifier for it would change what that document means without it changing.
+  if (!specVersionAtLeast(ir.specVersion, IDENTITY_GENERATED_MIN_VERSION)) return undefined;
+  return ir.deployments.map((deployment) => deployment.identity).find(generatesVerifier);
 }
 
 /**
@@ -568,13 +588,14 @@ const PRINCIPAL_DOC = pythonDoc(
     'is `isAuthenticated()` refuses the call instead of admitting every caller. The application ' +
     'that mounts this router replaces it -- `app.dependency_overrides[current_principal] = ' +
     'your_verifier` -- and names that verifier in `deployments.<id>.identity.verifiedBy`, which ' +
-    '`enterprise` requires from spec 0.33.',
+    '`enterprise` requires from spec 0.33. Write `verifiedBy: aid` instead to have AID emit the ' +
+    'verifier for you.',
   INDENT,
 );
 
 const PRINCIPAL = [
   '#: The caller a generated route seeds: anonymous and unauthenticated on purpose, because',
-  '#: nothing a generated app emits verifies a token.',
+  '#: this app declares no generated verifier.',
   'ANONYMOUS_PRINCIPAL = Principal.unauthenticated()',
   '',
   '',
@@ -582,6 +603,100 @@ const PRINCIPAL = [
   PRINCIPAL_DOC,
   `${INDENT}return ANONYMOUS_PRINCIPAL`,
 ].join('\n');
+
+/**
+ * The sentence a refused token carries back, whatever the verifier objected to.
+ *
+ * One message for every reason, for the reason `/agents/resume` has one: "expired",
+ * "wrong audience" and "signed by nobody we trust" are three facts to an operator reading
+ * the log and one fact to the caller, namely that the header did not work. The distinction
+ * lives in `refusal.reason`, which is logged and never returned.
+ */
+const TOKEN_REFUSED = `TOKEN_REFUSED = ${pythonString(
+  'the bearer token was refused; the operator log records why',
+)}`;
+
+/**
+ * The verifier, compiled from the deployment that asked for it.
+ *
+ * `ir/identity-conflict` refuses two deployments that disagree about the provider, and one
+ * that declares an identity without asking for the verifier, so every declaration that
+ * could reach this function says the same thing and there is nothing to merge. Only keys
+ * the document actually states are passed, so the runtime's documented defaults stay the
+ * single place a default lives and this file's diff tracks the spec rather than restating
+ * it.
+ *
+ * The verifier applies to every route, including a deployment that declares no `identity`
+ * at all, because one app has one `current_principal`. That is the stricter of the two
+ * readings and never weaker than what was declared -- the same direction `resumeState`
+ * takes for a checkpoint's signature -- and requiring a token where none was named is
+ * fail-closed rather than fail-open.
+ */
+function verifier(identity: DeploymentIdentityShape): string {
+  const args = [
+    `issuer=${pythonString(identity.issuer)}`,
+    `audience=${pythonString(identity.audience ?? '')}`,
+    `jwks_uri=${pythonString(identity.jwksUri ?? '')}`,
+  ];
+  if (identity.subjectClaim !== undefined) {
+    args.push(`subject_claim=${pythonString(identity.subjectClaim)}`);
+  }
+  if (identity.rolesClaim !== undefined)
+    args.push(`roles_claim=${pythonString(identity.rolesClaim)}`);
+  if (identity.scopesClaim !== undefined) {
+    args.push(`scopes_claim=${pythonString(identity.scopesClaim)}`);
+  }
+  return [
+    '#: The verifier this app was compiled with. `identity.verifiedBy: aid` asked for it, and',
+    "#: the issuer, audience and key source are the deployment's rather than defaults.",
+    'JWKS_VERIFIER = JwksVerifier(',
+    ...args.map((arg) => `${INDENT}${arg},`),
+    ')',
+  ].join('\n');
+}
+
+/**
+ * The dependency the routes seed, and the module-level state it reads.
+ *
+ * Two shapes for one name, because the two documents promise different things. With no
+ * generated verifier this stays the anonymous seam it has been since agents were first
+ * emitted: a placeholder an application overrides, which refuses nothing because it claims
+ * nothing. With one it becomes a real check -- an absent, malformed, expired or wrongly
+ * signed token is a 401 before any route body runs, so every `auth` policy downstream sees
+ * an authenticated principal or no principal at all.
+ */
+function principalBlock(identity: DeploymentIdentityShape | undefined): string {
+  if (identity === undefined) return PRINCIPAL;
+  return [
+    TOKEN_REFUSED,
+    '',
+    '',
+    verifier(identity),
+    '',
+    '',
+    'def current_principal(',
+    `${INDENT}authorization: Annotated[str | None, Header()] = None,`,
+    ') -> Principal:',
+    pythonDoc(
+      'The caller, from the bearer token this app was built to verify. Verification is ' +
+        'fail-closed: a token that is absent, malformed, expired, minted for another ' +
+        'audience, or signed by a key the issuer does not publish is one opaque 401, and ' +
+        'the reason is logged rather than returned. An unauthenticated principal is never ' +
+        'produced, so `isAuthenticated()` policies are true for exactly the callers the ' +
+        'issuer vouched for.',
+      INDENT,
+    ),
+    `${INDENT}try:`,
+    `${INDENT}${INDENT}return JWKS_VERIFIER.principal_from_authorization(authorization)`,
+    `${INDENT}except TokenRefusedError as refusal:`,
+    `${INDENT}${INDENT}logger.warning("refused a bearer token: %s", refusal.reason)`,
+    `${INDENT}${INDENT}raise HTTPException(`,
+    `${INDENT}${INDENT}${INDENT}status_code=401,`,
+    `${INDENT}${INDENT}${INDENT}detail=TOKEN_REFUSED,`,
+    `${INDENT}${INDENT}${INDENT}headers={"WWW-Authenticate": "Bearer"},`,
+    `${INDENT}${INDENT}) from refusal`,
+  ].join('\n');
+}
 
 const RUN_ROUTE = [
   '@agent_router.post("/agents/{agent_id}/run", response_model=AgentRunResponse)',
@@ -693,9 +808,12 @@ function resumeStoredRoute(): string {
 
 function exports(ir: IR): string {
   const durable = hasRunStore(ir);
+  const verifying = generatedVerifierIdentity(ir) !== undefined;
   const names = [
     'AGENT_IDS',
     'DOCUMENT',
+    ...(verifying ? ['JWKS_VERIFIER'] : []),
+    ...(verifying ? ['TOKEN_REFUSED'] : []),
     'agent_router',
     'build_runtime',
     'current_principal',
@@ -715,6 +833,7 @@ export function emitAgents(ir: IR): EmittedFile {
   const ttl = state?.checkpointTtlMinutes !== undefined;
   const durable = hasRunStore(ir);
   const retain = state?.ttlHours !== undefined;
+  const verifying = generatedVerifierIdentity(ir);
   const ids = agents.map((agent) => pythonString(agent.id));
   return generated(
     AGENTS_PATH,
@@ -726,7 +845,7 @@ export function emitAgents(ir: IR): EmittedFile {
       ),
       importBlock([
         [
-          ...(resume ? ['import logging'] : []),
+          ...(resume || verifying !== undefined ? ['import logging'] : []),
           'from collections.abc import Iterable',
           'from typing import Annotated, Any',
         ],
@@ -746,7 +865,15 @@ export function emitAgents(ir: IR): EmittedFile {
             ...(resume ? ['signer_from_env'] : []),
           ]),
           importFrom('aid_runtime.agents.ir', ['from_ir']),
-          importFrom('fastapi', ['APIRouter', 'Depends', 'HTTPException']),
+          ...(verifying !== undefined
+            ? [importFrom('aid_runtime.identity', ['JwksVerifier', 'TokenRefusedError'])]
+            : []),
+          importFrom('fastapi', [
+            'APIRouter',
+            'Depends',
+            ...(verifying !== undefined ? ['Header'] : []),
+            'HTTPException',
+          ]),
           importFrom('pydantic', [
             'BaseModel',
             'ConfigDict',
@@ -769,9 +896,9 @@ export function emitAgents(ir: IR): EmittedFile {
       buildRuntime(resume, durable),
       toResponse(durable),
       ROUTER,
-      ...(resume ? [LOGGER] : []),
+      ...(resume || verifying !== undefined ? [LOGGER] : []),
       ...(resume ? [RESUME_REFUSED] : []),
-      PRINCIPAL,
+      principalBlock(verifying),
       RUN_ROUTE,
       ...(resume ? [RESUME_ROUTE] : []),
       ...(durable ? [resumeStoredRoute()] : []),

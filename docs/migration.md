@@ -567,6 +567,91 @@ It still parses and still builds. `aid validate` reports nothing new from `ir/re
 the runtime changes above apply as soon as the app is regenerated and redeployed. A client that read
 `detail.reason` must stop: it no longer exists at any version.
 
+## 0.34 to 0.35: the verifier the build can actually generate {#generated-verifier-release}
+
+0.35 adds two keys under `deployments[].identity` -- `jwksUri` and `subjectClaim` -- and reserves one
+value of a key that already exists: `verifiedBy: aid`.
+
+Until 0.35 every value of `verifiedBy` named a component. A module path, a gateway, a service: all
+of them are places a token *might* be verified, and none of them is something a compiler can check.
+`ir/identity-verified-by` proved that a verifier was **named**. It never proved one ran, and the
+docs said so. The `0.33` release notes went further and said AID generates no token verification at
+all, which was true then.
+
+`verifiedBy: aid` closes that gap for the OIDC case, because it is not a component name -- it is an
+instruction to the compiler. `py-fastapi` answers it by generating `JwksVerifier` into
+`app/generated/agents.py`:
+
+```yaml
+specVersion: "0.35"
+
+deployments:
+  prod:
+    target: container
+    identity:
+      kind: oidc
+      issuer: https://login.example.com
+      audience: aid-claims
+      verifiedBy: aid
+      jwksUri: https://login.example.com/.well-known/jwks.json
+```
+
+The generated dependency keeps the signature it had, so an application that overrides
+`current_principal` is unaffected. What changes is the body: it now reads the `Authorization`
+header, and with no header -- or a token it will not honour -- it raises `401` with
+`WWW-Authenticate: Bearer` instead of returning the anonymous principal.
+
+### What the generated verifier checks, and what it does not
+
+| Checked | How |
+| --- | --- |
+| Signature | Against the key set at `jwksUri`, over `OIDC_ALGORITHMS` only: RS, PS and ES at 256, 384 and 512. `none` and every HMAC algorithm are refused when the verifier is constructed, so the key-confusion class is not reachable. |
+| `iss` | Compared to `identity.issuer`, exactly. |
+| `aud` | Compared to `identity.audience`, which `0.35` makes required with the generated verifier. |
+| `exp`, `iat`, `nbf` | With 30 seconds of leeway. |
+| Key rotation | The key set caches for five minutes and refetches once, no more than every 30 seconds, when a `kid` is unknown. |
+
+It does not check that the issuer is the one you meant. It trusts the URI the document declares, and
+a document that points `jwksUri` at a different identity provider builds a correctly-verifying app
+against that provider. Reviewing that URI is a review of the document, not a build check.
+
+`subjectClaim` defaults to `sub` and renames only the value the principal is bound to.
+
+### The four refusals
+
+| Refusal | Trigger | The fix |
+| --- | --- | --- |
+| `ir/identity-kind` | `kind: saml` with `verifiedBy: aid`. | AID generates no SAML verification; name the component that does, or move to `kind: oidc`. |
+| `ir/identity-audience` | `verifiedBy: aid` with no `audience`. | Declare the audience. A token checked for issuer alone is a token from any app on that issuer. |
+| `ir/identity-keys` | `verifiedBy: aid` with no `jwksUri`. | Declare an `https://` URI that publishes the key set. |
+| `ir/identity-conflict` | Two deployments that ask for different things. | Make every deployment that declares an identity ask for the same thing. |
+
+The conflict refusal has two halves and the second is the quiet one. It refuses a deployment asking
+for the generated verifier beside one naming a different verifier -- and it also refuses a
+deployment asking for the generated verifier beside one that declares an `identity` and asks for
+nothing at all. `current_principal` is a single dependency for the whole tree, so the generated check
+applies app-wide; honouring only the deployment that asked would check tokens from an issuer the
+other deployment never named.
+
+A deployment that declares **no** identity does not conflict. It inherits the generated check, which
+is the stricter of the two readings and never weaker than what was declared.
+
+### The literal is reserved only from 0.35
+
+A `0.34` document could name a component literally called `aid` and mean a module. Nothing reads
+that as an instruction: every consumer compares the literal only after checking the version, so a
+document below `0.35` is unchanged in every respect.
+
+### What you have to do
+
+Nothing, unless you want the generated verifier. A document with no `verifiedBy`, or with a
+component name, builds exactly as it did at `0.34`: the anonymous principal is still what it gets,
+and the generated `agents.py` gains no import and no verifier. Writing `verifiedBy: aid` is the
+opt-in, and it requires `specVersion: "0.35"`.
+
+If you already override `current_principal` with your own verifier, keep doing that. `verifiedBy: aid`
+is for the case where there is no verifier to name because nobody wrote one.
+
 ## 0.27 to 0.28: promoting a candidate, and the feedback that starts a loop
 
 What a document is allowed to do with a candidate, and which feedback it takes back from its users.

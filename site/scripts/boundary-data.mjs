@@ -85,10 +85,19 @@ export const BOUNDARY_TABLE_METADATA = Object.freeze({
     risk: 'A checkpoint proves the app issued it, not that the holder should have it',
   },
   'Identity and token verification': {
-    codes: ['ir/profile-identity', 'ir/identity-verified-by'],
-    generated: 'One `current_principal` dependency, whose default principal is anonymous',
-    provide: 'The verifier itself, named in `identity.verifiedBy`',
-    risk: '**Nothing verifies a token until you do.** The gate proves you named who does',
+    codes: [
+      'ir/profile-identity',
+      'ir/identity-verified-by',
+      'ir/identity-kind',
+      'ir/identity-audience',
+      'ir/identity-keys',
+      'ir/identity-conflict',
+    ],
+    generated:
+      'The verifier itself when the deployment writes `verifiedBy: aid` -- `JwksVerifier`, fetching `identity.jwksUri`, checking the signature over the OIDC algorithms and comparing `iss`, `aud` and `exp` -- and otherwise one `current_principal` dependency whose default principal is anonymous',
+    provide:
+      'The verifier when you name a component, and always the trust decision: the `jwksUri` is checked for shape, not for being the tenant you meant',
+    risk: '**With `verifiedBy: aid` a token is checked; with any other value nothing verifies it until you do.** The gate proves the URI is declared, not that it belongs to who you think',
   },
   Authorization: {
     codes: ['ir/security-missing-auth', 'ir/security-unauthenticated-path', 'ir/policy-syntax'],
