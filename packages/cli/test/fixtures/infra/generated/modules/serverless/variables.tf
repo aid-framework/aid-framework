@@ -64,6 +64,36 @@ variable "bedrock_region" {
   default     = ""
 }
 
+# A function outside a VPC reaches the internet through the network AWS manages, so
+# nothing in this account bounds where its traffic goes. Naming subnets attaches it to a
+# VPC, which is the only way an egress rule can apply to it at all. The module builds no
+# VPC of its own: a stack of functions needs none until one is named, and building one
+# here would duplicate the container module's networking without its load balancer.
+variable "vpc_id" {
+  description = "VPC the security group is created in. Required when egress is restricted."
+  type        = string
+  default     = ""
+}
+
+variable "vpc_subnet_ids" {
+  description = "Subnets the functions run in. Empty leaves them outside a VPC."
+  type        = list(string)
+  default     = []
+}
+
+# From the spec's `network.egress: declared-only`. False is what every project had before
+# the key was read: no security group, so the VPC default applies to an attached function.
+variable "egress_declared_only" {
+  type    = bool
+  default = false
+}
+
+variable "egress_private_cidrs" {
+  description = "Destinations the workload lives in, admitted on every protocol. Empty means none."
+  type        = list(string)
+  default     = []
+}
+
 variable "guardrails" {
   description = "Managed guardrails to provision, keyed by service id. Empty means no service owns one."
   type = map(object({

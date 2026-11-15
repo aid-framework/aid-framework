@@ -214,6 +214,36 @@ describe('profile', () => {
     expect(diagnostic.hint).toContain('set `ingress: internal`');
   });
 
+  it('tells a serverless deployment to move, not to declare an ingress it can never have', () => {
+    // `serverless` refuses `ingress: internal` outright (ir/network-target-incapable), so
+    // a hint naming that fix would name an edit that cannot build. The profile gate's
+    // remedy for a target with no private placement is the retarget, not the key.
+    for (const [network, path] of [
+      [undefined, ['deployments', 'prod', 'network']],
+      [{ ingress: 'public' }, ['deployments', 'prod', 'network', 'ingress']],
+    ] as const) {
+      const ir = mutateIR(CONTROLS);
+      const deployment = first(ir.deployments);
+      deployment.target = 'serverless';
+      if (network === undefined) {
+        delete deployment.network;
+      } else {
+        deployment.network = { ...network };
+      }
+
+      const diagnostic = onlyDiagnosticWith(
+        gate(ir).diagnostics,
+        IR_DIAGNOSTIC_CODES.profileNetwork,
+      );
+      expect(diagnostic.path).toEqual(path);
+      // The prescription leads with the retarget; naming `ingress: internal` only to say
+      // it is refused is the opposite of prescribing it.
+      expect(diagnostic.hint).toContain('`ingress: internal` is refused by the network gate');
+      expect(diagnostic.hint).toContain('retarget the deployment at `container`');
+      expect(diagnostic.hint).not.toMatch(/^(add|set) /);
+    }
+  });
+
   it('refuses a deployment that declares its network as not private', () => {
     // The 0.36 spelling of the same mistake, kept for documents that cannot write
     // `ingress` yet. It names the value the document actually used.

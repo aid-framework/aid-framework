@@ -56,6 +56,24 @@ function regionHint(cloud: string, regions: readonly string[]): string {
   return `pin a region ${cloud} offers, such as ${sample.join(' or ')}`;
 }
 
+/**
+ * The fix a missing private placement names, worded for a target that can have one.
+ *
+ * `serverless` and `edge` are refused `ingress: internal` by the `network` gate, so a hint
+ * that prescribed it would name a fix the next gate rejects -- the operator would follow
+ * the advice and be refused again. Where no private placement exists the prescription is
+ * replaced rather than supplemented, because a hint that leads with an impossible edit and
+ * adds the real fix afterwards still reads as an instruction to make the impossible edit.
+ * The capable form keeps the caller's wording and adds the other escape: a different
+ * profile.
+ */
+function privatePlacementHint(target: string, capable: string): string {
+  if (target === 'serverless' || target === 'edge') {
+    return `target "${target}" has no private placement, so \`ingress: internal\` is refused by the network gate; retarget the deployment at \`container\` with \`network: { ingress: internal, allowFrom: [<your CIDR>] }\`, or set \`profile: standard\` if the workload is meant to be internet-reachable`;
+  }
+  return `${capable}, or set \`profile: standard\` if the workload is meant to be internet-reachable directly`;
+}
+
 export function profileGate(ir: IR, options: GateOptions): GateResult {
   const diagnostics: IrDiagnostic[] = [];
   const report = reporter(options);
@@ -209,7 +227,10 @@ export function profileGate(ir: IR, options: GateOptions): GateResult {
           code: IR_DIAGNOSTIC_CODES.profileNetwork,
           message: `the profile gate rejected "${id}": the enterprise profile requires private networking, and this deployment does not place the workload in one`,
           path: ['deployments', id, 'network'],
-          hint: 'add `network: { ingress: internal, allowFrom: [<your CIDR>] }`, or set `profile: standard` if the workload is meant to be internet-reachable directly',
+          hint: privatePlacementHint(
+            deployment.target,
+            'add `network: { ingress: internal, allowFrom: [<your CIDR>] }`',
+          ),
         }),
       );
     } else if (deployment.network.private === false) {
@@ -229,7 +250,7 @@ export function profileGate(ir: IR, options: GateOptions): GateResult {
           code: IR_DIAGNOSTIC_CODES.profileNetwork,
           message: `the profile gate rejected "${id}": the enterprise profile requires private networking, and this deployment declares \`network.ingress: public\``,
           path: ['deployments', id, 'network', 'ingress'],
-          hint: 'set `ingress: internal` with `allowFrom`, or set `profile: standard` if the workload is meant to be internet-reachable directly',
+          hint: privatePlacementHint(deployment.target, 'set `ingress: internal` with `allowFrom`'),
         }),
       );
     }

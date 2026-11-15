@@ -13,9 +13,11 @@
  * a private endpoint.
  *
  * `ir/network-target-incapable` — `internal` on a target that has no private placement.
- * `serverless` emits no VPC at all; `edge` is a CloudFront function, which is reachable
- * from the internet by definition. The refusal names the target swap rather than
- * pretending a deployment declaration can move a serverless function into a subnet.
+ * `serverless` answers through an HTTP API whose endpoint is public, and the egress
+ * attachment it does get (`declared-only`) narrows what the function may call, not who may
+ * call it; `edge` is a CloudFront function, which is reachable from the internet by
+ * definition. The refusal names the target swap rather than pretending a deployment
+ * declaration can move a serverless function into a subnet.
  *
  * `ir/network-ingress-conflict` — reachability stated twice and disagreeing. Two cases:
  * an `internal` deployment that also declares a `kubernetes.ingress` object (the object
@@ -36,10 +38,13 @@
  * not make.
  *
  * `ir/network-egress-unsupported` — `egress: declared-only` on a target that has no
- * workload egress to restrict. `serverless` emits no VPC, `edge` is a CloudFront function,
- * and `batch` runs without a security group this generator writes. The declaration was
- * inert on every target before it was emitters' business, so a document that relied on it
- * was never protected; the refusal says so instead of leaving the belief in place.
+ * workload egress to restrict. `edge` is a CloudFront function and `batch` runs without a
+ * security group this generator writes, so the declaration would be a value no artifact
+ * applies. `serverless` is no longer refused: the Lambda gets a security group with the
+ * same rules and a `vpc_config`, which bounds what it can call without making it privately
+ * reachable (that is the paragraph above). The declaration was inert on every target
+ * before it was emitters' business, so a document that relied on it was never protected;
+ * the refusal says so instead of leaving the belief in place.
  *
  * What this gate does not do: it does not verify that a CIDR is routable from the
  * customer's network, or that a peered route exists. Those are properties of the account,
@@ -69,11 +74,12 @@ const ALLOW_FROM_REQUIRED: readonly string[] = ['container'];
 /**
  * Targets whose emitters place a workload egress rule, so `declared-only` means something.
  *
- * `container` writes security-group egress rules; `kubernetes` writes a NetworkPolicy.
- * Everywhere else the value would be a declaration no artifact applies, which is the state
- * this gate exists to end.
+ * `container` writes security-group egress rules, `serverless` attaches a security group to
+ * the Lambda and puts it in subnets, and `kubernetes` writes a NetworkPolicy. Everywhere
+ * else the value would be a declaration no artifact applies, which is the state this gate
+ * exists to end.
  */
-const EGRESS_TARGETS: readonly string[] = ['container', 'kubernetes'];
+const EGRESS_TARGETS: readonly string[] = ['container', 'serverless', 'kubernetes'];
 
 /**
  * Whether a CIDR admits every address.
@@ -121,10 +127,8 @@ export function networkGate(ir: IR, options: GateOptions): GateResult {
           path: ['deployments', deployment.id, 'network', 'egress'],
           hint:
             deployment.target === 'edge'
-              ? 'edge is a CloudFront function with no outbound network of its own; drop `egress`, or move the call that needs restricting to `container` or `kubernetes`'
-              : deployment.target === 'serverless'
-                ? "serverless emits no VPC, so it cannot be held to a declared egress; target `container` or `kubernetes`, or drop `egress` and accept that the platform's default applies"
-                : "batch emits no security group, so its egress is whatever the job's subnets allow; target `container` or `kubernetes` to have the restriction emitted",
+              ? 'edge is a CloudFront function with no outbound network of its own; drop `egress`, or move the call that needs restricting to `container`, `serverless` or `kubernetes`'
+              : "batch emits no security group, so its egress is whatever the job's subnets allow; target `container`, `serverless` or `kubernetes` to have the restriction emitted",
         }),
       );
     }
@@ -171,7 +175,7 @@ export function networkGate(ir: IR, options: GateOptions): GateResult {
           hint:
             deployment.target === 'edge'
               ? 'edge is a CloudFront function, reachable from the internet by definition; move the workload to `container` or `kubernetes` to place it privately'
-              : 'serverless emits no VPC; target `container` or `kubernetes` to place this deployment in private subnets',
+              : 'serverless answers through a public HTTP API, and `egress: declared-only` bounds what the function calls rather than who calls it; target `container` or `kubernetes` to place this deployment in private subnets',
         }),
       );
       continue;

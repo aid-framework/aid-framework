@@ -686,8 +686,12 @@ export function tfvars(plan: DeployPlan): DeployTfvars {
   const internalAllowFrom = [
     ...new Set(containerServices.flatMap((service) => service.network?.allowFrom ?? [])),
   ];
-  const egressDeclaredOnly = containerServices.some(
-    (service) => service.network?.egress === 'declared-only',
+  // Egress is not container-only: a `serverless` deployment reads the same flag, and the
+  // env root passes it to both modules. One flag because one environment shares its network.
+  const egressDeclaredOnly = plan.services.some(
+    (service) =>
+      (service.target === 'container' || service.target === 'serverless') &&
+      service.network?.egress === 'declared-only',
   );
 
   return {

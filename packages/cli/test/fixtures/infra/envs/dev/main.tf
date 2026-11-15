@@ -30,6 +30,10 @@ module "serverless" {
   bedrock_region  = var.bedrock_region
   knowledge_bases = var.knowledge_bases
   tags            = var.tags
+  vpc_id          = var.vpc_id
+  vpc_subnet_ids  = var.egress_declared_only ? var.private_subnet_ids : []
+  egress_declared_only = var.egress_declared_only
+  egress_private_cidrs = var.egress_private_cidrs
 }
 
 module "container" {
