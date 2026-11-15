@@ -546,6 +546,29 @@ is what makes `py-fastapi` declare the `streaming` capability. `concurrency` is 
 every `parallel`/`map`/`reduce` fan-out draws from - the smallest declared value wins - so a
 fan-out cannot widen the bound the rest of the app runs under.
 
+## Seeing the spec
+
+The declarations above share names, and a name typo is a broken reference rather than an
+error the parser can spot. `aid visualize` draws the spec to check them by eye:
+
+```bash
+aid visualize                                  # serve app/app.spec.yaml on 127.0.0.1:4321
+aid visualize customers/acme/app.spec.yaml     # draw a resolved customer spec instead
+aid visualize --port 4400                      # move the listener
+aid visualize --json                           # print the graph and layout, bind nothing
+```
+
+One column per construct group, one node per declaration, one edge per reference the
+document actually makes - a prompt points at its model, an agent step at the tool it names,
+a pipeline at the agents it calls, a deployment at the cloud and region it pins. A reference
+to something the spec never declared has no node to land on, which is the defect the picture
+exists to show.
+
+The page is served from the CLI itself: no hosted backend, no CDN, nothing to install. Save
+the spec and the graph redraws in place over server-sent events. A spec that a gate refuses
+draws the diagnostics - code, path, hint - instead of a graph, because the picture and the
+build read the same document, and a spec that does not build has no shape worth drawing.
+
 ## Read next
 
 - [The generated tree](generated-tree.md) - what these declarations become on disk.
