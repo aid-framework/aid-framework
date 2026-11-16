@@ -156,6 +156,18 @@ export interface LayoutEdge {
   readonly label?: string;
   /** The SVG path, already rounded, so the renderer emits a `d` attribute and nothing more. */
   readonly d: string;
+  /** The band the source box stands in, which is the band group this edge is drawn into. */
+  readonly layer: LayoutLayer;
+  /**
+   * The band the target box stands in.
+   *
+   * Equal to `layer` for a link inside one band, which is every run-order arrow. The two
+   * differ for a reference that leaves its band -- a step naming the tool it calls, an eval
+   * measuring a pipeline. The page shows one band at a time, so an edge that leaves the
+   * visible band has nowhere to point; the renderer drops it there and the detail panel
+   * names the same relation as a chip instead.
+   */
+  readonly toLayer: LayoutLayer;
 }
 
 /** One pipeline as a process, inside a box that also says where it is served. */
@@ -450,6 +462,8 @@ function layoutSystem(system: SystemGraph, top: number): ZoneLayout {
       kind: edge.kind,
       ...(edge.label === undefined ? {} : { label: edge.label }),
       d: crossesBand ? bandPath(fromBox, toBox, offset) : edgePath(fromBox, toBox, offset),
+      layer: 'system',
+      toLayer: 'system',
     });
   });
 
@@ -704,6 +718,8 @@ export function layoutGraph(graph: VisualGraph, system?: SystemGraph): Layout {
   nodes.sort((a, b) => (order.get(a.node.id) ?? 0) - (order.get(b.node.id) ?? 0));
 
   const offsets = offsetsFor(graph.edges);
+  const layerOf = new Map<string, LayoutLayer>();
+  for (const placed of nodes) layerOf.set(placed.node.id, placed.layer);
   const edges: LayoutEdge[] = [];
   graph.edges.forEach((edge, index) => {
     const fromBox = boxes.get(edge.from);
@@ -723,6 +739,8 @@ export function layoutGraph(graph: VisualGraph, system?: SystemGraph): Layout {
       kind: edge.kind,
       ...(edge.label === undefined ? {} : { label: edge.label }),
       d: crossesBand ? bandPath(fromBox, toBox, offset) : edgePath(fromBox, toBox, offset),
+      layer: layerOf.get(edge.from) ?? 'inventory',
+      toLayer: layerOf.get(edge.to) ?? 'inventory',
     });
   });
   // The architecture band routed its own edges, inside its own boxes: the bands share no

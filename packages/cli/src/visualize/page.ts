@@ -435,14 +435,26 @@ const SCRIPT = `
   function toggleKind(kind) {
     return function () {
       state.hidden[kind] = !state.hidden[kind];
-      for (var i = 0; i < state.paths.length; i++) {
-        var entry = state.paths[i];
-        if (entry.kind === kind) {
-          entry.el.style.display = state.hidden[kind] ? 'none' : '';
-        }
-      }
+      applyEdgeVisibility();
       if (state.doc && state.doc.ok) drawLegend(state.doc);
     };
+  }
+
+  /**
+   * Show or hide one edge.
+   *
+   * Two independent reasons to hide. The legend hides a whole kind. A band view hides every
+   * edge that leaves the visible band: its source box is here and its target box is in a
+   * band this view does not draw, so the arrow would end at nothing. The relation is not
+   * lost -- the detail panel names the same edges as chips that jump to the target.
+   */
+  function applyEdgeVisibility() {
+    for (var i = 0; i < state.paths.length; i++) {
+      var edge = state.paths[i];
+      var leavesBand = edge.layer !== edge.toLayer;
+      var hide = !!state.hidden[edge.kind] || (leavesBand && state.tab !== 'all');
+      edge.el.style.display = hide ? 'none' : '';
+    }
   }
 
   function draw(doc) {
@@ -609,12 +621,20 @@ const SCRIPT = `
       var tip = mk('title');
       tip.textContent = edge.kind + ': ' + edge.from + ' -> ' + edge.to;
       path.appendChild(tip);
-      if (state.hidden[edge.kind]) path.style.display = 'none';
-      // The band an edge belongs to is the band its source stands in: no edge crosses a
-      // band, because no reference in the spec does.
+      // An edge is drawn in its source's band, which is also where its tail is. When the two
+      // ends stand in different bands the far box is not on screen in a one-band view, so
+      // applyEdgeVisibility hides that arrow there and the detail panel names the relation.
       edgesLayer(layerOf[edge.from]).appendChild(path);
-      state.paths.push({ el: path, kind: edge.kind, from: edge.from, to: edge.to });
+      state.paths.push({
+        el: path,
+        kind: edge.kind,
+        from: edge.from,
+        to: edge.to,
+        layer: edge.layer,
+        toLayer: edge.toLayer
+      });
     }
+    applyEdgeVisibility();
 
     for (var n = 0; n < layout.nodes.length; n++) {
       nodesLayer(layout.nodes[n].layer).appendChild(buildNode(layout.nodes[n]));
@@ -734,6 +754,7 @@ const SCRIPT = `
       var band = state.bands[i];
       band.el.style.display = state.tab === 'all' || band.layer === state.tab ? '' : 'none';
     }
+    applyEdgeVisibility();
   }
 
   function tabIds() {
@@ -944,6 +965,33 @@ const SCRIPT = `
     return box;
   }
 
+  /**
+   * The edges that name one node, grouped by kind and direction.
+   *
+   * A kind can arrive in both directions (an eval measures a pipeline and a pipeline is
+   * measured by it), so direction is part of the grouping key and not just the title.
+   */
+  function relationGroups(id) {
+    var layout = state.doc.layout;
+    var groups = [];
+    var byKey = {};
+    for (var i = 0; i < layout.edges.length; i++) {
+      var edge = layout.edges[i];
+      var outgoing = edge.from === id;
+      if (!outgoing && edge.to !== id) continue;
+      var key = edge.kind + (outgoing ? '>' : '<');
+      var bucket = byKey[key];
+      if (bucket === undefined) {
+        bucket = { kind: edge.kind, outgoing: outgoing, ids: [] };
+        byKey[key] = bucket;
+        groups.push(bucket);
+      }
+      var other = outgoing ? edge.to : edge.from;
+      if (bucket.ids.indexOf(other) === -1) bucket.ids.push(other);
+    }
+    return groups;
+  }
+
   function renderSubject() {
     clear(subject);
     if (!state.doc || !state.doc.ok) return;
@@ -978,6 +1026,21 @@ const SCRIPT = `
       if (parent !== null) {
         subject.appendChild(chipSection('inside', [parent.id], 'the architecture box this runs as'));
       }
+    }
+
+    // The other end of every reference this box takes part in. A band view cannot draw an
+    // arrow that leaves the band, so the relation is named here instead, and a chip jumps to
+    // the box at the other end -- switching band when it has to.
+    var relations = relationGroups(node.id);
+    for (var r = 0; r < relations.length; r++) {
+      var group = relations[r];
+      subject.appendChild(
+        chipSection(
+          group.outgoing ? group.kind + '  \u2192' : '\u2190  ' + group.kind,
+          group.ids,
+          EDGE_MEANING[group.kind] || 'the other end of this ' + group.kind + ' edge'
+        )
+      );
     }
 
     var facts = div('');
