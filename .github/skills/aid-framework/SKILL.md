@@ -435,6 +435,12 @@ zooms, and a legend row hides that edge kind. A spec that a gate refuses renders
 with their codes, paths and hints instead of a graph - the picture and the build read the same
 document, so a picture of a spec that does not build would be misleading.
 
+Layers are shown one at a time, so an arrow that leaves the layer you are looking at has nowhere to
+land - the box at its far end is not drawn. The page drops that arrow in the single-layer views and
+draws every one of them under `everything`, where both ends are present. Nothing is lost with the
+arrow: the selected box lists every reference it takes part in, by kind and direction, and a chip on
+it switches to the layer the other end lives in.
+
 A spec you have not checked out can be drawn without installing anything: the documentation site's
 [Visualize](https://aid-framework.github.io/aid-framework/visualize) page takes a pasted spec or an
 uploaded file and compiles it in the browser through that same read, lower and gate path. Nothing is

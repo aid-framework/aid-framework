@@ -1133,6 +1133,10 @@ What comes out:
 - A deterministic layout: the architecture band, a lane per pipeline with its steps in run order,
   then one column per non-empty group, node boxes and edge paths with no overlap, computed without
   font metrics.
+- The three bands shown one at a time, plus an `everything` view. An arrow that leaves the band you
+  are looking at is not drawn there, because the box at its far end is not on screen; selecting the
+  box that owns the reference names the relation instead, and a chip on it switches to the band the
+  other end lives in. `everything` draws them all, where both ends are present.
 - One request path per pipeline, in step order, with each row naming the component it belongs to, so
   selecting a box can open the flow that reaches it.
 - A lane whose header names no deployment: the pipeline is drawn and labelled as served by nothing,

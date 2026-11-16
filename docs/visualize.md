@@ -45,6 +45,11 @@ context it is invoked from.
 The legend lists the edge kinds. Click one to hide that kind, which is the fastest way to answer
 "what does this agent actually call" without reading five hundred lines of YAML.
 
+One band is on screen at a time, so a reference that leaves the band you are looking at has no box
+to land on and is not drawn there. Select the box that owns it and the inspector lists every
+reference that box takes part in, by kind and direction, with a chip that switches to the band at
+the other end. The **everything** view draws them all, because both ends are present.
+
 ## When the picture is a refusal
 
 A spec that cannot be generated does not get a partial picture. It gets the refusals:

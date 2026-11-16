@@ -99,6 +99,24 @@ describe('layoutGraph', () => {
     }
   });
 
+  it('names the band each end stands in, so a one-band view can drop what leaves it', () => {
+    const bandOf = new Map(layout.nodes.map((placed) => [placed.node.id, placed.layer]));
+    for (const edge of layout.edges) {
+      expect(edge.layer, edge.from).toBe(bandOf.get(edge.from));
+      expect(edge.toLayer, edge.to).toBe(bandOf.get(edge.to));
+    }
+  });
+
+  it('carries edges that leave their band, which is what a single-band view cannot draw', () => {
+    // If this were false the page would never have to hide anything, and the rule that does
+    // the hiding would be untested decoration rather than a fix.
+    expect(layout.edges.some((edge) => edge.layer !== edge.toLayer)).toBe(true);
+    for (const edge of layout.edges.filter((candidate) => candidate.kind === 'flow')) {
+      expect(edge.layer).toBe('process');
+      expect(edge.toLayer).toBe('process');
+    }
+  });
+
   it('is deterministic, so two runs of the same spec land in the same place', () => {
     expect(layoutGraph(graphOf())).toStrictEqual(layout);
   });
@@ -576,6 +594,23 @@ describe('the page the reader gets', () => {
     // it throws and takes the first drag with it. The canvas has to go through classList.
     expect(html).not.toMatch(/canvas\.className\s*=/);
     expect(html).toContain("canvas.classList.add('dragging')");
+  });
+
+  it('hides an edge that leaves the visible band, and restores it for the whole picture', () => {
+    // A step naming the tool it calls is an edge out of the process band. Showing one band
+    // at a time would draw that arrow into empty space, so the page drops it there and
+    // names the relation in the detail panel instead.
+    expect(html).toContain('edge.layer !== edge.toLayer');
+    expect(html).toContain("leavesBand && state.tab !== 'all'");
+    expect(html).toContain('function applyEdgeVisibility');
+    // Both the legend and the view tabs go through the one rule; two rules would drift.
+    expect(html).toMatch(/function toggleKind[\s\S]{0,220}applyEdgeVisibility\(\)/);
+    expect(html).toMatch(/function applyTab[\s\S]{0,260}applyEdgeVisibility\(\)/);
+  });
+
+  it('names the relation a hidden edge carried, so nothing is lost with the arrow', () => {
+    expect(html).toContain('function relationGroups');
+    expect(html).toContain('var relations = relationGroups(node.id)');
   });
 });
 
