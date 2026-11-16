@@ -1086,30 +1086,59 @@ aid visualize --port 4400
 aid visualize --json                         # the graph and layout, no listener
 ```
 
-Two bands. The upper is the process: one lane per pipeline, its steps left to right in the order the
+Three layers in one picture. The first is the architecture: what the service is made of when it
+runs. Triggers in **entry**; the declared identity and the runtime gateway in **identity**; one box
+per deployment in **compute**; the stores, knowledge bases and run state a pipeline actually reaches
+in **data**; and the model providers, MCP servers, audit sinks and OTel collector they call in
+**external**. The five columns are fixed, so two customers' pictures compare column by column even
+when one of them declares no identity integration. Edges are declared relationships only: `serves`
+from a trigger to each deployment that runs it, `connects` from a box to what it calls, and
+`records` to an audit sink with its retention. A secret appears as a name on the deployment, never
+as a store node, because the spec never names the store.
+
+The second layer is the process: one lane per pipeline, its steps left to right in the order the
 list declares them, the arms of a branch, route, parallel or map step stacked under the step that
-chooses between them, and a lane header naming the deployments that serve it. The lower is the
+chooses between them, and a lane header naming the deployments that serve it. The third is the
 inventory: one column per construct group -- document, contract, service, agents, prompts, models,
 tools, retrieval, guardrails, evals, infra -- one node per declaration, and one edge per reference
 the document makes. Run order is drawn only where the declaration states it, never inferred: list
 adjacency and arm membership. The layout is a pure function of the IR, so the same spec draws the
 same picture and the picture can be asserted rather than eyeballed.
 
+Selecting a component opens its detail: the facts its declaration states, what it stands for in the
+inventory, and -- for a deployment, a trigger, a store, a model or a tool -- the request path that
+reaches it, step by step, with the guardrail stage, redaction, approval, retrieval and fan-out facts
+the spec declares at that point. A compute box names the pipelines it serves by the same rule that
+draws its `serves` arrow, so a box that runs a request always opens onto that request. A flow row is
+a component too: selecting one switches to the process layer with the step drawn. `1` to `4` switch
+between Architecture, Process, Inventory and everything; `0` or `f` fits; `Escape` clears.
+
 The page is served by the CLI process itself: no hosted backend, no CDN, no bundle, and no spec text
 in the HTML. The client fetches `/api/graph` and writes every string with `textContent`, so what the
 browser shows and what `--json` prints come from one document. Saving the spec redraws in place over
 server-sent events instead of reloading.
 
+The same picture is on this site's [Visualize](visualize.md) page, for a spec you have not checked out
+and a machine with no CLI installed. The browser compiles what you paste or upload through that same
+read, lower and gate path, so the page draws the graph the build would produce and a spec a gate
+rejects is shown with its codes, paths and hints rather than as a picture that build would never
+produce. Nothing leaves the page.
+
 What comes out:
 
 - A listener on `127.0.0.1` serving the page, the graph, and an event stream.
 - A graph document per construct group, with the project, profile, pinned targets and counts.
-- A deterministic layout: a lane per pipeline with its steps in run order, then one column per
-  non-empty group, node boxes and edge paths with no overlap, computed without font metrics.
+- An architecture layer of five fixed zones, one box per declared runtime component, and only the
+  relationships the document states.
+- A deterministic layout: the architecture band, a lane per pipeline with its steps in run order,
+  then one column per non-empty group, node boxes and edge paths with no overlap, computed without
+  font metrics.
+- One request path per pipeline, in step order, with each row naming the component it belongs to, so
+  selecting a box can open the flow that reaches it.
 - A lane whose header names no deployment: the pipeline is drawn and labelled as served by nothing,
   because dropping it would hide a pipeline the spec declares.
-- `--json`, which prints the same graph and layout and binds no port, so a scene can be asserted in
-  CI.
+- `--json`, which prints the same graph, layout and request paths and binds no port, so a scene can
+  be asserted in CI.
 
 What is refused:
 
@@ -1123,7 +1152,8 @@ judge, which is the document, and it proves nothing about a deployment.
 
 Covers:
 
-- **The whole spec as one picture, live**
+- **The whole spec as one picture, architecture first, live**
+- **Click-through from a deployed component to the request path that reaches it**
 
 ---
 

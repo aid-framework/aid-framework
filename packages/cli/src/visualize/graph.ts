@@ -39,7 +39,7 @@ import type {
 import { isManagedRetriever } from '@aid-framework/ir';
 
 /** Bumped when a reader of `--json` would need to change. Not the spec or IR version. */
-export const VISUAL_GRAPH_VERSION = 1;
+export const VISUAL_GRAPH_VERSION = 2;
 
 /**
  * The columns of the diagram, left to right in the order the data flows.
@@ -113,7 +113,8 @@ export type VisualGroupId = (typeof VISUAL_GROUPS)[number]['id'];
  *
  * `data` is the only one that runs between two steps of the same pipeline; the rest go
  * from a shape to the shape it names. A reader filters on this, so it is a union and not
- * a free string.
+ * a free string. `serves`, `connects` and `records` appear only in the architecture
+ * layer, where an arrow means "at run time, this talks to that over the wire".
  */
 export const VISUAL_EDGE_KINDS = [
   'flow',
@@ -125,6 +126,9 @@ export const VISUAL_EDGE_KINDS = [
   'delegates',
   'deploys',
   'derives',
+  'serves',
+  'connects',
+  'records',
 ] as const;
 
 export type VisualEdgeKind = (typeof VISUAL_EDGE_KINDS)[number];
@@ -181,9 +185,10 @@ export interface VisualGraph {
 }
 
 /** A fact whose value is absent is not a fact. Keeps `undefined` out of the document. */
-type FactInput = readonly [label: string, value: string | number | boolean | undefined];
+export type FactInput = readonly [label: string, value: string | number | boolean | undefined];
 
-function compact(inputs: readonly FactInput[]): VisualFact[] {
+/** Shared with the architecture layer so both views drop absent facts the same way. */
+export function compact(inputs: readonly FactInput[]): VisualFact[] {
   const facts: VisualFact[] = [];
   for (const [label, value] of inputs) {
     if (value === undefined) continue;
@@ -194,7 +199,7 @@ function compact(inputs: readonly FactInput[]): VisualFact[] {
   return facts;
 }
 
-const list = (values: readonly string[]): string | undefined =>
+export const list = (values: readonly string[]): string | undefined =>
   values.length === 0 ? undefined : values.join(', ');
 
 /** `12,345` rather than `12345`, because the diagram is read and not parsed. */
@@ -627,16 +632,17 @@ function targetNodeId(shape: EvalShape, ir: IR): string {
   }
 }
 
-function pipelineNode(pipeline: PipelineShape): VisualNode {
+/** The trigger as one line. Shared with the architecture layer so both say the same thing. */
+export function describeTrigger(pipeline: PipelineShape): string {
   const trigger = pipeline.trigger;
-  const triggerText =
-    trigger.kind === 'http'
-      ? `${trigger.method.toUpperCase()} ${trigger.path}`
-      : trigger.kind === 'schedule'
-        ? `schedule ${trigger.schedule}`
-        : trigger.kind === 'event'
-          ? `event ${trigger.event}`
-          : 'manual';
+  if (trigger.kind === 'http') return `${trigger.method.toUpperCase()} ${trigger.path}`;
+  if (trigger.kind === 'schedule') return `schedule ${trigger.schedule}`;
+  if (trigger.kind === 'event') return `event ${trigger.event}`;
+  return 'manual';
+}
+
+function pipelineNode(pipeline: PipelineShape): VisualNode {
+  const triggerText = describeTrigger(pipeline);
   return {
     id: `pipeline:${pipeline.id}`,
     kind: 'pipeline',

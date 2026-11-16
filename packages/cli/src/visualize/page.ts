@@ -7,6 +7,11 @@
  * the client writes strings with `textContent` rather than `innerHTML`, so a prompt that
  * contains markup cannot become markup.
  *
+ * The website embeds this page in an iframe, where there is no server to fetch from, so
+ * `renderPage` can also be handed the document up front. It still arrives as data through
+ * `json()`, never as markup, and it is still the client that writes every string with
+ * `textContent` -- the embedding changes where the document comes from, not how it is drawn.
+ *
  * **Why hand-rolled SVG.** The CLI ships with no runtime dependencies, and a page that loaded
  * a charting library from a CDN would stop working on the network that most needs it -- the
  * locked-down one. The renderer is a painter: every coordinate and every wrapped line comes
@@ -17,7 +22,22 @@
  * kind of bug that only shows up as a page that does not load.
  */
 
+import type { VisualDocument } from './document.js';
 import { VISUAL_EDGE_KINDS, VISUAL_GROUPS } from './graph.js';
+
+/** Where a page gets the document it draws. */
+export interface PageSource {
+  /**
+   * Draw this instead of fetching `/api/graph`. The website lowers a pasted spec in the
+   * browser and has no server behind the page to ask.
+   */
+  readonly document?: VisualDocument;
+  /**
+   * Watch the spec over SSE and re-fetch when it changes. The served page does; an embedded
+   * one cannot, so it says nothing about being live rather than claiming and holding.
+   */
+  readonly live?: boolean;
+}
 
 /**
  * Colours, mirrored in the stylesheet. A group owns a hue and the legend owns the edge hues;
@@ -47,6 +67,9 @@ const EDGE_COLORS: Record<string, string> = {
   delegates: '#f43f5e',
   deploys: '#3b82f6',
   derives: '#64748b',
+  serves: '#f472b6',
+  connects: '#7dd3fc',
+  records: '#facc15',
 };
 
 const EDGE_MEANING: Record<string, string> = {
@@ -59,6 +82,29 @@ const EDGE_MEANING: Record<string, string> = {
   delegates: 'an agent runs another agent as a step',
   deploys: 'a deployment serves a pipeline or an agent',
   derives: 'a shape is generated from another',
+  serves: 'a declared trigger starts a run on the deployment that serves it',
+  connects: 'one box calls another over the wire while a run is in flight',
+  records: 'a deployment writes its run record to this audit sink',
+};
+
+/**
+ * The hue a sequence row takes, by step kind. Rows are the process read in order, so they
+ * borrow the inventory's colours: a guardrail row and a guardrail box are the same orange,
+ * which is how a reader ties the flow back to the column it came from.
+ */
+const STEP_GROUPS: Record<string, string> = {
+  guard: 'guardrail',
+  tool: 'tool',
+  retrieve: 'retrieval',
+  rerank: 'retrieval',
+  generate: 'prompt',
+  reduce: 'prompt',
+  agent: 'agent',
+  map: 'agent',
+  emit: 'contract',
+  route: 'document',
+  branch: 'document',
+  parallel: 'document',
 };
 
 function json(value: unknown): string {
@@ -108,6 +154,16 @@ const THEME = `
   }
   button:hover { border-color: #33507d; }
   main { flex: 1; display: flex; min-height: 0; position: relative; }
+  #tabs {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    padding: 7px 16px; background: #0c1424; border-bottom: 1px solid var(--line);
+  }
+  #tabs[hidden] { display: none; }
+  #tab-buttons { flex: 0 0 auto; display: flex; gap: 4px; }
+  #tabs button { padding: 3px 11px; font-size: 12px; background: transparent; border-color: transparent; color: var(--muted); }
+  #tabs button:hover { color: var(--ink); border-color: var(--line); }
+  #tabs button.on { background: #16213a; border-color: #33507d; color: var(--ink); }
+  #tab-blurb { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #canvas {
     flex: 1; min-width: 0; cursor: grab; touch-action: none;
     background-image: radial-gradient(circle at 1px 1px, #1b2740 1px, transparent 0);
@@ -115,9 +171,12 @@ const THEME = `
   }
   #canvas.dragging { cursor: grabbing; }
   aside {
-    flex: 0 0 344px; overflow: auto; background: var(--panel);
+    flex: 0 0 400px; overflow: auto; background: var(--panel);
     border-left: 1px solid var(--line); display: flex; flex-direction: column;
   }
+  /* A scrollable region has to be reachable without a mouse, and this one scrolls on its own
+     axis, so it takes a tab stop of its own rather than relying on its contents. */
+  aside:focus-visible { outline: 2px solid #38bdf8; outline-offset: -2px; }
   aside section { padding: 12px 14px; border-bottom: 1px solid var(--line); }
   aside h2 {
     font-size: 11px; text-transform: uppercase; letter-spacing: .09em;
@@ -138,6 +197,15 @@ const THEME = `
     display: inline-block; margin-top: 8px; padding: 3px 7px; border-radius: 5px;
     background: #0c1424; border: 1px solid var(--line); color: #9fe8dd;
     font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
+  }
+  /* Narrow viewports -- a half-screen terminal, or the website's embedded copy on a
+     phone -- stack the inspector under the canvas instead of squeezing both. */
+  @media (max-width: 900px) {
+    main { flex-direction: column; }
+    aside {
+      flex: 0 0 auto; max-height: 45%; border-left: none;
+      border-top: 1px solid var(--line);
+    }
   }
   .fact { display: grid; grid-template-columns: 96px 1fr; gap: 8px; padding: 3px 0; }
   .fact .k { color: var(--muted); font-size: 11px; }
@@ -169,6 +237,50 @@ const THEME = `
   .node.sel rect.box { stroke: #ffffff; stroke-width: 2; }
   .edge { fill: none; }
   .edge.dim { opacity: .06; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip {
+    font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 2px 8px; border-radius: 999px; cursor: pointer;
+    background: #16213a; border: 1px solid var(--line); color: #bcd0ee;
+  }
+  .chip:hover { border-color: #33507d; color: #fff; }
+  .seq { margin-top: 10px; }
+  .seq-head {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted); font-weight: 600; margin-bottom: 4px;
+  }
+  .seq-notes {
+    font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #6f81a3; word-break: break-word; margin-bottom: 6px;
+  }
+  .seq-rows { display: flex; flex-direction: column; gap: 1px; }
+  .seq-row {
+    padding: 3px 6px; border-radius: 5px; cursor: pointer;
+    border-left: 2px solid transparent;
+  }
+  .seq-row:hover { background: #16213a; }
+  .seq-row.sel { background: #16213a; border-left-color: #4fd1c5; }
+  .seq-top { display: flex; align-items: baseline; gap: 6px; }
+  .seq-n {
+    flex: 0 0 auto; color: #55698f; font: 9px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .seq-text {
+    flex: 1; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    word-break: break-word;
+  }
+  .seq-flags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .flag {
+    font: 9px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 0 5px; border-radius: 999px; border: 1px solid currentColor; opacity: .9;
+  }
+  .flag.write, .flag.block { color: #f87171; }
+  .flag.approval { color: #fbbf24; }
+  .flag.retrieval { color: #2dd4bf; }
+  .flag.redact, .flag.mcp { color: #c4b5fd; }
+  .seq-detail {
+    font: 10px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #8b9cbb; margin-top: 2px; word-break: break-word;
+  }
 `;
 
 const SCRIPT = `
@@ -180,6 +292,9 @@ const SCRIPT = `
   var EDGE_COLORS = __EDGE_COLORS__;
   var EDGE_KINDS = __EDGE_KINDS__;
   var EDGE_MEANING = __EDGE_MEANING__;
+  var STEP_GROUPS = __STEP_GROUPS__;
+  // Present only when the document was handed to the page rather than served to it.
+  var BOOT = __BOOT__;
 
   var state = {
     doc: null,
@@ -189,7 +304,9 @@ const SCRIPT = `
     hidden: {},
     paths: [],
     nodes: [],
-    drag: null
+    drag: null,
+    tab: 'system',
+    bands: []
   };
 
   var canvas = document.getElementById('canvas');
@@ -204,6 +321,9 @@ const SCRIPT = `
   var specTag = document.getElementById('spec-tag');
   var liveDot = document.getElementById('live-dot');
   var liveText = document.getElementById('live-text');
+  var tabs = document.getElementById('tabs');
+  var tabButtons = document.getElementById('tab-buttons');
+  var tabBlurbEl = document.getElementById('tab-blurb');
 
   function mk(name, attrs) {
     var node = document.createElementNS(NS, name);
@@ -240,19 +360,33 @@ const SCRIPT = `
     var box = canvas.getBoundingClientRect();
     var pad = 44;
     if (box.width < 40 || box.height < 40) return;
+    var band = bandBox(state.tab);
     var scale = Math.min(
-      (box.width - pad * 2) / state.doc.layout.width,
-      (box.height - pad * 2) / state.doc.layout.height,
+      (box.width - pad * 2) / band.width,
+      (box.height - pad * 2) / band.height,
       1.15
     );
     scale = Math.max(0.12, scale);
     state.view.scale = scale;
-    state.view.tx = (box.width - state.doc.layout.width * scale) / 2;
-    state.view.ty = (box.height - state.doc.layout.height * scale) / 2;
+    state.view.tx = (box.width - band.width * scale) / 2 - band.x * scale;
+    state.view.ty = (box.height - band.height * scale) / 2 - band.y * scale;
     applyView();
   }
 
+  /** The box the current tab frames: one band, or the whole picture for 'all'. */
+  function bandBox(layer) {
+    var layout = state.doc.layout;
+    if (layer !== 'all') {
+      for (var i = 0; i < layout.bands.length; i++) {
+        if (layout.bands[i].id === layer) return layout.bands[i];
+      }
+    }
+    return { id: 'all', x: 0, y: 0, width: layout.width, height: layout.height };
+  }
+
   function setLive(on) {
+    // The embedded page has no server to be connected to, so it carries no live chip at all.
+    if (liveDot === null || liveText === null) return;
     liveDot.className = on ? 'dot on' : 'dot';
     liveText.textContent = on ? 'live' : 'disconnected';
   }
@@ -279,8 +413,9 @@ const SCRIPT = `
   function drawLegend(doc) {
     clear(legend);
     var totals = {};
-    for (var i = 0; i < doc.graph.edges.length; i++) {
-      var kind = doc.graph.edges[i].kind;
+    // Every drawn edge, so an architecture-only kind is not reported as zero.
+    for (var i = 0; i < doc.layout.edges.length; i++) {
+      var kind = doc.layout.edges[i].kind;
       totals[kind] = (totals[kind] || 0) + 1;
     }
     for (var k = 0; k < EDGE_KINDS.length; k++) {
@@ -334,7 +469,75 @@ const SCRIPT = `
     }
     scene.appendChild(defs);
 
-    var laneLayer = mk('g');
+    // One group per band, each with its decoration, its edges and its boxes in that paint
+    // order, so a view tab is a visibility flip on one element rather than a redraw.
+    var layerOf = {};
+    for (var ln = 0; ln < layout.nodes.length; ln++) {
+      layerOf[layout.nodes[ln].node.id] = layout.nodes[ln].layer;
+    }
+    var bandParts = {};
+    var LAYERS = ['system', 'process', 'inventory'];
+    state.bands = [];
+    for (var lb = 0; lb < LAYERS.length; lb++) {
+      var outer = mk('g', { 'data-layer': LAYERS[lb] });
+      var parts = { deco: mk('g'), edges: mk('g'), nodes: mk('g') };
+      outer.appendChild(parts.deco);
+      outer.appendChild(parts.edges);
+      outer.appendChild(parts.nodes);
+      scene.appendChild(outer);
+      bandParts[LAYERS[lb]] = parts;
+      state.bands.push({ layer: LAYERS[lb], el: outer });
+    }
+
+    function decoLayer(layer) { return (bandParts[layer] || bandParts.process).deco; }
+    function edgesLayer(layer) { return (bandParts[layer] || bandParts.process).edges; }
+    function nodesLayer(layer) { return (bandParts[layer] || bandParts.process).nodes; }
+
+    for (var tb = 0; tb < layout.bands.length; tb++) {
+      var band = layout.bands[tb];
+      var bandTitle = mk('text', {
+        x: band.x,
+        y: band.y - 14,
+        fill: '#64748b',
+        'font-size': 11,
+        'font-weight': 650,
+        class: 'band-title'
+      });
+      bandTitle.textContent = band.title.toUpperCase() + '  ·  ' + band.blurb;
+      decoLayer(band.id).appendChild(bandTitle);
+    }
+
+    for (var z = 0; z < layout.zones.length; z++) {
+      var zone = layout.zones[z];
+      var zoneLayer = decoLayer('system');
+      zoneLayer.appendChild(
+        mk('rect', {
+          x: zone.x,
+          y: zone.y,
+          width: zone.width,
+          height: zone.height,
+          rx: 12,
+          fill: '#0b1320',
+          stroke: '#1e3252',
+          'stroke-dasharray': '5 4'
+        })
+      );
+      var zoneTitle = mk('text', {
+        x: zone.x + 12,
+        y: zone.y + 16,
+        fill: '#7dd3fc',
+        'font-size': 11,
+        'font-weight': 650,
+        class: 'col-title'
+      });
+      zoneTitle.textContent = zone.title + ' (' + zone.count + ')';
+      var zoneTip = mk('title');
+      zoneTip.textContent = zone.blurb;
+      zoneTitle.appendChild(zoneTip);
+      zoneLayer.appendChild(zoneTitle);
+    }
+
+    var laneLayer = decoLayer('process');
     for (var l = 0; l < layout.lanes.length; l++) {
       var lane = layout.lanes[l];
       laneLayer.appendChild(
@@ -362,9 +565,8 @@ const SCRIPT = `
         : 'runs on ' + lane.placements.join('  +  ');
       laneLayer.appendChild(where);
     }
-    scene.appendChild(laneLayer);
 
-    var columns = mk('g');
+    var columns = decoLayer('inventory');
     for (var c = 0; c < layout.columns.length; c++) {
       var column = layout.columns[c];
       columns.appendChild(
@@ -392,9 +594,7 @@ const SCRIPT = `
       heading.appendChild(blurb);
       columns.appendChild(heading);
     }
-    scene.appendChild(columns);
 
-    var edgeLayer = mk('g');
     for (var e = 0; e < layout.edges.length; e++) {
       var edge = layout.edges[e];
       var path = mk('path', {
@@ -410,16 +610,15 @@ const SCRIPT = `
       tip.textContent = edge.kind + ': ' + edge.from + ' -> ' + edge.to;
       path.appendChild(tip);
       if (state.hidden[edge.kind]) path.style.display = 'none';
-      edgeLayer.appendChild(path);
+      // The band an edge belongs to is the band its source stands in: no edge crosses a
+      // band, because no reference in the spec does.
+      edgesLayer(layerOf[edge.from]).appendChild(path);
       state.paths.push({ el: path, kind: edge.kind, from: edge.from, to: edge.to });
     }
-    scene.appendChild(edgeLayer);
 
-    var nodeLayer = mk('g');
     for (var n = 0; n < layout.nodes.length; n++) {
-      nodeLayer.appendChild(buildNode(layout.nodes[n]));
+      nodesLayer(layout.nodes[n].layer).appendChild(buildNode(layout.nodes[n]));
     }
-    scene.appendChild(nodeLayer);
   }
 
   function buildNode(placed) {
@@ -522,55 +721,288 @@ const SCRIPT = `
     renderSubject();
   }
 
+  function setTab(layer, refit) {
+    state.tab = layer;
+    applyTab();
+    drawTabs();
+    if (refit) fit();
+  }
+
+  /** Show one band and hide the rest; 'all' shows the whole picture at once. */
+  function applyTab() {
+    for (var i = 0; i < state.bands.length; i++) {
+      var band = state.bands[i];
+      band.el.style.display = state.tab === 'all' || band.layer === state.tab ? '' : 'none';
+    }
+  }
+
+  function tabIds() {
+    var layout = state.doc.layout;
+    var ids = [];
+    for (var i = 0; i < layout.bands.length; i++) ids.push(layout.bands[i].id);
+    ids.push('all');
+    return ids;
+  }
+
+  function tabTitle(layer) {
+    if (layer === 'all') return 'everything';
+    var bands = state.doc.layout.bands;
+    for (var i = 0; i < bands.length; i++) {
+      if (bands[i].id === layer) return bands[i].title;
+    }
+    return layer;
+  }
+
+  function tabBlurb(layer) {
+    if (layer === 'all') return 'Every band at once, for the whole-picture view.';
+    var bands = state.doc.layout.bands;
+    for (var i = 0; i < bands.length; i++) {
+      if (bands[i].id === layer) return bands[i].blurb;
+    }
+    return '';
+  }
+
+  function drawTabs() {
+    clear(tabButtons);
+    var ids = tabIds();
+    for (var i = 0; i < ids.length; i++) {
+      var id = ids[i];
+      var button = document.createElement('button');
+      button.textContent = tabTitle(id);
+      button.title = tabBlurb(id);
+      if (id === state.tab) button.className = 'on';
+      button.addEventListener(
+        'click',
+        (function (target) {
+          return function () { setTab(target, true); };
+        })(id)
+      );
+      tabButtons.appendChild(button);
+    }
+    tabBlurbEl.textContent = tabBlurb(state.tab);
+  }
+
+  /** Open a box: switch to the band it lives in, and put it in the middle of the view. */
+  function focusNode(id) {
+    var placed = findPlaced(id);
+    state.selected = id;
+    if (placed !== null) {
+      if (state.tab !== 'all' && placed.layer !== state.tab) setTab(placed.layer, true);
+      else centerOn(id);
+    }
+    paintSelection();
+    renderSubject();
+  }
+
+  function centerOn(id) {
+    var placed = findPlaced(id);
+    if (placed === null) return;
+    var box = canvas.getBoundingClientRect();
+    state.view.tx = box.width / 2 - (placed.x + placed.width / 2) * state.view.scale;
+    state.view.ty = box.height / 2 - (placed.y + placed.height / 2) * state.view.scale;
+    applyView();
+  }
+
+  function findPlaced(id) {
+    var nodes = state.doc.layout.nodes;
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].node.id === id) return nodes[i];
+    }
+    return null;
+  }
+
+  function findSystem(id) {
+    var nodes = state.doc.system.nodes;
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].id === id) return nodes[i];
+    }
+    return null;
+  }
+
+  /** The architecture box a declaration runs as, if one claims it. */
+  function componentOf(id) {
+    var nodes = state.doc.system.nodes;
+    for (var i = 0; i < nodes.length; i++) {
+      var related = nodes[i].related;
+      for (var r = 0; r < related.length; r++) {
+        if (related[r] === id) return nodes[i];
+      }
+    }
+    return null;
+  }
+
+  function layerName(layer) {
+    var bands = state.doc.layout.bands;
+    for (var i = 0; i < bands.length; i++) {
+      if (bands[i].id === layer) return bands[i].title;
+    }
+    return layer;
+  }
+
+  function findSequence(pipelineId) {
+    var list = state.doc.sequences || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].pipeline === pipelineId) return list[i];
+    }
+    return null;
+  }
+
+  /** The sequence a selected node belongs to, so a step opens the flow it sits in. */
+  function sequencesFor(node, systemNode) {
+    if (systemNode !== null) {
+      var fromSystem = [];
+      for (var s = 0; s < systemNode.sequences.length; s++) {
+        var seq = findSequence(systemNode.sequences[s]);
+        if (seq !== null) fromSystem.push(seq);
+      }
+      if (fromSystem.length > 0) return fromSystem;
+    }
+    if (node.kind === 'pipeline') {
+      var own = findSequence(String(node.id).slice('pipeline:'.length));
+      if (own !== null) return [own];
+    }
+    var list = state.doc.sequences || [];
+    for (var i = 0; i < list.length; i++) {
+      var rows = list[i].rows;
+      for (var r = 0; r < rows.length; r++) {
+        if (rows[r].nodeId === node.id) return [list[i]];
+      }
+    }
+    return [];
+  }
+
+  function stepColor(kind) {
+    return GROUP_COLORS[STEP_GROUPS[kind] || 'document'] || '#94a3b8';
+  }
+
+  function sequenceRow(row) {
+    var chosen = state.selected === row.nodeId;
+    var el = div('seq-row' + (chosen ? ' sel' : ''));
+    el.style.paddingLeft = 6 + row.depth * 14 + 'px';
+    if (!chosen) el.style.borderLeftColor = stepColor(row.kind);
+
+    var top = div('seq-top');
+    top.appendChild(div('seq-n', row.path));
+    var text = div('seq-text', row.text);
+    text.style.color = stepColor(row.kind);
+    top.appendChild(text);
+    el.appendChild(top);
+
+    if (row.flags.length > 0) {
+      var flags = div('seq-flags');
+      for (var f = 0; f < row.flags.length; f++) {
+        var flag = row.flags[f];
+        flags.appendChild(div('flag ' + flag, flag));
+      }
+      el.appendChild(flags);
+    }
+    if (row.notes.length > 0) el.appendChild(div('seq-detail', row.notes.join('  ·  ')));
+
+    el.addEventListener('click', function (event) {
+      event.stopPropagation();
+      focusNode(row.nodeId);
+    });
+    return el;
+  }
+
+  function sequencePanel(seq) {
+    var wrap = div('seq');
+    wrap.appendChild(div('seq-head', 'request flow · ' + seq.steps + ' steps · ' + seq.trigger));
+    if (seq.notes.length > 0) wrap.appendChild(div('seq-notes', seq.notes.join('  ·  ')));
+    var rows = div('seq-rows');
+    for (var i = 0; i < seq.rows.length; i++) rows.appendChild(sequenceRow(seq.rows[i]));
+    wrap.appendChild(rows);
+    return wrap;
+  }
+
+  function chipSection(title, ids, hintText) {
+    var box = div('');
+    box.style.marginTop = '10px';
+    box.appendChild(div('seq-head', title));
+    if (hintText) box.appendChild(div('hint', hintText));
+    var chips = div('chips');
+    var shown = 0;
+    for (var i = 0; i < ids.length; i++) {
+      var placed = findPlaced(ids[i]);
+      if (placed === null) continue;
+      shown++;
+      var chip = div('chip', placed.node.label);
+      chip.title = placed.node.path;
+      chip.addEventListener(
+        'click',
+        (function (target) {
+          return function (event) {
+            event.stopPropagation();
+            focusNode(target);
+          };
+        })(ids[i])
+      );
+      chips.appendChild(chip);
+    }
+    if (shown === 0) return box;
+    box.appendChild(chips);
+    return box;
+  }
+
   function renderSubject() {
     clear(subject);
     if (!state.doc || !state.doc.ok) return;
     if (state.selected === null) {
-      var groupTitles = {};
-      for (var g = 0; g < state.doc.graph.groups.length; g++) {
-        groupTitles[state.doc.graph.groups[g].group] = state.doc.graph.groups[g].title;
-      }
-      subject.appendChild(div('label', 'Click a node'));
+      subject.appendChild(div('label', 'Pick a component'));
       subject.appendChild(
-        div('hint', 'Every box is a shape in the spec, and every line is a reference the build already resolved. Drag to pan, scroll to zoom, press 0 to fit.')
+        div('hint', 'The first layer is the architecture: entry, identity, compute, data, and the outside calls a run makes. Click a box and this panel opens it up, down to the order a request moves through it. Drag to pan, scroll to zoom, 0 fits, 1 to 4 switch layers.')
       );
       return;
     }
 
-    var found = null;
-    var nodes = state.doc.layout.nodes;
-    for (var i = 0; i < nodes.length; i++) {
-      if (nodes[i].node.id === state.selected) {
-        found = nodes[i].node;
-        break;
-      }
-    }
-    if (found === null) return;
+    var placed = findPlaced(state.selected);
+    if (placed === null) return;
+    var node = placed.node;
 
-    var head = div('label', found.label);
-    subject.appendChild(head);
-    if (found.detail) subject.appendChild(div('detail', found.detail));
+    subject.appendChild(div('label', node.label));
+    if (node.detail) subject.appendChild(div('detail', node.detail));
     var path = document.createElement('code');
     path.className = 'path';
-    path.textContent = found.path;
+    path.textContent = node.path;
     subject.appendChild(path);
+
+    // The two directions of the drill-down: an architecture box names the declarations it
+    // stands for, and a declaration names the box it runs as.
+    var systemNode = findSystem(node.id);
+    if (systemNode !== null) {
+      subject.appendChild(
+        chipSection('stands for', systemNode.related, 'the declarations this box is one of')
+      );
+    } else {
+      var parent = componentOf(node.id);
+      if (parent !== null) {
+        subject.appendChild(chipSection('inside', [parent.id], 'the architecture box this runs as'));
+      }
+    }
 
     var facts = div('');
     facts.style.marginTop = '12px';
-    for (var f = 0; f < found.facts.length; f++) {
+    for (var f = 0; f < node.facts.length; f++) {
       var row = div('fact');
-      row.appendChild(div('k', found.facts[f].label));
-      row.appendChild(div('v', found.facts[f].value));
+      row.appendChild(div('k', node.facts[f].label));
+      row.appendChild(div('v', node.facts[f].value));
       facts.appendChild(row);
     }
-    if (found.facts.length === 0) facts.appendChild(div('hint', 'No further keys.'));
+    if (node.facts.length === 0) facts.appendChild(div('hint', 'No further keys.'));
     subject.appendChild(facts);
+
+    var sequences = sequencesFor(node, systemNode);
+    for (var s = 0; s < sequences.length; s++) subject.appendChild(sequencePanel(sequences[s]));
 
     var groupName = '';
     for (var j = 0; j < state.doc.graph.groups.length; j++) {
-      if (state.doc.graph.groups[j].group === found.group) groupName = state.doc.graph.groups[j].title;
+      if (state.doc.graph.groups[j].group === node.group) {
+        groupName = state.doc.graph.groups[j].title;
+      }
     }
-    subject.appendChild(div('hint', 'group: ' + groupName + '  ·  kind: ' + found.kind));
+    subject.appendChild(
+      div('hint', 'layer: ' + layerName(placed.layer) + '  ·  group: ' + groupName + '  ·  kind: ' + node.kind)
+    );
   }
 
   function apply(doc) {
@@ -582,13 +1014,15 @@ const SCRIPT = `
       clear(scene);
       state.paths = [];
       state.nodes = [];
+      state.bands = [];
       showNotice(doc.diagnostics || []);
       title.textContent = 'refused';
       profile.hidden = true;
+      tabs.hidden = true;
       counts.textContent = '';
       clear(subject);
       subject.appendChild(div('label', 'No picture'));
-      subject.appendChild(div('hint', 'A spec the build refuses has no graph. Fix the diagnostics on the left; the page reloads the moment the spec stops being wrong.'));
+      subject.appendChild(div('hint', 'A spec the build refuses has no graph. Work the diagnostics in order, starting at the top: a spec-level refusal is the document itself, and nothing after it is worth reading until it is fixed.'));
       return;
     }
 
@@ -596,6 +1030,11 @@ const SCRIPT = `
     var fresh = previous === null || !previous.ok || previous.specPath !== doc.specPath;
     draw(doc);
     drawLegend(doc);
+    var ids = tabIds();
+    if (fresh || ids.indexOf(state.tab) === -1) state.tab = ids.length > 1 ? ids[0] : 'all';
+    applyTab();
+    drawTabs();
+    tabs.hidden = false;
     paintSelection();
     renderSubject();
 
@@ -608,11 +1047,18 @@ const SCRIPT = `
     counts.textContent =
       doc.counts.nodes + ' nodes · ' +
       doc.counts.edges + ' edges · ' +
-      doc.counts.steps + ' steps · spec ' + doc.graph.specVersion;
+      doc.counts.steps + ' steps · ' +
+      doc.counts.calls + ' calls · spec ' + doc.graph.specVersion;
     if (fresh) fit();
   }
 
   function load() {
+    // A handed-in document is fixed: re-reading it would redraw the same picture, so the
+    // embedded page has no refresh control and never calls this.
+    if (BOOT !== null) {
+      apply(BOOT);
+      return Promise.resolve();
+    }
     return fetch('/api/graph', { cache: 'no-store' })
       .then(function (response) { return response.json(); })
       .then(apply)
@@ -686,18 +1132,43 @@ const SCRIPT = `
 
   document.addEventListener('keydown', function (event) {
     if (event.key === '0' || event.key === 'f') fit();
-    if (event.key === 'Escape') select(state.selected === null ? '' : state.selected);
+    if (event.key === 'Escape') {
+      if (state.selected !== null) {
+        state.selected = null;
+        paintSelection();
+        renderSubject();
+      }
+    }
+    if (event.key >= '1' && event.key <= '4' && state.doc !== null && state.doc.ok) {
+      var ids = tabIds();
+      var index = Number(event.key) - 1;
+      if (index < ids.length) setTab(ids[index], true);
+    }
   });
 
   document.getElementById('fit').addEventListener('click', fit);
-  document.getElementById('refresh').addEventListener('click', load);
+  var refreshButton = document.getElementById('refresh');
+  if (refreshButton !== null) refreshButton.addEventListener('click', load);
 
   window.addEventListener('resize', function () {
     // Only re-fit a picture nobody has touched; a deliberate pan should survive a resize.
     if (state.view.scale === 1 && state.view.tx === 0 && state.view.ty === 0) fit();
   });
 
-  var events = new EventSource('/api/events');
+  __LIVE_SCRIPT__
+
+  load();
+})();
+`;
+
+/**
+ * The served page's live-reload tail.
+ *
+ * It is spliced in rather than switched off at runtime: an embedded page has no `/api/events`
+ * to open, and asking for one would leave a browser reconnecting to a 404 for as long as the
+ * tab is open.
+ */
+const LIVE_SCRIPT = `  var events = new EventSource('/api/events');
   events.addEventListener('open', function () { setLive(true); });
   events.addEventListener('error', function () { setLive(false); });
   events.addEventListener('message', function (event) {
@@ -705,23 +1176,36 @@ const SCRIPT = `
     try { payload = JSON.parse(event.data); } catch (error) { return; }
     setLive(true);
     if (payload.revision !== state.revision) load();
-  });
-
-  load();
-})();
-`;
+  });`;
 
 /**
  * The whole page. `__TOKENS__` are substituted rather than built into the template so the
  * client reads the same group and edge tables the server laid the graph out with.
  */
-export function renderPage(): string {
+export function renderPage(source: PageSource = {}): string {
+  // Live reload is for a page with a server behind it. An embedded page says nothing about
+  // being live rather than showing a chip stuck on "connecting".
+  const live = source.live ?? source.document === undefined;
+  const boot = source.document === undefined ? 'null' : json(source.document);
+
   const script = SCRIPT.replace('__GROUP_COLORS__', json(GROUP_COLORS))
     .replace('__EDGE_COLORS__', json(EDGE_COLORS))
     .replace('__EDGE_KINDS__', json([...VISUAL_EDGE_KINDS]))
-    .replace('__EDGE_MEANING__', json(EDGE_MEANING));
+    .replace('__EDGE_MEANING__', json(EDGE_MEANING))
+    .replace('__STEP_GROUPS__', json(STEP_GROUPS))
+    // A function replacement, so a prompt containing `$&` is not read as a substitution.
+    .replace('__BOOT__', () => boot)
+    .replace('__LIVE_SCRIPT__', () => (live ? LIVE_SCRIPT : ''));
 
   const groups = VISUAL_GROUPS.map((group) => `${group.id}: ${group.blurb}`).join('\n');
+
+  const refresh = live ? '<button id="refresh" title="Re-read the spec now">refresh</button>' : '';
+  const liveChip = live
+    ? '<span class="live"><span class="dot" id="live-dot"></span><span id="live-text">connecting</span></span>'
+    : '';
+  const noticeSub = live
+    ? 'There is no picture to draw, because a diagram of a spec that does not compile would be an approximation of one that does. Fix these and the page reloads by itself.'
+    : 'There is no picture to draw, because a diagram of a spec that does not compile would be an approximation of one that does. Fix these and draw it again.';
 
   return `<!doctype html>
 <html lang="en" data-aid-visualize="1">
@@ -740,17 +1224,18 @@ export function renderPage(): string {
   <span class="counts" id="counts"></span>
   <span class="spacer"></span>
   <button id="fit" title="Fit the whole picture (0)">fit</button>
-  <button id="refresh" title="Re-read the spec now">refresh</button>
-  <span class="live"><span class="dot" id="live-dot"></span><span id="live-text">connecting</span></span>
+  ${refresh}
+  ${liveChip}
 </header>
+<div id="tabs" hidden><div id="tab-buttons"></div><span id="tab-blurb"></span></div>
 <main>
   <svg id="canvas" xmlns="http://www.w3.org/2000/svg"><g id="scene"></g></svg>
   <div id="notice" hidden>
     <h2>The build refuses this spec</h2>
-    <div class="sub">There is no picture to draw, because a diagram of a spec that does not compile would be an approximation of one that does. Fix these and the page reloads by itself.</div>
+    <div class="sub">${noticeSub}</div>
     <div id="notice-list"></div>
   </div>
-  <aside>
+  <aside tabindex="0" aria-label="Inspector, legend and layer meanings">
     <section id="subject"></section>
     <section>
       <h2>Edge kinds</h2>
@@ -758,8 +1243,8 @@ export function renderPage(): string {
       <div class="hint" style="margin-top:10px">Click a kind to hide it.</div>
     </section>
     <section>
-      <h2>Two bands</h2>
-      <div class="hint" style="white-space:pre-wrap">The top band is the process. One lane per pipeline, its steps left to right in the order they run, headed by the deployments that serve it. The bottom band is what that process is built from, in a fixed group order:${'\n\n'}${groups}</div>
+      <h2>Layers</h2>
+      <div class="hint" style="white-space:pre-wrap">Three readings of the same spec, drawn top to bottom. <b>Architecture</b> is the system as it runs: the trigger that starts a request, the identity and gateway in front of it, one box per deployment, the data those deployments reach, and every outbound call. <b>Process</b> is each pipeline as a lane, its steps left to right in the order they run. <b>Inventory</b> is what the process is built from, in a fixed group order:${'\n\n'}${groups}</div>
     </section>
   </aside>
 </main>

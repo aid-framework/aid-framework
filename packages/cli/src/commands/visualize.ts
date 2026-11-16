@@ -40,7 +40,7 @@ import type { CommandOutcome } from '../output.js';
 import { outcome } from '../output.js';
 import { DEFAULT_SPEC_PATH } from '../targets.js';
 import type { VisualDocument } from '../visualize/document.js';
-import { buildVisualDocument } from '../visualize/document.js';
+import { buildVisualDocument } from '../visualize/document-node.js';
 import { startVisualServer } from '../visualize/server.js';
 
 export interface VisualizeOptions {
@@ -129,6 +129,8 @@ export function visualize(context: CliContext, options: VisualizeOptions): Comma
         profile: document.graph.profile,
         counts: document.counts,
         graph: document.graph,
+        system: document.system,
+        sequences: document.sequences,
         layout: document.layout,
       },
       diagnostics: document.warnings,
