@@ -8,12 +8,21 @@
  * of asking a browser for a font metric, which makes the answer a pure function of the
  * graph document -- no wall clock, no font, no viewport.
  *
- * **Why two bands.** The picture answers two different questions, and they do not belong in
- * one column order. The top band is the process: one lane per pipeline, steps laid left to
- * right in the order they run, with the deployments that serve them printed in the lane
- * header -- that is "what happens, and where it lives". The bottom band is the inventory:
- * the groups in their fixed order, because "prompt uses model guards output" is the reading
- * a reviewer does about the materials rather than about the run.
+ * **Why three bands.** The picture answers three different questions, and none of them
+ * belongs in another's column order.
+ *
+ * The top band is the architecture: the deployments, the triggers in front of them, the
+ * stores and providers they call, and the wires between. That is what a reviewer of a
+ * distributed system reads first -- "what is this made of, what does it call, where does it
+ * live" -- and no per-construction table can answer it.
+ *
+ * The middle band is the process: one lane per pipeline, steps laid left to right in the
+ * order they run, with the deployments that serve them printed in the lane header -- that
+ * is "what happens, and where".
+ *
+ * The bottom band is the inventory: the groups in their fixed order, because "prompt uses
+ * model guards output" is the reading a reviewer does about the materials rather than
+ * about the run.
  *
  * Vertical order inside a lane is the depth of the step in the flow, and inside a column it
  * is document order, so a node does not move when an unrelated part of the spec changes.
@@ -23,6 +32,8 @@
  * picture and it is the right trade against a diagram that is not reproducible.
  */
 
+import type { SystemGraph, SystemNode, SystemZoneId } from './architecture.js';
+import { SYSTEM_ZONES } from './architecture.js';
 import type {
   VisualEdge,
   VisualEdgeKind,
@@ -81,6 +92,9 @@ export interface LayoutLine {
   readonly role: 'label' | 'detail';
 }
 
+/** Which band a placed node belongs to. The renderer and the drill-down both key on it. */
+export type LayoutLayer = 'system' | 'process' | 'inventory';
+
 export interface LayoutNode {
   readonly node: VisualNode;
   readonly x: number;
@@ -89,6 +103,38 @@ export interface LayoutNode {
   readonly height: number;
   /** The text after wrapping, so the renderer measures nothing. */
   readonly lines: readonly LayoutLine[];
+  /** The band this box stands in, so the page can show one band and hide the others. */
+  readonly layer: LayoutLayer;
+}
+
+/** One band of the picture, with the heading the view tabs and the band title share. */
+export interface LayoutBand {
+  readonly id: LayoutLayer;
+  readonly title: string;
+  readonly blurb: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * A column of the architecture band: the systems that play one role.
+ *
+ * Zones are the architectural reading of a spec. They are not groups, because a group
+ * answers "what kind of thing is this declared as" and a zone answers "where does it stand
+ * when the service runs" -- the same store is a `store:` node in the inventory and a box in
+ * the data zone here.
+ */
+export interface LayoutZone {
+  readonly zone: SystemZoneId;
+  readonly title: string;
+  readonly blurb: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly count: number;
 }
 
 export interface LayoutColumn {
@@ -131,6 +177,10 @@ export interface LayoutLane {
 export interface Layout {
   readonly width: number;
   readonly height: number;
+  /** Every band the picture drew, top to bottom, in the order the view tabs list them. */
+  readonly bands: readonly LayoutBand[];
+  /** The architecture band's zone columns, left to right in fixed zone order. */
+  readonly zones: readonly LayoutZone[];
   /** The process band, top to bottom in document order. */
   readonly lanes: readonly LayoutLane[];
   /** The inventory band, left to right in fixed group order. */
@@ -291,11 +341,143 @@ interface PipelineFlow {
   readonly rowCount: number;
 }
 
-/** The whole picture: the process band, then the inventory band, with edges routed. */
-export function layoutGraph(graph: VisualGraph): Layout {
+/** The heading each band carries, so the view tabs and the band title cannot disagree. */
+const BAND_META: Readonly<Record<LayoutLayer, { readonly title: string; readonly blurb: string }>> =
+  {
+    system: {
+      title: 'Architecture',
+      blurb:
+        'What the service is made of when it runs: triggers, identity, deployments, and every store, provider and sink they call.',
+    },
+    process: {
+      title: 'Process',
+      blurb: 'Each pipeline as a lane, in run order, with the deployments that serve it.',
+    },
+    inventory: {
+      title: 'Inventory',
+      blurb: 'Every declared construction, in the fixed column order.',
+    },
+  };
+
+/** The architecture band: zone columns of system boxes, all as tall as the tallest zone. */
+interface ZoneLayout {
+  readonly zones: readonly LayoutZone[];
+  readonly nodes: readonly LayoutNode[];
+  readonly edges: readonly LayoutEdge[];
+  readonly band: LayoutBand | undefined;
+}
+
+/**
+ * Lay out the architecture band above `top`.
+ *
+ * Zones are columns in fixed order, and the systems inside a zone stack vertically in
+ * document order, which is the order `architecture.ts` emits them: triggers in pipeline
+ * order, then deployments, then the external systems in provider order. A zone the spec
+ * does not use is not drawn, for the same reason an unused inventory group is not a
+ * column: an empty stripe would imply something was meant to fill it.
+ *
+ * Stacks are vertically centred on the tallest of them rather than top-aligned, so a lone
+ * deployment sits level with the row of systems beside it instead of floating at the top of
+ * the band. Every number here is derived from the graph, so the geometry stays a pure
+ * function of the document.
+ */
+function layoutSystem(system: SystemGraph, top: number): ZoneLayout {
+  const nodes: LayoutNode[] = [];
+  const zones: LayoutZone[] = [];
+  const boxes = new Map<string, Box>();
+
+  const used = SYSTEM_ZONES.map((zone) => ({
+    zone,
+    members: system.nodes.filter((node): node is SystemNode => node.zone === zone.id),
+  })).filter((entry) => entry.members.length > 0);
+
+  if (used.length === 0) return { zones: [], nodes: [], edges: [], band: undefined };
+
+  const measured = new Map<string, { lines: LayoutLine[]; height: number }>();
+  const stacks = new Map<SystemZoneId, number>();
+  let tallest = 0;
+  for (const entry of used) {
+    let stack = 0;
+    entry.members.forEach((node, index) => {
+      const box = measure(node);
+      measured.set(node.id, box);
+      stack += box.height + (index === 0 ? 0 : NODE_GAP);
+    });
+    stacks.set(entry.zone.id, stack);
+    tallest = Math.max(tallest, stack);
+  }
+
+  const bodyTop = top + HEADER_HEIGHT;
+  let columnX = MARGIN;
+  for (const entry of used) {
+    const stack = stacks.get(entry.zone.id) ?? 0;
+    let cursorY = bodyTop + round((tallest - stack) / 2);
+    for (const node of entry.members) {
+      const box = measured.get(node.id);
+      if (box === undefined) continue;
+      const placed: Box = { x: columnX, y: cursorY, width: COLUMN_WIDTH, height: box.height };
+      boxes.set(node.id, placed);
+      nodes.push({ node, ...placed, lines: box.lines, layer: 'system' });
+      cursorY += box.height + NODE_GAP;
+    }
+    zones.push({
+      zone: entry.zone.id,
+      title: entry.zone.title,
+      blurb: entry.zone.blurb,
+      x: columnX,
+      y: top,
+      width: COLUMN_WIDTH,
+      height: HEADER_HEIGHT + tallest,
+      count: entry.members.length,
+    });
+    columnX += COLUMN_WIDTH + COLUMN_GAP;
+  }
+
+  const offsets = offsetsFor(system.edges);
+  const edges: LayoutEdge[] = [];
+  system.edges.forEach((edge, index) => {
+    const fromBox = boxes.get(edge.from);
+    const toBox = boxes.get(edge.to);
+    // The same rule as the other bands: an endpoint this band does not draw drops the edge,
+    // so the picture never shows an arrow to nowhere.
+    if (fromBox === undefined || toBox === undefined) return;
+    const offset = offsets[index] ?? 0;
+    const crossesBand =
+      toBox.y >= fromBox.y + fromBox.height || toBox.y + toBox.height <= fromBox.y;
+    edges.push({
+      from: edge.from,
+      to: edge.to,
+      kind: edge.kind,
+      ...(edge.label === undefined ? {} : { label: edge.label }),
+      d: crossesBand ? bandPath(fromBox, toBox, offset) : edgePath(fromBox, toBox, offset),
+    });
+  });
+
+  const last = zones[zones.length - 1];
+  return {
+    zones,
+    nodes,
+    edges,
+    band: {
+      id: 'system',
+      title: BAND_META.system.title,
+      blurb: BAND_META.system.blurb,
+      x: MARGIN,
+      y: top,
+      width: last === undefined ? MARGIN * 2 : last.x + last.width - MARGIN,
+      height: HEADER_HEIGHT + tallest,
+    },
+  };
+}
+
+/** The whole picture: the architecture band, the process band, then the inventory band. */
+export function layoutGraph(graph: VisualGraph, system?: SystemGraph): Layout {
   const nodes: LayoutNode[] = [];
   const boxes = new Map<string, Box>();
   const lanes: LayoutLane[] = [];
+  // The architecture band is laid out first because the other two stack below it, and the
+  // bands must not depend on each other's contents to know where they start.
+  const zoneLayout = system === undefined ? undefined : layoutSystem(system, MARGIN);
 
   // Where a pipeline is served, read off the `deploys` edges the graph already carries, so
   // the header cannot disagree with the arrows: both come from one edge set. A deployment
@@ -400,7 +582,9 @@ export function layoutGraph(graph: VisualGraph): Layout {
   }
   const laneWidth = widest + LANE_PAD * 2;
 
-  let cursorY = MARGIN;
+  const systemBand = zoneLayout?.band;
+  let cursorY =
+    systemBand === undefined ? MARGIN : round(systemBand.y + systemBand.height + BAND_GAP);
 
   for (const flow of flows) {
     const measuredPipeline = measure(flow.pipeline);
@@ -413,7 +597,12 @@ export function layoutGraph(graph: VisualGraph): Layout {
       height: measuredPipeline.height,
     };
     boxes.set(flow.pipeline.id, pipelineBox);
-    nodes.push({ node: flow.pipeline, ...pipelineBox, lines: measuredPipeline.lines });
+    nodes.push({
+      node: flow.pipeline,
+      ...pipelineBox,
+      lines: measuredPipeline.lines,
+      layer: 'process',
+    });
 
     const gridTop = pipelineBox.y + pipelineBox.height + LANE_ROW_GAP;
     for (const step of flow.steps) {
@@ -431,7 +620,7 @@ export function layoutGraph(graph: VisualGraph): Layout {
         height: measured.height,
       };
       boxes.set(step.id, box);
-      nodes.push({ node: step, ...box, lines: measured.lines });
+      nodes.push({ node: step, ...box, lines: measured.lines, layer: 'process' });
     }
 
     let gridHeight = 0;
@@ -482,7 +671,7 @@ export function layoutGraph(graph: VisualGraph): Layout {
       const measured = measure(node);
       const box: Box = { x: columnX, y: cursor, width: COLUMN_WIDTH, height: measured.height };
       boxes.set(node.id, box);
-      nodes.push({ node, ...box, lines: measured.lines });
+      nodes.push({ node, ...box, lines: measured.lines, layer: 'inventory' });
       cursor += measured.height + NODE_GAP;
     }
 
@@ -501,11 +690,17 @@ export function layoutGraph(graph: VisualGraph): Layout {
   }
 
   // The renderer draws in this order, and every table that reads a layout keys on it, so the
-  // document order of `graph.nodes` is restored after the two bands have been walked.
+  // document order of `graph.nodes` is restored after the bands have been walked. System
+  // boxes are not members of `graph.nodes`, so they follow the inventory in zone order and
+  // keep the order `layoutSystem` gave them.
   const order = new Map<string, number>();
   graph.nodes.forEach((node, index) => {
     order.set(node.id, index);
   });
+  for (const placed of zoneLayout?.nodes ?? []) {
+    order.set(placed.node.id, order.size);
+    nodes.push(placed);
+  }
   nodes.sort((a, b) => (order.get(a.node.id) ?? 0) - (order.get(b.node.id) ?? 0));
 
   const offsets = offsetsFor(graph.edges);
@@ -530,6 +725,32 @@ export function layoutGraph(graph: VisualGraph): Layout {
       d: crossesBand ? bandPath(fromBox, toBox, offset) : edgePath(fromBox, toBox, offset),
     });
   });
+  // The architecture band routed its own edges, inside its own boxes: the bands share no
+  // node, so there is no edge to route twice and no offset to negotiate between them.
+  edges.push(...(zoneLayout?.edges ?? []));
+
+  const bands: LayoutBand[] = [];
+  if (systemBand !== undefined) bands.push(systemBand);
+
+  /** The bounding box of a band's own containers, which is what the view tabs scroll to. */
+  const bounds = (items: readonly { x: number; y: number; width: number; height: number }[]) => {
+    let top = Number.POSITIVE_INFINITY;
+    let left = Number.POSITIVE_INFINITY;
+    let low = 0;
+    let high = 0;
+    for (const item of items) {
+      top = Math.min(top, item.y);
+      left = Math.min(left, item.x);
+      low = Math.max(low, item.y + item.height);
+      high = Math.max(high, item.x + item.width);
+    }
+    return { x: left, y: top, width: round(high - left), height: round(low - top) };
+  };
+
+  if (lanes.length > 0) bands.push({ id: 'process', ...BAND_META.process, ...bounds(lanes) });
+  if (columns.length > 0) {
+    bands.push({ id: 'inventory', ...BAND_META.inventory, ...bounds(columns) });
+  }
 
   let bottom = MARGIN;
   let right = MARGIN;
@@ -549,6 +770,8 @@ export function layoutGraph(graph: VisualGraph): Layout {
   return {
     width: round(right + MARGIN),
     height: round(bottom + MARGIN),
+    bands,
+    zones: zoneLayout?.zones ?? [],
     lanes,
     columns,
     nodes,

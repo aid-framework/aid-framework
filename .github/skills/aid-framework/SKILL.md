@@ -404,28 +404,45 @@ npx @aid-framework/cli visualize --port 4400
 npx @aid-framework/cli visualize --json                # print the graph, bind nothing
 ```
 
-One column per construct group - document, contract, service, agents, prompts, models, tools,
-retrieval, guardrails, evals, infra - one node per declaration, and one edge per reference the
-document actually makes: a prompt to its model, an agent step to the tool it names, a pipeline to
-the agents it calls, a deployment to its cloud and region. A reference to something the spec never
-declared has no node to land on, which is what the picture is for. Save the spec and the graph
-redraws in place over server-sent events.
+The first layer is the architecture - what the service is when it runs, in five fixed columns:
+triggers (entry), declared identity plus the runtime gateway (identity), one box per deployment
+(compute), the stores, knowledge bases and run state a pipeline actually reaches (data), and the
+model providers, MCP servers, audit sinks and OTel collector they call (external). Edges are the
+declared relationships only: `serves` (a trigger to each deployment that runs it), `connects` (a box
+to what it calls), `records` (an audit sink, with its retention). A secret is a name on the
+deployment, not a box, because the spec never names the store.
 
-Above those columns sits the process band: one lane per pipeline, its steps left to right in the
-order the list declares them, the arms of a branch stacked under the step that chooses between them,
-and a header naming the deployments that serve the pipeline - or saying that none does. Run order is
-drawn only where the declaration states it (list adjacency, arm membership), never inferred from
-which node happens to sit where.
+Below it sit the other two layers. The process layer is one lane per pipeline, its steps left to
+right in the order the list declares them, the arms of a branch stacked under the step that chooses
+between them, and a header naming the deployments that serve the pipeline - or saying that none
+does. The inventory layer is one column per construct group - document, contract, service, agents,
+prompts, models, tools, retrieval, guardrails, evals, infra - one node per declaration and one edge
+per reference the document actually makes: a prompt to its model, an agent step to the tool it
+names, a pipeline to the agents it calls. A reference to something the spec never declared has no
+node to land on, which is what the picture is for. Run order is drawn only where the declaration
+states it (list adjacency, arm membership), never inferred from which node happens to sit where.
 
-The page comes out of the CLI binary: no hosted backend, no CDN, no install. Click a node for its
-facts and to light up the edges that touch it, click a legend row to hide that edge kind, `f` or `0`
-to refit, drag to pan, wheel to zoom. A spec that a gate refuses renders the diagnostics with their
-codes, paths and hints instead of a graph - the picture and the build read the same document, so a
-picture of a spec that does not build would be misleading.
+Selecting a box opens its detail: the facts the declaration states, what it stands for in the
+inventory, and - for a deployment, trigger, store, model or tool - the request path that reaches it,
+step by step, with the guardrail stage, redaction, approval, retrieval and fan-out facts declared at
+that point. A compute box carries the pipelines it serves by the same rule that draws its `serves`
+arrow, so anything that runs a request opens onto that request. Selecting a flow row switches to the
+process layer with that step drawn.
 
-`--json` emits the same graph and layout document the page fetches, so a scene can be asserted in
-CI. Treat this as a view of the declaration, not of a running service: it draws what the spec says,
-which is exactly what the gates judge.
+The page comes out of the CLI binary: no hosted backend, no CDN, no install. `1`-`4` switch layer
+(Architecture, Process, Inventory, everything), `f` or `0` refits, `Escape` clears, drag pans, wheel
+zooms, and a legend row hides that edge kind. A spec that a gate refuses renders the diagnostics
+with their codes, paths and hints instead of a graph - the picture and the build read the same
+document, so a picture of a spec that does not build would be misleading.
+
+A spec you have not checked out can be drawn without installing anything: the documentation site's
+[Visualize](https://aid-framework.github.io/aid-framework/visualize) page takes a pasted spec or an
+uploaded file and compiles it in the browser through that same read, lower and gate path. Nothing is
+sent anywhere, so the graph on the page is the graph the build would produce, refusals included.
+
+`--json` emits the same graph, layout and request paths the page fetches, so a scene can be
+asserted in CI. Treat this as a view of the declaration, not of a running service: it draws what the
+spec says, which is exactly what the gates judge.
 
 ## Reading a refusal
 

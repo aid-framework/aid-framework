@@ -67,3 +67,30 @@
 html:not(.dark) {
   --vp-button-brand-bg: #4d67c4;
 }
+
+/**
+ * The `layout: page` wrapper, used by the visualiser page.
+ *
+ * That page is a diagram, not a column of prose: it needs the width the reading column
+ * deliberately does not give it. `layout: page` drops the sidebar and the width constraint, but
+ * it also drops `VPDoc`, so the container supplies the typography by carrying `vp-doc` itself
+ * and the top padding the doc layout would otherwise have added under the fixed navbar.
+ */
+.visualize-page {
+  box-sizing: border-box;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 1.5rem 1.5rem 5rem;
+}
+
+@media (max-width: 959px) {
+  .visualize-page {
+    padding-top: calc(var(--vp-nav-height) + 1.5rem);
+  }
+}
+
+@media (min-width: 960px) {
+  .visualize-page {
+    padding-top: 2.5rem;
+  }
+}

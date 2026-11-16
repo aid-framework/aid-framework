@@ -3,7 +3,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { createContext } from '../src/index.js';
 import { lowerSpec } from '../src/pipeline.js';
 import { templateSpec } from '../src/templates.js';
-import { buildVisualDocument } from '../src/visualize/document.js';
+import type { PipelineSequence, SystemGraph } from '../src/visualize/architecture.js';
+import { buildSequences, buildSystemGraph, SYSTEM_ZONES } from '../src/visualize/architecture.js';
+import { buildVisualDocument } from '../src/visualize/document-node.js';
 import type { VisualGraph, VisualNode } from '../src/visualize/graph.js';
 import { buildVisualGraph, VISUAL_GRAPH_VERSION, VISUAL_GROUPS } from '../src/visualize/graph.js';
 import type { Layout } from '../src/visualize/layout.js';
@@ -24,10 +26,22 @@ afterAll(() => {
   for (const made of created) made.close();
 });
 
-function graphOf(specText: string = EXAMPLE_SPEC): VisualGraph {
+function irOf(specText: string = EXAMPLE_SPEC) {
   const lowered = lowerSpec(specText, SPEC_PATH);
   if (!lowered.ok) throw new Error('the fixture has to build for this file to mean anything');
-  return buildVisualGraph(lowered.ir);
+  return lowered.ir;
+}
+
+function graphOf(specText: string = EXAMPLE_SPEC): VisualGraph {
+  return buildVisualGraph(irOf(specText));
+}
+
+function systemOf(specText: string = EXAMPLE_SPEC): SystemGraph {
+  return buildSystemGraph(irOf(specText));
+}
+
+function sequencesOf(specText: string = EXAMPLE_SPEC): PipelineSequence[] {
+  return buildSequences(irOf(specText));
 }
 
 function contextFor(root: string) {
@@ -106,11 +120,189 @@ describe('layoutGraph', () => {
   });
 });
 
+describe('buildSystemGraph', () => {
+  const system = systemOf();
+  const graph = graphOf();
+
+  it('is the fixed set of zones, including the ones this spec leaves empty', () => {
+    expect(system.zones.map((zone) => zone.zone)).toEqual(SYSTEM_ZONES.map((zone) => zone.id));
+    // The example is `profile: standard`: it declares no identity integration, so the
+    // Identity column is present and empty rather than absent. Two customers' pictures
+    // compare column by column only if the columns do not move.
+    expect(system.zones.find((zone) => zone.zone === 'identity')?.count).toBe(0);
+    for (const zone of system.zones) {
+      const drawn = system.nodes.filter((node) => node.zone === zone.zone);
+      expect(drawn.length).toBe(zone.count);
+    }
+    expect(system.nodes.length).toBe(system.zones.reduce((sum, zone) => sum + zone.count, 0));
+  });
+
+  it('routes every arrow between boxes it drew', () => {
+    const ids = new Set(system.nodes.map((node) => node.id));
+    const dangling = system.edges.filter((edge) => !ids.has(edge.from) || !ids.has(edge.to));
+    expect(dangling).toEqual([]);
+    // `serves` and `connects` are the architecture band's own vocabulary; nothing outside
+    // it may appear, or the legend would describe edges the band does not have.
+    expect([...new Set(system.edges.map((edge) => edge.kind))].sort()).toEqual([
+      'connects',
+      'serves',
+    ]);
+  });
+
+  it('names only inventory nodes that exist, so a drill-down always lands', () => {
+    const drawn = new Set(graph.nodes.map((node) => node.id));
+    for (const node of system.nodes) {
+      for (const related of node.related) expect(drawn).toContain(related);
+      // `sequences` holds bare pipeline ids, the key the page joins on.
+      for (const sequence of node.sequences) expect(drawn).toContain('pipeline:' + sequence);
+    }
+  });
+
+  it('never opens a compute box onto a different set of flows than its own arrows', () => {
+    // A deployment that names no `pipeline` serves the whole app, which is the same rule
+    // that draws its `serves` arrow. Drilling into the box has to agree with that arrow, or
+    // the most important box in the picture opens onto an empty panel.
+    const deployments = () => system.nodes.filter((node) => node.kind === 'deployment');
+    expect(deployments().length).toBeGreaterThan(0);
+    for (const deployment of deployments()) {
+      const arrows = system.edges.filter(
+        (edge) => edge.to === deployment.id && edge.kind === 'serves',
+      );
+      expect(deployment.sequences.length).toBe(arrows.length);
+      expect(deployment.sequences).toEqual(['answer_ticket']);
+    }
+  });
+
+  it('names the flow it runs in what it stands for, so the drill-down can reach it', () => {
+    // `deployments.api` targets `container`, which answers routes rather than running one
+    // pipeline: `spec/deployment-pipeline-without-batch` refuses a `pipeline` key here, so
+    // the single-pipeline branch is only reachable for `target: batch` and is asserted
+    // through `servesPipeline` by the arrow/flow agreement above.
+    const deployment = system.nodes.find((node) => node.id === 'system:deployment:api');
+    expect(deployment?.sequences).toEqual(['answer_ticket']);
+    // `related` is the "stands for" list the drill-down renders, so the flow is reachable
+    // from a compute box by two routes: the flow panel and the chip.
+    expect(deployment?.related).toContain('pipeline:answer_ticket');
+  });
+
+  it('is a pure function of the IR, because the picture is asserted on', () => {
+    expect(systemOf()).toStrictEqual(system);
+  });
+});
+
+describe('buildSequences', () => {
+  const sequences = sequencesOf();
+  const graph = graphOf();
+
+  it('reads every pipeline and points each row at a step box that exists', () => {
+    expect(sequences.map((sequence) => sequence.pipeline)).toEqual(['answer_ticket']);
+    const drawn = new Set(graph.nodes.map((node) => node.id));
+    for (const sequence of sequences) {
+      expect(sequence.nodeId).toBe('pipeline:' + sequence.pipeline);
+      expect(drawn).toContain(sequence.nodeId);
+      expect(sequence.rows.length).toBe(sequence.steps);
+      for (const row of sequence.rows) expect(drawn).toContain(row.nodeId);
+    }
+  });
+
+  it('keeps a fan-out arm on its own indented row', () => {
+    const rows = sequences[0]?.rows ?? [];
+    expect(rows.find((row) => row.kind === 'parallel')?.depth).toBe(0);
+    const arms = rows.filter((row) => row.depth === 1);
+    // The two `generate` arms of the parallel step, in declaration order.
+    expect(arms.map((row) => row.text.split(' ')[0])).toEqual(['customer_note', 'handbook_note']);
+  });
+
+  it('says only what a field declares about a stage, a side effect or a redaction', () => {
+    const rows = sequences[0]?.rows ?? [];
+    const guard = rows[0];
+    // A `guard` step names its stage in the spec, so the row can name it back.
+    expect(guard?.text).toBe('ticket_intake · input');
+    expect(guard?.flags).toEqual(['block']);
+    expect(guard?.notes).toContain('action block');
+    // `side effects: read` is `lookup_customer` declaring a read; nothing infers it.
+    expect(rows.find((row) => row.kind === 'tool')?.notes).toContain('side effects: read');
+    // No guardrail in this fixture declares `redact`, so no row may claim one.
+    expect(rows.flatMap((row) => row.flags)).not.toContain('redact');
+  });
+
+  it('is a pure function of the IR, because the picture is asserted on', () => {
+    expect(sequencesOf()).toStrictEqual(sequences);
+  });
+});
+
+describe('layoutGraph with the architecture band', () => {
+  const graph = graphOf();
+  const system = systemOf();
+  const layout = layoutGraph(graph, system);
+
+  it('stacks the bands top to bottom without overlap', () => {
+    expect(layout.bands.map((band) => band.id)).toEqual(['system', 'process', 'inventory']);
+    for (let i = 0; i + 1 < layout.bands.length; i += 1) {
+      const upper = layout.bands[i] as (typeof layout.bands)[number];
+      const lower = layout.bands[i + 1] as (typeof layout.bands)[number];
+      expect(upper.y + upper.height).toBeLessThanOrEqual(lower.y);
+    }
+  });
+
+  it('places every architecture box in its own column of the system band', () => {
+    const placed = layout.nodes.filter((node) => node.layer === 'system');
+    expect(placed.length).toBe(system.nodes.length);
+    const zones = new Map(layout.zones.map((zone) => [zone.zone, zone]));
+    // Only a zone holding a box is laid out, and the ones that are keep the fixed order.
+    const order = SYSTEM_ZONES.map((zone) => zone.id);
+    expect(layout.zones.map((zone) => zone.zone)).toEqual(
+      order.filter((id) => (system.zones.find((zone) => zone.zone === id)?.count ?? 0) > 0),
+    );
+    for (const box of placed) {
+      const zone = zones.get((box.node as SystemGraph['nodes'][number]).zone);
+      expect(zone).toBeDefined();
+      if (zone === undefined) continue;
+      expect(box.x).toBeGreaterThanOrEqual(zone.x);
+      expect(box.x + box.width).toBeLessThanOrEqual(zone.x + zone.width);
+      expect(box.y).toBeGreaterThanOrEqual(zone.y);
+      expect(box.y + box.height).toBeLessThanOrEqual(zone.y + zone.height);
+    }
+  });
+
+  it('puts no two architecture boxes on top of each other', () => {
+    const boxes = layout.nodes.filter((node) => node.layer === 'system');
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i] as (typeof boxes)[number];
+        const b = boxes[j] as (typeof boxes)[number];
+        const apart =
+          a.x + a.width <= b.x ||
+          b.x + b.width <= a.x ||
+          a.y + a.height <= b.y ||
+          b.y + b.height <= a.y;
+        expect(apart, `${a.node.id} overlaps ${b.node.id}`).toBe(true);
+      }
+    }
+  });
+
+  it('routes every architecture edge with a drawable path', () => {
+    const routed = layout.edges.filter((edge) => edge.from.startsWith('system:'));
+    expect(routed.length).toBe(system.edges.length);
+    for (const edge of routed) {
+      expect(edge.d).toMatch(/^M\s*-?[\d.]/);
+      expect(edge.d).not.toContain('NaN');
+    }
+  });
+});
+
 interface GraphJson {
   readonly spec: string;
   readonly profile: string;
-  readonly counts: { readonly nodes: number; readonly edges: number };
+  readonly counts: {
+    readonly nodes: number;
+    readonly edges: number;
+    readonly systems: number;
+    readonly calls: number;
+  };
   readonly graph: VisualGraph;
+  readonly system: VisualGraph;
+  readonly sequences: readonly unknown[];
   readonly layout: Layout;
 }
 
@@ -124,7 +316,13 @@ describe('aid visualize --json', () => {
     expect(report.spec).toBe(SPEC_PATH);
     expect(report.counts.nodes).toBe(report.graph.nodes.length);
     expect(report.counts.edges).toBe(report.graph.edges.length);
-    expect(report.layout.nodes.length).toBe(report.graph.nodes.length);
+    expect(report.counts.systems).toBe(report.system.nodes.length);
+    expect(report.counts.calls).toBe(report.system.edges.length);
+    // Every declaration is placed exactly once, and the architecture band adds boxes on top
+    // of them rather than replacing any: the two bands are the same spec read two ways.
+    const declared = report.layout.nodes.filter((node) => node.layer !== 'system');
+    expect(declared.length).toBe(report.graph.nodes.length);
+    expect(report.layout.nodes.length).toBe(report.graph.nodes.length + report.system.nodes.length);
     // Serving is the other mode; a `--json` run that reported a port would claim it listened.
     expect('port' in report).toBe(false);
   });

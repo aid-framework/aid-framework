@@ -1,9 +1,134 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import type { Plugin } from 'vite';
 import { defineConfig } from 'vitepress';
 import { currentVersion } from '../scripts/site-version.mjs';
 
 const SITE_ORIGIN = 'https://aid-framework.github.io';
 const BASE = '/aid-framework/';
 const REPOSITORY = 'https://github.com/aid-framework/aid-framework';
+
+/**
+ * A file in the repository, addressed from this config.
+ *
+ * The visualiser page compiles a spec in the browser, so it imports the same validator and
+ * gates the CLI runs rather than a second implementation of them. Those modules live in the
+ * workspace packages, which have no `node_modules` link from `site/` (they are pnpm
+ * workspace packages, not site dependencies), so they are reached by path.
+ */
+const repoFile = (path: string): string => fileURLToPath(new URL(`../../${path}`, import.meta.url));
+
+/**
+ * Workspace packages write their relative imports with the `.js` extension, because they
+ * are compiled as ESM and Node will not guess. The files on disk are `.ts`, and neither
+ * Vite nor esbuild rewrites one to the other, so a package imported from this site by
+ * source would fail to resolve the moment it imports a sibling.
+ *
+ * Rewriting `./x.js` to `./x.ts` when that file exists is safe in both directions: a real
+ * `.js` still wins, and nothing under `node_modules` has a `.ts` sibling to be confused by.
+ */
+function typescriptSourceImports(): Plugin {
+  return {
+    name: 'aid-typescript-source-imports',
+    enforce: 'pre',
+    async resolveId(source, importer, options) {
+      if (importer === undefined || !source.startsWith('.') || !source.endsWith('.js')) {
+        return null;
+      }
+      const rewritten = `${source.slice(0, -'.js'.length)}.ts`;
+      const resolved = await this.resolve(rewritten, importer, { ...options, skipSelf: true });
+      return resolved === null ? null : resolved.id;
+    },
+  };
+}
+
+const WORKSPACE_ALIASES: Record<string, string> = {
+  '@aid-framework/spec': repoFile('packages/spec/src/index.ts'),
+  '@aid-framework/ir': repoFile('packages/ir/src/index.ts'),
+  // `packages/cli/src/visualize/*` draws the picture `aid visualize` serves: `document.ts`
+  // turns spec text into either a graph or the diagnostics that refused it, and `lower.ts`
+  // is the one piece of the compiler the browser can run -- the same gates, with the target
+  // capability declarations passed in rather than reached for on disk.
+  '@aid-visualize/graph': repoFile('packages/cli/src/visualize/graph.ts'),
+  '@aid-visualize/architecture': repoFile('packages/cli/src/visualize/architecture.ts'),
+  '@aid-visualize/layout': repoFile('packages/cli/src/visualize/layout.ts'),
+  '@aid-visualize/page': repoFile('packages/cli/src/visualize/page.ts'),
+  '@aid-visualize/document': repoFile('packages/cli/src/visualize/document.ts'),
+  '@aid-visualize/lower': repoFile('packages/cli/src/lower.ts'),
+};
+
+const CAPABILITIES_MODULE = 'virtual:aid-capabilities';
+
+/**
+ * The target capability declarations, as build-time data.
+ *
+ * `runGates` refuses a spec that asks a target for something it does not publish, and it
+ * learns what each target publishes from the generator manifests -- which the browser cannot
+ * read, because the generators are node modules. So the declarations are read here, once, by
+ * the same parser the support page uses, and handed to the page as a module.
+ *
+ * Reading them at build time rather than committing a generated copy is deliberate: a
+ * committed copy is a second source of truth that goes stale quietly, and the gates it feeds
+ * are the reason the page is worth having. A target that gains a capability changes the page
+ * on the next build, with nothing to regenerate.
+ */
+function aidCapabilities(): Plugin {
+  const resolvedId = `\0${CAPABILITIES_MODULE}`;
+  return {
+    name: 'aid-capabilities',
+    resolveId(source) {
+      return source === CAPABILITIES_MODULE ? resolvedId : null;
+    },
+    async load(id) {
+      if (id !== resolvedId) return null;
+      const { targetCapabilities } = await import('../scripts/support-data.mjs');
+      const declarations = targetCapabilities();
+      return `export default ${JSON.stringify(declarations)};`;
+    },
+  };
+}
+
+const SAMPLES_MODULE = 'virtual:aid-samples';
+
+/**
+ * The example specs the visualiser page can load, read from this repository at build time.
+ *
+ * Copying a spec into the page would make it a second declaration that nothing compiles, so
+ * it would go stale the first time the language moved and then draw a refusal on the page
+ * meant to introduce the framework. Reading the examples keeps the page showing what ships.
+ */
+const SAMPLE_SPECS: { id: string; label: string; file: string }[] = [
+  {
+    id: 'warranty-claims',
+    label: 'Warranty claims: enterprise profile, Kubernetes and container deployments',
+    file: 'examples/scenarios/warranty-claims/app/app.spec.yaml',
+  },
+  {
+    id: 'support-copilot',
+    label: 'Support copilot: standard profile, one agent loop',
+    file: 'examples/support-copilot/app/app.spec.yaml',
+  },
+];
+
+function aidSamples(): Plugin {
+  const resolvedId = `\0${SAMPLES_MODULE}`;
+  return {
+    name: 'aid-samples',
+    resolveId(source) {
+      return source === SAMPLES_MODULE ? resolvedId : null;
+    },
+    load(id) {
+      if (id !== resolvedId) return null;
+      const samples = SAMPLE_SPECS.map((sample) => ({
+        id: sample.id,
+        label: sample.label,
+        specPath: sample.file,
+        yaml: readFileSync(repoFile(sample.file), 'utf8'),
+      }));
+      return `export default ${JSON.stringify(samples)};`;
+    },
+  };
+}
 
 const SITE_NAME = 'AID Framework';
 
@@ -179,6 +304,7 @@ export default defineConfig({
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'Usage', link: '/usage' },
       { text: 'Features', link: '/features' },
+      { text: 'Visualize', link: '/visualize' },
       { text: 'Reference', link: '/reference/spec' },
       { text: 'Walkthroughs', link: '/walkthroughs/support-copilot' },
     ],
@@ -299,6 +425,10 @@ export default defineConfig({
     },
   },
   vite: {
+    resolve: {
+      alias: WORKSPACE_ALIASES,
+    },
+    plugins: [typescriptSourceImports(), aidCapabilities(), aidSamples()],
     server: {
       fs: {
         // The content root sits one level above the VitePress project root.

@@ -30,35 +30,23 @@ import {
   type RegenerationSink,
 } from '@aid-framework/generator-sdk';
 import type { IR } from '@aid-framework/ir';
-import { buildIR, runGates } from '@aid-framework/ir';
-import { checkSpecText, hasErrors, sortDiagnostics } from '@aid-framework/spec';
+import { hasErrors, sortDiagnostics } from '@aid-framework/spec';
 
 import type { CliContext } from './context.js';
 import type { CliDiagnostic } from './diagnostics.js';
 import { CLI_DIAGNOSTIC_CODES, cliError } from './diagnostics.js';
+import type { Failed, LowerOutcome } from './lower.js';
+import { lowerSpecWithCapabilities } from './lower.js';
 import { absolutePath } from './paths.js';
 import type { Target } from './targets.js';
 import { targetCapabilities } from './targets.js';
 
-/** A stage that judged the project and said no. */
-export interface Failed {
-  readonly ok: false;
-  readonly diagnostics: readonly CliDiagnostic[];
-}
+export type { Failed, Lowered, LowerOutcome } from './lower.js';
 
 export interface ReadSpec {
   readonly ok: true;
   readonly text: string;
 }
-
-/** A spec that reduced to an IR the gates accepted. `diagnostics` holds its warnings. */
-export interface Lowered {
-  readonly ok: true;
-  readonly ir: IR;
-  readonly diagnostics: readonly CliDiagnostic[];
-}
-
-export type LowerOutcome = Lowered | Failed;
 
 /** A spec the target accepted, with the plan it produced. */
 export interface Compiled {
@@ -100,30 +88,15 @@ export function readSpec(context: CliContext, specPath: string): ReadSpec | Fail
   }
 }
 
+/**
+ * Lower a spec using the capabilities the installed generators declare.
+ *
+ * The work itself is `lowerSpecWithCapabilities`, which takes those declarations as data so
+ * that it can run where no generator is installed — see `lower.ts`. This wrapper is the only
+ * place that asks the generators, so both callers agree on what a target can do.
+ */
 export function lowerSpec(text: string, file: string): LowerOutcome {
-  const diagnostics: CliDiagnostic[] = [];
-
-  const parsed = checkSpecText(text, { file });
-  diagnostics.push(...parsed.diagnostics);
-  if (!parsed.ok || parsed.value === undefined) {
-    return { ok: false, diagnostics: sortDiagnostics(diagnostics) };
-  }
-
-  const built = buildIR(parsed.value, { file });
-  diagnostics.push(...built.diagnostics);
-  if (hasErrors(built.diagnostics)) {
-    return { ok: false, diagnostics: sortDiagnostics(diagnostics) };
-  }
-
-  // The gates take the *generators'* capability declarations, not the IR package's
-  // placeholder: a gate run against a placeholder passes every spec and is not a gate.
-  const gates = runGates(built.ir, { targetCapabilities: targetCapabilities(), file });
-  diagnostics.push(...gates.diagnostics);
-  if (hasErrors(gates.diagnostics)) {
-    return { ok: false, diagnostics: sortDiagnostics(diagnostics) };
-  }
-
-  return { ok: true, ir: built.ir, diagnostics: sortDiagnostics(diagnostics) };
+  return lowerSpecWithCapabilities(text, file, targetCapabilities());
 }
 
 export function compile(text: string, file: string, target: Target): CompileOutcome {
