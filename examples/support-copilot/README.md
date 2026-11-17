@@ -16,9 +16,10 @@ The committed tree **is** that generator's golden fixture, so `pnpm test` fails 
 | `app/generated/**` | the generator; rewritten on every regeneration |
 | `app/business/**` | seeded once by the generator, then yours; regeneration never touches it |
 | `app/aid.manifest.json` | the generator; the hashes that make drift detectable |
-| `app/main.py`, `app/__init__.py` | hand-written; mounts the generated routers |
+| `app/main.py` | hand-written; mounts the generated routers |
+| `app/__init__.py`, `requirements.txt`, `pyproject.toml`, `tests/test_generated_tree.py` | scaffolded once, then kept; yours to change from then on |
 | `app/evals/*.json` | hand-written; the eval dataset and its recorded baseline |
-| `tests/**`, `pyproject.toml` | hand-written |
+| the rest of `tests/**` | hand-written |
 
 ## Regenerate
 

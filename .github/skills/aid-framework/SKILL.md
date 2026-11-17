@@ -47,16 +47,27 @@ cd my-app
 npx @aid-framework/cli validate
 ```
 
-`init` writes `app/app.spec.yaml`, a README, the template's `customers/` overlay, the CI workflows
-and the generated tree; `--gen` compiles immediately, so a contradiction in the spec is refused
-before you have read anything.
+`init` writes `app/app.spec.yaml`, a README, and the template's own scaffolding (its `customers/`
+overlay, and for `enterprise-approvals` a `app/business/principal.py` stub). With `--gen` it also
+compiles, which adds the generated tree, the dependency manifests and the two CI workflows; `--gen`
+compiles immediately, so a contradiction in the spec is refused before you have read anything.
 
 Without `--template` the starter spec declares a project name and a target and nothing else. It
 validates clean, because there is no construct to refuse, and it serves nothing, because it declares
 no pipeline. Use a template when you want to watch a gate do its job.
 
-Two things `init` does not supply, and both are refusals rather than silent failures when they are
-missing. The entry point is yours, because only the application knows what to mount:
+Three things `aid gen` scaffolds for you and one it does not, and the one it does not is a named
+refusal rather than a silent failure. The dependency manifests are generated: `pyproject.toml` and
+`requirements.txt` for `py-fastapi`, `package.json` and `tsconfig.json` for `ts-vercel`, carrying
+the AID runtime pinned alongside the linters and test tools. They are written once and are yours
+afterwards — `aid gen` will not rewrite a file you have since edited, and `gen --check` does not
+diff them — so adding a dependency is an ordinary edit that the next `gen` leaves alone. The
+generated CI probes for `package.json` (`ts-vercel`) or `pyproject.toml` (`py-fastapi`) and *skips*
+its lint/build/test job when neither exists; with the scaffold in place that job really runs, which
+is why the emitted code is held to ruff and `tsc --noEmit`. The packaging path reads the same file:
+`aid package` stages from `pyproject.toml` and `README.md` at the project root, and refuses with
+`cli/package-stage-missing` when they are absent, so deleting the scaffold is what breaks a
+package build. The entry point is yours, because only the application knows what to mount:
 
 ```python
 # app/main.py - routing names come from app/generated/routes/__init__.py
@@ -68,19 +79,18 @@ app = FastAPI(title="support-copilot")
 app.include_router(answer_message_router)
 ```
 
-and the runtime, installed into whichever interpreter `aid dev` will actually run. `dev` tries
-`python3`, then `python`, then `uv` from `PATH`:
+and the install reads the scaffold rather than a hand-typed list. `dev` tries `python3`, then
+`python`, then `uv` from `PATH`:
 
 ```bash
-pip install aid-runtime-python "fastapi>=0.115,<1" "uvicorn>=0.30,<1"
+pip install -e ".[dev]"      # or: uv sync
 npx @aid-framework/cli dev
 ```
 
-Neither omission is a puzzle when it happens: no entry point is `cli/dev-entry-missing` at
-`app/main.py`, and an interpreter that cannot import both `aid_runtime` and `uvicorn` is
-`cli/dev-uvicorn-missing`. The first hint tells you to run `aid init`, which cannot help — `init`
-writes no entry point — so write the file and re-run. Serving without `dev` works too:
-`uvicorn app.main:app --reload` with that same install.
+The entry point is the one thing still missing, and no entry point is `cli/dev-entry-missing` at
+`app/main.py`. An interpreter that cannot import both `aid_runtime` and `uvicorn` is
+`cli/dev-uvicorn-missing`, which means the install above did not reach the interpreter `dev` picked.
+Serving without `dev` works too: `uvicorn app.main:app --reload` with that same install.
 
 ## 2. Start a new service
 
@@ -104,9 +114,10 @@ Both carry an `overridable` block, because a template is the base half of the ov
 Neither template is a scaffold to strip. Delete a guardrail and the profile gate refuses the build,
 which is the intended feedback.
 
-Both emit routers and no application. There is no `app/main.py` and no `pyproject.toml` in either
-tree: the entry point is yours to write (see [1](#1-try-it-without-cloning)), and `aid dev` names the
-file it cannot find rather than inventing one.
+Both emit routers and no application. Neither tree has an `app/main.py`: the entry point is yours to
+write (see [1](#1-try-it-without-cloning)), and `aid dev` names the file it cannot find rather than
+inventing one. Both do get a dependency manifest, so `pip install -e ".[dev]"` (or `uv sync`) is
+enough to run the tests the generator wrote.
 
 ## 3. Adopt an existing spec
 
@@ -524,9 +535,16 @@ examples, not every tree `init` can emit.
     aid.manifest.json      # hashes of every generated file; what `gen --check` compares
     evals/                 # you: the datasets the spec points at; `init` does not write them
     main.py                # you: a few lines mounting the generated routers
+  pyproject.toml           # the generator once, then you: the dependencies and tool config
+  requirements.txt         # the same, for a plain `pip install -r`
+  tests/                   # the generator once: a smoke test `pytest` can fail on
   customers/               # you: one overlay per customer
   infra/                   # the generator: appears after `aid infra gen`
 ```
+
+With `--target ts-vercel` the first three root entries are `package.json`, `tsconfig.json` and
+`app/`. The scaffold is written once and never diffed, so a dependency you add survives the next
+`aid gen` - only `app/generated/` is regenerated.
 
 If a generated file must change, change the spec and re-run `aid gen`. If the spec cannot express it,
 `aid eject` and own the file.

@@ -64,6 +64,23 @@ function apiKeyEnv(ir: IR, provider: string): string | undefined {
 }
 
 /**
+ * The environment variable a provider entry actually reads, if any.
+ *
+ * Converse authenticates with the execution role's credentials and Vertex with a
+ * short-lived bearer token from the environment or the metadata server, so a key from
+ * the spec would be a credential the app carried but never used. The file's `import os`
+ * and the entry itself both ask this question, so they cannot disagree about whether the
+ * module needs `os`.
+ */
+function providerKeyEnv(ir: IR, provider: string, adapter: string | undefined): string | undefined {
+  const env = apiKeyEnv(ir, provider);
+  if (env === undefined) return undefined;
+  if (adapter === 'BedrockProvider' || adapter === 'VertexProvider') return undefined;
+  if (adapter === 'FakeProvider') return undefined;
+  return env;
+}
+
+/**
  * One provider entry: one argument per line, so a long key never joins a keyword.
  *
  * The entry sits inside `return {` in a function body, so it is indented two levels --
@@ -73,21 +90,13 @@ function apiKeyEnv(ir: IR, provider: string): string | undefined {
  */
 function providerEntry(ir: IR, provider: string): string {
   const adapter = providerAdapter(provider);
-  const env = apiKeyEnv(ir, provider);
+  const env = providerKeyEnv(ir, provider, adapter);
   const arguments_: string[] = [];
   // Every real adapter takes a `name`; only the fake takes nothing.
   if (adapter !== 'FakeProvider') {
     arguments_.push(`${INDENT}${INDENT}${INDENT}name=${pythonString(provider)},`);
   }
-  // Converse authenticates with the execution role's credentials and Vertex with a
-  // short-lived bearer token from the environment or the metadata server, so a key
-  // from the spec would be a credential the app carried but never used.
-  if (
-    env !== undefined &&
-    adapter !== 'BedrockProvider' &&
-    adapter !== 'VertexProvider' &&
-    adapter !== 'FakeProvider'
-  ) {
+  if (env !== undefined) {
     arguments_.push(`${INDENT}${INDENT}${INDENT}api_key=os.environ.get(${pythonString(env)}),`);
   }
   const head = `${INDENT}${INDENT}${pythonString(provider)}: ${adapter}(`;
@@ -118,10 +127,12 @@ export function emitGatewayModels(ir: IR): EmittedFile {
   const providers = providerKeys(ir);
 
   const aliases: string[] = [];
+  let advertises = false;
   for (const model of models) {
     const adapter = providerAdapter(model.provider);
     const advertised =
       adapter === undefined ? [] : modelCapabilities(adapter, model.capabilities ?? []).advertised;
+    if (advertised.length > 0) advertises = true;
     const cost =
       model.costProfile === undefined
         ? 'CostProfile(input_per_1k_usd=0.0, output_per_1k_usd=0.0)'
@@ -155,11 +166,21 @@ export function emitGatewayModels(ir: IR): EmittedFile {
       )},`;
     });
 
-  const runtimeNames = ['Capability', 'CostProfile', 'ModelSpec', 'Provider'];
+  /*
+   * Every name here is conditional on something being emitted that uses it: a document
+   * with no models still generates this module, and an import nothing references is a
+   * `F401` in a tree the scaffolded CI lints.
+   */
+  const runtimeNames = ['ModelSpec', 'Provider'];
+  if (models.length > 0) runtimeNames.push('CostProfile');
+  if (advertises) runtimeNames.push('Capability');
   const adapters = [...new Set(providers.map((provider) => providerAdapter(provider)))].sort();
   for (const adapter of adapters) {
     if (adapter !== undefined) runtimeNames.push(adapter);
   }
+  const readsEnv = providers.some(
+    (provider) => providerKeyEnv(ir, provider, providerAdapter(provider)) !== undefined,
+  );
 
   return generated(
     GATEWAY_MODELS_PATH,
@@ -170,7 +191,7 @@ export function emitGatewayModels(ir: IR): EmittedFile {
           "runtime's per-1k pricing and the capability set narrowed to what the runtime " +
           'can express.',
       ),
-      'import os',
+      ...(readsEnv ? ['import os'] : []),
       importFrom('aid_runtime', runtimeNames),
       dictBlock('ALIASES: dict[str, ModelSpec] =', aliases),
       dictBlock('FALLBACKS: dict[str, tuple[str, ...]] =', fallbacks),
@@ -182,9 +203,18 @@ export function emitGatewayModels(ir: IR): EmittedFile {
             'names none.',
           INDENT,
         ),
-        `${INDENT}return {`,
-        ...providers.map((provider) => providerEntry(ir, provider)),
-        `${INDENT}}`,
+        /*
+         * Empty is `{}` on the `return` statement itself: `ruff format` folds an
+         * exploded but empty dict back down, so emitting the braces on separate lines
+         * would be a file the format check rejects.
+         */
+        ...(providers.length === 0
+          ? [`${INDENT}return {}`]
+          : [
+              `${INDENT}return {`,
+              ...providers.map((provider) => providerEntry(ir, provider)),
+              `${INDENT}}`,
+            ]),
       ].join('\n'),
     ]),
   );

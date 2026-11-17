@@ -27,6 +27,12 @@ next: aid validate, then aid gen
 `app/app.spec.yaml` is the source of truth. `README.md` is a note to your future self about
 which directory the generator owns.
 
+There is a `pyproject.toml` and a `requirements.txt` at the project root, and they are there for
+exactly this step: `aid gen` scaffolds them from the full list of what the generated tree imports,
+so you can install before you have decided anything. They are written once and then yours - add a
+dependency and the generator will not touch the file again. `app/main.py` is not scaffolded,
+because the entry point is the application's, and it is the four lines below.
+
 ## 2. Look at the starter spec
 
 ```yaml
@@ -240,9 +246,15 @@ app.include_router(hello_router)
 
 ```bash
 python -m venv .venv
-.venv/bin/pip install aid-runtime-python "fastapi>=0.115,<1" "uvicorn>=0.30,<1"
+.venv/bin/pip install -e ".[dev]"
 .venv/bin/uvicorn app.main:app --reload
 ```
+
+`pip install -e ".[dev]"` reads `pyproject.toml`; `pip install -r requirements.txt` reaches the
+runtime alone, without the linter and test tools; and if you have
+[uv](https://docs.astral.sh/uv/), `uv sync` installs the same set and `uv run uvicorn app.main:app
+--reload` runs in it. Pick one - the three read the same declaration and are kept in step by the
+generator.
 
 ```bash
 curl -sS -X POST localhost:8000/hello \

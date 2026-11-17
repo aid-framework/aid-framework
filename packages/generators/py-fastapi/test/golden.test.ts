@@ -31,6 +31,7 @@ import {
   fileMap,
   firstDifference,
   formatMismatches,
+  pinnedPlanFiles,
   planFilesByOwner,
   provenanceFor,
   shippedGeneratedTree,
@@ -49,7 +50,7 @@ function generated(): { path: string; content: string; owner: string }[] {
 describe('the committed example', () => {
   it('is the plan, byte for byte', () => {
     const shipped = shippedManagedTree();
-    const mismatches = diffTree(examplePlan().files, shipped);
+    const mismatches = diffTree(pinnedPlanFiles(), shipped);
     expect(mismatches.length, formatMismatches(mismatches, shipped)).toBe(0);
   });
 
@@ -69,10 +70,14 @@ describe('the committed example', () => {
     // `generated/Dockerfile`, the only artifact that depends on where the app runs rather
     // than on what it does. 37 since B1: an `agent:` eval adds `generated/evals/<id>.py`,
     // the offline runner that replays a recording and scores the trajectory.
+    // The scaffold tier is 7 since P9: the CI workflow, the eval workflow two `gate.ci`
+    // evals earn, the manual infra plan, and the four files that let a fresh checkout
+    // install and test itself -- `pyproject.toml`, `requirements.txt`, the package marker
+    // and a smoke test, because a tree with no test fails the CI job that now runs.
     expect(generated().length).toBe(37);
     expect(planFilesByOwner('business').length).toBe(5);
-    expect(planFilesByOwner('scaffold').length).toBe(3);
-    expect(shipped.size).toBe(45);
+    expect(planFilesByOwner('scaffold').length).toBe(7);
+    expect(shipped.size).toBe(49);
   });
 
   it('records every generated file in aid.manifest.json at the hash of its bytes', () => {
@@ -257,7 +262,7 @@ describe('the golden comparison can fail', () => {
       content.replace('DO NOT EDIT', 'DO NOT TOUCH'),
     );
 
-    expect(diffTree(examplePlan().files, mutated)).toEqual([
+    expect(diffTree(pinnedPlanFiles(), mutated)).toEqual([
       { kind: 'content', path: CONTRACTS_INIT },
     ]);
   });
@@ -273,7 +278,7 @@ describe('the golden comparison can fail', () => {
 
   it('catches a deleted generated file', () => {
     const mutated = without(shippedManagedTree(), CONTRACTS_INIT);
-    expect(diffTree(examplePlan().files, mutated)).toEqual([
+    expect(diffTree(pinnedPlanFiles(), mutated)).toEqual([
       { kind: 'missing', path: CONTRACTS_INIT },
     ]);
   });
@@ -281,7 +286,7 @@ describe('the golden comparison can fail', () => {
   it('catches a file under a managed tier that the plan does not own', () => {
     const mutated = new Map(shippedManagedTree());
     mutated.set('app/generated/handwritten.py', 'x = 1\n');
-    expect(diffTree(examplePlan().files, mutated)).toEqual([
+    expect(diffTree(pinnedPlanFiles(), mutated)).toEqual([
       { kind: 'extra', path: 'app/generated/handwritten.py' },
     ]);
   });
@@ -294,9 +299,9 @@ describe('the golden comparison can fail', () => {
     // The example implements the tool, so its bytes already differ from the seed. That
     // must not be a mismatch -- it is the whole point of the business tier.
     expect(shipped.get(tool)).not.toBe(seed?.content);
-    expect(diffTree(examplePlan().files, shipped)).toEqual([]);
+    expect(diffTree(pinnedPlanFiles(), shipped)).toEqual([]);
 
-    expect(diffTree(examplePlan().files, without(shipped, tool))).toEqual([
+    expect(diffTree(pinnedPlanFiles(), without(shipped, tool))).toEqual([
       { kind: 'missing', path: tool },
     ]);
   });

@@ -1008,7 +1008,10 @@ app/
 ├── evals/                  # datasets + baselines (developer-owned)
 ├── aid.manifest.json      # per-file hashes + ownership + generator version
 ├── app.spec.yaml
-└── <stack files>           # pyproject.toml / package.json, config, entrypoint
+└── main.py                # developer-owned: mounts the generated routers
+<project root>
+├── pyproject.toml         # scaffolded ONCE, then developer-owned (package.json for ts-vercel)
+└── requirements.txt       # the same dependencies, for `pip install -r`
 ```
 
 ### 8.4 The seam (how generated code calls business logic)

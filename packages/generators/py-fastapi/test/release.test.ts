@@ -25,6 +25,11 @@ function plannedScaffoldPaths(specText: string): string[] {
     .map((file) => file.path);
 }
 
+/** The workflows alone, which is the part of the scaffold tier this file is about. */
+function plannedWorkflows(specText: string): string[] {
+  return plannedScaffoldPaths(specText).filter((path) => path.startsWith('.github/workflows/'));
+}
+
 function releaseFor(specText: string): string {
   const file = buildForSpecText(specText, 'app.spec.yaml').plan.files.find(
     (candidate) => candidate.path === RELEASE_WORKFLOW_PATH,
@@ -107,8 +112,10 @@ function matrixImages(content: string): string[] {
 describe('a spec that declares no image', () => {
   it('plans no release workflow, because there is nothing to publish', () => {
     expect(examplePlan().files.map((file) => file.path)).not.toContain(RELEASE_WORKFLOW_PATH);
-    // The three workflows that do not depend on the spec's registry stay planned.
-    expect(plannedScaffoldPaths(exampleSpecText())).toHaveLength(3);
+    // The three workflows that do not depend on the spec's registry stay planned. Counted
+    // as workflows rather than as scaffold files: the dependency manifests are scaffold
+    // too, and a spec change that added or dropped one must not move this number.
+    expect(plannedWorkflows(exampleSpecText())).toHaveLength(3);
   });
 });
 
@@ -116,7 +123,7 @@ describe('a spec that declares an image', () => {
   it('plans the release workflow as a scaffold file', () => {
     const paths = plannedScaffoldPaths(specWithImage());
     expect(paths).toContain(RELEASE_WORKFLOW_PATH);
-    expect(paths).toHaveLength(4);
+    expect(plannedWorkflows(specWithImage())).toHaveLength(4);
 
     const release = buildForSpecText(specWithImage(), 'app.spec.yaml').plan.files.find(
       (file) => file.path === RELEASE_WORKFLOW_PATH,

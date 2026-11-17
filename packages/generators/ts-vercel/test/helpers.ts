@@ -252,11 +252,24 @@ export function readTree(root: string): Map<string, string> {
 }
 
 /**
- * The two managed tiers as the example ships them, POSIX-keyed and app-relative, plus the
- * scaffold tier at its project-relative path.
+ * The scaffold files the example keeps exactly as the generator wrote them.
  *
- * Only `generated/`, `business/`, and the scaffold file are included: everything else in
- * the example -- the spec, the Next `app/api` shim, the tests, `package.json` -- is
+ * A scaffold file is created once and then the developer's -- `drift` never compares one --
+ * so pinning these is a fixture choice, not a product rule: it is what makes a change to
+ * the emitted workflow show up as a diff instead of landing silently.
+ *
+ * `package.json` and `tsconfig.json` are deliberately not pinned. The example is a pnpm
+ * workspace member: its manifest links the runtime with `workspace:*` and its tsconfig
+ * extends the repo base, so the developer rewrote both. That is the scaffold tier working
+ * as intended, and {@link pinnedPlanFiles} drops the same two paths from the plan.
+ */
+const PINNED_SCAFFOLD_PATHS = [CI_WORKFLOW_PATH, EVALS_WORKFLOW_PATH] as const;
+
+/**
+ * The managed tiers as the example ships them, POSIX-keyed: `generated/` and `business/`
+ * app-relative, scaffold files at their project-relative path.
+ *
+ * Everything else in the example -- the spec, the Next `app/api` shim, the tests -- is
  * hand-written and belongs to no tier, so including it would report the whole project as
  * stray.
  */
@@ -270,12 +283,43 @@ export function shippedManagedTree(): Map<string, string> {
     }
   }
 
-  for (const path of [CI_WORKFLOW_PATH, EVALS_WORKFLOW_PATH]) {
-    const scaffold = join(EXAMPLE_ROOT, path);
-    if (existsSync(scaffold)) managed.set(path, readFileSync(scaffold, 'utf8'));
+  for (const path of PINNED_SCAFFOLD_PATHS) {
+    const absolute = join(EXAMPLE_ROOT, path);
+    if (existsSync(absolute)) managed.set(path, readFileSync(absolute, 'utf8'));
   }
 
   return managed;
+}
+
+/**
+ * The plan's files, less the scaffold files this package does not pin.
+ *
+ * `diffTree` counts a plan file that the tree lacks as `missing`, so the plan side has to
+ * be filtered the same way the tree is.
+ */
+export function pinnedPlanFiles(): Plan['files'] {
+  const pinned = new Set<string>(PINNED_SCAFFOLD_PATHS);
+  return examplePlan().files.filter((file) => file.owner !== 'scaffold' || pinned.has(file.path));
+}
+
+/**
+ * The example's project root as committed: every managed tier plus every scaffold file the
+ * plan declares that is actually on disk.
+ *
+ * This is what a regeneration run sees. {@link shippedManagedTree} is narrower on purpose
+ * -- it holds only the bytes pinned as fixtures -- so a run seeded from it would report the
+ * two manifests this package does not pin as newly created, when the project has them.
+ */
+export function shippedProjectTree(): Map<string, string> {
+  const tree = shippedManagedTree();
+
+  for (const file of examplePlan().files) {
+    if (file.owner !== 'scaffold' || tree.has(file.path)) continue;
+    const absolute = join(EXAMPLE_ROOT, file.path);
+    if (existsSync(absolute)) tree.set(file.path, readFileSync(absolute, 'utf8'));
+  }
+
+  return tree;
 }
 
 /** The generated tier alone, from the same read as {@link shippedManagedTree}. */

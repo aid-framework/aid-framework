@@ -21,6 +21,9 @@ allowBuilds:
 # Each entry is scoped to the parent that pins it, so an unrelated package is
 # never silently downgraded or held back. Re-checked on every dependabot sweep:
 # remove an entry once the parent itself resolves the patched version.
+minimumReleaseAgeExclude:
+  - deepagents@1.17.0
+
 overrides:
   # markdownlint pins re2js. 2.8.7 fixes a quadratic-time lookbehind DoS; lint
   # input is our own markdown, but the fix is a patch bump with no API change.

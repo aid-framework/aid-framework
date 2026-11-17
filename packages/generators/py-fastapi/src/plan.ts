@@ -21,6 +21,7 @@ import {
   scaffoldCi,
   scaffoldEvals,
   scaffoldInfraPlan,
+  scaffoldPythonProject,
   scaffoldRelease,
 } from '@aid-framework/generator-sdk';
 import type { IR } from '@aid-framework/ir';
@@ -65,8 +66,10 @@ function byPath(left: GeneratedFile, right: GeneratedFile): number {
  * two `__init__.py` files that make the package importable belong to it as well.
  * Nothing above `generated/` or `business/` is planned except the scaffold files §6a
  * allows -- the CI workflow, and the eval workflow when the spec declares a `gate.ci`
- * eval -- so `app/main.py` and the app's packaging are the application's own files
- * rather than generation output.
+ * eval -- so `app/main.py` stays the application's own file. The project's packaging is
+ * scaffolded beside it -- `pyproject.toml`, `requirements.txt`, the `app/__init__.py` that
+ * makes the tree importable, and one test for `pytest` to collect -- because the CI job
+ * cannot install, lint or test a tree that declares no dependencies.
  */
 export function filesFor(ir: IR): GeneratedFile[] {
   const prompts = orderedPrompts(ir);
@@ -103,6 +106,11 @@ export function filesFor(ir: IR): GeneratedFile[] {
     emitBusinessToolsInit(ir),
     ...tools.map((tool) => emitBusinessToolSeed(tool)),
     emitBusinessPromptsInit(),
+    ...scaffoldPythonProject({
+      name: ir.project.name,
+      ...(ir.project.description === undefined ? {} : { description: ir.project.description }),
+      runtimeVersion: GENERATOR_VERSION,
+    }),
     scaffoldCi(ciProfile(), cliRangeFor(GENERATOR_VERSION)),
     ...evalsScaffold(ir),
     ...releaseScaffold(ir),

@@ -13,8 +13,10 @@ import {
   ACTION_PINS,
   ambientCredentialNote,
   cliRangeFor,
+  SCAFFOLD_NODE_MAJOR,
   scaffoldCi,
   scaffoldEvals,
+  scaffoldTypeScriptProject,
   sortByPath,
 } from '@aid-framework/generator-sdk';
 import type { IR } from '@aid-framework/ir';
@@ -76,7 +78,11 @@ function ciProfile() {
     target: TS_VERCEL_MANIFEST.target,
     specPath: `${root}/app.spec.yaml`,
     dependencyManifest: 'package.json',
-    toolchain: [`- uses: ${ACTION_PINS.setupNode}`, '  with:', "    node-version: '22'"],
+    toolchain: [
+      `- uses: ${ACTION_PINS.setupNode}`,
+      '  with:',
+      `    node-version: '${SCAFFOLD_NODE_MAJOR}'`,
+    ],
     install: ['if [ -f package-lock.json ]; then npm ci; else npm install; fi'],
     lint: ['npx --no-install tsc --noEmit -p tsconfig.json'],
     build: 'npm run build --if-present',
@@ -195,6 +201,13 @@ function collect(ir: IR): EmittedFile[] {
   files.push(emitBusinessIndex(ir));
 
   files.push(emitGeneratedIndex(ir));
+  files.push(
+    ...scaffoldTypeScriptProject({
+      name: ir.project.name,
+      ...(ir.project.description === undefined ? {} : { description: ir.project.description }),
+      runtimeVersion: GENERATOR_VERSION,
+    }),
+  );
   files.push(scaffoldCi(ciProfile(), cliRangeFor(GENERATOR_VERSION)));
   files.push(...evalsScaffold(ir));
 

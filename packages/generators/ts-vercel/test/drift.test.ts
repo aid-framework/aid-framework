@@ -31,15 +31,15 @@ import {
   example,
   examplePlan,
   provenanceFor,
-  shippedManagedTree,
   shippedManifest,
+  shippedProjectTree,
 } from './helpers.js';
 
 const SCHEMAS = 'app/generated/schemas.ts';
 const TOOL_PATH = 'app/business/tools/lookup_customer.ts';
 
 function buildSink(): ReturnType<typeof createMemorySink> {
-  return createMemorySink(Object.fromEntries(shippedManagedTree()));
+  return createMemorySink(Object.fromEntries(shippedProjectTree()));
 }
 
 function read(sink: ReturnType<typeof createMemorySink>, path: string): string {
@@ -80,12 +80,12 @@ describe('regenerating over the committed example', () => {
     expect(report.diagnostics).toEqual([]);
     expect(hasDrift(report)).toBe(false);
     expect(formatRegenerationSummary(report)).toBe(
-      '0 created, 0 updated, 32 unchanged, 4 kept, 2 scaffold kept',
+      '0 created, 0 updated, 32 unchanged, 4 kept, 4 scaffold kept',
     );
   });
 
   it('leaves every file of both tiers byte for byte as it was', () => {
-    const before = shippedManagedTree();
+    const before = shippedProjectTree();
     const sink = buildSink();
     regenerate(examplePlan(), {
       sink,
@@ -302,7 +302,7 @@ describe('stale generated files', () => {
 
 describe('business files', () => {
   it('creates a missing developer-owned file from the seed and reports it as created', () => {
-    const tree = shippedManagedTree();
+    const tree = shippedProjectTree();
     tree.delete(TOOL_PATH);
     const sink = createMemorySink(Object.fromEntries(tree));
 

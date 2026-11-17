@@ -723,13 +723,28 @@ function targetsPage() {
       failures.push('cannot parse `IR_VERSION` from packages/ir/src/shapes.ts');
     }
     const irRange = (irRangeMatch?.[1] ?? '').replace(/\$\{IR_VERSION\}/g, irVersion ?? '');
+    // `version` is no longer a string literal: it reads the generator's own package.json at
+    // run time, so the published version cannot drift from the manifest a consumer installs.
+    // Resolve that call from the file it names rather than printing the call, and refuse
+    // anything that is not a version -- an empty cell is the failure this table cannot show,
+    // because the page would still render and simply stop carrying the claim.
+    const versionIsPackageCall = /version:\s*packageVersion\(import\.meta\.url\)/.test(text);
+    const version = versionIsPackageCall
+      ? String(readJson(`packages/generators/${directory}/package.json`)?.version ?? '')
+      : literal('version');
+    if (!/^\d+\.\d+\.\d+/.test(version)) {
+      failures.push(
+        `cannot resolve the manifest version for \`${id}\` from ` +
+          `packages/generators/${directory}/src/manifest.ts`,
+      );
+    }
     if (capabilities_.length === 0) {
       failures.push(`parsed no capabilities for \`${id}\``);
     }
     manifests.push({
       target: id,
       name: literal('name'),
-      version: literal('version'),
+      version,
       irRange,
       capabilities: capabilities_,
       emitsAgainst: pairsIn('emitsAgainst'),

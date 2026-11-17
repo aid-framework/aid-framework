@@ -285,12 +285,16 @@ export function emitGuardrails(ir: IR): EmittedFile {
           ? 'export const ENGINE = new GuardrailEngine(BY_ID);'
           : 'export const ENGINE = new GuardrailEngine(BY_ID, { decisions: DECISIONS });',
       ].join('\n'),
-      [
-        '/** The declarations that run at one stage. */',
-        'function byStage(stage: string): readonly GuardrailDefinition[] {',
-        '  return GUARDRAILS.filter((guardrail) => guardrail.stages.includes(stage));',
-        '}',
-      ].join('\n'),
+      ...(tables(ir).length === 0
+        ? []
+        : [
+            [
+              '/** The declarations that run at one stage. */',
+              'function byStage(stage: string): readonly GuardrailDefinition[] {',
+              '  return GUARDRAILS.filter((guardrail) => guardrail.stages.includes(stage));',
+              '}',
+            ].join('\n'),
+          ]),
       [
         '/** One declaration by id, which is how a `guard` step names one. */',
         'export function guardrailById(id: string): GuardrailDefinition {',

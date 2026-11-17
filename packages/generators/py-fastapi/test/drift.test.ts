@@ -83,7 +83,7 @@ describe('regenerating over the committed example', () => {
     expect(report.diagnostics).toEqual([]);
     expect(hasDrift(report)).toBe(false);
     expect(formatRegenerationSummary(report)).toBe(
-      '0 created, 0 updated, 37 unchanged, 5 kept, 3 scaffold kept',
+      '0 created, 0 updated, 37 unchanged, 5 kept, 7 scaffold kept',
     );
   });
 

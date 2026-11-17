@@ -56,7 +56,9 @@ function typeShapeModule(shape: TypeShape): string {
 
 export function emitSchemas(ir: IR): EmittedFile {
   const header = [
-    ZOD_HEADER,
+    // An app with no declared types emits no schema, so it also must not import `z`: the
+    // scaffolded CI typechecks with `noUnusedLocals`.
+    ir.types.length === 0 ? '' : ZOD_HEADER,
     '',
     // Import order matters for reading, not for correctness; schemas reference each
     // other only through `z.lazy`-free direct references, which the IR keeps acyclic.
@@ -137,7 +139,12 @@ function requestModule(ir: IR): string {
 }
 
 export function emitRequests(ir: IR): EmittedFile {
-  return generated(paths.requests, moduleText(ZOD_HEADER, requestModule(ir)));
+  // One module per pipeline, so a spec with no pipelines emits no `z` use and must not
+  // import it: the scaffolded CI typechecks with `noUnusedLocals`.
+  return generated(
+    paths.requests,
+    moduleText(ir.pipelines.length === 0 ? '' : ZOD_HEADER, requestModule(ir)),
+  );
 }
 
 /** The request type name of one pipeline. */

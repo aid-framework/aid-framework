@@ -31,6 +31,7 @@ import {
   fileMap,
   firstDifference,
   formatMismatches,
+  pinnedPlanFiles,
   planFilesByOwner,
   provenanceFor,
   shippedGeneratedTree,
@@ -51,7 +52,7 @@ function generated(): { path: string; content: string; owner: string }[] {
 describe('the committed example', () => {
   it('is the plan, byte for byte', () => {
     const shipped = shippedManagedTree();
-    const mismatches = diffTree(examplePlan().files, shipped);
+    const mismatches = diffTree(pinnedPlanFiles(), shipped);
     expect(mismatches.length, formatMismatches(mismatches, shipped)).toBe(0);
   });
 
@@ -59,7 +60,11 @@ describe('the committed example', () => {
     const shipped = shippedManagedTree();
     expect(generated().length).toBe(32);
     expect(planFilesByOwner('business').length).toBe(4);
-    expect(planFilesByOwner('scaffold').length).toBe(2);
+    // 4 since P9: the two workflows, plus `package.json` and `tsconfig.json`. The example
+    // ships its own copies of those two -- it is a workspace member, so its manifest links
+    // the runtime with `workspace:*` -- which is why they are scaffold and not asserted
+    // byte for byte.
+    expect(planFilesByOwner('scaffold').length).toBe(4);
     expect(shipped.size).toBe(38);
   });
 
@@ -247,7 +252,7 @@ describe('the golden comparison can fail', () => {
       content.replace('DO NOT EDIT', 'DO NOT TOUCH'),
     );
 
-    expect(diffTree(examplePlan().files, mutated)).toEqual([{ kind: 'content', path: SCHEMAS }]);
+    expect(diffTree(pinnedPlanFiles(), mutated)).toEqual([{ kind: 'content', path: SCHEMAS }]);
   });
 
   it('names the first line that differs', () => {
@@ -261,13 +266,13 @@ describe('the golden comparison can fail', () => {
 
   it('catches a deleted generated file', () => {
     const mutated = without(shippedManagedTree(), SCHEMAS);
-    expect(diffTree(examplePlan().files, mutated)).toEqual([{ kind: 'missing', path: SCHEMAS }]);
+    expect(diffTree(pinnedPlanFiles(), mutated)).toEqual([{ kind: 'missing', path: SCHEMAS }]);
   });
 
   it('catches a file under a managed tier that the plan does not own', () => {
     const mutated = new Map(shippedManagedTree());
     mutated.set('app/generated/handwritten.ts', 'export const x = 1;\n');
-    expect(diffTree(examplePlan().files, mutated)).toEqual([
+    expect(diffTree(pinnedPlanFiles(), mutated)).toEqual([
       { kind: 'extra', path: 'app/generated/handwritten.ts' },
     ]);
   });
@@ -280,9 +285,9 @@ describe('the golden comparison can fail', () => {
     // The example implements the tool, so its bytes already differ from the seed. That
     // must not be a mismatch -- it is the whole point of the business tier.
     expect(shipped.get(tool)).not.toBe(seed?.content);
-    expect(diffTree(examplePlan().files, shipped)).toEqual([]);
+    expect(diffTree(pinnedPlanFiles(), shipped)).toEqual([]);
 
-    expect(diffTree(examplePlan().files, without(shipped, tool))).toEqual([
+    expect(diffTree(pinnedPlanFiles(), without(shipped, tool))).toEqual([
       { kind: 'missing', path: tool },
     ]);
   });
