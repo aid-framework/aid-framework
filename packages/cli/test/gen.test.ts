@@ -172,11 +172,17 @@ describe('aid gen', () => {
     expect(changes.updated).toEqual([]);
     // The scaffold files are the caller's now: reported as kept, never as drift. The eval
     // workflow is present because the example declares `gate.ci` evals; the infra plan is
-    // always present because it detects its own inputs.
+    // always present because it detects its own inputs. The four that are not workflows
+    // are what lets a fresh checkout install and test itself -- without them the CI job
+    // that runs the tests has nothing to run.
     expect(changes.scaffold).toEqual([
       CI_WORKFLOW_PATH,
       EVALS_WORKFLOW_PATH,
       INFRA_PLAN_WORKFLOW_PATH,
+      'app/__init__.py',
+      'pyproject.toml',
+      'requirements.txt',
+      'tests/test_generated_tree.py',
     ]);
     expect(made.walk()).toEqual(before);
   });

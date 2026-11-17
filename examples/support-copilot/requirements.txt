@@ -1,0 +1,9 @@
+# Generated once by `aid gen` for the `py-fastapi` target, then yours.
+# `pip install -r requirements.txt`, or `uv pip install -r requirements.txt`.
+#
+# `pyproject.toml` declares these same runtime dependencies plus a `dev` group, so
+# `pip install -e ".[dev]"` and `uv sync` install everything the scaffolded CI needs.
+# Keep the two files in step if you add a runtime dependency.
+aid-runtime-python>=0.1.199,<0.2
+fastapi>=0.115,<1
+uvicorn>=0.30,<1

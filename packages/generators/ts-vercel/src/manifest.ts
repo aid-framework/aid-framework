@@ -21,6 +21,7 @@
 import {
   type GeneratorManifest,
   type GeneratorManifestInput,
+  packageVersion,
   parseManifest,
   supportsIR,
 } from '@aid-framework/generator-sdk';
@@ -74,7 +75,7 @@ export const TS_VERCEL_MANIFEST_INPUT: GeneratorManifestInput = {
   manifestVersion: 1,
   name: '@aid-framework/generator-ts-vercel',
   target: TS_VERCEL_TARGET,
-  version: '0.1.0',
+  version: packageVersion(import.meta.url),
   irRange: `^${IR_VERSION}`,
   capabilities: [...TS_VERCEL_CAPABILITIES],
   emitsAgainst: {

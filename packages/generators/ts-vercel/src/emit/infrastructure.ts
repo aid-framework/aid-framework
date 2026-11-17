@@ -111,7 +111,10 @@ export function emitGatewayModels(ir: IR): EmittedFile {
   const needsKeyedAnthropic = providers.some((line) => line.includes('keyedAnthropicProvider('));
   const needsKeyedGemini = providers.some((line) => line.includes('keyedGeminiProvider('));
 
-  const imports: ImportName[] = [{ name: 'CostProfile', type: false }];
+  const imports: ImportName[] = [];
+  // `costExpression` gives every model a `CostProfile`, so the import is live exactly when
+  // the spec declares one.
+  if (ir.models.length > 0) imports.push({ name: 'CostProfile', type: false });
   if (adapters.has('AnthropicProvider')) imports.push({ name: 'AnthropicProvider', type: false });
   if (adapters.has('BedrockProvider')) imports.push({ name: 'BedrockProvider', type: false });
   if (adapters.has('GeminiProvider')) imports.push({ name: 'GeminiProvider', type: false });

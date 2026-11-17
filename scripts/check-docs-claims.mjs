@@ -1096,6 +1096,10 @@ if (featuresSource !== undefined) {
  */
 const GENERATED_TREE = 'docs/guide/generated-tree.md';
 const GENERATED_TREE_EXAMPLE = 'examples/support-copilot';
+/** Where the IR format version the manifest records is declared, for the version check below. */
+const IR_VERSION_SOURCE = 'packages/ir/src/shapes.ts';
+/** The generated target tables, which quote a manifest version and IR range per generator. */
+const TARGETS_REFERENCE = 'docs/reference/targets.md';
 const generatedTree = read(GENERATED_TREE);
 
 /**
@@ -1226,6 +1230,102 @@ if (generatedTree !== undefined) {
         lineOf(generatedTree, tutorialRow.text),
         `says the tutorial has ${tutorialRow.managed} manifest entries; its tree block labels ${tutorialTree.managed}`,
       );
+    }
+  }
+
+  // The page quotes three numbers that the generator writes into every file: the version in
+  // the two banner examples, the `generatorVersion` in the manifest, and the `irVersion` the
+  // manifest describes. All three were `0.1.0` while the package had moved on, because a
+  // hand-copied number is a claim with no gate behind it - the same failure the counts above
+  // are checked for, in the one place a reader would believe it hardest.
+  if (CURRENT_VERSION !== undefined) {
+    for (const banner of ['DO NOT EDIT.', 'Edit freely.']) {
+      const quoted = `v${CURRENT_VERSION}. ${banner}`;
+      claimsChecked += 1;
+      if (!generatedTree.includes(quoted)) {
+        fail(
+          GENERATED_TREE,
+          lineOf(generatedTree, `v${banner}`),
+          `does not show the banner the generator writes, \`${quoted}\``,
+        );
+      }
+    }
+
+    for (const match of generatedTree.matchAll(/"generatorVersion":\s*"(?<version>[^"]+)"/g)) {
+      claimsChecked += 1;
+      if (match.groups?.version !== CURRENT_VERSION) {
+        fail(
+          GENERATED_TREE,
+          lineOf(generatedTree, match[0]),
+          `shows \`generatorVersion: ${match.groups?.version ?? ''}\`; the generator writes \`${CURRENT_VERSION}\``,
+        );
+      }
+    }
+
+    const irSource = read(IR_VERSION_SOURCE);
+    const irVersion =
+      irSource === undefined ? undefined : /IR_VERSION\s*=\s*'([^']+)'/.exec(irSource);
+    if (irVersion?.[1] !== undefined) {
+      claimsChecked += 1;
+      if (!generatedTree.includes(`"irVersion": "${irVersion[1]}"`)) {
+        fail(
+          GENERATED_TREE,
+          lineOf(generatedTree, '"irVersion"'),
+          `does not show \`"irVersion": "${irVersion[1]}"\`, the IR format version the generator names`,
+        );
+      }
+    }
+  }
+}
+
+// The target tables quote the same two numbers per generator, and they are the page a reader
+// consults to decide whether a target is compatible. `site/scripts/gen-reference.mjs` writes
+// the page by parsing each generator's manifest input, so `gen:check` only proves the page
+// matches that parser -- it cannot notice the parser resolving nothing, which is what it did
+// once `version` became a call into the package rather than a literal: the page rendered an
+// empty cell, and before that it faithfully repeated a hardcoded `0.1.0` for four releases.
+// This check asks the other question, against the package the numbers are supposed to come
+// from, so a reference that is self-consistent and wrong still fails.
+const targetsReference = read(TARGETS_REFERENCE);
+if (targetsReference !== undefined && CURRENT_VERSION !== undefined) {
+  const irSource = read(IR_VERSION_SOURCE);
+  const irVersion =
+    irSource === undefined ? undefined : /IR_VERSION\s*=\s*'([^']+)'/.exec(irSource);
+
+  const versionRows = [
+    ...targetsReference.matchAll(/^\| Manifest version \| `(?<version>[^`]*)` \|$/gm),
+  ];
+  const targetHeadings = [...targetsReference.matchAll(/^### `(?<name>[^`]+)`$/gm)];
+  if (versionRows.length === 0 || versionRows.length !== targetHeadings.length) {
+    claimsChecked += 1;
+    fail(
+      TARGETS_REFERENCE,
+      lineOf(targetsReference, 'Manifest version'),
+      `has ${versionRows.length} \`Manifest version\` row(s) for ${targetHeadings.length} target(s), so the version check below proves nothing`,
+    );
+  }
+
+  for (const match of versionRows) {
+    claimsChecked += 1;
+    if (match.groups?.version !== CURRENT_VERSION) {
+      fail(
+        TARGETS_REFERENCE,
+        lineOf(targetsReference, match[0]),
+        `says a manifest version is \`${match.groups?.version ?? ''}\`; the generator writes \`${CURRENT_VERSION}\``,
+      );
+    }
+  }
+
+  if (irVersion?.[1] !== undefined) {
+    for (const match of targetsReference.matchAll(/^\| IR range \| `(?<range>[^`]*)` \|$/gm)) {
+      claimsChecked += 1;
+      if (match.groups?.range !== `^${irVersion[1]}`) {
+        fail(
+          TARGETS_REFERENCE,
+          lineOf(targetsReference, match[0]),
+          `says an IR range is \`${match.groups?.range ?? ''}\`; the generator declares \`^${irVersion[1]}\``,
+        );
+      }
     }
   }
 }

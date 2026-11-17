@@ -12,6 +12,7 @@
  * that cannot fail is not a check.
  */
 
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
@@ -41,6 +42,18 @@ import {
 import { example, examplePlan, REPO_ROOT, readTree } from './helpers.js';
 
 const PACKAGE_ROOT = join(REPO_ROOT, 'packages', 'generators', 'ts-vercel');
+
+/**
+ * The version this package publishes.
+ *
+ * Read rather than written out: the manifest reports the version of the package it ships
+ * in, so pinning a literal here would only be a second place to forget to bump -- which is
+ * exactly the bug that left every generated file stamped `0.1.0` while the packages moved
+ * on. The literal is what a re-hardcoded version fails against.
+ */
+const PUBLISHED_VERSION = (
+  JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8')) as { version: string }
+).version;
 
 /** The roots the plan writes into, derived from the manifest under test. */
 function roots() {
@@ -90,7 +103,7 @@ describe('the declaration', () => {
       manifestVersion: GENERATOR_MANIFEST_VERSION,
       name: '@aid-framework/generator-ts-vercel',
       target: 'ts-vercel',
-      version: '0.1.0',
+      version: PUBLISHED_VERSION,
       irRange: TS_VERCEL_MANIFEST.irRange,
       capabilities: [
         'agents',
@@ -258,9 +271,9 @@ describe('the IR contract', () => {
     expect(offenders).toEqual([
       "src/emit/business.ts:341: importStatement('node:fs', [",
       "src/emit/eval-driver.ts:49: \"const modules = process.env.AID_EVAL_MODULES ?? join(root, 'dist', 'app', 'generated');\",",
-      "src/emit/infrastructure.ts:137: '  const apiKey = process.env[apiKeyEnv];',",
-      "src/emit/infrastructure.ts:147: '  const apiKey = process.env[apiKeyEnv];',",
-      "src/emit/infrastructure.ts:157: '  const apiKey = process.env[apiKeyEnv];',",
+      "src/emit/infrastructure.ts:140: '  const apiKey = process.env[apiKeyEnv];',",
+      "src/emit/infrastructure.ts:150: '  const apiKey = process.env[apiKeyEnv];',",
+      "src/emit/infrastructure.ts:160: '  const apiKey = process.env[apiKeyEnv];',",
       "src/emit/retrieval.ts:223: importStatement('node:fs', [{ name: 'existsSync', type: false }]),",
     ]);
 

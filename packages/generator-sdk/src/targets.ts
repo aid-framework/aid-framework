@@ -40,6 +40,7 @@ import {
   parseManifest,
   targetCapabilityDeclarations,
 } from './manifest.js';
+import { packageVersion } from './package-version.js';
 
 export const PY_FASTAPI_TARGET = 'py-fastapi';
 
@@ -52,7 +53,10 @@ export const PY_FASTAPI_MANIFEST_INPUT: GeneratorManifestInput = {
   manifestVersion: 1,
   name: '@aid-framework/generator-py-fastapi',
   target: PY_FASTAPI_TARGET,
-  version: '0.1.0',
+  // This is a copy of the py-fastapi generator's manifest, kept here so the capability
+  // declarations exist without importing a generator. Every package in this repo is
+  // released in lockstep, so the SDK's own version is that manifest's version too.
+  version: packageVersion(import.meta.url),
   irRange: `^${IR_VERSION}`,
   capabilities: [
     'http-trigger',

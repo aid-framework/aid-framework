@@ -193,12 +193,15 @@ describe('the engine seam', () => {
     expect(() => checkEngine(agent)).not.toThrow();
   });
 
+  // The harness is loaded for real here, so the run carries deepagents' own import cost. Under
+  // the full suite's worker pool that has been seen to tip over vitest's 5s default, which says
+  // something about the machine rather than about the pin. The assertion is about the run.
   it('accepts the declared pin and lets the run proceed', async () => {
     const harness = build(gated(), { script: [ScriptedTurn.answer('done')] });
     const result = await harness.runtime.run('solo', PROMPT);
     expect(result.status).toBe('completed');
     expect(result.answer).toBe('done');
-  });
+  }, 30_000);
 
   // Approval condition 2. Python and TypeScript pin different releases of the harness, so
   // the same `engineVersion` cannot satisfy both. This is the accepted cost of per-runtime

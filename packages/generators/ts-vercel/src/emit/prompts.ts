@@ -47,7 +47,10 @@ export function emitPromptModules(ir: IR): EmittedFile[] {
 
 export function emitPromptsIndex(ir: IR): EmittedFile {
   const header = [
-    importStatement('@aid-framework/runtime', [{ name: 'PromptRegistry', type: false }]),
+    importStatement('@aid-framework/runtime', [
+      { name: 'PromptRegistry', type: false },
+      { name: 'PromptTemplate', type: true },
+    ]),
     importStatement('../../business/prompts/index.js', [{ name: 'OVERRIDES', type: false }]),
     ...ir.prompts.map((prompt) =>
       importStatement(`./${toSnakeCase(prompt.id)}.js`, [
@@ -57,7 +60,7 @@ export function emitPromptsIndex(ir: IR): EmittedFile {
   ].join('\n');
   const names = ir.prompts.map((prompt) => promptConstant(prompt.id));
   const body = [
-    `const TEMPLATES = ${arrayLiteral(names, '  ')};`,
+    `const TEMPLATES: readonly PromptTemplate[] = ${arrayLiteral(names, '  ')};`,
     '',
     '/** The generated templates, with any business override layered on top. */',
     'export function buildPrompts(): PromptRegistry {',

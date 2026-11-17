@@ -796,12 +796,15 @@ describe('a spec with no agent and no memory', () => {
  * fixture's own contents rather than anything the generator decides.
  *
  * Every digest here was re-recorded once, when the package scope changed to `@aid-framework/*`:
- * the generator's name is written into each generated file, so that rename moved all 27. Two
+ * the generator's name is written into each generated file, so that rename moved all 27. It then
+ * happened a second time for the same class of reason: the version in that same banner was a
+ * hardcoded `0.1.0` and now reads the published version, so `v0.1.199` moved every file without
+ * any emitter changing. A banner is a mechanical, spec-independent rewrite of line one, which is
+ * exactly the kind of move this pin should not be spent on -- so all 27 were re-recorded and
+ * `observability.py` was again left behind, preserving the single exclusion below. Two
  * digests were then re-baselined individually -- `guardrails.py` by L5c and `gateway/models.py`
  * when a second network provider adapter arrived -- each for a prose-only change and each
- * recorded at the file it moved rather than by widening `DECLARATION_ONLY`. The
- * `observability.py` pin is deliberately left at its pre-rename value, so the exclusion below
- * still has exactly one file that has moved.
+ * recorded at the file it moved rather than by widening `DECLARATION_ONLY`.
  */
 describe('the pre-P7b example', () => {
   const FIXTURE = join(REPO_ROOT, 'packages/generators/py-fastapi/test/fixtures/p7a');
@@ -818,6 +821,12 @@ describe('the pre-P7b example', () => {
    * already named `embeddings` and `rerank` for an example that uses neither. Widening the
    * declaration therefore rewrites it for every spec, including this one, and no emitter
    * change can avoid that. Every other file in the tier is held to the old bytes.
+   *
+   * That pin is still at its pre-rename value, and the version banner has since moved every
+   * file for a reason unrelated to any emitter: this one is deliberately not re-recorded, so
+   * the exclusion keeps exactly one mover to point at instead of becoming an empty list that
+   * asserts nothing. Its `description` half of the claim is checked against the current bytes
+   * by the test below, not by the digest.
    *
    * The recorded digest of `guardrails.py` was re-baselined once, by L5c, and this is the
    * only file that layer touched here: a `guard` step runs one named declaration, so that

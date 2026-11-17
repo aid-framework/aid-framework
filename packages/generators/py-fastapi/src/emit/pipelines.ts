@@ -1619,8 +1619,9 @@ export function emitRequests(ir: IR): EmittedFile {
   const blocks: string[] = [
     HEADER,
     pythonDoc('The request bodies the app accepts, derived from what each pipeline reads.'),
-    importFrom('pydantic', ['BaseModel']),
   ];
+  /* No request-taking pipeline means no class, and an import nothing references is a `F401`. */
+  if (classes.length > 0) blocks.push(importFrom('pydantic', ['BaseModel']));
   if (names.size > 0) blocks.push(importFrom('.schemas', [...names]));
   return generated(REQUESTS_PATH, assemble([...blocks, ...classes]));
 }

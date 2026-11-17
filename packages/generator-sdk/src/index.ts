@@ -109,8 +109,10 @@ export {
   ownerForPath,
   REJECTION_SUFFIX,
   rejectionPath,
+  SCAFFOLD_FILES,
   SCAFFOLD_PREFIXES,
 } from './ownership.js';
+export { packageVersion } from './package-version.js';
 export type {
   GeneratedFile,
   Generator,
@@ -119,6 +121,12 @@ export type {
   PlanValidationOptions,
 } from './plan.js';
 export { isRecord, validatePlan } from './plan.js';
+export type { PythonProjectProfile, TypeScriptProjectProfile } from './project-files.js';
+export {
+  SCAFFOLD_NODE_MAJOR,
+  scaffoldPythonProject,
+  scaffoldTypeScriptProject,
+} from './project-files.js';
 export type {
   CiProfile,
   EvalProfile,

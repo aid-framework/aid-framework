@@ -9,8 +9,9 @@
  * generated (or the reverse).
  *
  * `scaffold` is the third tier: generator-authored content that lives *outside* the
- * managed roots, which today means the repository's own CI workflows. It is written
- * once and then belongs to the developer, so it is never recorded in the manifest --
+ * managed roots, which means the repository's own CI workflows and the dependency
+ * manifest a project needs before it can be installed. It is written once and then
+ * belongs to the developer, so it is never recorded in the manifest --
  * there is no hash to compare against, and claiming one would make every edit a drift
  * conflict. The allowlist exists so that "outside the managed roots" does not become
  * "anywhere": a generator may only reach paths it is explicitly permitted to own.
@@ -23,6 +24,24 @@ export type FileOwner = 'generated' | 'business' | 'scaffold';
  * stays a string comparison and a generator cannot smuggle a nested escape past it.
  */
 export const SCAFFOLD_PREFIXES = ['.github/workflows/'] as const;
+
+/**
+ * The individual files a generator may scaffold, matched whole.
+ *
+ * A prefix cannot express these: `SCAFFOLD_PREFIXES` requires the path to be strictly
+ * longer than what it matches, so `pyproject.toml` has no prefix that names only itself.
+ * Listing them exactly keeps the grant as narrow as a prefix would be -- a generator may
+ * write `package.json`, not any JSON file, and `tests/test_generated_tree.py`, not
+ * whatever it likes under `tests/`.
+ */
+export const SCAFFOLD_FILES = [
+  'package.json',
+  'pyproject.toml',
+  'requirements.txt',
+  'tsconfig.json',
+  'app/__init__.py',
+  'tests/test_generated_tree.py',
+] as const;
 
 export const DEFAULT_GENERATED_DIR = 'generated';
 export const DEFAULT_BUSINESS_DIR = 'business';
@@ -96,12 +115,14 @@ export function ownerForPath(
 }
 
 /**
- * True for a path inside the scaffold allowlist. Requires a file name after the
- * prefix: `.github/workflows/` itself is the directory, not a workflow.
+ * True for a path inside the scaffold allowlist: a named file, or a file below a
+ * permitted prefix. A prefix requires a file name after it -- `.github/workflows/` itself
+ * is the directory, not a workflow.
  */
 export function isScaffoldPath(path: string): boolean {
   const normalized = normalizeRelativePath(path);
   if (normalized === undefined) return false;
+  if ((SCAFFOLD_FILES as readonly string[]).includes(normalized)) return true;
   return SCAFFOLD_PREFIXES.some(
     (prefix) => normalized.startsWith(prefix) && normalized.length > prefix.length,
   );

@@ -14,6 +14,7 @@
 
 import { imageRegistry, type RegistryAuthKind } from '@aid-framework/spec';
 import type { GeneratedFile } from './plan.js';
+import { SCAFFOLD_NODE_MAJOR } from './project-files.js';
 
 /** The repository CI: the spec gates, then lint/build/test for the app tier. */
 export const CI_WORKFLOW_PATH = '.github/workflows/ci.yml';
@@ -189,7 +190,7 @@ export function scaffoldCi(profile: CiProfile, cliRange: string): GeneratedFile 
     `      - uses: ${ACTION_PINS.checkout}`,
     `      - uses: ${ACTION_PINS.setupNode}`,
     '        with:',
-    "          node-version: '22'",
+    `          node-version: '${SCAFFOLD_NODE_MAJOR}'`,
     '      - name: Install the AID CLI',
     `        run: npm install --global @aid-framework/cli@${cliRange}`,
     '      - name: Validate the spec',
@@ -258,7 +259,7 @@ export function scaffoldCi(profile: CiProfile, cliRange: string): GeneratedFile 
     `      - uses: ${ACTION_PINS.checkout}`,
     `      - uses: ${ACTION_PINS.setupNode}`,
     '        with:',
-    "          node-version: '22'",
+    `          node-version: '${SCAFFOLD_NODE_MAJOR}'`,
     '      - name: Install the AID CLI',
     `        run: npm install --global @aid-framework/cli@${cliRange}`,
     '      - name: The committed infra tree matches the spec',
@@ -376,7 +377,7 @@ export function scaffoldEvals(profile: EvalProfile, cliRange: string): Generated
     `      - uses: ${ACTION_PINS.checkout}`,
     `      - uses: ${ACTION_PINS.setupNode}`,
     '        with:',
-    "          node-version: '22'",
+    `          node-version: '${SCAFFOLD_NODE_MAJOR}'`,
     '      - name: Install the AID CLI',
     `        run: npm install --global @aid-framework/cli@${cliRange}`,
     ...lines(profile.toolchain, '      '),
@@ -536,7 +537,7 @@ export function scaffoldRelease(profile: ReleaseProfile, cliRange: string): Gene
     `      - uses: ${ACTION_PINS.checkout}`,
     `      - uses: ${ACTION_PINS.setupNode}`,
     '        with:',
-    "          node-version: '22'",
+    `          node-version: '${SCAFFOLD_NODE_MAJOR}'`,
     '      - name: Install the AID CLI',
     `        run: npm install --global @aid-framework/cli@${cliRange}`,
     '      - name: Validate the spec',
@@ -856,7 +857,7 @@ export function scaffoldInfraPlan(profile: InfraPlanProfile, cliRange: string): 
     `      - uses: ${ACTION_PINS.setupNode}`,
     "        if: steps.creds.outputs.ready == 'true'",
     '        with:',
-    "          node-version: '22'",
+    `          node-version: '${SCAFFOLD_NODE_MAJOR}'`,
     '      - name: Install the AID CLI',
     "        if: steps.creds.outputs.ready == 'true'",
     `        run: npm install --global @aid-framework/cli@${cliRange}`,

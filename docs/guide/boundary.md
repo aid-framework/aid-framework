@@ -153,12 +153,11 @@ not exercised by it, and the [support matrix](../reference/support.md) is where 
 is written down.
 
 It also does not boot a **template** tree. `aid init --template enterprise-approvals --gen` emits
-routers and no application: no `app/main.py`, no `pyproject.toml`. That is deliberate — the Python
-target stops at routers and leaves the entrypoint to the application that mounts them, which is
-why `aid dev` refuses when `app/main.py` is absent
-(`packages/cli/src/commands/dev.ts`). A job that booted a template would have to supply that
-entrypoint itself, and would then be testing its own bootstrap rather than anything AID generated.
-There is no such job, and this page does not claim one.
+routers and a dependency manifest, but no `app/main.py`. That is deliberate — the Python target stops
+at routers and leaves the entrypoint to the application that mounts them, which is why `aid dev`
+refuses when `app/main.py` is absent (`packages/cli/src/commands/dev.ts`). A job that booted a
+template would have to supply that entrypoint itself, and would then be testing its own bootstrap
+rather than anything AID generated. There is no such job, and this page does not claim one.
 
 ## What this page is not
 
