@@ -75,9 +75,18 @@ function pythonProjectName(name: string): string {
   const normalized = name
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return normalized === '' ? 'aid-app' : normalized;
+    .replace(/[^a-z0-9]+/g, '-');
+  // At most one hyphen can be leading or trailing, because the replace above collapses
+  // runs. Slicing says that plainly; an anchored `^-+|-+$` is polynomial on a long run of
+  // dashes, and a scanner has no way to know the invariant that keeps it short here.
+  let trimmed = normalized;
+  if (trimmed.startsWith('-')) {
+    trimmed = trimmed.slice(1);
+  }
+  if (trimmed.endsWith('-')) {
+    trimmed = trimmed.slice(0, -1);
+  }
+  return trimmed === '' ? 'aid-app' : trimmed;
 }
 
 /** The same normalization, for an npm package name. */
