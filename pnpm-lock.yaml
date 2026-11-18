@@ -324,8 +324,8 @@ importers:
         specifier: 1.4.1
         version: 1.4.1(@opentelemetry/api@1.10.0)
       '@langchain/langgraph':
-        specifier: 1.7.2
-        version: 1.7.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)
+        specifier: 1.7.3
+        version: 1.7.3(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)
       '@langchain/langgraph-checkpoint':
         specifier: 1.2.2
         version: 1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
@@ -334,13 +334,13 @@ importers:
         version: 1.15.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
       deepagents:
         specifier: 1.17.0
-        version: 1.17.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@langchain/langgraph-checkpoint@1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph-sdk@1.15.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph@1.7.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7))(langchain@1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0))(langsmith@0.11.8(@opentelemetry/api@1.10.0))
+        version: 1.17.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@langchain/langgraph-checkpoint@1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph-sdk@1.15.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph@1.7.3(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7))(langchain@1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0))(langsmith@0.12.0(@opentelemetry/api@1.10.0))
       langchain:
         specifier: 1.6.6
         version: 1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0)
       langsmith:
-        specifier: 0.11.8
-        version: 0.11.8(@opentelemetry/api@1.10.0)
+        specifier: 0.12.0
+        version: 0.12.0(@opentelemetry/api@1.10.0)
 
   site:
     devDependencies:
@@ -764,8 +764,8 @@ packages:
       react-dom:
         optional: true
 
-  '@langchain/langgraph@1.7.2':
-    resolution: {integrity: sha512-xkyVqLT3NDWXmm7uh15nWIBXfn5BkTX8V7sKkP4fGG0AJSttzzIt/izJ03xKEmVcNOgeSyWhPKrsoQg8+MB3MQ==}
+  '@langchain/langgraph@1.7.3':
+    resolution: {integrity: sha512-QKZs9OEy6T2BWQAZUd0EsSLV6/ENOUehsr13b52qdWGaYhutWt4QEyuSrlu3QDPg3uSQQ6JyKKZG0ZT3KOwpIw==}
     engines: {node: '>=18'}
     peerDependencies:
       '@langchain/core': ^1.3.4
@@ -1652,8 +1652,8 @@ packages:
     peerDependencies:
       '@langchain/core': ^1.4.1
 
-  langsmith@0.11.8:
-    resolution: {integrity: sha512-rAskvQCNjwGqwjA9fOJGugZ1vLB66yaivxWGSTA9ldtF9+P00gvXH1DEr0kW798cyUyBlZolFO0kPb//zDNc7w==}
+  langsmith@0.12.0:
+    resolution: {integrity: sha512-fbV0Dya+HOTyCEfH0+jbBuSXBgIj6sfm3VYxD9UmJ5H2W303UEEizxjEWu880P5qS7zRnnsYO5MVLE6pLPQKKQ==}
     peerDependencies:
       '@opentelemetry/api': '*'
       '@opentelemetry/exporter-trace-otlp-proto': '*'
@@ -2660,7 +2660,7 @@ snapshots:
       '@cfworker/json-schema': 4.1.6
       '@standard-schema/spec': 1.1.0
       js-tiktoken: 1.0.21
-      langsmith: 0.11.8(@opentelemetry/api@1.10.0)
+      langsmith: 0.12.0(@opentelemetry/api@1.10.0)
       mustache: 4.2.0
       p-queue: 6.6.2
       zod: 4.6.7
@@ -2683,7 +2683,7 @@ snapshots:
       p-queue: 9.3.5
       p-retry: 7.1.1
 
-  '@langchain/langgraph@1.7.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)':
+  '@langchain/langgraph@1.7.3(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)':
     dependencies:
       '@langchain/core': 1.4.1(@opentelemetry/api@1.10.0)
       '@langchain/langgraph-checkpoint': 1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
@@ -3205,15 +3205,15 @@ snapshots:
     dependencies:
       character-entities: 2.0.2
 
-  deepagents@1.17.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@langchain/langgraph-checkpoint@1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph-sdk@1.15.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph@1.7.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7))(langchain@1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0))(langsmith@0.11.8(@opentelemetry/api@1.10.0)):
+  deepagents@1.17.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@langchain/langgraph-checkpoint@1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph-sdk@1.15.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph@1.7.3(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7))(langchain@1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0))(langsmith@0.12.0(@opentelemetry/api@1.10.0)):
     dependencies:
       '@langchain/core': 1.4.1(@opentelemetry/api@1.10.0)
-      '@langchain/langgraph': 1.7.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)
+      '@langchain/langgraph': 1.7.3(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)
       '@langchain/langgraph-checkpoint': 1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
       '@langchain/langgraph-sdk': 1.15.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
       fast-glob: 3.3.3
       langchain: 1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0)
-      langsmith: 0.11.8(@opentelemetry/api@1.10.0)
+      langsmith: 0.12.0(@opentelemetry/api@1.10.0)
       micromatch: 4.0.8
       yaml: 2.9.1
       zod: 4.6.7
@@ -3408,9 +3408,9 @@ snapshots:
   langchain@1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0):
     dependencies:
       '@langchain/core': 1.4.1(@opentelemetry/api@1.10.0)
-      '@langchain/langgraph': 1.7.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)
+      '@langchain/langgraph': 1.7.3(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)
       '@langchain/langgraph-checkpoint': 1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
-      langsmith: 0.11.8(@opentelemetry/api@1.10.0)
+      langsmith: 0.12.0(@opentelemetry/api@1.10.0)
       zod: 4.6.7
     transitivePeerDependencies:
       - '@opentelemetry/api'
@@ -3421,7 +3421,7 @@ snapshots:
       - react-dom
       - ws
 
-  langsmith@0.11.8(@opentelemetry/api@1.10.0):
+  langsmith@0.12.0(@opentelemetry/api@1.10.0):
     dependencies:
       p-queue: 6.6.2
     optionalDependencies:
