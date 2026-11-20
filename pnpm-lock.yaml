@@ -172,8 +172,8 @@ importers:
   .:
     devDependencies:
       '@biomejs/biome':
-        specifier: ^2.6.6
-        version: 2.6.6
+        specifier: ^2.6.7
+        version: 2.6.7
       '@types/node':
         specifier: ^26.6.6
         version: 26.6.6
@@ -187,8 +187,8 @@ importers:
         specifier: ^2.2.2
         version: 2.2.2
       markdownlint-cli2:
-        specifier: ^0.24.0
-        version: 0.24.0
+        specifier: ^0.24.1
+        version: 0.24.1
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -324,23 +324,23 @@ importers:
         specifier: 1.4.1
         version: 1.4.1(@opentelemetry/api@1.10.0)
       '@langchain/langgraph':
-        specifier: 1.7.2
-        version: 1.7.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)
+        specifier: 1.7.4
+        version: 1.7.4(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)
       '@langchain/langgraph-checkpoint':
         specifier: 1.2.2
         version: 1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
       '@langchain/langgraph-sdk':
-        specifier: 1.15.0
-        version: 1.15.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
+        specifier: 1.16.0
+        version: 1.16.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
       deepagents:
         specifier: 1.17.0
-        version: 1.17.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@langchain/langgraph-checkpoint@1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph-sdk@1.15.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph@1.7.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7))(langchain@1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0))(langsmith@0.11.8(@opentelemetry/api@1.10.0))
+        version: 1.17.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@langchain/langgraph-checkpoint@1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph-sdk@1.16.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph@1.7.4(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7))(langchain@1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0))(langsmith@0.12.0(@opentelemetry/api@1.10.0))
       langchain:
         specifier: 1.6.6
         version: 1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0)
       langsmith:
-        specifier: 0.11.8
-        version: 0.11.8(@opentelemetry/api@1.10.0)
+        specifier: 0.12.0
+        version: 0.12.0(@opentelemetry/api@1.10.0)
 
   site:
     devDependencies:
@@ -475,71 +475,71 @@ packages:
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
 
-  '@biomejs/biome@2.6.6':
-    resolution: {integrity: sha512-NCgVJRyrU1+hsW1ILNaRqNAb9fRL4n49bwyef+wjVJQ488/bXbp0BfnNqTTExkiNQT3ugkgYKR1vK8NxsjlNSQ==}
+  '@biomejs/biome@2.6.7':
+    resolution: {integrity: sha512-2bT1FE6FvZZgPLFw4BjcDyRwG8Ry9zYla4X+Lw8oj2SxvqiXHiYkkEpjcrsWQrik6iYHygAa/D67YxLbVz9P1Q==}
     engines: {node: '>=14.21.3'}
     hasBin: true
 
-  '@biomejs/cli-android-arm64@2.6.6':
-    resolution: {integrity: sha512-bicnqNNxEX7pjkDQaptYvPRIWDfgXJLl/Ok7iZjC+F1AhfReor3FSS7SgPYnOvUy/jf++5U/KYN4T8OKH5rrNA==}
+  '@biomejs/cli-android-arm64@2.6.7':
+    resolution: {integrity: sha512-f4fyRTl+rW6QZp+iHdZrKAKptG/xmIDijTnxWhpC1Hnzr8yvjaBm/aJ98JiMv5mMx7jL1MOu4+zwmQUzfcoKBg==}
     engines: {node: '>=14.21.3'}
     cpu: [arm64]
     os: [android]
 
-  '@biomejs/cli-android-x64@2.6.6':
-    resolution: {integrity: sha512-N443kDSElF4kDMKjarsL+ymj/ewLA5R9VAdawA7fJ7pwgN3JVDZp0K+xhKBglH8EwsKi2+K8xC6WxXSkgziFfw==}
+  '@biomejs/cli-android-x64@2.6.7':
+    resolution: {integrity: sha512-eUdeN+mh2bwen+By1feKzpFkFGAfLG3Pxi6tbwpzMvePBwFGMd4mnE6gaxDRMiWJ1eMuc+Xhtg3ErbLLbtL5wQ==}
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [android]
 
-  '@biomejs/cli-darwin-arm64@2.6.6':
-    resolution: {integrity: sha512-/vSAqWx3by3p8w5ew+HVJDgguuaTK3U6Fb5gk/oDUH21iWOopm3gOlhT6tZfy5mTaM5R4CVc3uFWkxBtEDrKyw==}
+  '@biomejs/cli-darwin-arm64@2.6.7':
+    resolution: {integrity: sha512-GewLcsnCsVblgnWYw5QRz5ydy9xphCtlFP37TpLKarezqwZMrH2qxrYblhY6DPOir4gnKyaqDnS/xZWIGVjaKw==}
     engines: {node: '>=14.21.3'}
     cpu: [arm64]
     os: [darwin]
 
-  '@biomejs/cli-darwin-x64@2.6.6':
-    resolution: {integrity: sha512-lLdOAJKbrAoDs+3GvTyVmMW345D9IhrIE3GgoL2eeHwO1boN4VhrSlALtFYsP0p+Jy4udUp4bTguij0qjKrH8w==}
+  '@biomejs/cli-darwin-x64@2.6.7':
+    resolution: {integrity: sha512-AMPl+Q+bHjRcNUBn8gwBl+dJAnKRUWGZ7ZiJo2U8tQtdpqJ32OqvIg4cwTH+xv0jrcNVkUSE69nj57zsHZ1WBA==}
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [darwin]
 
-  '@biomejs/cli-linux-arm64-musl@2.6.6':
-    resolution: {integrity: sha512-rw2Vsoi/WZGDyRjMXx9KZH9zsHe79LIzkdWHkLqsIkeKZm6qiGxtiIApxn7cmJSoEPaSvHaH5pRj1FhTcyL/XA==}
+  '@biomejs/cli-linux-arm64-musl@2.6.7':
+    resolution: {integrity: sha512-BIA7qVO1O15D2wVKxLTcvEWszgOqJVZRUhlksg1KQ9N0VtYCbvknV1vyjFiSrzuBT57+z59gbzhYQCinw9lRSQ==}
     engines: {node: '>=14.21.3'}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@biomejs/cli-linux-arm64@2.6.6':
-    resolution: {integrity: sha512-UzJdUCg9dbEGpZOuZRyehEPrnwKjx9z4Um7sWLG5x6txu7UjeWdJZuBXVGlyAdD39w2Hx0nZeK1jKC4NFUTCNQ==}
+  '@biomejs/cli-linux-arm64@2.6.7':
+    resolution: {integrity: sha512-Qa2edxQClKn17y1ASWkOOuT96K2si1nTLiPbXMOMilNJ79eNsa1as1kaSbgxOXy1kRUENw76sp4pAddneq3l8Q==}
     engines: {node: '>=14.21.3'}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@biomejs/cli-linux-x64-musl@2.6.6':
-    resolution: {integrity: sha512-DiKejs+GnFbOVQsBnukUpiB+T13tqUDFGwwjsTq51vatAsaflzFzVD0BOgjVUGRrqKgE0K0Xf+wNtkcmdN2chw==}
+  '@biomejs/cli-linux-x64-musl@2.6.7':
+    resolution: {integrity: sha512-+AOQyCsPR4nH5L4Hjzp8T0iaHm4UxY3unjL/KUJKc/8ziLnbkbmL3adtWmQW5ERB1zi6LRA1fsjaSuf/xGnLaQ==}
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@biomejs/cli-linux-x64@2.6.6':
-    resolution: {integrity: sha512-l8/aPXc1cz8VpUyd4hb5Pm5zx+X3voQBks4aLYbp5pC8KSchuHyvqDfY5xax39qCHomI/2xn6NKEot+zebG38g==}
+  '@biomejs/cli-linux-x64@2.6.7':
+    resolution: {integrity: sha512-VpHQ33CPNYrlIn0vyDdRS1KUlS3AiM17FiyEE2gwU000NwzyY4MgjzVHEv2KrmMb5D9Ksm3gFkwg+IOx/ULJNQ==}
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@biomejs/cli-win32-arm64@2.6.6':
-    resolution: {integrity: sha512-DjVXwQAQeHrO1JEZAEus54k40Tnh4glyU3VFLcDBKwoz0xnxCEnqw6TCMXoujcQMQynWd3AY8bLrbR1o0XNqow==}
+  '@biomejs/cli-win32-arm64@2.6.7':
+    resolution: {integrity: sha512-2nLivZfgcGMIXP/bI8w1FZP5JE2MetP+XZInyMQ7SvJBKlDoGrm/nRjN7uUi9dOaaSlpbRWkHSfb7PqcQR3nXg==}
     engines: {node: '>=14.21.3'}
     cpu: [arm64]
     os: [win32]
 
-  '@biomejs/cli-win32-x64@2.6.6':
-    resolution: {integrity: sha512-B7KMG26A4I9lAuxwBGMmiVcjMGAeJRoz+pzFt9brRvOAsIrgOu8ptJld5rUWui6tM1uiJwxeJhhDPuAiZtxXdw==}
+  '@biomejs/cli-win32-x64@2.6.7':
+    resolution: {integrity: sha512-uYfH+n+IAtVz3lh7m6JxdjxfJ3WCvAJDE3spHIUbU955V42oKymlhiQiu92fAhXZb7KOjvRcrfImySQbc1MFFg==}
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [win32]
@@ -752,8 +752,8 @@ packages:
     peerDependencies:
       '@langchain/core': ^1.1.48
 
-  '@langchain/langgraph-sdk@1.15.0':
-    resolution: {integrity: sha512-5s57608G4bjQCxyCXuHXU18K/8Vyl6JHBxa3MPpSD6z/LHvWazyShXKoYiNTSXhg8OrMBobPqxBJm14CWK9APw==}
+  '@langchain/langgraph-sdk@1.16.0':
+    resolution: {integrity: sha512-E1NZJDHmHxKBqbxGGahNSlvpI8oUo7UKs+Ce4XhGz2tvXRAyQfZeQppVzFkeQsYpueXvFiyMYuyUXz9X98/4+A==}
     peerDependencies:
       '@langchain/core': ^1.3.2
       react: ^18 || ^19
@@ -764,8 +764,8 @@ packages:
       react-dom:
         optional: true
 
-  '@langchain/langgraph@1.7.2':
-    resolution: {integrity: sha512-xkyVqLT3NDWXmm7uh15nWIBXfn5BkTX8V7sKkP4fGG0AJSttzzIt/izJ03xKEmVcNOgeSyWhPKrsoQg8+MB3MQ==}
+  '@langchain/langgraph@1.7.4':
+    resolution: {integrity: sha512-4OOmXzMy7cCmFUpFFyMnlM0wunh3xBq5RETASXsUKM3yve4bJQxVZfR1l9NmIeDmbHYfPZIXQGtcE3I1jTHP6A==}
     engines: {node: '>=18'}
     peerDependencies:
       '@langchain/core': ^1.3.4
@@ -1383,9 +1383,6 @@ packages:
   anynum@1.0.1:
     resolution: {integrity: sha512-N6//FLET/tXYNM/F6ABca1oH6fWB+KlTt909Le28WMDBk8oaT4vY17DCrwg2MvmuqUKt3Ni4N5dGJ/EoBgcO6A==}
 
-  argparse@2.0.1:
-    resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
-
   argparse@3.0.4:
     resolution: {integrity: sha512-fwWK3Zq22l4XJJjx5mcBHGikIk+hJqO+32dPm0Jur7+rtG5x1scOjSfdT9ZKeWHPpsya/l0HHK4tDImBkTrtvA==}
 
@@ -1628,8 +1625,8 @@ packages:
   js-tokens@10.0.0:
     resolution: {integrity: sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q==}
 
-  js-yaml@5.4.3:
-    resolution: {integrity: sha512-yzzNtgczwgoVHNigCyKTXcQJU4Y8t/ikU4UxXW0BvrLfHTGWZhsNcOT2s/a7vn81/4KqVnNmHjaUEPlvWnNwVw==}
+  js-yaml@5.5.0:
+    resolution: {integrity: sha512-paNr4LFIFPjeeSmwNYdrb8FafLLG/Cr2Af3GjbsHJ5CxIjH4r0c2emlmRdAtpPAieP1gRVzk6buBbVP5gBMGAg==}
     hasBin: true
 
   json-schema-traverse@1.0.0:
@@ -1652,8 +1649,8 @@ packages:
     peerDependencies:
       '@langchain/core': ^1.4.1
 
-  langsmith@0.11.8:
-    resolution: {integrity: sha512-rAskvQCNjwGqwjA9fOJGugZ1vLB66yaivxWGSTA9ldtF9+P00gvXH1DEr0kW798cyUyBlZolFO0kPb//zDNc7w==}
+  langsmith@0.12.0:
+    resolution: {integrity: sha512-fbV0Dya+HOTyCEfH0+jbBuSXBgIj6sfm3VYxD9UmJ5H2W303UEEizxjEWu880P5qS7zRnnsYO5MVLE6pLPQKKQ==}
     peerDependencies:
       '@opentelemetry/api': '*'
       '@opentelemetry/exporter-trace-otlp-proto': '*'
@@ -1829,13 +1826,13 @@ packages:
     peerDependencies:
       markdownlint-cli2: '>=0.0.4'
 
-  markdownlint-cli2@0.24.0:
-    resolution: {integrity: sha512-c5hU2MDoTlS230MLzdNlkIyxImXq5acxGKz4nYz4aDhH/2BgFtpsA7iK9/OoTHMgZ4FuR0wedTQA31K6Lp9I/Q==}
+  markdownlint-cli2@0.24.1:
+    resolution: {integrity: sha512-nLhes/MIPJQLm+Gmh+3jQEnwMOaalaN0wfCD2qz1247zNZ7R3r2WDHJB191x4hcy6soKAUTybp1bFK7aJGw/WA==}
     engines: {node: '>=22'}
     hasBin: true
 
-  markdownlint@0.42.0:
-    resolution: {integrity: sha512-kzsCV/rPWRFn3jUhcB919YF4Qgeh0g9tcogoXFadGSo6Zxj6662YOqWXv0jDn8nv5KCCxDfMKJZv6N4HkNkvTg==}
+  markdownlint@0.42.1:
+    resolution: {integrity: sha512-Otolm9JX12iO2NG5cetlKfzGygpiLSlHuqXKxoT6HGhN5HtbxprJPicKZqqCQd88qOvUi/TEs3o1AmcYioVscA==}
     engines: {node: '>=22'}
 
   mdast-util-to-hast@13.2.1:
@@ -1847,9 +1844,6 @@ packages:
   merge2@1.4.1:
     resolution: {integrity: sha512-8q7VEgMJW4J8tcfVPy8g09NcQwZdbwFEqhe/WZkoIzjn/3TGDwtOCYtXGxA3O8tPzpczCCDgv+P2P5y00ZJOOg==}
     engines: {node: '>= 8'}
-
-  micromark-core-commonmark@2.0.3:
-    resolution: {integrity: sha512-RDBrHEMSxVFLg6xvnXmb1Ayr2WzLAWjeSATAoxwKYJV94TeNavgoIdA0a9ytzDSVzBy2YKFK+emCPOEibLeCrg==}
 
   micromark-core-commonmark@2.0.4:
     resolution: {integrity: sha512-wxEeE8v8XVvOrxn1TZj74qYhAtTQsSqufHVS3uNVyT1MupXxhyaHk8/9xDNPh9BmL77QNDgWTkZ3RsYHB2ry7w==}
@@ -1922,9 +1916,6 @@ packages:
 
   micromark-util-symbol@2.0.1:
     resolution: {integrity: sha512-vs5t8Apaud9N28kgCrRUdEed4UJ+wWNvicHLPxCa9ENlYuAY31M0ETy5y1vA33YoNPDFTghEbnh6efaE8h4x0Q==}
-
-  micromark-util-types@2.0.2:
-    resolution: {integrity: sha512-Yw0ECSpJoViF1qTU4DC6NwtC4aWGt1EkzaQB8KPPyCRR8z9TWeV0HbEFGTO+ZY1wB22zmxnJqhPyTpOVCpeHTA==}
 
   micromark-util-types@2.0.3:
     resolution: {integrity: sha512-oxB2Ik03hI0gv+VNn9tnh1t1YEe9MDPptViAEgfdf3YQHsn0pzGTgCdlSCJXcwhqm8phaEuM7zeEu3QQzVBrPg==}
@@ -2492,47 +2483,47 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
-  '@biomejs/biome@2.6.6':
+  '@biomejs/biome@2.6.7':
     optionalDependencies:
-      '@biomejs/cli-android-arm64': 2.6.6
-      '@biomejs/cli-android-x64': 2.6.6
-      '@biomejs/cli-darwin-arm64': 2.6.6
-      '@biomejs/cli-darwin-x64': 2.6.6
-      '@biomejs/cli-linux-arm64': 2.6.6
-      '@biomejs/cli-linux-arm64-musl': 2.6.6
-      '@biomejs/cli-linux-x64': 2.6.6
-      '@biomejs/cli-linux-x64-musl': 2.6.6
-      '@biomejs/cli-win32-arm64': 2.6.6
-      '@biomejs/cli-win32-x64': 2.6.6
+      '@biomejs/cli-android-arm64': 2.6.7
+      '@biomejs/cli-android-x64': 2.6.7
+      '@biomejs/cli-darwin-arm64': 2.6.7
+      '@biomejs/cli-darwin-x64': 2.6.7
+      '@biomejs/cli-linux-arm64': 2.6.7
+      '@biomejs/cli-linux-arm64-musl': 2.6.7
+      '@biomejs/cli-linux-x64': 2.6.7
+      '@biomejs/cli-linux-x64-musl': 2.6.7
+      '@biomejs/cli-win32-arm64': 2.6.7
+      '@biomejs/cli-win32-x64': 2.6.7
 
-  '@biomejs/cli-android-arm64@2.6.6':
+  '@biomejs/cli-android-arm64@2.6.7':
     optional: true
 
-  '@biomejs/cli-android-x64@2.6.6':
+  '@biomejs/cli-android-x64@2.6.7':
     optional: true
 
-  '@biomejs/cli-darwin-arm64@2.6.6':
+  '@biomejs/cli-darwin-arm64@2.6.7':
     optional: true
 
-  '@biomejs/cli-darwin-x64@2.6.6':
+  '@biomejs/cli-darwin-x64@2.6.7':
     optional: true
 
-  '@biomejs/cli-linux-arm64-musl@2.6.6':
+  '@biomejs/cli-linux-arm64-musl@2.6.7':
     optional: true
 
-  '@biomejs/cli-linux-arm64@2.6.6':
+  '@biomejs/cli-linux-arm64@2.6.7':
     optional: true
 
-  '@biomejs/cli-linux-x64-musl@2.6.6':
+  '@biomejs/cli-linux-x64-musl@2.6.7':
     optional: true
 
-  '@biomejs/cli-linux-x64@2.6.6':
+  '@biomejs/cli-linux-x64@2.6.7':
     optional: true
 
-  '@biomejs/cli-win32-arm64@2.6.6':
+  '@biomejs/cli-win32-arm64@2.6.7':
     optional: true
 
-  '@biomejs/cli-win32-x64@2.6.6':
+  '@biomejs/cli-win32-x64@2.6.7':
     optional: true
 
   '@cfworker/json-schema@4.1.6': {}
@@ -2660,7 +2651,7 @@ snapshots:
       '@cfworker/json-schema': 4.1.6
       '@standard-schema/spec': 1.1.0
       js-tiktoken: 1.0.21
-      langsmith: 0.11.8(@opentelemetry/api@1.10.0)
+      langsmith: 0.12.0(@opentelemetry/api@1.10.0)
       mustache: 4.2.0
       p-queue: 6.6.2
       zod: 4.6.7
@@ -2675,7 +2666,7 @@ snapshots:
     dependencies:
       '@langchain/core': 1.4.1(@opentelemetry/api@1.10.0)
 
-  '@langchain/langgraph-sdk@1.15.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))':
+  '@langchain/langgraph-sdk@1.16.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))':
     dependencies:
       '@langchain/core': 1.4.1(@opentelemetry/api@1.10.0)
       '@langchain/protocol': 0.0.21
@@ -2683,11 +2674,11 @@ snapshots:
       p-queue: 9.3.5
       p-retry: 7.1.1
 
-  '@langchain/langgraph@1.7.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)':
+  '@langchain/langgraph@1.7.4(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)':
     dependencies:
       '@langchain/core': 1.4.1(@opentelemetry/api@1.10.0)
       '@langchain/langgraph-checkpoint': 1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
-      '@langchain/langgraph-sdk': 1.15.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
+      '@langchain/langgraph-sdk': 1.16.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
       '@langchain/protocol': 0.0.21
       '@standard-schema/spec': 1.1.0
       zod: 4.6.7
@@ -3155,8 +3146,6 @@ snapshots:
 
   anynum@1.0.1: {}
 
-  argparse@2.0.1: {}
-
   argparse@3.0.4: {}
 
   assertion-error@2.0.1: {}
@@ -3205,15 +3194,15 @@ snapshots:
     dependencies:
       character-entities: 2.0.2
 
-  deepagents@1.17.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@langchain/langgraph-checkpoint@1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph-sdk@1.15.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph@1.7.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7))(langchain@1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0))(langsmith@0.11.8(@opentelemetry/api@1.10.0)):
+  deepagents@1.17.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@langchain/langgraph-checkpoint@1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph-sdk@1.16.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0)))(@langchain/langgraph@1.7.4(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7))(langchain@1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0))(langsmith@0.12.0(@opentelemetry/api@1.10.0)):
     dependencies:
       '@langchain/core': 1.4.1(@opentelemetry/api@1.10.0)
-      '@langchain/langgraph': 1.7.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)
+      '@langchain/langgraph': 1.7.4(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)
       '@langchain/langgraph-checkpoint': 1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
-      '@langchain/langgraph-sdk': 1.15.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
+      '@langchain/langgraph-sdk': 1.16.0(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
       fast-glob: 3.3.3
       langchain: 1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0)
-      langsmith: 0.11.8(@opentelemetry/api@1.10.0)
+      langsmith: 0.12.0(@opentelemetry/api@1.10.0)
       micromatch: 4.0.8
       yaml: 2.9.1
       zod: 4.6.7
@@ -3391,9 +3380,9 @@ snapshots:
 
   js-tokens@10.0.0: {}
 
-  js-yaml@5.4.3:
+  js-yaml@5.5.0:
     dependencies:
-      argparse: 2.0.1
+      argparse: 3.0.4
 
   json-schema-traverse@1.0.0: {}
 
@@ -3408,9 +3397,9 @@ snapshots:
   langchain@1.6.6(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(@opentelemetry/api@1.10.0):
     dependencies:
       '@langchain/core': 1.4.1(@opentelemetry/api@1.10.0)
-      '@langchain/langgraph': 1.7.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)
+      '@langchain/langgraph': 1.7.4(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))(zod@4.6.7)
       '@langchain/langgraph-checkpoint': 1.2.2(@langchain/core@1.4.1(@opentelemetry/api@1.10.0))
-      langsmith: 0.11.8(@opentelemetry/api@1.10.0)
+      langsmith: 0.12.0(@opentelemetry/api@1.10.0)
       zod: 4.6.7
     transitivePeerDependencies:
       - '@opentelemetry/api'
@@ -3421,7 +3410,7 @@ snapshots:
       - react-dom
       - ws
 
-  langsmith@0.11.8(@opentelemetry/api@1.10.0):
+  langsmith@0.12.0(@opentelemetry/api@1.10.0):
     dependencies:
       p-queue: 6.6.2
     optionalDependencies:
@@ -3552,25 +3541,25 @@ snapshots:
       punycode.js: 2.3.1
       uc.micro: 3.0.0
 
-  markdownlint-cli2-formatter-default@0.0.6(markdownlint-cli2@0.24.0):
+  markdownlint-cli2-formatter-default@0.0.6(markdownlint-cli2@0.24.1):
     dependencies:
-      markdownlint-cli2: 0.24.0
+      markdownlint-cli2: 0.24.1
 
-  markdownlint-cli2@0.24.0:
+  markdownlint-cli2@0.24.1:
     dependencies:
       globby: 16.2.4
-      js-yaml: 5.4.3
+      js-yaml: 5.5.0
       jsonc-parser: 3.3.1
       jsonpointer: 5.0.1
       markdown-it: 15.0.3
-      markdownlint: 0.42.0
-      markdownlint-cli2-formatter-default: 0.0.6(markdownlint-cli2@0.24.0)
+      markdownlint: 0.42.1
+      markdownlint-cli2-formatter-default: 0.0.6(markdownlint-cli2@0.24.1)
       micromatch: 4.0.8
       smol-toml: 1.9.1
     transitivePeerDependencies:
       - supports-color
 
-  markdownlint@0.42.0:
+  markdownlint@0.42.1:
     dependencies:
       micromark: 4.0.3
       micromark-core-commonmark: 2.0.4
@@ -3601,25 +3590,6 @@ snapshots:
 
   merge2@1.4.1: {}
 
-  micromark-core-commonmark@2.0.3:
-    dependencies:
-      decode-named-character-reference: 1.3.0
-      devlop: 1.1.0
-      micromark-factory-destination: 2.0.1
-      micromark-factory-label: 2.0.1
-      micromark-factory-space: 2.1.0
-      micromark-factory-title: 2.0.1
-      micromark-factory-whitespace: 2.0.1
-      micromark-util-character: 2.1.1
-      micromark-util-chunked: 2.0.1
-      micromark-util-classify-character: 2.0.1
-      micromark-util-html-tag-name: 2.0.1
-      micromark-util-normalize-identifier: 2.0.1
-      micromark-util-resolve-all: 2.0.1
-      micromark-util-subtokenize: 2.1.0
-      micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
-
   micromark-core-commonmark@2.0.4:
     dependencies:
       decode-named-character-reference: 1.3.0
@@ -3647,7 +3617,7 @@ snapshots:
       micromark-factory-whitespace: 2.0.1
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
       parse-entities: 4.0.2
 
   micromark-extension-gfm-autolink-literal@2.1.0:
@@ -3655,18 +3625,18 @@ snapshots:
       micromark-util-character: 2.1.1
       micromark-util-sanitize-uri: 2.0.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-extension-gfm-footnote@2.1.0:
     dependencies:
       devlop: 1.1.0
-      micromark-core-commonmark: 2.0.3
+      micromark-core-commonmark: 2.0.4
       micromark-factory-space: 2.1.0
       micromark-util-character: 2.1.1
       micromark-util-normalize-identifier: 2.0.1
       micromark-util-sanitize-uri: 2.0.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-extension-gfm-table@2.1.2:
     dependencies:
@@ -3674,7 +3644,7 @@ snapshots:
       micromark-factory-space: 2.1.0
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-extension-math@3.1.0:
     dependencies:
@@ -3684,44 +3654,44 @@ snapshots:
       micromark-factory-space: 2.1.0
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-factory-destination@2.0.1:
     dependencies:
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-factory-label@2.0.1:
     dependencies:
       devlop: 1.1.0
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-factory-space@2.1.0:
     dependencies:
       micromark-util-character: 2.1.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-factory-title@2.0.1:
     dependencies:
       micromark-factory-space: 2.1.0
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-factory-whitespace@2.0.1:
     dependencies:
       micromark-factory-space: 2.1.0
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-util-character@2.1.1:
     dependencies:
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-util-chunked@2.0.1:
     dependencies:
@@ -3731,12 +3701,12 @@ snapshots:
     dependencies:
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-util-combine-extensions@2.0.1:
     dependencies:
       micromark-util-chunked: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-util-decode-numeric-character-reference@2.0.2:
     dependencies:
@@ -3744,7 +3714,7 @@ snapshots:
 
   micromark-util-edit-map@1.0.0:
     dependencies:
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-util-encode@2.0.1: {}
 
@@ -3756,7 +3726,7 @@ snapshots:
 
   micromark-util-resolve-all@2.0.1:
     dependencies:
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-util-sanitize-uri@2.0.1:
     dependencies:
@@ -3769,11 +3739,9 @@ snapshots:
       devlop: 1.1.0
       micromark-util-chunked: 2.0.1
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
 
   micromark-util-symbol@2.0.1: {}
-
-  micromark-util-types@2.0.2: {}
 
   micromark-util-types@2.0.3: {}
 
@@ -3783,7 +3751,7 @@ snapshots:
       debug: 4.4.3
       decode-named-character-reference: 1.3.0
       devlop: 1.1.0
-      micromark-core-commonmark: 2.0.3
+      micromark-core-commonmark: 2.0.4
       micromark-factory-space: 2.1.0
       micromark-util-character: 2.1.1
       micromark-util-chunked: 2.0.1
@@ -3796,7 +3764,7 @@ snapshots:
       micromark-util-sanitize-uri: 2.0.1
       micromark-util-subtokenize: 2.1.0
       micromark-util-symbol: 2.0.1
-      micromark-util-types: 2.0.2
+      micromark-util-types: 2.0.3
     transitivePeerDependencies:
       - supports-color
 

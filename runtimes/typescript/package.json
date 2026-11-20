@@ -40,12 +40,12 @@
   },
   "peerDependencies": {
     "@langchain/core": "1.4.1",
-    "@langchain/langgraph": "1.7.2",
+    "@langchain/langgraph": "1.7.4",
     "@langchain/langgraph-checkpoint": "1.2.2",
-    "@langchain/langgraph-sdk": "1.15.0",
+    "@langchain/langgraph-sdk": "1.16.0",
     "deepagents": "1.17.0",
     "langchain": "1.6.6",
-    "langsmith": "0.11.8"
+    "langsmith": "0.12.0"
   },
   "peerDependenciesMeta": {
     "@langchain/core": {
@@ -72,11 +72,11 @@
   },
   "devDependencies": {
     "@langchain/core": "1.4.1",
-    "@langchain/langgraph": "1.7.2",
+    "@langchain/langgraph": "1.7.4",
     "@langchain/langgraph-checkpoint": "1.2.2",
-    "@langchain/langgraph-sdk": "1.15.0",
+    "@langchain/langgraph-sdk": "1.16.0",
     "deepagents": "1.17.0",
     "langchain": "1.6.6",
-    "langsmith": "0.11.8"
+    "langsmith": "0.12.0"
   }
 }
