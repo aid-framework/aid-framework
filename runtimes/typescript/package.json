@@ -1,6 +1,6 @@
 {
   "name": "@aid-framework/runtime",
-  "version": "0.1.200",
+  "version": "0.1.201",
   "description": "AID runtime for TypeScript: pinned-model gateway, prompt registry, tool dispatch, pipelines, structured output, eval gates and retrieval.",
   "license": "Apache-2.0",
   "repository": {
@@ -35,17 +35,17 @@
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
-    "fast-xml-parser": "^5.12.0",
+    "fast-xml-parser": "^5.12.1",
     "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@langchain/core": "1.4.1",
-    "@langchain/langgraph": "1.7.2",
-    "@langchain/langgraph-checkpoint": "1.2.2",
-    "@langchain/langgraph-sdk": "1.15.0",
+    "@langchain/core": "1.4.2",
+    "@langchain/langgraph": "1.7.5",
+    "@langchain/langgraph-checkpoint": "1.2.3",
+    "@langchain/langgraph-sdk": "1.17.0",
     "deepagents": "1.17.0",
-    "langchain": "1.6.6",
-    "langsmith": "0.11.8"
+    "langchain": "1.6.7",
+    "langsmith": "0.13.0"
   },
   "peerDependenciesMeta": {
     "@langchain/core": {
@@ -71,12 +71,12 @@
     }
   },
   "devDependencies": {
-    "@langchain/core": "1.4.1",
-    "@langchain/langgraph": "1.7.2",
-    "@langchain/langgraph-checkpoint": "1.2.2",
-    "@langchain/langgraph-sdk": "1.15.0",
+    "@langchain/core": "1.4.2",
+    "@langchain/langgraph": "1.7.5",
+    "@langchain/langgraph-checkpoint": "1.2.3",
+    "@langchain/langgraph-sdk": "1.17.0",
     "deepagents": "1.17.0",
-    "langchain": "1.6.6",
-    "langsmith": "0.11.8"
+    "langchain": "1.6.7",
+    "langsmith": "0.13.0"
   }
 }
