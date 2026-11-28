@@ -3,6 +3,12 @@
 # arrived with `release-plan` red and needed a human to push `version.mjs stamp` onto the
 # branch (done by hand four times). This job does that step for Dependabot only.
 #
+# Stamping is the whole job, and it is self-contained. Generated output carries no release
+# version - file banners name the generator, not the release, and the capability report
+# records a name - so the release version lives only in `aid.manifest.json` as provenance
+# and in the declared manifests stamped here. A bump therefore updates those manifests and
+# nothing regenerated, and this job never has to run `aid gen`.
+#
 # `pull_request_target` is required: a Dependabot-triggered `pull_request` run gets a
 # read-only token, so it could compute the stamp but never push it. Running with a write
 # token means the PR's code must never execute. Only `scripts/version.mjs` from the base

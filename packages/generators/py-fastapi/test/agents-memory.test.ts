@@ -801,8 +801,14 @@ describe('a spec with no agent and no memory', () => {
  * hardcoded `0.1.0` and now reads the published version, so `v0.1.199` moved every file without
  * any emitter changing. A banner is a mechanical, spec-independent rewrite of line one, which is
  * exactly the kind of move this pin should not be spent on -- so all 27 were re-recorded and
- * `observability.py` was again left behind, preserving the single exclusion below. Two
- * digests were then re-baselined individually -- `guardrails.py` by L5c and `gateway/models.py`
+ * `observability.py` was again left behind, preserving the single exclusion below. A third
+ * re-record of all 27 came when the banner dropped the release version entirely: a version there
+ * meant every release rewrote every generated file, so the banner now names only the generator
+ * and provenance lives in `aid.manifest.json`. That is the last re-record of this class -- the
+ * move was made so that a release cannot reach these bytes at all, and a stamp now asserts
+ * exactly that.
+ *
+ * Two digests were then re-baselined individually -- `guardrails.py` by L5c and `gateway/models.py`
  * when a second network provider adapter arrived -- each for a prose-only change and each
  * recorded at the file it moved rather than by widening `DECLARATION_ONLY`.
  */
@@ -822,11 +828,11 @@ describe('the pre-P7b example', () => {
    * declaration therefore rewrites it for every spec, including this one, and no emitter
    * change can avoid that. Every other file in the tier is held to the old bytes.
    *
-   * That pin is still at its pre-rename value, and the version banner has since moved every
-   * file for a reason unrelated to any emitter: this one is deliberately not re-recorded, so
-   * the exclusion keeps exactly one mover to point at instead of becoming an empty list that
-   * asserts nothing. Its `description` half of the claim is checked against the current bytes
-   * by the test below, not by the digest.
+   * That pin is still at its pre-rename value, and every re-baseline since has left it alone for
+   * a reason unrelated to any emitter: it is deliberately not re-recorded, so the exclusion keeps
+   * exactly one mover to point at instead of becoming an empty list that asserts nothing. Its
+   * `description` half of the claim is checked against the current bytes by the test below, not
+   * by the digest.
    *
    * The recorded digest of `guardrails.py` was re-baselined once, by L5c, and this is the
    * only file that layer touched here: a `guard` step runs one named declaration, so that

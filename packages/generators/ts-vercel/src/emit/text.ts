@@ -12,23 +12,31 @@ import {
   normalizeText,
   sha256Hex,
 } from '@aid-framework/generator-sdk';
-import { GENERATOR_NAME, GENERATOR_VERSION } from '../manifest.js';
+import { GENERATOR_NAME } from '../manifest.js';
 import { propertyKey, stringLiteral } from '../names.js';
 
 export { GENERATED_BANNER_MARKER, sha256Hex };
 
-/** The `DO NOT EDIT` banner every generated file starts with. */
+/**
+ * The `DO NOT EDIT` banner every generated file starts with.
+ *
+ * No release version, for the reason `businessBanner` below gives.
+ */
 export function banner(): string {
-  return generatedBanner({ generator: GENERATOR_NAME, version: GENERATOR_VERSION, comment: '//' });
+  return generatedBanner({ generator: GENERATOR_NAME, comment: '//' });
 }
 
 /**
  * The banner a business seed carries. It says the file is *not* owned by the generator
  * and is never overwritten, because that sentence is the whole point of the tier.
+ *
+ * Neither banner names a release version: a version here would rewrite every generated
+ * and seeded file on a release, so a dependency bump would arrive as a repository-wide
+ * diff. The version that wrote a file is provenance, recorded in `aid.manifest.json`.
  */
 export function businessBanner(): string {
   return [
-    `// Created once by AID Framework "${GENERATOR_NAME}" v${GENERATOR_VERSION}. Edit freely.`,
+    `// Created once by AID Framework "${GENERATOR_NAME}". Edit freely.`,
     '// This file is yours: the generator seeds it on first run and never overwrites it.',
   ].join('\n');
 }
