@@ -270,11 +270,12 @@ git add -A && git commit -s -m "Release 0.1.69"
 
 `stamp` changes nothing else, because **generated output is release-invariant**. The banner on a generated
 file names the generator, not the release, and the capability report records that name, so the release
-version survives in generated output only as `aid.manifest.json`'s `generatedBy.generatorVersion`: prose
-provenance for `aid doctor` to compare against the installed CLI, not content that `aid gen --check`
+version survives in generated output only inside `aid.manifest.json`, where it is provenance: `generatedBy`
+is what `aid doctor` compares against the installed CLI, and it is not content that `aid gen --check`
 compares (it hashes file contents, and the manifest is excluded from that set). A release therefore moves
 source plus the stamped manifests, and no file under `examples/` or `docs/`. Do not regenerate them in a
-release commit, and do not expect regeneration to change a byte.
+release commit: a regeneration would rewrite only the `generatorVersion` provenance inside each committed
+`aid.manifest.json`, which is why the no-op tests compare manifests with that field normalised away.
 
 One consequence is intentional: after a stamp, a committed example's manifest names the release that
 generated it while the installed CLI is newer, so `aid doctor` reports `cliVersionMismatch`. That is the
