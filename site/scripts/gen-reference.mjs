@@ -651,8 +651,21 @@ function targetsPage() {
   const ids = targetIds();
   if (ids.length === 0) return '';
 
-  /** @type {{ target: string, name: string, version: string, irRange: string, capabilities: string[], emitsAgainst: Record<string, string>, output: Record<string, string> }[]} */
+  /** @type {{ target: string, name: string, manifestFormat: string, irRange: string, capabilities: string[], emitsAgainst: Record<string, string>, output: Record<string, string> }[]} */
   const manifests = [];
+  // The table states the compatibility contract, not the release. A generator's package
+  // `version` moves on every release and this page is committed, so printing it here made a
+  // dependency bump arrive with a regenerated reference beside it -- noise in a diff whose
+  // only real change was one number in `package.json`. The manifest *format* is the number a
+  // reader can act on: it moves only when the document's own shape does.
+  const manifestFormat = /AID_MANIFEST_VERSION = (\d+)/.exec(
+    readSource('packages/generator-sdk/src/aid-manifest.ts'),
+  )?.[1];
+  if (manifestFormat === undefined) {
+    failures.push(
+      'cannot parse `AID_MANIFEST_VERSION` from packages/generator-sdk/src/aid-manifest.ts',
+    );
+  }
   for (const id of ids) {
     const directory = generatorDirectories().find((name) => {
       const source = readSource(`packages/generators/${name}/src/manifest.ts`);
@@ -723,28 +736,13 @@ function targetsPage() {
       failures.push('cannot parse `IR_VERSION` from packages/ir/src/shapes.ts');
     }
     const irRange = (irRangeMatch?.[1] ?? '').replace(/\$\{IR_VERSION\}/g, irVersion ?? '');
-    // `version` is no longer a string literal: it reads the generator's own package.json at
-    // run time, so the published version cannot drift from the manifest a consumer installs.
-    // Resolve that call from the file it names rather than printing the call, and refuse
-    // anything that is not a version -- an empty cell is the failure this table cannot show,
-    // because the page would still render and simply stop carrying the claim.
-    const versionIsPackageCall = /version:\s*packageVersion\(import\.meta\.url\)/.test(text);
-    const version = versionIsPackageCall
-      ? String(readJson(`packages/generators/${directory}/package.json`)?.version ?? '')
-      : literal('version');
-    if (!/^\d+\.\d+\.\d+/.test(version)) {
-      failures.push(
-        `cannot resolve the manifest version for \`${id}\` from ` +
-          `packages/generators/${directory}/src/manifest.ts`,
-      );
-    }
     if (capabilities_.length === 0) {
       failures.push(`parsed no capabilities for \`${id}\``);
     }
     manifests.push({
       target: id,
       name: literal('name'),
-      version,
+      manifestFormat: manifestFormat ?? '',
       irRange,
       capabilities: capabilities_,
       emitsAgainst: pairsIn('emitsAgainst'),
@@ -787,7 +785,7 @@ function targetsPage() {
     lines.push('| Field | Value |');
     lines.push('| --- | --- |');
     lines.push(`| Package | \`${manifest.name}\` |`);
-    lines.push(`| Manifest version | \`${manifest.version}\` |`);
+    lines.push(`| Manifest format | \`${manifest.manifestFormat}\` |`);
     lines.push(`| IR range | \`${manifest.irRange}\` |`);
     lines.push(
       `| Capabilities | ${manifest.capabilities.map((entry) => `\`${entry}\``).join(', ')} |`,

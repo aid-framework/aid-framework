@@ -268,6 +268,19 @@ git add -A && git commit -s -m "Release 0.1.69"
 `__version__` a PyPI package exposes — the runtime's own tests pin that literal to `[project].version`.
 `verify` reports every manifest that disagrees and exits non-zero if any does.
 
+`stamp` changes nothing else, because **generated output is release-invariant**. The banner on a generated
+file names the generator, not the release, and the capability report records that name, so the release
+version survives in generated output only inside `aid.manifest.json`, where it is provenance: `generatedBy`
+is what `aid doctor` compares against the installed CLI, and it is not content that `aid gen --check`
+compares (it hashes file contents, and the manifest is excluded from that set). A release therefore moves
+source plus the stamped manifests, and no file under `examples/` or `docs/`. Do not regenerate them in a
+release commit: a regeneration would rewrite only the `generatorVersion` provenance inside each committed
+`aid.manifest.json`, which is why the no-op tests compare manifests with that field normalised away.
+
+One consequence is intentional: after a stamp, a committed example's manifest names the release that
+generated it while the installed CLI is newer, so `aid doctor` reports `cliVersionMismatch`. That is the
+warning working as designed. It says the tree came from an older release, not that the tree is wrong.
+
 All five commands the script supports are usable locally; none of them needs network access:
 
 | Command | What it does |
@@ -298,6 +311,10 @@ never executes that branch: only the **base** commit's `scripts/version.mjs` run
 written as data, `release.config.json` must be byte-identical to the base one, and the stamp is rejected if it
 touches a path other than a version-declaring manifest. It exits without pushing when the base policy says the
 change set releases nothing.
+
+Because generated output carries no release version, the stamped manifests are the whole of that commit. A
+Dependabot PR stays the size of its dependency bump, which is the point: a patch release of the generator must
+not show up as a rewrite of every example.
 
 ## Reporting bugs
 

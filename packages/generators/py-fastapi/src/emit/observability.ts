@@ -12,12 +12,7 @@
 
 import type { IR } from '@aid-framework/ir';
 
-import {
-  GENERATOR_NAME,
-  GENERATOR_VERSION,
-  PY_FASTAPI_MANIFEST,
-  PY_FASTAPI_TARGET,
-} from '../manifest.js';
+import { GENERATOR_NAME, PY_FASTAPI_MANIFEST, PY_FASTAPI_TARGET } from '../manifest.js';
 import { capabilityReport, modelCapabilities, providerAdapter } from '../names.js';
 import { INDENT, pythonStatement } from '../python.js';
 import { assemble, HEADER, importFrom } from '../template.js';
@@ -54,7 +49,7 @@ export function emitObservability(ir: IR): EmittedFile {
   const report = {
     capabilities: capabilityReport(PY_FASTAPI_MANIFEST.capabilities),
     emitsAgainst: PY_FASTAPI_MANIFEST.emitsAgainst,
-    generator: { name: GENERATOR_NAME, version: GENERATOR_VERSION },
+    generator: GENERATOR_NAME,
     irVersion: ir.irVersion,
     models: { advertised, unrepresentable },
     observability: {

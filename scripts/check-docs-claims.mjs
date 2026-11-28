@@ -1096,9 +1096,15 @@ if (featuresSource !== undefined) {
  */
 const GENERATED_TREE = 'docs/guide/generated-tree.md';
 const GENERATED_TREE_EXAMPLE = 'examples/support-copilot';
+/** Where the banner marker the page quotes is declared, so the page cannot drift from it. */
+const DETERMINISM_SOURCE = 'packages/generator-sdk/src/determinism.ts';
+/** The target whose banner the page shows; both generators write the same wording. */
+const PY_GENERATOR = '@aid-framework/generator-py-fastapi';
 /** Where the IR format version the manifest records is declared, for the version check below. */
 const IR_VERSION_SOURCE = 'packages/ir/src/shapes.ts';
-/** The generated target tables, which quote a manifest version and IR range per generator. */
+/** Where the manifest format version the target tables quote is declared. */
+const AID_MANIFEST_SOURCE = 'packages/generator-sdk/src/aid-manifest.ts';
+/** The generated target tables, which quote the manifest format version and an IR range. */
 const TARGETS_REFERENCE = 'docs/reference/targets.md';
 const generatedTree = read(GENERATED_TREE);
 
@@ -1233,86 +1239,144 @@ if (generatedTree !== undefined) {
     }
   }
 
-  // The page quotes three numbers that the generator writes into every file: the version in
-  // the two banner examples, the `generatorVersion` in the manifest, and the `irVersion` the
-  // manifest describes. All three were `0.1.0` while the package had moved on, because a
-  // hand-copied number is a claim with no gate behind it - the same failure the counts above
-  // are checked for, in the one place a reader would believe it hardest.
-  if (CURRENT_VERSION !== undefined) {
-    for (const banner of ['DO NOT EDIT.', 'Edit freely.']) {
-      const quoted = `v${CURRENT_VERSION}. ${banner}`;
+  // The page quotes the banner the generator writes into every file, and the manifest fields a
+  // reader will meet there. The banner carries *no* release version, and that absence is the
+  // claim: a version in the banner would rewrite every generated and seeded file when the
+  // framework is released, so a dependency bump would arrive as a repository-wide diff. The
+  // page owes a reader the exact wording, quoted from the emitter, and a check that the rule
+  // that keeps it stable was not quietly undone.
+  const determinismSource = read(DETERMINISM_SOURCE);
+  const marker =
+    determinismSource === undefined
+      ? undefined
+      : /GENERATED_BANNER_MARKER = '([^']+)'/.exec(determinismSource)?.[1];
+  if (marker !== undefined) {
+    // The generated banner is the marker plus the tail; the business banner is its own sentence,
+    // because it makes the opposite promise. Both are quoted here as a reader will meet them.
+    for (const quoted of [
+      `${marker} "${PY_GENERATOR}". DO NOT EDIT.`,
+      `Created once by AID Framework "${PY_GENERATOR}". Edit freely.`,
+    ]) {
       claimsChecked += 1;
       if (!generatedTree.includes(quoted)) {
         fail(
           GENERATED_TREE,
-          lineOf(generatedTree, `v${banner}`),
+          lineOf(generatedTree, quoted.slice(-14)),
           `does not show the banner the generator writes, \`${quoted}\``,
         );
       }
     }
+  }
 
-    for (const match of generatedTree.matchAll(/"generatorVersion":\s*"(?<version>[^"]+)"/g)) {
-      claimsChecked += 1;
-      if (match.groups?.version !== CURRENT_VERSION) {
-        fail(
-          GENERATED_TREE,
-          lineOf(generatedTree, match[0]),
-          `shows \`generatorVersion: ${match.groups?.version ?? ''}\`; the generator writes \`${CURRENT_VERSION}\``,
-        );
-      }
+  // Any release version in a banner example reintroduces the churn the wording avoids.
+  for (const match of generatedTree.matchAll(
+    /v\d+\.\d+\.\d+[^\n]*?\. (?:DO NOT EDIT|Edit freely)\./g,
+  )) {
+    claimsChecked += 1;
+    fail(
+      GENERATED_TREE,
+      lineOf(generatedTree, match[0]),
+      `shows \`${match[0]}\`; the banner names the generator and carries no release version`,
+    );
+  }
+
+  // `generatorVersion` is provenance: the page names the field and what it means, but pins no
+  // release, because a literal there is a number every release has to re-edit.
+  let generatorVersions = 0;
+  for (const match of generatedTree.matchAll(/"generatorVersion":\s*"(?<value>[^"]*)"/g)) {
+    generatorVersions += 1;
+    claimsChecked += 1;
+    const value = match.groups?.value ?? '';
+    if (/^\d+\.\d+\.\d+/.test(value)) {
+      fail(
+        GENERATED_TREE,
+        lineOf(generatedTree, match[0]),
+        `shows \`generatorVersion\` as the literal \`${value}\`; show a placeholder, so a release does not have to edit this page`,
+      );
     }
+  }
+  claimsChecked += 1;
+  if (generatorVersions < 2) {
+    fail(
+      GENERATED_TREE,
+      lineOf(generatedTree, 'generatedBy'),
+      `shows ${generatorVersions} \`generatorVersion\` field(s) in the manifest example; it has one in \`generatedBy\` and one per file`,
+    );
+  }
 
-    const irSource = read(IR_VERSION_SOURCE);
-    const irVersion =
-      irSource === undefined ? undefined : /IR_VERSION\s*=\s*'([^']+)'/.exec(irSource);
-    if (irVersion?.[1] !== undefined) {
-      claimsChecked += 1;
-      if (!generatedTree.includes(`"irVersion": "${irVersion[1]}"`)) {
-        fail(
-          GENERATED_TREE,
-          lineOf(generatedTree, '"irVersion"'),
-          `does not show \`"irVersion": "${irVersion[1]}"\`, the IR format version the generator names`,
-        );
-      }
+  claimsChecked += 1;
+  if (!generatedTree.includes('is the release that ran `aid gen`')) {
+    fail(
+      GENERATED_TREE,
+      lineOf(generatedTree, 'generatorVersion'),
+      'does not explain that `generatorVersion` is the release that ran `aid gen`',
+    );
+  }
+
+  const irSource = read(IR_VERSION_SOURCE);
+  const irVersion =
+    irSource === undefined ? undefined : /IR_VERSION\s*=\s*'([^']+)'/.exec(irSource);
+  if (irVersion?.[1] !== undefined) {
+    claimsChecked += 1;
+    if (!generatedTree.includes(`"irVersion": "${irVersion[1]}"`)) {
+      fail(
+        GENERATED_TREE,
+        lineOf(generatedTree, '"irVersion"'),
+        `does not show \`"irVersion": "${irVersion[1]}"\`, the IR format version the generator names`,
+      );
     }
   }
 }
 
-// The target tables quote the same two numbers per generator, and they are the page a reader
-// consults to decide whether a target is compatible. `site/scripts/gen-reference.mjs` writes
-// the page by parsing each generator's manifest input, so `gen:check` only proves the page
-// matches that parser -- it cannot notice the parser resolving nothing, which is what it did
-// once `version` became a call into the package rather than a literal: the page rendered an
-// empty cell, and before that it faithfully repeated a hardcoded `0.1.0` for four releases.
-// This check asks the other question, against the package the numbers are supposed to come
-// from, so a reference that is self-consistent and wrong still fails.
+// The target tables quote two numbers per generator, and they are the page a reader consults
+// to decide whether a target is compatible. `site/scripts/gen-reference.mjs` writes the page by
+// parsing each generator's manifest input, so `gen:check` only proves the page matches that
+// parser -- it cannot notice the parser resolving nothing, which is what it did once `version`
+// became a call into the package rather than a literal: the page rendered an empty cell, and
+// before that it faithfully repeated a hardcoded `0.1.0` for four releases. This check asks the
+// other question, against the source the numbers are supposed to come from, so a reference that
+// is self-consistent and wrong still fails.
+//
+// The version row states the manifest *format*, not the release. It used to state the release,
+// which meant every release had to regenerate this page -- a diff in a dependency bump that had
+// nothing to do with the dependency.
 const targetsReference = read(TARGETS_REFERENCE);
-if (targetsReference !== undefined && CURRENT_VERSION !== undefined) {
+if (targetsReference !== undefined) {
   const irSource = read(IR_VERSION_SOURCE);
   const irVersion =
     irSource === undefined ? undefined : /IR_VERSION\s*=\s*'([^']+)'/.exec(irSource);
+  const manifestFormat = /AID_MANIFEST_VERSION = (\d+)/.exec(read(AID_MANIFEST_SOURCE) ?? '')?.[1];
 
-  const versionRows = [
-    ...targetsReference.matchAll(/^\| Manifest version \| `(?<version>[^`]*)` \|$/gm),
+  const formatRows = [
+    ...targetsReference.matchAll(/^\| Manifest format \| `(?<format>[^`]*)` \|$/gm),
   ];
   const targetHeadings = [...targetsReference.matchAll(/^### `(?<name>[^`]+)`$/gm)];
-  if (versionRows.length === 0 || versionRows.length !== targetHeadings.length) {
+  if (formatRows.length === 0 || formatRows.length !== targetHeadings.length) {
     claimsChecked += 1;
     fail(
       TARGETS_REFERENCE,
-      lineOf(targetsReference, 'Manifest version'),
-      `has ${versionRows.length} \`Manifest version\` row(s) for ${targetHeadings.length} target(s), so the version check below proves nothing`,
+      lineOf(targetsReference, 'Manifest format'),
+      `has ${formatRows.length} \`Manifest format\` row(s) for ${targetHeadings.length} target(s), so the version check below proves nothing`,
     );
   }
 
-  for (const match of versionRows) {
+  if (manifestFormat === undefined) {
     claimsChecked += 1;
-    if (match.groups?.version !== CURRENT_VERSION) {
-      fail(
-        TARGETS_REFERENCE,
-        lineOf(targetsReference, match[0]),
-        `says a manifest version is \`${match.groups?.version ?? ''}\`; the generator writes \`${CURRENT_VERSION}\``,
-      );
+    fail(
+      AID_MANIFEST_SOURCE,
+      1,
+      'cannot parse `AID_MANIFEST_VERSION`, so the target tables cannot be checked',
+    );
+  } else {
+    for (const match of formatRows) {
+      claimsChecked += 1;
+      if (match.groups?.format !== manifestFormat) {
+        fail(
+          TARGETS_REFERENCE,
+          lineOf(targetsReference, match[0]),
+          `says the manifest format is \`${match.groups?.format ?? ''}\`; the SDK writes and reads \`${manifestFormat}\``,
+        );
+      }
     }
   }
 

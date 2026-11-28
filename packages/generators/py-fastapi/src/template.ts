@@ -10,14 +10,13 @@
 
 import { generatedBanner, normalizeText } from '@aid-framework/generator-sdk';
 
-import { GENERATOR_NAME, GENERATOR_VERSION } from './manifest.js';
+import { GENERATOR_NAME } from './manifest.js';
 import { collapseWhitespace, INDENT, MAX_LINE } from './python.js';
 
 /** The ownership banner every generated file carries, as one comment block. */
 export function banner(): string {
   return generatedBanner({
     generator: GENERATOR_NAME,
-    version: GENERATOR_VERSION,
     comment: '#',
   });
 }
@@ -30,10 +29,14 @@ export function banner(): string {
  * creates a business file only when it is missing and otherwise leaves it alone, per
  * `docs/design.md` §10 step 3, which calls that work "sacred". Reusing the generated
  * banner here would tell a reader the opposite of what the drift logic does.
+ *
+ * Neither banner names a release version: a version there would rewrite every generated
+ * and seeded file on a release, so a dependency bump would arrive as a repository-wide
+ * diff. The version that wrote a file is provenance, recorded in `aid.manifest.json`.
  */
 export function businessBanner(): string {
   return [
-    `# Created once by AID Framework "${GENERATOR_NAME}" v${GENERATOR_VERSION}. Edit freely.`,
+    `# Created once by AID Framework "${GENERATOR_NAME}". Edit freely.`,
     '# The generator never overwrites this file: it is yours. See aid.manifest.json.',
   ].join('\n');
 }

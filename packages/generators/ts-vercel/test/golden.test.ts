@@ -99,8 +99,19 @@ describe('the committed example', () => {
     expect(manifest.files.filter((file) => !planned.has(file.path)).map((f) => f.path)).toEqual([]);
   });
 
-  it('records the generator, version and IR version that produced it', () => {
-    expect(shippedManifest().generatedBy).toEqual(provenanceFor(example().ir));
+  it('records the generator and IR version that produced it', () => {
+    const { generatedBy } = shippedManifest();
+    const current = provenanceFor(example().ir);
+    expect({ generator: generatedBy.generator, irVersion: generatedBy.irVersion }).toEqual({
+      generator: current.generator,
+      irVersion: current.irVersion,
+    });
+    /* This fixture records the release that generated it, which is not necessarily the
+     * release in the checkout you are holding. Pinning the value would make every version
+     * bump a rewrite of every example, which the release-invariance rule forbids, so assert
+     * the shape here. That a run records its own version is owned by `aid doctor`, whose
+     * version-mismatch test fails if a freshly generated tree does not match the release. */
+    expect(generatedBy.generatorVersion).toMatch(/^\d+\.\d+\.\d+/);
   });
 
   it('agrees with the manifest on who owns each path', () => {
